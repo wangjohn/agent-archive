@@ -23,7 +23,10 @@ CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
-line tools on macOS; elsewhere a stub is built. `go test ./...` also checks the docs:
+line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
+runs the Linux scheduler against a real systemd user manager on Ubuntu (see
+[below](#never-test-against-your-real-mac)); it is its own check, not a
+required one. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -140,6 +143,35 @@ In Go tests, everything goes through injection:
   drive the real commands over it with `fakeUserManager`, a user manager that
   keeps each job's state, answers `show` and enables a timer only when its unit
   files are where the manager searches.
+- The same adapter also runs against a **real** systemd user manager, which no
+  fake can vouch for: `TestRealUserManagerConformance` (the conformance suite,
+  with states put in and read back by `systemctl` itself) in
+  `internal/scheduler/systemd` and `TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt`
+  (the real `setup`, the manager's timer starting the job's program, the real
+  `uninstall`) in `internal/cli`. Both skip unless
+  `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
+  manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
+  and the user's hook and skill files for the smoke); they refuse a machine that
+  already has such units. CI runs them in the `real-systemd` job on
+  `ubuntu-latest` (a virtual machine with systemd: it enables lingering for the
+  runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  waits up to two and a half minutes for the timer's first run). That job is
+  its own check and is not among the branch's required ones, so a change to the
+  runner image does not stop unrelated pull requests; a failure in it is a real
+  finding about the adapter. To run it yourself, never on your own Mac or
+  login, use a disposable Linux container with systemd as PID 1 (Docker on
+  macOS runs it in a Linux VM) and a non-root user:
+
+  ```sh
+  docker run -d --name aa-systemd --privileged --cgroupns=host \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+    IMAGE /sbin/init   # Ubuntu 24.04 with systemd, dbus-user-session, sudo and Go
+  # as a user with sudo, in a checkout of the repository inside it:
+  sudo loginctl enable-linger "$USER"     # starts the user's manager
+  export XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+  AGENT_ARCHIVE_REAL_SYSTEMD=1 go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd ./internal/cli
+  docker rm -f aa-systemd                 # when done
+  ```
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
