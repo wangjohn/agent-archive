@@ -143,8 +143,14 @@ New here:
 - `setup --no-skills` (and `--yes --no-skills`) opts out of every skill.
   It is recorded in config (`Config.NoSkills`, `json:"no_skills,omitempty"`)
   so a re-run or `--refresh` does not reinstall them, and it removes owned
-  skill files already there. A prompt-driven setup does not ask; it
-  installs, and the review line names the flag.
+  skill files already there (a file that is not setup's is left alone and
+  named). A prompt-driven setup does not ask; it installs, and its closing
+  output names the flag.
+- Because the opt-out is sticky it needs a way back: `setup --skills`
+  clears it and installs. Giving both flags is a usage error (exit 2,
+  before anything is read or changed). While opted out, `status` says the
+  skills are turned off (`agent_skills_disabled` in `--json`, present only
+  when true).
 - Nothing in the background rewrites agent configuration. The collector
   never touches skills.
 
@@ -270,7 +276,8 @@ Parallel packages rely on these; change them here first.
 | PR 3 `internal/agentskills` | `type Destination`, `type Skill`, `var Registry []Skill`, `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`, `PlanInstall`, `PlanRemoval`, `Installed`, `Stale(userHome, claudeDir, executable, dataHome string) []string` (owned files whose content differs from this render), same signatures as `agentcommands` otherwise |
 | PR 3 `internal/cli` | `status --json`: `agent_skills` (paths), `agent_skills_out_of_date` (paths) |
 | PR 4 `internal/config` | `Config.NoSkills bool` |
-| PR 4 `internal/cli/setup_flags.go` | `--no-skills` |
+| PR 4 `internal/cli/setup_flags.go` | `--no-skills`, `--skills` (both is a usage error) |
+| PR 4 `internal/cli` | `status --json`: `agent_skills_disabled` (only when true) |
 | PR 5 skill | directory `agent-archive`, `Registry` entry `archiveSkill` |
 | PR 6 `internal/cli/setup_refresh.go` | `runSetupRefresh(...)`, flag `--refresh` |
 | PR 4b `internal/cli` | `AGENT_ARCHIVE_NONINTERACTIVE`, `Env.interactive(stream)`, `cursorAgentEnv`, `agentShellEnv()` |
@@ -348,12 +355,15 @@ it renames the package.
 
 ### PR 4 — `setup --no-skills` (~200 lines + tests)
 
-- Flag, `Config.NoSkills`, review-screen line, `--yes` path. A set flag
-  skips installing and removes owned skill files. Recorded so re-runs and
-  `--refresh` honor it.
+- Flags `--no-skills` and `--skills`, `Config.NoSkills`, a closing line
+  that names the opt-out (or, when opted out, `--skills`), `--yes` path. A
+  set flag skips installing and removes owned skill files. Recorded so
+  re-runs and `--refresh` honor it; `--skills` clears it.
 - Tests: fresh setup with the flag installs none; existing install then
   `--no-skills` removes owned files and leaves foreign ones; a later plain
-  setup keeps the opt-out; the journal rolls the removal back on failure.
+  setup keeps the opt-out; `--skills` turns it off; both flags is a usage
+  error; another installation's file is never removed; the journal rolls the
+  removal back on failure.
 - Docs: setup guide, `docs/reference/configuration.md`, CLI reference.
 
 ### PR 4b — Non-interactive mode (~250 lines + tests)
