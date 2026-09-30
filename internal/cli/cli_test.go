@@ -52,7 +52,10 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")
 		},
-		WorkingDir:           func() (string, error) { return "", errors.New("no working directory in this test") },
+		WorkingDir: func() (string, error) { return "", errors.New("no working directory in this test") },
+		// Tests never run git to find a directory's repository key: no
+		// directory has an origin remote unless a test says so.
+		repoKey:              func(string) string { return "" },
 		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },

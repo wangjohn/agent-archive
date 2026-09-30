@@ -173,8 +173,8 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		local, scanned = rows, truncated
 	}
 	if r.scope.narrowed() {
-		if code, done := r.inScope(local); done {
-			return code, true
+		if code, done, found := r.inScope(local); found {
+			return code, done
 		}
 	}
 	if opts.source != "archive" {
@@ -192,9 +192,10 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 }
 
 // inScope settles on the matches in the scope, this Mac's before the
-// archive's, and says how many more match outside it. done is false when
-// nothing in the scope matches, and the search goes on everywhere.
-func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done bool) {
+// archive's, and says how many more match outside it. found is false when
+// nothing in the scope matches, and the search goes on everywhere; otherwise
+// code and done are choose's.
+func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done, found bool) {
 	within := func(rows []handoffPickerRow) []handoffPickerRow {
 		return slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return !r.scope.contains(row.metadata, row.reg) })
 	}
@@ -203,7 +204,7 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 		matches = matchHandoffRows(within(r.archiveRows()), r.query, r.skip)
 	}
 	if len(matches) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	// The count covers what was searched. A title answered on this Mac did not
 	// ask the archive, which needs the network, so its other matches are not in it.
@@ -222,7 +223,8 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 		terminal.Printf(r.stderr, "%s in %s (%d more in other projects: --all-projects or a project name finds them)\n",
 			plural(len(matches), "match"), archive.DisplayLine(r.scope.Label), outside)
 	}
-	return r.choose(matches)
+	code, done = r.choose(matches)
+	return code, done, true
 }
 
 // openArchive opens the archive's store once.

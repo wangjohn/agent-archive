@@ -163,11 +163,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
 		GroupByProject: true, Numbered: browsing,
 	}
-	choices := newScopeChoices(scope, format, func(s sessionScope) scopeView {
+	choices := newScopeChoices(scope, format, !browsing, func(s sessionScope) scopeView {
 		shown, totalMatched, truncated := view(s)
 		return scopeView{rows: formatSessionRows(shown, format), total: totalMatched, truncated: truncated}
 	})
-	choices.plain = !browsing
 	if len(choices.shown().rows) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
