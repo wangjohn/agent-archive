@@ -218,9 +218,12 @@ func hostileStats() stats.Stats {
 	s.MCP.Servers[0].Name = hostileNames[1]
 	s.MCP.Scope = hostileNames[2]
 	s.Agents[0].Label = hostileNames[6]
+	s.Agents[1].Label = hostileNames[0]
+	s.Agents[2].Label = hostileNames[1]
 	s.Highlights.CostliestSession.Project = hostileNames[8]
 	s.HeadsUp[1].Project = hostileNames[8]
 	s.HeadsUp[2].ByAgent[0].Label = hostileNames[9]
+	s.HeadsUp[2].ByAgent[1].Label = hostileNames[2]
 	s.Prices.Version = hostileNames[0]
 	return s
 }

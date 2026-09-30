@@ -309,20 +309,6 @@ as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
 and `skills` keeps the recorded names. Every field, rule and threshold is in
 [JSON output](../reference/json-output.md#stats---json).
 
-## In `--json`: spend by day and heads-up notes
-
-`--json` carries the numbers the screen and the page are built from, so a
-script can chart or check them: each `daily` entry has that day's estimated
-`cost` (the days add up to the overview's cost), `peak_spend` names the
-dearest day, `overview.cache_share` is the part of your tokens that were
-cache reads, and `heads_up` lists up to three things worth a second look
-(subagents using a quarter or more of your tokens, one session costing a tenth
-or more of your spend, sessions with no token data, a low cache-hit rate) as
-data, in that order of priority. A skill that a plugin provides is listed once
-as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
-and `skills` keeps the recorded names. Every field, rule and threshold is in
-[JSON output](../reference/json-output.md#stats---json).
-
 ## Share it as a web page
 
 ```sh

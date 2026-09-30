@@ -4,7 +4,8 @@ agent-archive stats · last 30 days · 3 agents
   at list price             673 prompts               97% served from cache
 
 AGENTS  ███████████████████████████████████████████ ████ █
-        ● 日本語のとても長いプロジ 90%   ● Cursor 9%   ● Codex 1%   of sessions
+        ● 日本語のとても長いプロジ 90%   ● proj[31mRED]0;title 9%
+        ● [2J[Hgone 1%   of sessions
 
 DAILY SPEND                           peak ~$2,910 · Sep 27
                                                       █
@@ -29,6 +30,6 @@ HEADS UP
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long context, 38
   subagents
-● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, Claude Code 2)
+● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, abcdefghi 2)
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html
