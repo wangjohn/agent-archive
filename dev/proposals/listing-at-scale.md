@@ -1,14 +1,14 @@
 # Archive listing at scale: implementation plan
 
-Prepared 2026-09-30 against `main` at `dc443c7`. Status: phase 1
-implemented; phases 2 and 3 planned; phase 4 needs its own spec before any code.
+Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
+and 2 implemented; phase 3 planned; phase 4 needs its own spec before any code.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 1 | Parallel range listing | Implemented |
-| 2 | `AGENT_ARCHIVE_TRACE` timings | Planned |
+| 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
+| 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented |
 | 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |
 
@@ -113,16 +113,32 @@ Size: ~150 lines of production code, ~300 of tests. One PR.
 ## Phase 2: `AGENT_ARCHIVE_TRACE`
 
 With `AGENT_ARCHIVE_TRACE=1`, a command prints a timing tree to stderr when it
-finishes. It covers phases (config, store open, registrations, listing,
-sidecar reads, local activity, rows) and counts (ranges, keys listed, cache
-hits and misses, requests by operation). Measuring then no longer needs a
-proxy and a pseudo-terminal. It covers `handoff`, `list`, `show` and `stats`.
-The recorder travels in the `context.Context` that listing already takes.
-Request counts come from a counting `http.RoundTripper`, installed only when
-tracing is on. Output is timings and counts only, never keys, titles or
-paths. It is documented in the troubleshooting guide.
+finishes. It covers config, store open (Keychain included), registrations,
+the listing (ranges and keys), sidecar reads (from cache or downloaded), the
+indexed listing, local activity, local transcript reads, source loads, and
+every storage request with its bytes. Measuring then no longer needs a proxy
+and a pseudo-terminal.
 
-Size: ~200 lines of production code, ~150 of tests. One PR.
+- **Process-wide recorder** (`internal/trace`). Library packages record
+  spans without a context threaded through every command. So no command's
+  code changes, including the handoff picker, which the session-finding work
+  owns.
+- **Nesting:**
+  - spans from different packages nest by time (the innermost span that
+    contains them);
+  - concurrent work (listing ranges) is attached to its parent explicitly;
+  - same-named siblings fold into one line with a count, the total, and the
+    longest.
+- **Requests:** a wrapper on the S3 client's HTTP client, always installed
+  (a pointer check while tracing is off). Each request's span lasts until
+  its body is closed, so a listing page's download counts.
+- **Privacy:** names are fixed strings and details are counts, never keys,
+  titles or paths. A test asserts that.
+- **Internal commands never trace:** the hooks and the collector (`_hook`,
+  `_collect`).
+- **Docs:** the troubleshooting guide and the configuration reference.
+
+Size: ~250 lines of production code, ~200 of tests. One PR.
 
 ## Phase 3: listing benchmark
 

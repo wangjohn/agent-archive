@@ -35,6 +35,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -312,6 +313,7 @@ func (e Env) now() time.Time {
 }
 
 func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -319,6 +321,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -518,6 +521,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
+	defer startTrace(args[0], stderr, env)()
 
 	switch args[0] {
 	case "-h", "--help", "help":
