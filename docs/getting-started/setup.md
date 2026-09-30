@@ -396,6 +396,15 @@ Then setup says, with one line per app, what to do next:
 - **Claude Code:** nothing to approve; start a new session.
 - **Cursor:** nothing to approve; start a new Agent chat.
 
+Setup's closing lines also name the agent skills it installed (`/handoff` and
+`agent-archive`) and the opt-out, `--no-skills`. Unlike Codex's hooks, a skill
+needs no approval; Claude Code and Codex notice it in a session that is
+already open (Claude Code needs `/reload-skills` when it had no
+`~/.claude/skills` folder at start), and Cursor may need a new chat. Then ask an agent in words, such
+as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.md)).
+Claude Code asks before it first uses the skill and before the commands it
+runs.
+
 Sessions already open are not captured: capture needs a provable fresh
 start, so only a new session in an included project counts. In Codex and
 Claude Code, `/clear` also starts one; in Cursor, only a new chat does. Setup finishes without waiting for it. Check
