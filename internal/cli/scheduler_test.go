@@ -46,11 +46,11 @@ func TestLaunchdSchedulerFindsEveryPlistFromRefAndSite(t *testing.T) {
 // sandbox's plist, never one of the same label in the real home (another
 // installation's job, or none).
 func TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes(t *testing.T) {
-	home, sandbox, real := t.TempDir(), t.TempDir(), t.TempDir()
+	home, sandbox, account := t.TempDir(), t.TempDir(), t.TempDir()
 	label := hooks.CollectorLabel(home, "")
 	plist := filepath.Join(sandbox, "Library", "LaunchAgents", label+".plist")
 	must(t, local.WriteBytes(plist, []byte("new")))
-	must(t, local.WriteBytes(filepath.Join(real, "Library", "LaunchAgents", label+".plist"), []byte("real")))
+	must(t, local.WriteBytes(filepath.Join(account, "Library", "LaunchAgents", label+".plist"), []byte("real")))
 	journal := setupjournal.Journal{
 		Changes:   []hooks.Change{{Path: plist, Before: []byte("old"), After: []byte("new"), Existed: true, Mode: 0o644}},
 		Plist:     plist,
@@ -66,7 +66,7 @@ func TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes(t *testing.T) {
 		return nil, nil
 	})
 
-	must(t, recoverSetup(home, Env{UserHomeDir: func() (string, error) { return real, nil }}))
+	must(t, recoverSetup(home, Env{UserHomeDir: func() (string, error) { return account, nil }}))
 
 	target := serviceTarget(plist)
 	want := []string{"print " + target, "print " + target, "bootout " + target, "bootstrap " + strings.TrimSuffix(target, "/"+label) + " " + plist}
@@ -86,9 +86,9 @@ func TestEnvLaunchdNamesJobsByRefAtThePlistsHome(t *testing.T) {
 	t.Parallel()
 	sched := &siteRecorder{fakeScheduler: newFakeScheduler(t, "loaded")}
 	launchd := Env{Scheduler: sched}.launchd()
-	sandbox, real := filepath.Join("sandbox", "me"), filepath.Join("/Users", "me")
+	sandbox, account := filepath.Join("sandbox", "me"), "/Users/me"
 	plist := filepath.Join(sandbox, "Library", "LaunchAgents", "com.agent-archive.collector.plist")
-	other := filepath.Join(real, "Library", "LaunchAgents", "com.agent-archive.collector.0123456789ab.plist")
+	other := filepath.Join(account, "Library", "LaunchAgents", "com.agent-archive.collector.0123456789ab.plist")
 	if got := launchd.JobState(plist); got != "loaded" {
 		t.Errorf("JobState = %q", got)
 	}
@@ -102,7 +102,7 @@ func TestEnvLaunchdNamesJobsByRefAtThePlistsHome(t *testing.T) {
 	if got := sched.all(); !slices.Equal(got, want) {
 		t.Errorf("scheduler calls %q, want %q", got, want)
 	}
-	if want := []string{sandbox, sandbox, sandbox, sandbox, real}; !slices.Equal(sched.sites, want) {
+	if want := []string{sandbox, sandbox, sandbox, sandbox, account}; !slices.Equal(sched.sites, want) {
 		t.Errorf("scheduler sites %q, want %q", sched.sites, want)
 	}
 	if got := sched.state("com.agent-archive.collector"); got != "loaded" {
@@ -120,8 +120,8 @@ func TestEnvLaunchdRefusesAPlistNoRefAndSiteName(t *testing.T) {
 	launchd := Env{Scheduler: sched}.launchd()
 	for _, plist := range []string{
 		"/synthetic/job",
-		filepath.Join("/Users", "me", "Library", "LaunchDaemons", "com.agent-archive.collector.plist"),
-		filepath.Join("/Users", "me", "Library", "LaunchAgents", "com.agent-archive.collector.PLIST"),
+		"/Users/me/Library/LaunchDaemons/com.agent-archive.collector.plist",
+		"/Users/me/Library/LaunchAgents/com.agent-archive.collector.PLIST",
 		"/Users/me/Library/LaunchAgents/../LaunchAgents/com.agent-archive.collector.plist",
 	} {
 		if got := launchd.JobState(plist); got != "unknown" {
@@ -166,7 +166,7 @@ func (s *siteRecorder) unload(ctx context.Context, site schedulerSite, ref sched
 // interrupted (or whose own context ran out) still finishes the launchctl
 // change it started, and the setup journal handles what comes after.
 func TestLaunchdSchedulerChangesIgnoreTheCallersCancellation(t *testing.T) {
-	site := schedulerSite{filepath.Join("/Users", "me")}
+	site := schedulerSite{"/Users/me"}
 	ref := schedulerRef("com.agent-archive.collector")
 	plist := site.launchAgent(ref)
 	type seen struct {
@@ -192,8 +192,9 @@ func TestLaunchdSchedulerChangesIgnoreTheCallersCancellation(t *testing.T) {
 	must(t, launchdScheduler{}.unload(ctx, site, ref))
 
 	for _, tc := range []struct {
-		verb     string
-		min, max time.Duration
+		verb string
+		min  time.Duration
+		max  time.Duration
 	}{
 		{"print", time.Second, 2 * time.Second},
 		{"bootstrap", 25 * time.Second, launchctlChangeTimeout},
