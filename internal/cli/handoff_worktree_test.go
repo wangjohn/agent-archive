@@ -435,12 +435,13 @@ func TestActiveSourceDoesNotAskTheCallingAgent(t *testing.T) {
 }
 
 // Inside an agent the question is never asked, even on a terminal: it warns
-// and continues in the same checkout.
+// and continues in the same checkout. A switch value that is not recognized
+// counts as on here too (Run reports it before handoff starts).
 func TestActiveSourceWarnsInsteadOfAskingInAnAgent(t *testing.T) {
 	t.Parallel()
 	f, target := activeFixture(t)
 	f.env.IsTerminal = func(any) bool { return true }
-	for _, vars := range []map[string]string{{cursorAgentEnv: "1"}, {envNonInteractive: "1"}} {
+	for _, vars := range []map[string]string{{cursorAgentEnv: "1"}, {envNonInteractive: "1"}, {envNonInteractive: "ture"}} {
 		f.env.LookupEnv = agentEnv(vars)
 		var stderr bytes.Buffer
 		dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader("n\n"), &stderr)
