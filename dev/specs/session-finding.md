@@ -676,7 +676,9 @@ guide. Live check on the owner's Mac:
   has no scope (every session). A directory named with `--project` is always
   the scope, so one in no project holds nothing and falls back with the
   heading saying so. A scope made from a worktree's directory is named after the
-  project its sessions have, not the directory (`sessionScope.relabeled`).
+  project its sessions have, not the directory (`sessionScope.named`), once per
+  command from the sessions it read, so every view, heading, and `--json`
+  document names it alike.
 - PR 4: `listScope.label` is the scope's name even when it is turned off
   (`all_projects` says so); `outside_matches` counts the sessions outside the
   scope that match the same filters. The object is omitted outside a project.
@@ -694,4 +696,7 @@ guide. Live check on the owner's Mac:
   and `--all-projects` with `--latest`; `--project` sets where a launched agent
   starts only with `--latest`, as before.
 - PR 4: the picker's line-mode `a` takes precedence over a short ID prefix
-  typed as `a`, as `n` and `p` do.
+  typed as `a`, as `n` and `p` do. In the key browser `a` pressed first
+  switches the scope, so a short ID that starts with `a` (IDs are hex) is
+  picked by its row number there; `n`, `p`, and `q` never met this, as they
+  are not hex digits.

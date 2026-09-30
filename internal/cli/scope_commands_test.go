@@ -124,7 +124,7 @@ func (a scopedArchive) runList(t *testing.T, args ...string) (out, errOut string
 	return stdout.String(), stderr.String(), code
 }
 
-// shortIDs lists which of ids a listing names.
+// namedIDs lists which of ids a listing names.
 func namedIDs(out string, ids ...string) []string {
 	var named []string
 	for _, id := range ids {
@@ -345,6 +345,57 @@ func TestListScopeSpansCheckoutsOfOneRepository(t *testing.T) {
 	// is in scope by its project ID.
 	if !sameStrings(got, []string{a.id, "tree0001"}) {
 		t.Fatalf("scoped sessions %v", got)
+	}
+}
+
+// Run in a checkout whose directory is not the project's name (a worktree
+// called pr4), every view names the scope after its sessions' project: the
+// scoped and --all-projects documents, and both headings of the browser, before
+// and after a switches the scope.
+func TestScopeIsNamedAfterItsProjectInEveryView(t *testing.T) {
+	t.Parallel()
+	a := newScopedArchive(t)
+	worktree := filepath.Join(t.TempDir(), "pr4")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.env.WorkingDir = func() (string, error) { return worktree, nil }
+	a.env.repoKey = func(root string) string {
+		if root == worktree {
+			return scopeKey
+		}
+		return ""
+	}
+	inRepo := func(m *archive.Metadata) { m.RepoKey = scopeKey }
+	a.add(t, "mine0002", "Second task here", a.label, inRepo)
+	a.add(t, "mine0003", "Third task here", a.label, inRepo)
+	a.add(t, "bill0001", "Invoice export", "billing")
+	for _, args := range [][]string{{"--json"}, {"--json", "--all-projects"}} {
+		out, errOut, code := a.runList(t, args...)
+		if code != 0 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut)
+		}
+		var doc listDocument
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.Scope == nil || doc.Scope.Label != a.label {
+			t.Fatalf("%v: scope %+v, want the label %q", args, doc.Scope, a.label)
+		}
+	}
+	var headings []string
+	for _, screen := range a.browserRun(t, []string{"a", "a", "q"}, "list", "--all-projects") {
+		if strings.Contains(screen, "type a number") {
+			headings = append(headings, headingOf(screen))
+		}
+	}
+	want := []string{
+		"All projects · 4 sessions · codex · a " + a.label,
+		a.label + " · 2 sessions · codex · a all projects",
+		"All projects · 4 sessions · codex · a " + a.label,
+	}
+	if strings.Join(headings, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("headings\n%s\nwant\n%s", strings.Join(headings, "\n"), strings.Join(want, "\n"))
 	}
 }
 

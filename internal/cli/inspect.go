@@ -60,9 +60,10 @@ func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, conf
 
 // runListCommand implements `agent-archive list`. It reads only metadata
 // sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
-// metadata fields, so its output can never contain transcript content. It
-// uses the time-ordered index when complete and verifies each displayed
-// sidecar live; full scans reuse the local metadata cache unless --no-cache.
+// metadata fields, so its output can never contain transcript content. A
+// listing of every project uses the time-ordered index when complete and
+// verifies each displayed sidecar live; full scans, which a scope needs,
+// reuse the local metadata cache unless --no-cache.
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
 // terminal, paged through $PAGER unless --no-pager, --json, or an interactive
 // browse (stdin and stdout are both terminals).
@@ -143,6 +144,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
+	scope = scope.named(sessions)
 	// view is what a scope lists: its sessions, how many there are, and
 	// whether --limit cut them.
 	view := func(s sessionScope) (shown []archive.Metadata, totalMatched int, truncated bool) {
@@ -156,7 +158,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return shown, listed.TotalMatched, listed.TotalMatched > len(shown)
 	}
 	if opts.jsonOut {
-		doc := listJSON(scope, sessions, full, opts.limit, view)
+		doc := listJSON(scope, sessions, opts.limit, view)
 		return printJSON(stdout, stderr, doc)
 	}
 	format := listFormatOptions{
@@ -186,7 +188,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // listJSON builds the `list --json` document for a scope. Its rows are the
 // scope's sessions, or every session when the scope is off or holds none (and
 // the scope object says which).
-func listJSON(scope sessionScope, sessions []archive.Metadata, full bool, limit int, view func(sessionScope) ([]archive.Metadata, int, bool)) listDocument {
+func listJSON(scope sessionScope, sessions []archive.Metadata, limit int, view func(sessionScope) ([]archive.Metadata, int, bool)) listDocument {
 	shown, totalMatched, truncated := view(scope)
 	fellBack, outside := false, 0
 	if scope.narrowed() {
@@ -197,17 +199,9 @@ func listJSON(scope sessionScope, sessions []archive.Metadata, full bool, limit 
 			outside = len(sessions) - len(scope.filter(sessions))
 		}
 	}
-	label := scope.Label
-	if full && label != "" {
-		names := make([]string, 0, len(sessions))
-		for _, m := range scope.only().filter(sessions) {
-			names = append(names, m.ProjectName)
-		}
-		label = scope.only().relabeled(names).Label
-	}
 	out := newListDocument(shown, limit, totalMatched, truncated)
 	if scope.Label != "" {
-		out.Scope = &listScope{Label: label, AllProjects: scope.All || fellBack, FellBack: fellBack, OutsideMatches: outside}
+		out.Scope = &listScope{Label: scope.Label, AllProjects: scope.All || fellBack, FellBack: fellBack, OutsideMatches: outside}
 	}
 	return out
 }

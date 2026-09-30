@@ -275,6 +275,7 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
                                  name (matched to project_name and the
                                  configured project labels, exactly, ignoring
                                  case). Default: the current directory's
+                                 repository
   --all-projects                 List every project's sessions. Scripts that
                                  read every session pass this, since list
                                  run inside a project now lists only its own

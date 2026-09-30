@@ -233,6 +233,24 @@ func TestHandoffTitleSearchesTheScopeFirst(t *testing.T) {
 	}
 }
 
+// Several matches in the scope are counted as matches, and listed for the
+// caller to choose from.
+func TestHandoffTitleNoteCountsSeveralMatches(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	label := filepath.Base(f.project)
+	f.addArchived(t, "alpha001", "Shared words alpha", label)
+	f.addArchived(t, "alpha002", "Shared words alpha again", label)
+	f.addArchived(t, "beta0001", "Shared words beta", "billing")
+	opts := handoffOptions{sessionID: "shared words", source: "auto"}
+	var out, errOut bytes.Buffer
+	code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+	note := "2 matches in " + label + " (1 more in other projects: --all-projects or a project name finds them)"
+	if !done || code != 1 || !strings.HasPrefix(errOut.String(), note+"\n") || !strings.Contains(errOut.String(), `"shared words" matches 2 sessions`) {
+		t.Fatalf("code %d done %v, stderr %q", code, done, errOut.String())
+	}
+}
+
 // A title answered on this Mac does not ask the archive for a count: this
 // Mac's sessions come first, with no network.
 func TestHandoffTitleInScopeOnThisMacNeverOpensTheArchive(t *testing.T) {

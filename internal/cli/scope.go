@@ -219,6 +219,17 @@ func (s sessionScope) filter(sessions []archive.Metadata) []archive.Metadata {
 	return slices.DeleteFunc(slices.Clone(sessions), func(m archive.Metadata) bool { return !s.contains(m, nil) })
 }
 
+// named is the scope named after the project its sessions have (relabeled),
+// counting those of sessions that are in it. Every view of one command names
+// the scope the same way, so it is named once, from what the command read.
+func (s sessionScope) named(sessions []archive.Metadata) sessionScope {
+	var names []string
+	for _, m := range s.only().filter(sessions) {
+		names = append(names, m.ProjectName)
+	}
+	return s.relabeled(names)
+}
+
 // relabeled names a scope made from a directory after the project its
 // sessions have, when it would otherwise be named for the directory: run in a
 // worktree called pr4 of agent-archive, the scope reads agent-archive. names

@@ -221,8 +221,18 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 		}
 	}
 	if outside > 0 {
-		terminal.Printf(r.stderr, "%s in %s (%d more in other projects: --all-projects or a project name finds them)\n",
-			plural(len(matches), "match"), archive.DisplayLine(r.scope.Label), outside)
+		noun := "matches"
+		if len(matches) == 1 {
+			noun = "match"
+		}
+		// Named, as the picker's heading is, from the archive's sessions
+		// when it was read (this Mac's are named for their checkout).
+		sessions := make([]archive.Metadata, len(r.archive))
+		for i, row := range r.archive {
+			sessions[i] = row.metadata
+		}
+		terminal.Printf(r.stderr, "%d %s in %s (%d more in other projects: --all-projects or a project name finds them)\n",
+			len(matches), noun, archive.DisplayLine(r.scope.named(sessions).Label), outside)
 	}
 	code, done = r.choose(matches)
 	return code, done, true
