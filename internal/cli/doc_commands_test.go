@@ -173,6 +173,9 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 						set.VisitAll(func(f *flag.Flag) { accepted = append(accepted, f.Name) })
 					}
 					for _, word := range rest {
+						if word == "--" {
+							break // the rest is for another program (handoff --to)
+						}
 						name := flagNameOf(word)
 						if name == "" {
 							continue

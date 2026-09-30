@@ -68,8 +68,20 @@ follow [Semantic Versioning](https://semver.org/).
   a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
   turns it off, and a refusal caused by it says so.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record in a private temporary file. The receiving agent is
-  told how to inspect the archived or current local record with Agent Archive.
+  filtered session record. The session can be local or archived. With no
+  session named, run inside Claude Code, Codex, or Cursor, it hands off that
+  agent's own session; otherwise a terminal gets the picker. The receiving
+  agent is told how to inspect the archived or current local record with
+  Agent Archive. The record is kept in the data directory's `handoffs/` for 7
+  days, so a resumed session can read it again (before setup, in a private
+  temporary folder the system clears). Each launch's copy has a folder of its
+  own, which is all Claude Code gets with `--add-dir`; Codex and Cursor get
+  the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
+  before `cursor-agent`. The launched agent does not inherit the calling
+  agent's session variables.
+- Arguments after `--` go to the agent `handoff --to` launches, and
+  `config.json` may set per-agent arguments (`handoff.args`) and a default
+  destination per source harness (`handoff.default_to`).
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a
@@ -91,6 +103,19 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window. The browser reads keys as you press them, without Enter: the
+  mouse wheel, the arrows, PgUp and PgDn (or space, `n`, `p`), and Home and
+  End scroll the list and a long summary at once, with a status line saying
+  where you are (Top, a percentage, Bottom) and, in the summary, how many
+  lines are above and below. Type a row number or short ID and press Enter
+  to open it; in the summary, `t`, `m` (the whole summary in the pager),
+  `b`, and `q` act on their own key, and Enter or Backspace go back
+  to the list. The wheel's arrows are no longer echoed into the prompt as
+  `^[[A`. The other pickers still read a line and show a list taller than
+  the terminal a page at a time (`n` and `p` move; any row number or short
+  ID still works).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
@@ -108,8 +133,27 @@ follow [Semantic Versioning](https://semver.org/).
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
 
+- `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
+  terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
+  `show`'s `--no-pager` now covers the summary too. Piped output is
+  unchanged.
+
 ### Changed
 
+- The `handoff` picker also lists this Mac's sessions, including ones not
+  yet uploaded (marked so), newest activity first, and still works when the
+  archive cannot be read. Sessions with no prompt yet are left out.
+- The default pager scrolls on the mouse wheel and names its keys. With no
+  `AGENT_ARCHIVE_PAGER` or `PAGER` set, or one set to a bare `less`, `less`
+  551 or later runs with `--mouse` (hold Option while dragging to select
+  text in iTerm2), and `less` 530 to 550 runs on the alternate screen, where
+  the wheel scrolls it too. The prompt reads, for example, "lines 1-48 of
+  1210 - arrows/space scroll, / search, q quit" ("q back" from the
+  session browser). Any other pager you set runs as given, with `LESS=FRX`
+  and `LV=-c` added when those are unset, as git does.
+- Ctrl-C while a pager shows `list`, `show`, `status`, or `purge plan` now
+  goes to the pager (in `less`, it cancels a search) instead of ending
+  agent-archive and leaving the pager on the terminal.
 - Off macOS, Cursor's data folder is looked for where VS Code keeps its own,
   `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
   backfill inputs (Claude and Codex desktop app folders, the privacy-protected
