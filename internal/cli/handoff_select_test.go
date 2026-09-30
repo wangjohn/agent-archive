@@ -382,7 +382,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 }
 
 // addSubagent registers a subagent of parent under native, sharing parent's
-// transcript, as newer than everything else.
+// transcript, so it is as active as parent.
 func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string {
 	t.Helper()
 	reg, found, err := state.OpenReadOnly(f.home).LoadRegistration(parent)
@@ -390,8 +390,8 @@ func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string 
 		t.Fatalf("load %s: found=%v err=%v", parent, found, err)
 	}
 	id := "ffffffff" + parent[8:]
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, reg.NativeSessionID, "agent-1"
 	reg.ArchiveSessionID, reg.NativeSessionID = id, native
-	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, "native-new", "agent-1"
 	data, err := json.Marshal(reg)
 	if err != nil {
 		t.Fatal(err)
