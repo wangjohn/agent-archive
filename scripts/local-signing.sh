@@ -1,11 +1,12 @@
 # Sourced by build-release.sh and install-from-source.sh; not run directly.
 
-# release_asset_name prints the file name of a release binary for an
-# architecture. codesign derives a release's identifier from it (see
-# release.yml), and sign_local_build signs development builds with the same
-# identifier, so it is spelled here once.
+# release_asset_name prints the file name of a release binary for an OS
+# (darwin or linux) and architecture, as install.sh downloads it. A macOS
+# release's code signing identifier is its file name (see release.yml), and
+# development builds are signed with the same identifier, so the name is
+# spelled here once.
 release_asset_name() {
-  printf 'agent-archive-darwin-%s' "$1"
+  printf 'agent-archive-%s-%s' "$1" "$2"
 }
 
 # sign_local_build signs a development build with a stable identity, so a

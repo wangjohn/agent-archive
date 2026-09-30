@@ -1,4 +1,4 @@
-"""Exercise the source installer without building Go code or touching this Mac."""
+"""Exercise the source installer without building Go code or touching this machine."""
 
 import os
 from pathlib import Path
@@ -25,12 +25,14 @@ class InstallFromSourceTest(unittest.TestCase):
         self.home.mkdir()
         self.shims = self.root / "shims"
         self.shims.mkdir()
-        executable(self.shims / "uname", '#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n')
-        executable(self.shims / "sysctl", "#!/bin/sh\necho 0\n")
+        self.build_log = self.root / "build.log"
+        self.sysctl_log = self.root / "sysctl.log"
+        self.set_platform("Darwin", "x86_64")
         executable(
             self.shims / "go",
             '#!/bin/sh\n'
             '[ "$1" = build ] || exit 2\n'
+            'echo "GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=$CGO_ENABLED" >> "$BUILD_LOG"\n'
             'while [ "$1" != -o ]; do shift; done\n'
             'cat > "$2" <<\'EOF\'\n#!/bin/sh\necho dev-test-commit\nEOF\n'
             'chmod +x "$2"\n',
@@ -40,8 +42,15 @@ class InstallFromSourceTest(unittest.TestCase):
         self.identities("     0 valid identities found\n")
         executable(self.shims / "codesign",
                    f'#!/bin/sh\necho "$@" >> "{self.codesign_log}"\n')
-        self.env = dict(os.environ, HOME=str(self.home),
-                        PATH=f"{self.shims}:/usr/bin:/bin")
+        self.env = dict(os.environ, HOME=str(self.home), BUILD_LOG=str(self.build_log),
+                        SYSCTL_LOG=str(self.sysctl_log), PATH=f"{self.shims}:/usr/bin:/bin")
+
+    def set_platform(self, system, machine, rosetta="0"):
+        executable(self.shims / "uname", f'#!/bin/sh\ncase "$1" in -s) echo {system} ;; -m) echo {machine} ;; esac\n')
+        executable(self.shims / "sysctl", f'#!/bin/sh\necho sysctl >> "$SYSCTL_LOG"\necho {rosetta}\n')
+
+    def built_for(self):
+        return self.build_log.read_text().splitlines()
 
     def identities(self, listing):
         executable(self.shims / "security",
@@ -65,6 +74,51 @@ class InstallFromSourceTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(f"Installed dev-test-commit at {target}", result.stdout)
             self.assertEqual(subprocess.check_output([target], text=True), "dev-test-commit\n")
+
+    def test_macos_builds_with_cgo_for_the_native_architecture(self):
+        for machine, rosetta, arch in (("x86_64", "0", "amd64"), ("x86_64", "1", "arm64"), ("arm64", "0", "arm64")):
+            with self.subTest(machine=machine, rosetta=rosetta):
+                self.build_log.unlink(missing_ok=True)
+                self.set_platform("Darwin", machine, rosetta)
+                result = self.run_script()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"for darwin/{arch}...", result.stdout)
+                self.assertEqual(self.built_for(), [f"GOOS=darwin GOARCH={arch} CGO_ENABLED=1"])
+
+    def test_linux_builds_static_without_cgo(self):
+        for machine, arch in (("x86_64", "amd64"), ("amd64", "amd64"), ("aarch64", "arm64"), ("arm64", "arm64")):
+            with self.subTest(machine=machine):
+                self.build_log.unlink(missing_ok=True)
+                self.sysctl_log.unlink(missing_ok=True)
+                self.set_platform("Linux", machine, rosetta="1")
+                target = self.home / ".local/share/agent-archive-dev/bin/agent-archive"
+                result = self.run_script()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"for linux/{arch}...", result.stdout)
+                self.assertIn(f"Installed dev-test-commit at {target}", result.stdout)
+                self.assertEqual(self.built_for(), [f"GOOS=linux GOARCH={arch} CGO_ENABLED=0"])
+                self.assertFalse(self.sysctl_log.exists())
+                self.assertEqual(subprocess.check_output([target], text=True), "dev-test-commit\n")
+
+    def test_rejects_unsupported_architectures(self):
+        for system, machine in (("Linux", "armv7l"), ("Linux", "riscv64"), ("Linux", "i686"), ("Darwin", "ppc64")):
+            with self.subTest(system=system, machine=machine):
+                self.set_platform(system, machine)
+                result = self.run_script()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unsupported", result.stderr)
+                self.assertFalse(self.build_log.exists())
+                self.assertFalse((self.home / ".local").exists())
+
+    def test_rejects_unsupported_operating_systems(self):
+        for system in ("FreeBSD", "MINGW64_NT-10.0", "SunOS"):
+            with self.subTest(system=system):
+                self.set_platform(system, "x86_64")
+                result = self.run_script()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("macOS or Linux is required", result.stderr)
+                self.assertFalse(self.build_log.exists())
+                self.assertFalse((self.home / ".local").exists())
 
     def test_replace_current_uses_path_and_replaces_binary(self):
         current = self.root / "bin"
@@ -112,6 +166,13 @@ class InstallFromSourceTest(unittest.TestCase):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("signed ad hoc", result.stderr)
+        self.assertEqual(self.codesign_calls(), [])
+
+    def test_linux_is_never_signed(self):
+        self.set_platform("Linux", "x86_64")
+        result = self.run_script(env=self.auto())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
         self.assertEqual(self.codesign_calls(), [])
 
     def test_opt_out_is_quiet(self):
@@ -172,13 +233,13 @@ class ReleaseAssetNameTest(unittest.TestCase):
     def test_names_agree(self):
         root = SCRIPT.parent.parent
         names = subprocess.check_output(
-            ["bash", "-c", 'source "$1"; release_asset_name amd64; echo; release_asset_name arm64',
+            ["bash", "-c", 'source "$1"; for a in amd64 arm64; do release_asset_name darwin $a; echo; done',
              "-", str(SCRIPT.with_name("local-signing.sh"))], text=True).split()
         self.assertEqual(names, ["agent-archive-darwin-amd64", "agent-archive-darwin-arm64"])
         release = (root / ".github/workflows/release.yml").read_text()
         self.assertIn("for binary in " + " ".join(f"dist/{n}" for n in names) + "; do", release)
         self.assertIn('identifier="$(basename "$binary")"', release)
-        self.assertIn('asset="agent-archive-darwin-${arch}"', (root / "install.sh").read_text())
+        self.assertIn('asset="agent-archive-${os}-${arch}"', (root / "install.sh").read_text())
 
 if __name__ == "__main__":
     unittest.main()

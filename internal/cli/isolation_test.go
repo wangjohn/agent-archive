@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -37,6 +38,12 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     "darwin", so the many tests whose fake stands for the Keychain see the
 //     Keychain's wording on every runner, Linux CI included. A test of the
 //     other platform's wording sets it to "linux" (useCredentialGOOS).
+//
+//   - less: detectLessVersion panics. Set Env.LessVersion (testEnv does).
+//
+//   - The terminal's modes: openTerminalKeys never reads keys, so the
+//     session browser reads lines, and no test changes the modes of the
+//     terminal running it. Set Env.openKeys to read keys.
 //
 //   - $HOME and the variables that move app and data directories: HOME is a
 //     fresh temporary directory, and AGENT_ARCHIVE_HOME, CLAUDE_CONFIG_DIR,
@@ -91,6 +98,10 @@ func isolateProcessForTesting() func() {
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
+	detectLessVersion = func(string) (int, bool) {
+		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
+	}
+	openTerminalKeys = func(io.Reader) (keyTerminal, bool) { return nil, false }
 	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 }
 
@@ -110,6 +121,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("launchctl print", func() { launchdJobState("/nonexistent/com.agent-archive.collector.plist") })
 	panics("launchctl bootstrap", func() { _ = loadLaunchAgent("/nonexistent/x.plist") })
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
+	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {
 		_, _ = Env{}.openStore(config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}})
 	})

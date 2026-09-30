@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -15,15 +14,20 @@ import (
 const envNonInteractive = "AGENT_ARCHIVE_NONINTERACTIVE"
 
 // cursorAgentEnv is set by Cursor's agent for the commands it runs. Cursor
-// exposes no session ID, so it appears here only as evidence that an agent
-// is running the command.
+// exposes no session ID, so it is evidence that an agent is running the
+// command, and handoff --to falls back to the newest Cursor session for the
+// working directory.
 const cursorAgentEnv = "CURSOR_AGENT"
 
 // agentShellEnv lists the variables whose presence means a coding agent's
 // shell is running this command: the ones handoff reads to find the calling
 // session, plus Cursor's.
 func agentShellEnv() []string {
-	return append(slices.Clone(currentSessionEnv), cursorAgentEnv)
+	keys := make([]string, 0, len(currentSessionEnv)+1)
+	for _, v := range currentSessionEnv {
+		keys = append(keys, v.key)
+	}
+	return append(keys, cursorAgentEnv)
 }
 
 // nonInteractiveMode says whether interaction is off and why.
