@@ -45,7 +45,7 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination. |
+| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, repository key (a hash of its git origin, when it had one), app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination. |
 | `requests/<id>.json`, `request-locks/` | Hook evidence waiting for the next collector pass, and the per-session locks around it. |
 | `sessions/<hash>.json` | Index from a native session ID (hashed, since it is app-controlled input) to its archive session ID. |
 | `sessions/<id>/` | Per-session evidence, such as `verification.json` (the last read-back check). |

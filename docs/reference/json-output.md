@@ -127,6 +127,18 @@ Work done outside the session, such as a pull request merged on GitHub's
 website, is not seen. Work a subagent did is in the subagent's own
 metadata.
 
+From parser `0.16.0` a sidecar may also carry `repo_key`, an opaque
+identifier for the git repository the session ran in (`repo-` and 16 hex
+digits: a hash of the normalized `origin` address, never the address). Two
+sessions of one repository share it whatever their checkout paths, and
+whether cloned over SSH or HTTPS. It is absent for a project that is not a
+git repository or has no `origin`. The repository name keeps its case and a
+port is ignored (see [privacy](../security/privacy.md)). It can be stale: a
+key recorded when the session started is never re-derived, a derived one
+persists if the remote is later removed or git fails, a changed remote
+replaces it only at the next content publish or parser refresh, and a
+finished session never updates.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
@@ -228,12 +240,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). `models` lists every model family. `display_skills` is `skills`
-  for showing to a person: a plugin prefix is stripped from each name
-  (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
-  that then share a name are one row, counted in the sessions that used any
-  of them (a session that used both counts once); `total_display_skills` is
-  its length before the cut. `skills` keeps the names as recorded.
+  (see below). Every project is in `groups.rows` with `--by project`, which
+  is never cut; the terminal's "all in --json --by project" points at it.
+  The JSON has no more than five skills or MCP servers (the terminal's detail
+  screen lists up to 40). `models` lists every model family (the terminal's
+  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
+  only the first `:` counts) and skills that then share a name are one row,
+  counted in the sessions that used any of them (a session that used both
+  counts once); `total_display_skills` is its length before the cut. `skills`
+  keeps the names as recorded.
 - **Project order.** `projects` (and `groups.rows` with `--by project`) are
   ordered by `cost.usd`, the highest first, and only then cut to the top
   five, so a project left out never has a higher `usd` than one listed. A

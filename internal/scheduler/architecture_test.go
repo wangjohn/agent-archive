@@ -99,6 +99,7 @@ func adapterPackages(module map[string][]string) []string {
 var osExecImporters = []string{
 	modulePath + "internal/cli",
 	modulePath + "internal/cursorstore",
+	modulePath + "internal/gitremote", // runs git to read a project's origin remote
 	hostPath,
 	modulePath + "internal/termlaunch",
 	modulePath + "internal/testutil/importgraph",
