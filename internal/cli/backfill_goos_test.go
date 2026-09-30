@@ -2,10 +2,12 @@ package cli
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // Env.BackfillGOOS decides where backfill, and the collector, look for
@@ -71,6 +73,39 @@ func TestBackfillEnvironmentFollowsBackfillGOOS(t *testing.T) {
 		if !equalStrings(bf.DefaultTempDirs(), tc.temp) {
 			t.Errorf("%s: default temporary directories %v, want %v", tc.name, bf.DefaultTempDirs(), tc.temp)
 		}
+	}
+}
+
+// With BackfillGOOS empty, which is production, everything answers for the
+// real system: a Mac gets the Library layout and the macOS temporary
+// directories, never the Linux layout.
+func TestBackfillEnvironmentDefaultsToTheRealSystem(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.UserHomeDir = func() (string, error) { return userHome, nil }
+	env.BackfillGOOS = ""
+	env.BackfillTempDirs = nil
+	env.LookupEnv = func(string) (string, bool) { return "", false }
+
+	if got := env.goos(); got != runtime.GOOS {
+		t.Errorf("goos() = %q, want %q", got, runtime.GOOS)
+	}
+	if got, want := env.cursorDatabase(), cursorstore.StateDatabase(userHome); got != want {
+		t.Errorf("cursorDatabase() = %q, want %q", got, want)
+	}
+	if runtime.GOOS == "darwin" {
+		if got, want := env.cursorDatabase(), filepath.Join(userHome, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"); got != want {
+			t.Errorf("on macOS cursorDatabase() = %q, want %q", got, want)
+		}
+	}
+	bf := env.backfillEnvironment(userHome, config.Config{})
+	want := []string{"/tmp", "/var/tmp"}
+	if runtime.GOOS == "darwin" {
+		want = []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+	}
+	if !equalStrings(bf.DefaultTempDirs(), want) || !equalStrings(bf.TempDirs, want) {
+		t.Errorf("temporary directories %v (defaults %v), want %v", bf.TempDirs, bf.DefaultTempDirs(), want)
 	}
 }
 

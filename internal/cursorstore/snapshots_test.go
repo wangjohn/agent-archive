@@ -128,15 +128,15 @@ func TestUserTempDir(t *testing.T) {
 		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
-		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, os.TempDir()},
+		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, fallbackTemp()},
 		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
-		{"Linux without TMPDIR", "", "linux", perUser, os.TempDir()},
+		{"Linux without TMPDIR", "", "linux", perUser, fallbackTemp()},
 		// A relative $TMPDIR is ignored as if unset: the snapshot root, a
 		// copy of every chat, must not depend on the working directory.
-		{"Linux relative TMPDIR", "tmp", "linux", perUser, os.TempDir()},
-		{"Linux dot-relative TMPDIR", "./tmp", "linux", perUser, os.TempDir()},
-		{"Linux tilde TMPDIR", "~/tmp", "linux", perUser, os.TempDir()},
-		{"macOS relative TMPDIR, getconf failed", "tmp", "darwin", func() string { return "" }, os.TempDir()},
+		{"Linux relative TMPDIR", "tmp", "linux", perUser, fallbackTemp()},
+		{"Linux dot-relative TMPDIR", "./tmp", "linux", perUser, fallbackTemp()},
+		{"Linux tilde TMPDIR", "~/tmp", "linux", perUser, fallbackTemp()},
+		{"macOS relative TMPDIR, getconf failed", "tmp", "darwin", func() string { return "" }, fallbackTemp()},
 		{"macOS relative TMPDIR, getconf answers", "tmp", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"macOS absolute TMPDIR, getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
 		{"Linux absolute TMPDIR", "/var/tmp/mine", "linux", perUser, "/var/tmp/mine"},
@@ -281,4 +281,13 @@ func TestUserTempDirIgnoresARelativeProcessTMPDIR(t *testing.T) {
 			t.Errorf("%s: %q, want /tmp", goos, got)
 		}
 	}
+}
+
+// fallbackTemp is what userTempDir answers when neither the system nor an
+// absolute $TMPDIR says: os.TempDir when that is absolute, else /tmp.
+func fallbackTemp() string {
+	if dir := os.TempDir(); filepath.IsAbs(dir) {
+		return dir
+	}
+	return "/tmp"
 }
