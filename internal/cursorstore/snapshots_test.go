@@ -131,6 +131,15 @@ func TestUserTempDir(t *testing.T) {
 		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, os.TempDir()},
 		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
 		{"Linux without TMPDIR", "", "linux", perUser, os.TempDir()},
+		// A relative $TMPDIR is ignored as if unset: the snapshot root, a
+		// copy of every chat, must not depend on the working directory.
+		{"Linux relative TMPDIR", "tmp", "linux", perUser, os.TempDir()},
+		{"Linux dot-relative TMPDIR", "./tmp", "linux", perUser, os.TempDir()},
+		{"Linux tilde TMPDIR", "~/tmp", "linux", perUser, os.TempDir()},
+		{"macOS relative TMPDIR, getconf failed", "tmp", "darwin", func() string { return "" }, os.TempDir()},
+		{"macOS relative TMPDIR, getconf answers", "tmp", "darwin", perUser, "/var/folders/xy/abc/T"},
+		{"macOS absolute TMPDIR, getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
+		{"Linux absolute TMPDIR", "/var/tmp/mine", "linux", perUser, "/var/tmp/mine"},
 	} {
 		if got := userTempDir(env(tc.tmpdir), tc.goos, tc.darwin); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
@@ -254,6 +263,22 @@ func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
 		}
 		if _, err := SnapshotRoot(); !errors.Is(err, errSnapshotRootNotPrivate) {
 			t.Errorf("mode %v: err %v, want errSnapshotRootNotPrivate", mode, err)
+		}
+	}
+}
+
+// With the process's own $TMPDIR relative, os.TempDir would return it; the
+// snapshot root still falls back to /tmp rather than a working-directory
+// path.
+func TestUserTempDirIgnoresARelativeProcessTMPDIR(t *testing.T) {
+	t.Setenv("TMPDIR", "relative/tmp")
+	if runtime.GOOS == "windows" {
+		t.Skip("no /tmp")
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		got := userTempDir(func(string) string { return "relative/tmp" }, goos, func() string { return "" })
+		if got != "/tmp" {
+			t.Errorf("%s: %q, want /tmp", goos, got)
 		}
 	}
 }

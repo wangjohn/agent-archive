@@ -40,6 +40,11 @@ import (
 //     empty one. Windows keeps its data under %APPDATA%, which this does not
 //     model: agent-archive does not run there.
 //
+// Only the exact string "darwin" selects the macOS layout: an empty or
+// unknown goos gets the Linux one, so a caller that means the real system
+// must pass runtime.GOOS (StateDatabase and Env.goos do); it is not defaulted
+// here.
+//
 // The Linux layout is the VS Code convention and has not been confirmed on a
 // real Cursor install.
 func AppSupportDir(home string, getenv func(string) string, goos string) string {

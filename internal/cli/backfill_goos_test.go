@@ -22,18 +22,30 @@ func TestBackfillEnvironmentFollowsBackfillGOOS(t *testing.T) {
 		xdg  string
 		want string
 		temp []string
+		// tmpdir is $TMPDIR in the Env's environment; a non-blank one is
+		// appended (trimmed) to the default temporary directories.
+		tmpdir string
+		// wantTemp is the complete list of temporary directories.
+		wantTemp []string
 	}{
-		{"darwin", "darwin", xdg, filepath.Join(userHome, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}},
-		{"linux", "linux", "", filepath.Join(userHome, ".config", "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/var/tmp"}},
-		{"linux with XDG_CONFIG_HOME", "linux", xdg, filepath.Join(xdg, "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/var/tmp"}},
+		{"darwin", "darwin", xdg, filepath.Join(userHome, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"),
+			[]string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}, "  /private/tmp/mine \n",
+			[]string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/private/tmp/mine"}},
+		{"linux", "linux", "", filepath.Join(userHome, ".config", "Cursor", "User", "globalStorage", "state.vscdb"),
+			[]string{"/tmp", "/var/tmp"}, "   ", []string{"/tmp", "/var/tmp"}},
+		{"linux with XDG_CONFIG_HOME", "linux", xdg, filepath.Join(xdg, "Cursor", "User", "globalStorage", "state.vscdb"),
+			[]string{"/tmp", "/var/tmp"}, "/home/me/scratch", []string{"/tmp", "/var/tmp", "/home/me/scratch"}},
 	} {
 		env := testEnv(t, t.TempDir(), time.Now())
 		env.UserHomeDir = func() (string, error) { return userHome, nil }
 		env.BackfillGOOS = tc.goos
 		env.BackfillTempDirs = nil
 		env.LookupEnv = func(key string) (string, bool) {
-			if key == "XDG_CONFIG_HOME" && tc.xdg != "" {
+			switch {
+			case key == "XDG_CONFIG_HOME" && tc.xdg != "":
 				return tc.xdg, true
+			case key == "TMPDIR" && tc.tmpdir != "":
+				return tc.tmpdir, true
 			}
 			return "", false
 		}
@@ -44,14 +56,20 @@ func TestBackfillEnvironmentFollowsBackfillGOOS(t *testing.T) {
 		if bf.GOOS != tc.goos {
 			t.Errorf("%s: GOOS %q", tc.name, bf.GOOS)
 		}
+		if bf.Getenv == nil {
+			t.Fatalf("%s: the backfill environment has no Getenv", tc.name)
+		}
 		if got := bf.Getenv("XDG_CONFIG_HOME"); got != tc.xdg {
 			t.Errorf("%s: XDG_CONFIG_HOME %q, want %q", tc.name, got, tc.xdg)
 		}
 		if bf.CursorDatabase == nil {
 			t.Errorf("%s: no Cursor database reader", tc.name)
 		}
-		if got := bf.TempDirs; len(got) < len(tc.temp) || !equalStrings(got[:len(tc.temp)], tc.temp) {
-			t.Errorf("%s: temporary directories %v, want %v first", tc.name, got, tc.temp)
+		if !equalStrings(bf.TempDirs, tc.wantTemp) {
+			t.Errorf("%s: temporary directories %v, want %v", tc.name, bf.TempDirs, tc.wantTemp)
+		}
+		if !equalStrings(bf.DefaultTempDirs(), tc.temp) {
+			t.Errorf("%s: default temporary directories %v, want %v", tc.name, bf.DefaultTempDirs(), tc.temp)
 		}
 	}
 }

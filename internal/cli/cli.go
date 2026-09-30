@@ -12,12 +12,14 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -308,11 +310,21 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	if e.BackfillGOOS == "" {
-		return cursorstore.StateDatabase(home)
-	}
-	getenv := func(key string) string { v, _ := e.lookupEnv(key); return v }
-	return cursorstore.StateDatabaseFor(home, getenv, e.BackfillGOOS)
+	return cursorstore.StateDatabaseFor(home, e.getenv, e.goos())
+}
+
+// getenv reads one variable of the Env's environment (LookupEnv; the process
+// environment unless a test injects one). backfillEnvironment and
+// cursorDatabase both read through it, so they can never disagree.
+func (e Env) getenv(key string) string {
+	v, _ := e.lookupEnv(key)
+	return v
+}
+
+// goos is the operating system whose app locations backfill and the
+// collector look for: BackfillGOOS, else the real one.
+func (e Env) goos() string {
+	return cmp.Or(e.BackfillGOOS, runtime.GOOS)
 }
 
 func (e Env) detectHarnesses(userHome string) []string {
