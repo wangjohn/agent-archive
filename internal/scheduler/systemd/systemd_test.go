@@ -347,8 +347,11 @@ func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "the units are in "+s.UnitDir(site)) || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
 		t.Errorf("Load of a missing unit file: %v", err)
 	}
-	refused := func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("Failed to enable unit: Access denied"), errors.New("exit status 1")
+	refused := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if slices.Contains(args, "enable") {
+			return []byte("Failed to enable unit: Access denied"), errors.New("exit status 1")
+		}
+		return nil, nil
 	}
 	if err := (Scheduler{Run: refused}).Load(context.Background(), site, ref); err == nil || strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
 		t.Errorf("Load refused for another reason: %v", err)
@@ -515,6 +518,7 @@ func TestInspectJudgesEachUnit(t *testing.T) {
 		// reloaded while the job ran. Unload cannot stop a unit it cannot
 		// tell is its own, so it must not say there is nothing to stop.
 		"running with its files gone":         {id + ".timer\nLoadState=not-found\nActiveState=active\nSubState=running\nFragmentPath=\n\n" + id + ".service\nLoadState=not-found\nActiveState=activating\nSubState=start\nFragmentPath=\n", scheduler.Unknown},
+		"stopping with its file gone":         {id + ".timer\nLoadState=not-found\nActiveState=inactive\n\n" + id + ".service\nLoadState=not-found\nActiveState=deactivating\n", scheduler.Unknown},
 		"a timer with its file gone":          {id + ".timer\nLoadState=not-found\nActiveState=active\n\n" + id + ".service\nLoadState=not-found\nActiveState=inactive\n", scheduler.Unknown},
 		"a failed service whose file is gone": {id + ".timer\nLoadState=not-found\nActiveState=inactive\n\n" + id + ".service\nLoadState=loaded\nActiveState=failed\nFragmentPath=" + service + "\n", scheduler.Missing},
 	} {
@@ -554,6 +558,18 @@ func TestUnloadSucceedsWhenResetFailedIsRefused(t *testing.T) {
 	must(t, Scheduler{Run: run}.Unload(context.Background(), site, ref))
 	if last := calls[len(calls)-1]; last != "--user daemon-reload" {
 		t.Errorf("calls %q end without a reload", calls)
+	}
+
+	// A stop that fails is still the unload's failure, which ignoring the
+	// reset-failed after it must not hide.
+	stopFails := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if slices.Contains(args, "stop") {
+			return []byte("Job for agent-archive-collector.service canceled.\n"), errors.New("exit status 1")
+		}
+		return a.run(ctx, name, args...)
+	}
+	if err := (Scheduler{Run: stopFails}).Unload(context.Background(), site, ref); err == nil || !strings.Contains(err.Error(), "systemctl stop") {
+		t.Errorf("Unload with a failed stop: %v", err)
 	}
 }
 
