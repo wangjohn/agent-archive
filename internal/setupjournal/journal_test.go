@@ -410,15 +410,15 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 			f := newTxFixture(t)
 			f.crash(t, true)
 			plist := retired(f)
-			// Setup had retired the job before it stopped (it stops the
-			// collector first; the rest of its plan is done by hand here);
-			// since then, another installation loaded that label from its
-			// own plist.
-			if err := f.sim.Unload(plist); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(plist); err != nil {
-				t.Fatal(err)
+			// Setup had retired every job before it stopped (it stops the
+			// collector first; the rest of its plan is done by hand here),
+			// so the jobs restored after this one are restarted or put back
+			// too; since then, another installation loaded this one's
+			// label from its own plist.
+			for _, job := range append([]*LegacyJob{f.journal.Legacy}, f.journal.relabeled()...) {
+				if err := retireLegacyJob(job, f.sim); err != nil {
+					t.Fatal(err)
+				}
 			}
 			elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(plist)
 			f.sim.loaded[simLabel(plist)] = elsewhere
