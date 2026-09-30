@@ -15,6 +15,7 @@ import (
 func TestUnknownJobsSayWhatIsWrong(t *testing.T) {
 	t.Parallel()
 	site, ref := scheduler.Site{UserHome: t.TempDir()}, scheduler.Ref("agent-archive-collector")
+	const manual = "systemctl --user disable --now agent-archive-collector.timer && systemctl --user stop agent-archive-collector.service"
 	version := func(text string, then scheduler.Runner) scheduler.Runner {
 		return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if len(args) == 1 && args[0] == "--version" {
@@ -33,8 +34,8 @@ func TestUnknownJobsSayWhatIsWrong(t *testing.T) {
 	f := newFakeSystemctl(t, "252")
 	f.override = "masked"
 	got := Scheduler{Run: f.run}.Inspect(context.Background(), site, ref)
-	if got.State != scheduler.Unknown || got.Problem == nil || !strings.Contains(got.Problem.Reason, "is masked") {
-		t.Errorf("masked: %q, %+v, want a reason that says it is masked", got.State, got.Problem)
+	if got.State != scheduler.Unknown || got.Problem == nil || !strings.Contains(got.Problem.Reason, "is masked") || got.Problem.Manual != manual {
+		t.Errorf("masked: %q, %+v, want a reason that says it is masked and the manual stop", got.State, got.Problem)
 	}
 	for name, tc := range map[string]struct {
 		run    scheduler.Runner
@@ -50,6 +51,11 @@ func TestUnknownJobsSayWhatIsWrong(t *testing.T) {
 		got := Scheduler{Run: tc.run}.Inspect(context.Background(), site, ref)
 		if got.State != scheduler.Unknown || got.Problem == nil || !strings.Contains(got.Problem.Reason, tc.reason) || got.Problem.Fix == "" {
 			t.Errorf("%s: %q, %+v, want a reason that says %q and a fix", name, got.State, got.Problem, tc.reason)
+		}
+		// Whatever the reason, the command that stops the job by hand is what
+		// Unload does, for a session that can reach the manager.
+		if got.Problem != nil && got.Problem.Manual != manual {
+			t.Errorf("%s: manual stop %q, want %q", name, got.Problem.Manual, manual)
 		}
 	}
 }
