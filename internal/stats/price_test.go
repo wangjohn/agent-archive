@@ -281,3 +281,45 @@ func TestEachTokenTypeIsPricedSeparately(t *testing.T) {
 		t.Fatalf("reasoning was priced on top of output: %v", *v)
 	}
 }
+
+// Family answers for the models a table lists, as the archive records them,
+// and for nothing else: a fine-tune id, a family name and a model no table
+// prices are not listed.
+func TestFamilyIsOnlyForListedModels(t *testing.T) {
+	t.Parallel()
+	table := DefaultPriceTable()
+	cases := []struct {
+		model  string
+		family string
+		listed bool
+	}{
+		{"claude-opus-5", "opus", true},
+		{"  CLAUDE-OPUS-5-20250101 ", "opus", true},
+		{"claude-opus-5[1m]", "opus", true},
+		{"gpt-5", "gpt-5", true},
+		{"opus", "", false},
+		{"ft:gpt-4o:acme::abc", "", false},
+		{"codex-auto-review", "", false},
+		{"unknown", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		family, listed := table.Family(c.model)
+		if family != c.family || listed != c.listed {
+			t.Errorf("Family(%q) = %q, %v; want %q, %v", c.model, family, listed, c.family, c.listed)
+		}
+	}
+	// It reads the table it is asked of: a table's own family is its answer,
+	// a family left empty falls back to the id, and an entry with an invalid
+	// price is not listed.
+	custom := PriceTable{Models: []ModelPrice{
+		{ID: "acme-model", Family: "acme"},
+		{ID: "no-family"},
+		{ID: "bad", InputPerMTok: -1},
+	}}
+	for model, want := range map[string]string{"acme-model": "acme", "NO-FAMILY": "no-family", "bad": ""} {
+		if family, listed := custom.Family(model); family != want || listed != (want != "") {
+			t.Errorf("custom Family(%q) = %q, %v; want %q", model, family, listed, want)
+		}
+	}
+}

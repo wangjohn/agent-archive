@@ -102,10 +102,10 @@ type preflightScope struct {
 	// setup --yes refuses to run then. A problem with one of their files
 	// is fixed only in the file.
 	kept []string
-	// r2 is whether the Keychain is checked, for an R2 key.
+	// r2 is whether the credential store is checked, for an R2 key.
 	r2 bool
-	// credentialRef is the saved R2 key's Keychain reference, if any: the
-	// item the Keychain check reads.
+	// credentialRef is the saved R2 key's credential reference, if any: the
+	// item the credential check reads.
 	credentialRef string
 }
 
@@ -116,18 +116,18 @@ type preflightDependencies interface {
 	hookFiles(userHome string) hooks.Files
 	installation(home, userHome string) installation
 	jobState(plist string) string
-	keychain() (credentials.CredentialStore, error)
+	credentialStore() (credentials.CredentialStore, error)
 }
 
 type keychainOpener interface {
-	keychain() (credentials.CredentialStore, error)
+	credentialStore() (credentials.CredentialStore, error)
 }
 
 // preflight checks what applying the setup needs, before setup asks
 // anything: that the hook files of scope's apps (in allHarnesses order)
 // are ones setup can install into, that launchctl answers about the
-// background job, and, when scope.r2 is set, that the Keychain opens for
-// an R2 key.
+// background job, and, when scope.r2 is set, that the credential store
+// (the Keychain on macOS) opens for an R2 key.
 func preflight(env preflightDependencies, home, userHome string, scope preflightScope) preflightChecks {
 	checks := hookFileChecks(scope.apps, env.hookFiles(userHome), userHome, func(app string) string {
 		fix := "Setup edits only plain JSON. Fix the file, then run agent-archive setup again."
@@ -203,27 +203,23 @@ const keychainProbeRef = "agent-archive-setup-check"
 // A missing or unreadable item is no problem here: setup asks for the key
 // again.
 func keychainCheck(env keychainOpener, ref string) preflightCheck {
-	kc, err := env.keychain()
+	kc, err := env.credentialStore()
 	if err == nil {
 		if ref == "" {
 			ref = keychainProbeRef
 		}
-		if _, err = kc.Load(context.Background(), ref); !errors.Is(err, credentials.ErrUnavailable) {
+		if _, err = credentials.LoadStored(context.Background(), kc, ref); !errors.Is(err, credentials.ErrUnavailable) {
 			err = nil
 		}
 	}
 	if err != nil {
-		fix := "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3."
-		if errors.Is(err, credentials.ErrKeychainLocked) {
-			fix = "Unlock the login Keychain (log in, or open Keychain Access), then run agent-archive setup again, or store in Amazon S3 with agent-archive setup --yes --provider s3."
-		}
 		return preflightCheck{
-			Label:  "Keychain",
+			Label:  credentialCheckLabel(credentialGOOS),
 			Detail: "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")",
-			Fix:    fix,
+			Fix:    credentialCheckFix(credentialGOOS, errors.Is(err, credentials.ErrKeychainLocked)),
 		}
 	}
-	return preflightCheck{Label: "Keychain", Detail: "opens (for the R2 key)", OK: true}
+	return preflightCheck{Label: credentialCheckLabel(credentialGOOS), Detail: "opens (for the R2 key)", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
