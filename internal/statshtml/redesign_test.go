@@ -112,6 +112,10 @@ func TestDeltaTextStates(t *testing.T) {
 		{"up", stats.Measure{Value: f(118), Previous: f(100), ChangePct: f(18)}, "▲ 18%", "up 18 percent", "up", false},
 		{"down", stats.Measure{Value: f(82), Previous: f(100), ChangePct: f(-18)}, "▼ 18%", "down 18 percent", "down", false},
 		{"flat", stats.Measure{Value: f(100), Previous: f(100), ChangePct: f(0.2)}, "no change", "no change", "flat", false},
+		// Against next to nothing the exact figure only measures how little there was.
+		{"999 percent", stats.Measure{Value: f(1099), Previous: f(100), ChangePct: f(999)}, "▲ 999%", "up 999 percent", "up", false},
+		{"past 999 percent", stats.Measure{Value: f(3), Previous: f(0.0001), ChangePct: f(2_999_900)}, "▲ >999%", "up more than 999 percent", "up", false},
+		{"beyond any integer", stats.Measure{Value: f(1e30), Previous: f(1), ChangePct: f(1e32)}, "▲ >999%", "up more than 999 percent", "up", false},
 		{"nothing before", stats.Measure{Value: f(5), Previous: f(0)}, "", "", "", true},
 		{"unknown before", stats.Measure{Value: f(5)}, "", "", "", true},
 		{"unknown now", stats.Measure{Previous: f(5)}, "", "", "", true},
