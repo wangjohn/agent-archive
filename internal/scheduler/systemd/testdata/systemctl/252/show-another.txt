@@ -3,9 +3,11 @@ LoadState=loaded
 ActiveState=active
 SubState=waiting
 FragmentPath=@OTHER@/@REF@.timer
+DropInPaths=
 
 Id=@REF@.service
 LoadState=loaded
 ActiveState=inactive
 SubState=dead
 FragmentPath=@OTHER@/@REF@.service
+DropInPaths=

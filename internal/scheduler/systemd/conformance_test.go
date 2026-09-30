@@ -15,11 +15,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/testutil/schedulertest"
 )
 
-// fixtures are hand-built `systemctl show` and `systemctl --version` outputs
-// for systemd 239, 245 and 252, in testdata/systemctl (see the README there):
-// they are written from systemd's documented property formats and are NOT
-// captured from a live system. @REF@, @TIMER@, @SERVICE@ and @OTHER@ stand
-// for the job, its two unit files and another user's unit directory.
+// fixtures are `systemctl show` and `systemctl --version` outputs captured
+// from real user managers of systemd 239 (Rocky 8), 245 (Ubuntu 20.04), 252
+// (Debian 12) and 255 (Ubuntu 24.04), in testdata/systemctl (see the README
+// there for how). @REF@, @TIMER@, @SERVICE@ and @OTHER@ stand for the job,
+// its two unit files and another user's unit directory.
 const fixtures = "testdata/systemctl"
 
 // fakeSystemctl is the systemctl (and loginctl) the conformance suite drives
@@ -35,9 +35,11 @@ type fakeSystemctl struct {
 	t  *testing.T
 	mu sync.Mutex
 	// version is the fixture directory `--version` is answered from, and
-	// shown the one `show` is (a test may set another).
-	version string
-	shown   string
+	// shown the one `show` is (a test may set another); versionText, when
+	// set, is the answer to `--version` instead.
+	version     string
+	shown       string
+	versionText string
 	// override answers every show with this fixture, whatever was Put.
 	override string
 	// linger is what loginctl says about lingering.
@@ -88,6 +90,8 @@ func (f *fakeSystemctl) run(ctx context.Context, name string, args ...string) ([
 	case name == "loginctl" && len(args) == 3 && args[0] == "show-user":
 		return []byte("Linger=" + f.linger + "\n"), nil
 	case name != "systemctl":
+	case len(args) == 1 && args[0] == "--version" && f.versionText != "":
+		return []byte(f.versionText), nil
 	case len(args) == 1 && args[0] == "--version":
 		return []byte(f.fixture("version.txt")), nil
 	case len(args) == 5 && args[0] == "--user" && args[1] == "show":
@@ -106,7 +110,7 @@ func (f *fakeSystemctl) run(ctx context.Context, name string, args ...string) ([
 	case len(args) == 4 && args[0] == "--user" && args[1] == "disable" && args[2] == "--now":
 		delete(f.state, strings.TrimSuffix(args[3], ".timer"))
 		return nil, nil
-	case len(args) == 3 && args[0] == "--user" && args[1] == "stop":
+	case len(args) == 3 && args[0] == "--user" && (args[1] == "stop" || args[1] == "reset-failed"):
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected %s %q", name, args)
@@ -144,12 +148,13 @@ func (f *fakeSystemctl) Calls() []string {
 }
 
 // systemd passes the conformance suite over a systemctl that shows what the
-// fixtures say, for a systemd that supports the collector's unit (245 and 252;
-// 239 is too old, see TestOldSystemdIsRefused), and its unit files are the
+// fixtures say, for each captured systemd (239 is RHEL 8's, which has the
+// StandardOutput=append: the unit needs; an older 239 is refused, see
+// TestOldSystemdIsRefused), and its unit files are the
 // golden files in testdata/conformance: <name>.service and <name>.timer. It
 // is not parallel: one of the suite's checks sets the process's environment.
 func TestConformance(t *testing.T) {
-	for _, version := range []string{"245", "252"} {
+	for _, version := range []string{"239", "245", "252", "255"} {
 		t.Run("systemd"+version, func(t *testing.T) {
 			schedulertest.RunConformance(t, schedulertest.Backend{
 				New: func(t *testing.T) (scheduler.Scheduler, schedulertest.Manager) {

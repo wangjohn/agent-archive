@@ -154,10 +154,11 @@ func TestDefinitionReadsTheUnitFilesAlone(t *testing.T) {
 //	masked, or a unit that fails      unknown, with a Problem
 //	loaded from another unit file     another_installation
 //
-// and notes a drop-in that overrides the unit as Degraded.
+// and notes a drop-in that overrides the unit as Degraded, but not one every
+// unit of its type has (a distribution's service.d).
 func TestInspectStateMap(t *testing.T) {
 	t.Parallel()
-	for _, shown := range []string{"239", "245", "252"} {
+	for _, shown := range []string{"239", "245", "252", "255"} {
 		for _, tc := range []struct {
 			fixture  string
 			want     scheduler.JobState
@@ -173,7 +174,11 @@ func TestInspectStateMap(t *testing.T) {
 			{"dropin", scheduler.Loaded, "", "", "override.conf"},
 			{"another", scheduler.AnotherInstallation, scheduler.ProblemNotOwned, "/home/someone/.config/systemd/user/agent-archive-collector.timer", ""},
 			{"masked", scheduler.Unknown, scheduler.ProblemCannotTell, "systemctl --user unmask", ""},
+			{"typewide-dropin", scheduler.Loaded, "", "", ""},
 		} {
+			if _, err := os.Stat(filepath.Join(fixtures, shown, "show-"+tc.fixture+".txt")); tc.fixture == "typewide-dropin" && err != nil {
+				continue // captured on 255 alone
+			}
 			t.Run(shown+"/"+tc.fixture, func(t *testing.T) {
 				t.Parallel()
 				f := newFakeSystemctl(t, "252")
@@ -196,24 +201,46 @@ func TestInspectStateMap(t *testing.T) {
 	}
 }
 
-// A systemd older than 240 cannot append to the collector's logs: Inspect
-// says so, with the fix, and nothing is stopped for a job it cannot describe.
+// A systemd older than 240 cannot append to the collector's logs, unless it
+// is RHEL 8's 239 from the release that backported append: on: Inspect says
+// so, with the fix, and nothing is stopped for a job it cannot describe.
 func TestOldSystemdIsRefused(t *testing.T) {
 	t.Parallel()
-	f := newFakeSystemctl(t, "239")
-	s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
-	ref := write(t, s, site)
-	f.Put(site, ref, scheduler.Loaded)
-	got := s.Inspect(context.Background(), site, ref)
-	if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || !strings.Contains(got.Problem.Fix, "240") || !strings.Contains(got.Problem.Fix, "239") {
-		t.Errorf("Inspect on systemd 239: %q, %+v", got.State, got.Problem)
-	}
-	var indeterminate *scheduler.IndeterminateError
-	if err := s.Unload(context.Background(), site, ref); !errors.As(err, &indeterminate) {
-		t.Errorf("Unload on systemd 239: %v", err)
-	}
-	if calls := f.Calls(); slices.ContainsFunc(calls, func(c string) bool { return strings.Contains(c, "show") || strings.Contains(c, "disable") }) {
-		t.Errorf("systemctl was asked about the job on systemd 239: %q", calls)
+	for version, refused := range map[string]bool{
+		"systemd 238\n+PAM":                 true,
+		"systemd 239\n+PAM":                 true,
+		"systemd 239 (239)\n":               true,
+		"systemd 239 (239-31.el8)\n":        true,
+		"systemd 239 (239-45.fc29)\n":       true,
+		"systemd 237 (237-3ubuntu10.57)\n":  true,
+		"systemd 239 (239-32.el8)\n":        false,
+		"systemd 239 (239-82.el8_10.19)\n":  false,
+		"systemd 240 (240)\n":               false,
+		"systemd 255 (255.4-1ubuntu8.17)\n": false,
+		"systemd 257.7 (257.7-1)\n":         false, // not a number: asked as if new
+	} {
+		f := newFakeSystemctl(t, "252")
+		f.versionText = version
+		s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
+		ref := write(t, s, site)
+		f.Put(site, ref, scheduler.Loaded)
+		got := s.Inspect(context.Background(), site, ref)
+		if !refused {
+			if got.State != scheduler.Loaded {
+				t.Errorf("Inspect on %q: %q, %+v, want it asked", version, got.State, got.Problem)
+			}
+			continue
+		}
+		if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || !strings.Contains(got.Problem.Fix, "240") || !strings.Contains(got.Problem.Fix, "RHEL 8") {
+			t.Errorf("Inspect on %q: %q, %+v", version, got.State, got.Problem)
+		}
+		var indeterminate *scheduler.IndeterminateError
+		if err := s.Unload(context.Background(), site, ref); !errors.As(err, &indeterminate) {
+			t.Errorf("Unload on %q: %v", version, err)
+		}
+		if calls := f.Calls(); slices.ContainsFunc(calls, func(c string) bool { return strings.Contains(c, "show") || strings.Contains(c, "disable") }) {
+			t.Errorf("systemctl was asked about the job on %q: %q", version, calls)
+		}
 	}
 }
 
@@ -309,8 +336,8 @@ func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
 }
 
 // Unload asks first, and stops the job only when systemd loaded it from these
-// unit files: it disables and stops the timer, stops the service, and reloads
-// the manager. It leaves another installation's job, and one it cannot
+// unit files: it disables and stops the timer, stops the service and clears
+// its failed state, and reloads the manager. It leaves another installation's job, and one it cannot
 // describe, alone, and does nothing for a job that is not loaded.
 func TestUnloadStopsOnlyItsOwnJob(t *testing.T) {
 	t.Parallel()
@@ -319,8 +346,8 @@ func TestUnloadStopsOnlyItsOwnJob(t *testing.T) {
 		want    []string
 		wantErr string
 	}{
-		{scheduler.Loaded, []string{"disable --now", "stop", "daemon-reload"}, ""},
-		{scheduler.Running, []string{"disable --now", "stop", "daemon-reload"}, ""},
+		{scheduler.Loaded, []string{"disable --now", "stop", "reset-failed", "daemon-reload"}, ""},
+		{scheduler.Running, []string{"disable --now", "stop", "reset-failed", "daemon-reload"}, ""},
 		{scheduler.Missing, nil, ""},
 		{scheduler.AnotherInstallation, nil, "belongs to another installation"},
 		{scheduler.Unknown, nil, "cannot confirm"},
@@ -461,6 +488,12 @@ func TestInspectJudgesEachUnit(t *testing.T) {
 		"another service":            {id + ".timer\nLoadState=loaded\nActiveState=active\nFragmentPath=" + timer + "\n\n" + id + ".service\nLoadState=loaded\nActiveState=inactive\nFragmentPath=/home/x/.config/systemd/user/" + string(ref) + ".service\n", scheduler.AnotherInstallation},
 		"stopping service, no timer": {id + ".timer\nLoadState=not-found\nActiveState=inactive\n\n" + id + ".service\nLoadState=loaded\nActiveState=deactivating\nFragmentPath=" + service + "\n", scheduler.Running},
 		"a loaded unit with no file": {id + ".timer\nLoadState=loaded\nActiveState=active\n\n" + id + ".service\nLoadState=not-found\nActiveState=inactive\n", scheduler.Unknown},
+		// Captured on systemd 255: the unit files deleted and the manager
+		// reloaded while the job ran. Unload cannot stop a unit it cannot
+		// tell is its own, so it must not say there is nothing to stop.
+		"running with its files gone":         {id + ".timer\nLoadState=not-found\nActiveState=active\nSubState=running\nFragmentPath=\n\n" + id + ".service\nLoadState=not-found\nActiveState=activating\nSubState=start\nFragmentPath=\n", scheduler.Unknown},
+		"a timer with its file gone":          {id + ".timer\nLoadState=not-found\nActiveState=active\n\n" + id + ".service\nLoadState=not-found\nActiveState=inactive\n", scheduler.Unknown},
+		"a failed service whose file is gone": {id + ".timer\nLoadState=not-found\nActiveState=inactive\n\n" + id + ".service\nLoadState=loaded\nActiveState=failed\nFragmentPath=" + service + "\n", scheduler.Missing},
 	} {
 		run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
 			if args[0] == "--version" {
@@ -468,9 +501,36 @@ func TestInspectJudgesEachUnit(t *testing.T) {
 			}
 			return []byte(tc.show), nil
 		}
-		if got := (Scheduler{Run: run}).Inspect(context.Background(), site, ref); got.State != tc.want {
+		s := Scheduler{Run: run}
+		got := s.Inspect(context.Background(), site, ref)
+		if got.State != tc.want {
 			t.Errorf("%s: state %q (%+v), want %q", name, got.State, got.Problem, tc.want)
 		}
+		var indeterminate *scheduler.IndeterminateError
+		if err := s.Unload(context.Background(), site, ref); tc.want == scheduler.Unknown && !errors.As(err, &indeterminate) {
+			t.Errorf("%s: Unload %v, want an *IndeterminateError", name, err)
+		}
+	}
+}
+
+// Clearing the failed state of a service Unload stopped is tidying: when
+// systemctl refuses it (the manager already unloaded the unit), the unload
+// still succeeds and still reloads the manager.
+func TestUnloadSucceedsWhenResetFailedIsRefused(t *testing.T) {
+	t.Parallel()
+	site, ref := scheduler.Site{UserHome: "/home/u"}, scheduler.Ref("agent-archive-collector")
+	a := &answering{ref: string(ref), timer: Scheduler{}.timerPath(site, ref), service: Scheduler{}.servicePath(site, ref)}
+	var calls []string
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if slices.Contains(args, "reset-failed") {
+			return []byte("Failed to reset failed state of unit agent-archive-collector.service: Unit agent-archive-collector.service not loaded.\n"), errors.New("exit status 1")
+		}
+		return a.run(ctx, name, args...)
+	}
+	must(t, Scheduler{Run: run}.Unload(context.Background(), site, ref))
+	if last := calls[len(calls)-1]; last != "--user daemon-reload" {
+		t.Errorf("calls %q end without a reload", calls)
 	}
 }
 

@@ -1,11 +1,13 @@
 Id=@REF@.timer
 LoadState=masked
-ActiveState=inactive
-SubState=dead
+ActiveState=failed
+SubState=failed
 FragmentPath=/dev/null
+DropInPaths=
 
 Id=@REF@.service
 LoadState=loaded
-ActiveState=inactive
-SubState=dead
+ActiveState=failed
+SubState=failed
 FragmentPath=@SERVICE@
+DropInPaths=
