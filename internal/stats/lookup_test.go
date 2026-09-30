@@ -6,6 +6,9 @@ package stats
 // table's index.
 func (t PriceTable) Lookup(model string) (ModelPrice, bool) {
 	id := NormalizeModel(model)
+	if id == "" {
+		return ModelPrice{}, false
+	}
 	for _, entry := range t.Models {
 		if NormalizeModel(entry.ID) == id {
 			return entry, true

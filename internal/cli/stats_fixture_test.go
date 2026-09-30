@@ -28,24 +28,31 @@ func statsDay(month time.Month, day, hour int) time.Time {
 // syntheticSession is a session sidecar the stats tests publish: all
 // content is invented, and only metadata is set.
 type syntheticSession struct {
-	id, harness, project string
-	captured             time.Time
-	parent               string
-	origin               archive.SessionOrigin
-	models               []string
-	turns, messages      int
-	toolResults, errors  int
-	compactions          int
-	perModel             []modelTokenSpec
-	skills               []string
-	mcp                  map[string]int
-	noTokens             bool
-	parser               string
+	id          string
+	harness     string
+	project     string
+	captured    time.Time
+	parent      string
+	origin      archive.SessionOrigin
+	models      []string
+	turns       int
+	messages    int
+	toolResults int
+	errors      int
+	compactions int
+	perModel    []modelTokenSpec
+	skills      []string
+	mcp         map[string]int
+	noTokens    bool
+	parser      string
 }
 
 type modelTokenSpec struct {
-	model                           string
-	input, output, cacheRead, write int
+	model     string
+	input     int
+	output    int
+	cacheRead int
+	write     int
 }
 
 // positive is a count that is reported only when it is above zero.
@@ -112,18 +119,18 @@ func (s syntheticSession) build() archive.Metadata {
 }
 
 // publish writes the sidecar to the store.
-func (s syntheticSession) publish(t testing.TB, mem *storagetest.MemoryStore) {
-	t.Helper()
+func (s syntheticSession) publish(tb testing.TB, mem *storagetest.MemoryStore) {
+	tb.Helper()
 	data, err := json.Marshal(s.build())
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	key, err := archive.MetadataObjectKey(s.harness, s.id)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := mem.Put(context.Background(), key, data); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
@@ -144,14 +151,14 @@ func statsEnv(t *testing.T) (Env, *storagetest.MemoryStore) {
 // long-context session and skills and MCP calls; Codex sessions with a priced
 // and an unpriced model; Cursor sessions with no tokens; sessions in the
 // previous period; and sessions in earlier months for the month rank.
-func publishStatsFixture(t testing.TB, mem *storagetest.MemoryStore) {
-	t.Helper()
+func publishStatsFixture(tb testing.TB, mem *storagetest.MemoryStore) {
+	tb.Helper()
 	opus, sonnet := "claude-opus-5", "claude-sonnet-5"
 	var sessions []syntheticSession
 	add := func(s syntheticSession) { sessions = append(sessions, s) }
 
 	// The window: Aug 31 to Sep 29.
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		day := statsDay(time.September, 2+i*2, 9+i%6)
 		project := "agent-archive"
 		if i%3 == 0 {
@@ -173,14 +180,14 @@ func publishStatsFixture(t testing.TB, mem *storagetest.MemoryStore) {
 		perModel: []modelTokenSpec{{opus, 3_000_000, 900_000, 12_000_000, 2_000_000}},
 		skills:   []string{"create-skill", "review-pr"}, mcp: map[string]int{"linear": 12},
 	})
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		add(syntheticSession{
 			id: fmt.Sprintf("claude-sub-%d", i), harness: "claude", project: "proj-api", captured: statsDay(time.September, 17, 15),
 			parent: "claude-big", models: []string{sonnet}, turns: 5, toolResults: 50, errors: 2,
 			perModel: []modelTokenSpec{{sonnet, 500_000, 200_000, 4_000_000, 300_000}},
 		})
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		add(syntheticSession{
 			id: fmt.Sprintf("codex-%02d", i), harness: "codex", project: "dotfiles", captured: statsDay(time.September, 5+i*4, 11),
 			models: []string{"gpt-5"}, turns: 6, messages: 40, toolResults: 30,
@@ -193,14 +200,14 @@ func publishStatsFixture(t testing.TB, mem *storagetest.MemoryStore) {
 		models: []string{"codex-auto-review"}, turns: 2, messages: 10, toolResults: 5,
 		perModel: []modelTokenSpec{{"codex-auto-review", 100_000, 10_000, 50_000, 0}},
 	})
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		add(syntheticSession{
 			id: fmt.Sprintf("cursor-%02d", i), harness: "cursor", project: "agent-archive", captured: statsDay(time.September, 10+i*5, 16),
 			models: []string{"cursor-auto"}, turns: 4, noTokens: true,
 		})
 	}
 	// The previous period: Aug 1 to Aug 30.
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		add(syntheticSession{
 			id: fmt.Sprintf("claude-prev-%02d", i), harness: "claude", project: "agent-archive", captured: statsDay(time.August, 3+i*4, 10),
 			models: []string{opus}, turns: 7, messages: 50, toolResults: 80, errors: 3,
@@ -216,6 +223,6 @@ func publishStatsFixture(t testing.TB, mem *storagetest.MemoryStore) {
 		})
 	}
 	for _, s := range sessions {
-		s.publish(t, mem)
+		s.publish(tb, mem)
 	}
 }

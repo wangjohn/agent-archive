@@ -44,13 +44,15 @@ const (
 // use Unicode block characters; ASCII is the fallback for a locale that is
 // not UTF-8 and for a dumb terminal.
 type statsGlyphs struct {
-	filled, empty string
-	spark         [8]string
-	sparkUnknown  string
-	segments      [4]string
-	up, down      string
-	sep           string
-	ellipsis      string
+	filled       string
+	empty        string
+	spark        [8]string
+	sparkUnknown string
+	segments     [4]string
+	up           string
+	down         string
+	sep          string
+	ellipsis     string
 }
 
 var unicodeGlyphs = statsGlyphs{
@@ -168,7 +170,8 @@ func renderStats(w io.Writer, s stats.Stats, v statsView) error {
 }
 
 func (p *statsPrinter) bold(text string) string { return p.v.style.bold(text) }
-func (p *statsPrinter) dim(text string) string  { return p.v.style.dim(text) }
+
+func (p *statsPrinter) dim(text string) string { return p.v.style.dim(text) }
 
 // heading is a section's title, with an optional right-aligned note.
 func (p *statsPrinter) heading(title, note string) string {
@@ -198,7 +201,7 @@ func (p *statsPrinter) header() []string {
 	if s.Coverage.Agents != 1 {
 		agents = fmt.Sprintf("%d agents", s.Coverage.Agents)
 	}
-	sessions := fmt.Sprintf("%s sessions", commaInt(int64(s.Coverage.Sessions)))
+	sessions := commaInt(int64(s.Coverage.Sessions)) + " sessions"
 	if s.Coverage.Sessions == 1 {
 		sessions = "1 session"
 	}
@@ -316,7 +319,12 @@ func (p *statsPrinter) overview() []string {
 	if p.anyDelta() {
 		note = fmt.Sprintf("vs previous %d days", p.s.Window.Days)
 	}
-	type row struct{ label, value, delta, extra string }
+	type row struct {
+		label string
+		value string
+		delta string
+		extra string
+	}
 	rows := []row{
 		{"Sessions", commaMeasure(o.Sessions), p.delta(o.Sessions), ""},
 		{"Prompts", commaMeasure(o.Prompts), p.delta(o.Prompts), ""},
@@ -491,20 +499,22 @@ func (p *statsPrinter) table(title string, labels, bars []string, cols []tableCo
 			labels[i] = truncateVisible(l, leftW)
 		}
 	}
-	head := p.bold(title) + strings.Repeat(" ", max(leftW+barW-visibleWidth(title), 0))
+	var head strings.Builder
+	head.WriteString(p.bold(title) + strings.Repeat(" ", max(leftW+barW-visibleWidth(title), 0)))
 	for i, c := range cols {
-		head += "  " + p.dim(padLeft(c.head, widths[i]))
+		head.WriteString("  " + p.dim(padLeft(c.head, widths[i])))
 	}
-	lines := []string{head}
+	lines := []string{head.String()}
 	for r, label := range labels {
-		line := padRight(label, leftW)
+		var line strings.Builder
+		line.WriteString(padRight(label, leftW))
 		if len(bars) > 0 {
-			line += "  " + bars[r]
+			line.WriteString("  " + bars[r])
 		}
 		for i, c := range cols {
-			line += "  " + padLeft(c.cells[r], widths[i])
+			line.WriteString("  " + padLeft(c.cells[r], widths[i]))
 		}
-		lines = append(lines, line)
+		lines = append(lines, line.String())
 	}
 	return lines
 }
@@ -734,7 +744,10 @@ func (p *statsPrinter) highlights() []string {
 	if !p.full {
 		labelW = len("Favorite model")
 	}
-	type item struct{ label, text string }
+	type item struct {
+		label string
+		text  string
+	}
 	var items []item
 	if h.BusiestDay != nil {
 		items = append(items, item{"Busiest day", fmt.Sprintf("%s (%s)", p.dayLabel(h.BusiestDay.Date), plural(h.BusiestDay.Sessions, "session"))})
