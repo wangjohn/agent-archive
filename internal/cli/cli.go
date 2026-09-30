@@ -3,11 +3,11 @@
 // and LaunchAgent invoke, and the user-facing
 // setup/status/sync/pause/resume/uninstall, read-only list/show, and
 // handoff commands. Process-level state (args, stdio, the clock, the home
-// directory, launchctl, the Keychain) reaches commands through Env, so a test
+// directory, launchctl, the credential store) reaches commands through Env, so a test
 // can substitute every piece of it; a nil Env field means the real thing.
 // A few lower packages still read the process directly: local resolves the
 // data directory from AGENT_ARCHIVE_HOME and $HOME, credentials reads the AWS
-// configuration files and the Keychain, and cursorstore asks getconf for the
+// configuration files and the environment, and cursorstore asks getconf for the
 // user's temporary directory.
 package cli
 
@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -167,11 +168,11 @@ type Env struct {
 	// already loaded, and stops the collector during uninstall. Defaults to
 	// shelling out to launchctl, like LoadLaunchAgent.
 	UnloadLaunchAgent func(plistPath string) error
-	// Keychain opens the credential store setup saves R2 secrets to and
-	// uninstall deletes them from.
-	// Defaults to credentials.NewKeychainStore, which is only available on
-	// a darwin+cgo build.
-	Keychain func() (credentials.CredentialStore, error)
+	// Credentials opens the credential store setup saves R2 secrets to and
+	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
+	// Keychain on macOS (which needs a cgo build), a private file under the
+	// data directory elsewhere.
+	Credentials func() (credentials.CredentialStore, error)
 	// LookupEnv reads the process environment. `handoff --latest` uses it to
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
@@ -180,9 +181,11 @@ type Env struct {
 	// means the macOS defaults plus $TMPDIR; tests set it because their
 	// files live in one.
 	BackfillTempDirs []string
-	// IsTerminal reports whether stdin or stdout is an interactive
-	// terminal. backfill asks for confirmation only on one, and redraws its
-	// progress line only on one. Defaults to checking the file descriptor.
+	// IsTerminal reports whether stdin or stdout is a terminal. backfill
+	// redraws its progress line only on one; whether a command may also ask
+	// questions there is Env.interactive, which the
+	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
+	// the file descriptor.
 	IsTerminal func(any) bool
 	// TerminalSize reports the columns and rows of the terminal out writes
 	// to, and ok=false when out is not a terminal or its size is unknown.
@@ -258,14 +261,14 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStore(cfg, e.keychain)
+	return openConfiguredStore(cfg, e.credentialStore)
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStoreContext(ctx, cfg, e.keychain)
+	return openConfiguredStoreContext(ctx, cfg, e.credentialStore)
 }
 
 func (e Env) executable() (string, error) {
@@ -348,23 +351,34 @@ func (e Env) unloadLaunchAgent(plistPath string) error {
 	return unloadLaunchAgent(plistPath)
 }
 
-func (e Env) keychain() (credentials.CredentialStore, error) {
-	if e.Keychain != nil {
-		return e.Keychain()
+func (e Env) credentialStore() (credentials.CredentialStore, error) {
+	if e.Credentials != nil {
+		return e.Credentials()
 	}
-	return openKeychain()
+	return openCredentialStore()
 }
 
-// openKeychain opens the login Keychain's agent-archive items: Env.Keychain's
-// default. The package's tests replace it with one that fails the test, so a
-// test that forgets to set Env.Keychain can never reach the real Keychain.
-var openKeychain = func() (credentials.CredentialStore, error) {
-	store, err := credentials.NewKeychainStore(credentials.KeychainService)
-	if err != nil {
-		// Never a non-nil interface holding a nil store.
-		return nil, err
-	}
-	return store, nil
+// credentialGOOS is the platform whose credential store is opened and named:
+// runtime.GOOS. It is a variable so a test can see both platforms' wording
+// and choices (credentialWords, credentials.OpenDefault) on any OS.
+var credentialGOOS = runtime.GOOS
+
+// openCredentialStore opens the platform's credential store (see
+// credentials.OpenDefault): Env.Credentials's default. The package's tests
+// replace it with one that fails the test, so a test that forgets to set
+// Env.Credentials can never reach the real Keychain or write a credentials
+// file into a real data directory.
+var openCredentialStore = func() (credentials.CredentialStore, error) {
+	return credentials.OpenDefault(credentials.OpenOptions{
+		GOOS: credentialGOOS,
+		Dir: func() (string, error) {
+			home, err := local.ReadHome()
+			if err != nil {
+				return "", err
+			}
+			return credentials.FileStoreDir(home), nil
+		},
+	})
 }
 
 // notSetUp reports whether this Mac is not archiving: it has no saved
@@ -393,6 +407,7 @@ Manage capture
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive show        Read a session's summary or transcript
+  agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -425,6 +440,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if !nonInteractiveSettingUsable(args, stderr, env) {
+			return 2
+		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
@@ -437,6 +455,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
+	}
+	// After the preflight, which answers `list --help` and its kind without
+	// touching the environment, so the setting can still be looked up.
+	if !nonInteractiveSettingUsable(args, stderr, env) {
+		return 2
 	}
 
 	switch args[0] {
@@ -467,6 +490,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
+	case "stats":
+		return runStatsCommand(args[1:], stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

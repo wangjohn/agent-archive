@@ -311,14 +311,14 @@ func isLess(command string) bool {
 }
 
 // resolvePagerCommand returns the pager to run. page is false when nothing
-// is to be paged: --no-pager, a non-terminal stdout, or an empty
+// is to be paged: --no-pager, a non-terminal stdout (or AGENT_ARCHIVE_NONINTERACTIVE; see interactive), or an empty
 // AGENT_ARCHIVE_PAGER or PAGER, or the value "cat". chosen is false when
 // the default command (defaultPagerCommand) runs: when the user set no
 // pager (command is then ""), or set a bare less with no options (command
 // is then that program, "less" or a path to it). Otherwise command is the
 // user's, run as given.
 func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) (command string, chosen, page bool) {
-	if noPager || !env.isTerminal(stdout) {
+	if noPager || !env.interactive(stdout) {
 		return "", false, false
 	}
 	for _, name := range []string{"AGENT_ARCHIVE_PAGER", "PAGER"} {

@@ -121,6 +121,11 @@ type ListOptions struct {
 	// left out, in key order, after every sidecar has been read, so a caller
 	// can warn about it. The listing itself still succeeds.
 	Skipped func(SkippedSidecar)
+	// Progress, when set, is called as each listed sidecar has been read
+	// (served from the cache or downloaded), with how many are done of how
+	// many the listing has. It is called from several goroutines at once, so
+	// it must be safe for that, and it must not block.
+	Progress func(done, total int)
 }
 
 // ListMetadataWithOptions reads only metadata sidecars and applies filters
@@ -148,7 +153,7 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 			sidecars = append(sidecars, object)
 		}
 	}
-	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache)
+	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache, options.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -196,11 +201,12 @@ func listPrefixFor(prefix, harness string) string {
 // ctx is reported even when the store itself ignores it. A sidecar deleted
 // since the listing is left out, and one that is invalid is left out and
 // returned in skipped, in key order; neither stops the others.
-func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache) (loaded []archive.Metadata, skipped []SkippedSidecar, err error) {
+func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache, progress func(done, total int)) (loaded []archive.Metadata, skipped []SkippedSidecar, err error) {
 	out := make([]archive.Metadata, len(objects))
 	present := make([]bool, len(objects))
 	errs := make([]error, len(objects))
 	var failed atomic.Bool
+	var finished atomic.Int64
 	slots := make(chan struct{}, listConcurrency)
 	var wg sync.WaitGroup
 	dispatched := 0
@@ -219,6 +225,11 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 		go func(index int, object storage.Object) {
 			defer wg.Done()
 			defer func() { <-slots }()
+			defer func() {
+				if progress != nil {
+					progress(int(finished.Add(1)), len(objects))
+				}
+			}()
 			metadata, err := readListedSidecar(ctx, store, object, cache)
 			switch {
 			case errors.Is(err, storage.ErrNotFound):

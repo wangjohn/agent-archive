@@ -38,6 +38,7 @@ Manage capture
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive show        Read a session's summary or transcript
+  agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -132,17 +133,23 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive status [--verbose] [--json] [--no-pager]
+Usage: agent-archive status [APP] [--verbose] [--json] [--no-pager]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
---verbose adds a Details section with the codes, exact times, full
+Each app's line counts its sessions, imports and uploads, with at most
+five uploading sessions under it; the screen doesn't grow with projects.
+APP (claude, codex or cursor) shows that app in full: every uploading
+session and a table of its projects.
+--verbose adds each project's progress, skill evidence, imports and
+every error, then a Details section with the codes, exact times, full
 paths and raw errors behind each line.
 On a terminal, status is paged through $PAGER unless --no-pager.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
 "setup" or the "collector", in storage_access_confirmed_by).
+Example: agent-archive status claude
 Example: agent-archive status --verbose
 Example: agent-archive status --json
 ```
@@ -212,8 +219,9 @@ and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
 transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
 wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
-never interactive. On a terminal without interactive stdin, text is paged
-through $PAGER unless --no-pager.
+never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
+is inside coding agents (see the configuration reference). On a terminal
+without interactive stdin, text is paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -280,13 +288,19 @@ several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
 its transcript, Enter or b to go back, or q to quit. On a terminal, the
 summary and transcript are paged; in the default less, scroll with the mouse
-wheel, arrows, or space, search with /, and quit with q.
+wheel, arrows, or space, search with /, and quit with q. Nothing is asked
+when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
+a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
                         command output (trimmed)
+  --max-bytes N         With --transcript, the output limit, default 120000
+                        (about 30k tokens); 0 for no limit. When trimmed, the
+                        full version is saved in the data directory for 7 days
+                        and its path is named at the end
   --json                Print JSON: the metadata sidecar, which an imported
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
@@ -302,9 +316,84 @@ Example: agent-archive show SESSION_ID --transcript
 | `--full` | no value | — |
 | `--harness` | a value | — |
 | `--json` | no value | — |
+| `--max-bytes` | a value | `120000` |
 | `--no-pager` | no value | — |
 | `--normalized` | no value | — |
 | `--transcript` | no value | — |
+
+## agent-archive stats
+
+Guide: [See your usage](../guides/stats.md); `--json` in [JSON output](json-output.md).
+
+```text
+Usage: agent-archive stats [options]
+
+Show how you use your coding agents: tokens by day, sessions, estimated cost,
+agents, models, projects, what the tokens were spent on, and highlights, over
+the last 30 days by default, with the change from the 30 days before. Reads
+metadata only; prints numbers and names, never prompts or paths. Cost is an
+estimate at list price, not a bill, from a dated price table. Tokens and cost
+say "unknown" for sessions that record none (Cursor). A subagent's tokens
+count with its session. Sessions are placed by capture time, so imported
+sessions appear on the day they were imported.
+On a terminal of 80 columns or more, bars; narrower, a compact table. Text is
+paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
+  --days N                       Window of N calendar days ending today
+                                 (default 30; up to 3660)
+  --since DATE|TIME|AGE          Window from this local day through today (a
+                                 date, an RFC 3339 time, or an age: 7d, 12h;
+                                 a date is a local day here, not UTC as in
+                                 list). Not with --days
+  --by day|week|month|project    Also break the window down that way
+  --harness codex|claude|cursor  Only this application
+  --model NAME                   Only sessions that used this model (their
+                                 other models count too)
+  --imported                     Only sessions agent-archive backfill imported
+  --hook-captured                Only sessions hooks captured as they ran
+  --prices FILE                  Price tokens with the prices in this JSON file
+                                 (the built-in table's format), applied on top
+                                 of it; the output says so
+  --no-cache                     Download every metadata sidecar instead of
+                                 reusing the local metadata cache
+  --no-pager                     Print directly; do not page through $PAGER
+  --json                         Print a versioned document ({"schema_version":
+                                 1, ...}) of the numbers: unknown is null,
+                                 never 0. Usage errors print no JSON.
+  --html                         Write one self-contained web page (inline
+                                 styles and SVG; no script, no requests, works
+                                 in light and dark and prints) to stdout, or
+                                 to --output. Counts and names only. Not with
+                                 --json
+  --output FILE                  With --html, write the page to FILE (mode
+                                 0600, replaced in one step) instead of stdout
+  --force                        With --output, replace FILE if it is an
+                                 ordinary file that exists
+  --include-names                With --html, name the real projects, skills,
+                                 MCP servers and models the built-in price
+                                 table does not list; by default the page
+                                 says project A, skill A, MCP server A,
+                                 model A, ... so it can be shared
+Example: agent-archive stats --since 2026-09-01 --by project
+Example: agent-archive stats --html --output stats.html
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--by` | a value | — |
+| `--days` | a value | `30` |
+| `--force` | no value | — |
+| `--harness` | a value | — |
+| `--hook-captured` | no value | — |
+| `--html` | no value | — |
+| `--imported` | no value | — |
+| `--include-names` | no value | — |
+| `--json` | no value | — |
+| `--model` | a value | — |
+| `--no-cache` | no value | — |
+| `--no-pager` | no value | — |
+| `--output` | a value | — |
+| `--prices` | a value | — |
+| `--since` | a value | — |
 
 ## agent-archive feedback
 
@@ -428,9 +517,10 @@ instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
 With no selector on a terminal, pick an archived session from the same
-numbered session browser as show. Without a terminal, give a SESSION_ID,
---latest, or --file PATH. The picker lists archived sessions only; --latest
-can also find a local session that has not uploaded yet.
+numbered session browser as show. Without a terminal, or when
+AGENT_ARCHIVE_NONINTERACTIVE is on (automatic inside coding agents), give a
+SESSION_ID, --latest, or --file PATH. The picker lists archived sessions
+only; --latest can also find a local session that has not uploaded yet.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor

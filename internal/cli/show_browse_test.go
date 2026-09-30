@@ -157,7 +157,7 @@ type screenStub struct {
 	stopped  bool
 }
 
-func (s *screenStub) isTerminal(any) bool { return s.terminal }
+func (s *screenStub) interactive(any) bool { return s.terminal }
 
 func (s *screenStub) interrupts() (<-chan os.Signal, func()) {
 	return s.signals, func() { s.stopped = true }
