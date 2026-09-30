@@ -110,7 +110,7 @@ session's summary replace each other instead of piling up:
   project scrolled into keeps its heading at the top, marked
   `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
 - In the summary, `t` opens its transcript through the pager (quit the pager
-  to come back), `b`, Enter, Backspace, or Esc return to the list, and `q`
+  to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
   `q`; after another pager, press Enter to return to the summary.
 - A summary taller than the window scrolls the same way, with a line such

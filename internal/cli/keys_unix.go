@@ -45,16 +45,18 @@ func terminalKeys(stdin io.Reader) (keyTerminal, bool) {
 }
 
 // keys turns off canonical input and echo, reading each byte as it comes
-// (VMIN 1, VTIME 0). ISIG stays on, so Ctrl-C still sends SIGINT, which the
-// browser's interrupt handler answers by restoring the terminal, and
-// Ctrl-Z suspends (keyInput restores the terminal first). Ctrl-\ is turned off:
-// its SIGQUIT would end the process with no chance to restore the terminal.
+// (VMIN 1, VTIME 0), and the extended input characters (IEXTEN: macOS's
+// Ctrl-O would discard output, Ctrl-V quote the next key). ISIG stays on,
+// so Ctrl-C still sends SIGINT, which the browser's interrupt handler
+// answers by restoring the terminal, and Ctrl-Z suspends (keyInput
+// restores the terminal first). Ctrl-\ is turned off: its SIGQUIT would
+// end the process with no chance to restore the terminal.
 func (t *ttyKeys) keys() error {
 	modes, err := unix.IoctlGetTermios(t.fd, ioctlGetTermios)
 	if err != nil {
 		return err
 	}
-	modes.Lflag &^= unix.ICANON | unix.ECHO | unix.ECHONL
+	modes.Lflag &^= unix.ICANON | unix.ECHO | unix.ECHONL | unix.IEXTEN
 	modes.Lflag |= unix.ISIG
 	modes.Cc[unix.VMIN] = 1
 	modes.Cc[unix.VTIME] = 0
@@ -73,11 +75,35 @@ func (t *ttyKeys) lines() {
 	t.restore()
 }
 
-// stop stops the process, as Ctrl-Z would have, until the shell continues
-// it.
-func (t *ttyKeys) stop() error {
-	return unix.Kill(os.Getpid(), unix.SIGSTOP)
+// flush discards input not read yet, keeping the terminal's modes.
+func (t *ttyKeys) flush() {
+	if modes, err := unix.IoctlGetTermios(t.fd, ioctlGetTermios); err == nil {
+		_ = unix.IoctlSetTermios(t.fd, ioctlSetTermiosFlush, modes)
+	}
 }
+
+// stop stops the process as Ctrl-Z would have, and returns once the shell
+// continues it. It sends SIGSTOP: Go keeps its own handler for SIGTSTP
+// after signal.Reset, so re-raising SIGTSTP would not stop the process.
+func (t *ttyKeys) stop() error {
+	continued := make(chan os.Signal, 1)
+	signal.Notify(continued, syscall.SIGCONT)
+	defer signal.Stop(continued)
+	if err := unix.Kill(os.Getpid(), unix.SIGSTOP); err != nil {
+		return err
+	}
+	// The stop takes effect as the signal is delivered, which may be just
+	// after Kill returns; key mode goes back on only once continued.
+	select {
+	case <-continued:
+	case <-time.After(stopWait):
+	}
+	return nil
+}
+
+// stopWait bounds how long stop waits for SIGCONT, in case it never
+// comes; a stopped process gets it as it continues.
+const stopWait = time.Second
 
 // readPoll is how often a read waiting forever checks for a resize or
 // Ctrl-Z.

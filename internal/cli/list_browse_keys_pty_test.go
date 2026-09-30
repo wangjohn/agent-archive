@@ -26,9 +26,11 @@ func TestBrowserKeysTerminalChild(t *testing.T) {
 	}
 }
 
-// On a real terminal the browser turns off echo and line editing while it
-// reads keys, and turns them back on however it ends: quitting, Ctrl-C,
-// or Ctrl-Z (until the shell continues it).
+// On a real terminal the browser turns off echo, line editing, the
+// extended input characters and Ctrl-\ while it reads keys, and turns them
+// back on however it ends: quitting, Ctrl-C, or Ctrl-Z (until the shell
+// continues it, with the normal screen shown meanwhile). The modes are
+// checked one run at a time, each well within its own deadline.
 func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
@@ -39,23 +41,33 @@ func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One at a time, not as parallel subtests.
 	for _, mode := range []string{"quit", "interrupt", "suspend"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, python, "-c", keysPTYScript, binary, mode)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("PTY test: %v %s", err, out)
-			}
-		})
+		if out, err := runKeysPTYScript(python, binary, mode); err != nil {
+			t.Errorf("PTY test %s: %v %s", mode, err, out)
+		}
 	}
+}
+
+// runKeysPTYScript runs keysPTYScript for one mode. The script gives up
+// after 60 seconds, before this does.
+func runKeysPTYScript(python, binary, mode string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, python, "-c", keysPTYScript, binary, mode).CombinedOutput()
 }
 
 const keysPTYScript = `import fcntl, os, pty, select, signal, struct, subprocess, sys, termios, time
 binary, mode = sys.argv[1], sys.argv[2]
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
+# ECHONL on, so turning it off shows; IEXTEN and VQUIT are on by default.
+modes = termios.tcgetattr(slave)
+modes[3] |= termios.ECHONL | termios.IEXTEN
+termios.tcsetattr(slave, termios.TCSANOW, modes)
+before = termios.tcgetattr(slave)
+vdisable = b'\xff' if sys.platform == 'darwin' else b'\x00'
+assert before[6][termios.VQUIT] != vdisable
 env = dict(os.environ, ARCHIVE_KEYS_TEST_CHILD='1', TERM='xterm-256color')
 # As a shell does: this script leads a session whose controlling terminal
 # is the pty, and runs the child as the foreground job, so Ctrl-C and
@@ -68,7 +80,7 @@ def foreground():
     os.tcsetpgrp(0, os.getpid())
     signal.signal(signal.SIGTTOU, signal.SIG_DFL)
 p = subprocess.Popen([binary, '-test.run=^TestBrowserKeysTerminalChild$'], stdin=slave, stdout=slave, stderr=slave, env=env, preexec_fn=foreground)
-deadline = time.monotonic() + 20
+deadline = time.monotonic() + 60
 output = b''
 def pump():
     global output
@@ -77,17 +89,30 @@ def pump():
         try: output += os.read(master, 65536)
         except OSError: pass
 def keys_on():
-    lflag = termios.tcgetattr(slave)[3]
-    return not (lflag & termios.ECHO) and not (lflag & termios.ICANON) and lflag & termios.ISIG
+    m = termios.tcgetattr(slave)
+    lflag = m[3]
+    off = termios.ECHO | termios.ICANON | termios.ECHONL | termios.IEXTEN
+    return not (lflag & off) and lflag & termios.ISIG and m[6][termios.VQUIT] == vdisable
+def restored():
+    # The system sets PENDIN itself when line editing goes back on.
+    m = termios.tcgetattr(slave)
+    return m[3] & ~termios.PENDIN == before[3] and m[6][termios.VQUIT] == before[6][termios.VQUIT]
 def wait_for(text):
     while text not in output: pump()
 def wait_until(check, what):
+    # The modes change as the prompt is drawn: a few seconds is plenty.
+    limit = min(deadline, time.monotonic() + 10)
     while not check():
-        if time.monotonic() > deadline: raise RuntimeError(what)
+        if time.monotonic() > limit: raise RuntimeError(what, termios.tcgetattr(slave))
         pump()
 def finish(code):
     while p.poll() is None: pump()
     assert p.returncode == code, (p.returncode, output[-800:])
+def wait_stopped():
+    while True:
+        pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
+        if pid: return status
+        pump()
 try:
     wait_for(b'or q to quit')
     wait_until(keys_on, 'key mode not on at the list')
@@ -102,15 +127,18 @@ try:
         finish(130)
     else:
         os.write(master, b'\x1a')
-        _, status = os.waitpid(p.pid, os.WUNTRACED)
-        assert os.WIFSTOPPED(status), status
-        assert termios.tcgetattr(slave)[3] & termios.ECHO, 'echo off while stopped'
+        status = wait_stopped()
+        assert os.WIFSTOPPED(status) and os.WSTOPSIG(status) == signal.SIGSTOP, status
+        assert restored(), 'terminal modes not restored while stopped'
+        assert output.endswith(b'\x1b[?1049l'), ('alternate screen shown while stopped', output[-200:])
+        stopped = len(output)
         p.send_signal(signal.SIGCONT)
         wait_until(keys_on, 'key mode not back on after continuing')
+        wait_for(b'or q to quit')
+        assert b'\x1b[?1049h' in output[stopped:], 'alternate screen not entered again'
         os.write(master, b'q')
         finish(0)
-    lflag = termios.tcgetattr(slave)[3]
-    assert lflag & termios.ECHO and lflag & termios.ICANON, 'terminal modes not restored'
+    assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
     assert b'\x1b[?1049l' in output, 'alternate screen not left'
 finally:
     if p.poll() is None: p.kill(); p.wait()

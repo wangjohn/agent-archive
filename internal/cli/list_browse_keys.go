@@ -27,6 +27,7 @@ func browserKeys(env sessionBrowserDependencies, p *prompter, screen *altScreen)
 	}
 	keys := startKeys(term)
 	if keys != nil {
+		keys.hide, keys.show = screen.hide, screen.reenter
 		screen.restoreOnLeave(keys.close)
 	}
 	return keys
@@ -106,6 +107,11 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, sessions []archi
 			}
 			var result listKeyResult
 			typed, result = l.listKey(k, screen, typed)
+			if l.start != screen.start {
+				// Measured again, so the next key of a burst (PgDn after
+				// PgDn, or after ↓) moves on from here.
+				screen = l.screen(stdout, groups, format, len(rows), footer.String(), question+typed)
+			}
 			switch result {
 			case listQuit:
 				return listRow{}, false, nil
@@ -317,7 +323,7 @@ type detailsScreen struct {
 
 // detailsKeys is details reading a key at a time: ↑ ↓ PgUp PgDn space Home
 // and End scroll a summary taller than the window; t, m, b, and q act at
-// once, and Enter, Backspace, and Esc go back to the list as b does.
+// once, and Enter and Backspace go back to the list as b does.
 func (b *sessionBrowser) detailsKeys(view sessionView, row listRow) (browseAction, error) {
 	var summary bytes.Buffer
 	renderSessionSummary(&summary, view, b.summaryOptions(false))
@@ -359,7 +365,7 @@ func (b *sessionBrowser) detailsKey(k key, screen *detailsScreen, row listRow, s
 		return browseStay, browseNotice{}, nil
 	}
 	switch k.kind {
-	case keyEnter, keyBackspace, keyEscape:
+	case keyEnter, keyBackspace:
 		return browseBack, browseNotice{}, nil
 	case keyEndOfInput:
 		return browseQuit, browseNotice{}, nil
@@ -367,8 +373,9 @@ func (b *sessionBrowser) detailsKey(k key, screen *detailsScreen, row listRow, s
 		return browseRedraw, browseNotice{}, nil
 	case keyRune:
 		return b.detailsRune(k.r, screen, row, summary, pager)
-	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
-		// Scrolled above, or nothing to do.
+	case keyEscape, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
+		// Scrolled above, or nothing to do. Esc does not go back: it may
+		// be the start of a wheel's arrow split from the rest.
 	}
 	return browseStay, browseNotice{}, nil
 }
@@ -421,6 +428,10 @@ func (s *detailsScreen) scroll(move scrollMove) {
 		s.top = 0
 	case scrollBottom:
 		s.top = s.bottom
+	}
+	if s.cut {
+		// Measured again, so the next key of a burst moves on from here.
+		s.shown = detailsLinesFrom(s.lines[s.top:], s.width, s.budget)
 	}
 }
 
@@ -528,8 +539,8 @@ func scrollIndicator(above, below int) string {
 	return strings.Join(parts, " · ")
 }
 
-// transcriptKeys is transcriptPrompt reading a key at a time: Enter, b,
-// Backspace, or Esc return to the details, and q quits.
+// transcriptKeys is transcriptPrompt reading a key at a time: Enter, b, or
+// Backspace return to the details, and q quits.
 func (b *sessionBrowser) transcriptKeys() (browseAction, error) {
 	terminal.Println(b.stdout)
 	terminal.Print(b.stdout, b.prompt.promptText("[Enter/b] back to details  [q] quit", false, nil, -1, ": "))
@@ -539,7 +550,7 @@ func (b *sessionBrowser) transcriptKeys() (browseAction, error) {
 			return endOfInput(err)
 		}
 		switch {
-		case k.kind == keyEnter || k.kind == keyBackspace || k.kind == keyEscape || k.kind == keyRune && unicode.ToLower(k.r) == 'b':
+		case k.kind == keyEnter || k.kind == keyBackspace || k.kind == keyRune && unicode.ToLower(k.r) == 'b':
 			return browseRedraw, nil
 		case k.kind == keyEndOfInput || k.kind == keyRune && unicode.ToLower(k.r) == 'q':
 			return browseQuit, nil

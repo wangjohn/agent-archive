@@ -82,6 +82,8 @@ type keyTerminal interface {
 	keys() error
 	// lines restores the modes the terminal had when it was opened.
 	lines()
+	// flush discards input not read yet.
+	flush()
 	// read waits up to wait (forever when wait is negative) for input and
 	// returns what is available at once: several keys when the terminal
 	// sent them together, as the mouse wheel does. It returns 0 bytes when
@@ -89,14 +91,17 @@ type keyTerminal interface {
 	// errWindowResized or errSuspended when the window changed size or
 	// Ctrl-Z was pressed while it waited forever.
 	read(p []byte, wait time.Duration) (int, error)
-	// stop stops the process, as Ctrl-Z does, until it is continued.
+	// stop stops the process, as Ctrl-Z does, and returns once it is
+	// continued.
 	stop() error
 }
 
 // escapeWait is how long a lone Esc waits for the rest of an escape
 // sequence: the bytes of one sequence arrive together, so an Esc followed
-// by nothing within it was pressed on its own.
-const escapeWait = 30 * time.Millisecond
+// by nothing within it was pressed on its own. It allows for a slow link
+// (ssh, tmux, a loaded machine); a sequence split by more is still read as
+// its key when the rest starts the next burst (see keyInput.stale).
+const escapeWait = 120 * time.Millisecond
 
 // keyInput reads the browser's key presses. Keys read together (a wheel
 // burst, or a pasted number) are queued, and a screen draws itself again
@@ -111,6 +116,17 @@ type keyInput struct {
 	// failed is an error that came after keys still pending, returned once
 	// they are handled.
 	failed error
+	// carry is the start of an escape sequence or character cut off by
+	// maxBurst, read again with the next burst.
+	carry []byte
+	// stale is the start of an escape sequence that timed out at the end of
+	// the last burst: a lone Esc, or ESC [ with no final byte. When the next
+	// burst goes on with the rest of it, the two are read as one key.
+	stale []byte
+	// hide and show, when set, leave the alternate screen before Ctrl-Z
+	// stops the process and enter it again once it continues.
+	hide func()
+	show func()
 }
 
 // startKeys turns key mode on, or returns nil (line input) when it cannot.
@@ -149,11 +165,17 @@ func (k *keyInput) suspend() {
 	}
 }
 
-// close restores line input for good. It may be called more than once.
+// close restores line input for good, discarding keys not read yet (the
+// rest of a wheel's momentum, say) so the shell does not get them. It may
+// be called more than once.
 func (k *keyInput) close() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.closed {
+		return
+	}
 	k.closed = true
+	k.term.flush()
 	if k.on {
 		k.on = false
 		k.term.lines()
@@ -186,21 +208,53 @@ func (k *keyInput) next() (key, error) {
 		if err != nil {
 			return key{}, err
 		}
-		k.pending = decodeKeys(data)
+		k.pending = k.decode(data)
 	}
 	next := k.pending[0]
 	k.pending = k.pending[1:]
 	return next, nil
 }
 
-// pause answers Ctrl-Z: the terminal gets its modes back while the process
-// is stopped, and key mode is turned on again once it continues.
+// pause answers Ctrl-Z: the terminal gets its modes and its normal screen
+// back while the process is stopped, and the browser's once it continues.
 func (k *keyInput) pause() error {
 	k.suspend()
-	if err := k.term.stop(); err != nil {
+	if k.hide != nil {
+		k.hide()
+	}
+	err := k.term.stop()
+	if k.show != nil {
+		k.show()
+	}
+	if err != nil {
 		return err
 	}
 	return k.resume()
+}
+
+// decode turns a burst into keys. A burst going on with an escape sequence
+// that timed out at the end of the last one (ESC, then [B after a pause)
+// is read as that sequence's key, not typed; ESC O goes on only with a key
+// it names, since O may be typed after Esc.
+func (k *keyInput) decode(data []byte) []key {
+	stale := k.stale
+	k.stale = nil
+	if len(stale) > 0 && len(data) > 0 && (len(stale) > 1 || data[0] == '[' || data[0] == 'O') {
+		joined := append(append([]byte(nil), stale...), data...)
+		if found, size, complete := decodeEscape(joined); complete && size > len(stale) && (found != nil || joined[1] == '[') {
+			var keys []key
+			if found != nil {
+				keys = append(keys, *found)
+			}
+			return append(keys, k.decode(joined[size:])...)
+		}
+	}
+	if tail := incompleteTail(data); tail > 0 && data[len(data)-tail] == 0x1b {
+		// Waited out: decoded below as a lone Esc or dropped, and kept in
+		// case the rest comes next.
+		k.stale = append([]byte(nil), data[len(data)-tail:]...)
+	}
+	return decodeKeys(data)
 }
 
 // maxBurst bounds the bytes read as one burst.
@@ -214,7 +268,14 @@ func (k *keyInput) readBurst() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return k.readRest(append([]byte(nil), buf[:n]...), buf), nil
+	data := k.readRest(append(k.carry, buf[:n]...), buf)
+	k.carry = nil
+	if tail := incompleteTail(data); tail > 0 && len(data) >= maxBurst {
+		// Cut off by the cap, not by time: the rest is already waiting.
+		k.carry = append([]byte(nil), data[len(data)-tail:]...)
+		data = data[:len(data)-tail]
+	}
+	return data, nil
 }
 
 // readRest adds to data what else has arrived with it. An error ends the
@@ -238,18 +299,27 @@ func (k *keyInput) readRest(data, buf []byte) []byte {
 // incompleteKey reports whether data ends partway through an escape
 // sequence or a UTF-8 character.
 func incompleteKey(data []byte) bool {
+	return incompleteTail(data) > 0
+}
+
+// incompleteTail is how many bytes at the end of data are an escape
+// sequence or a UTF-8 character cut off, or 0.
+func incompleteTail(data []byte) int {
 	if i := bytes.LastIndexByte(data, 0x1b); i >= 0 {
 		if _, size, complete := decodeEscape(data[i:]); !complete && i+size == len(data) {
-			return true
+			return len(data) - i
 		}
 	}
 	// A UTF-8 lead byte whose continuation bytes have not arrived.
 	for i := len(data) - 1; i >= 0 && i >= len(data)-utf8.UTFMax; i-- {
 		if utf8.RuneStart(data[i]) {
-			return data[i] >= utf8.RuneSelf && !utf8.FullRune(data[i:])
+			if data[i] >= utf8.RuneSelf && !utf8.FullRune(data[i:]) {
+				return len(data) - i
+			}
+			return 0
 		}
 	}
-	return false
+	return 0
 }
 
 // decodeKeys turns raw terminal input into key presses. Escape sequences it

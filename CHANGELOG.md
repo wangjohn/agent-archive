@@ -33,7 +33,7 @@ follow [Semantic Versioning](https://semver.org/).
   where you are (Top, a percentage, Bottom) and, in the summary, how many
   lines are above and below. Type a row number or short ID and press Enter
   to open it; in the summary, `t`, `m` (the whole summary in the pager),
-  `b`, and `q` act on their own key, and Enter, Backspace, or Esc go back
+  `b`, and `q` act on their own key, and Enter or Backspace go back
   to the list. The wheel's arrows are no longer echoed into the prompt as
   `^[[A`. The other pickers still read a line and show a list taller than
   the terminal a page at a time (`n` and `p` move; any row number or short

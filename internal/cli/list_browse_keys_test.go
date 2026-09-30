@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,8 +31,19 @@ const (
 	fakeBlock fakeEvent = "\x00block"
 )
 
+// fakeAfter starts a chunk that arrives a while after the one before it:
+// later builds one.
+const fakeAfter = "\x00after "
+
+// later is a chunk of data that arrives d after the chunk before it. A
+// read waiting less than d for the rest of a burst times out first.
+func later(d time.Duration, data string) string {
+	return fakeAfter + strconv.FormatInt(int64(d), 10) + "\x00" + data
+}
+
 // fakeKeys is a terminal read a key at a time that feeds raw bytes: each
-// chunk is one burst, as the terminal would send it.
+// chunk is one burst, as the terminal would send it, unless later says it
+// arrives soon enough to join the burst before it.
 type fakeKeys struct {
 	mu      sync.Mutex
 	chunks  []string
@@ -40,10 +52,14 @@ type fakeKeys struct {
 	release chan struct{}
 	// blocked is closed when a read starts waiting on fakeBlock.
 	blocked chan struct{}
+	// arrived is set while the rest of a chunk longer than one read waits.
+	arrived bool
+	// onResize, when set, is called as fakeResize is read.
+	onResize func()
 }
 
 func newFakeKeys(chunks ...string) *fakeKeys {
-	return &fakeKeys{chunks: chunks, release: make(chan struct{}), blocked: make(chan struct{})}
+	return &fakeKeys{chunks: append([]string(nil), chunks...), release: make(chan struct{}), blocked: make(chan struct{})}
 }
 
 func (f *fakeKeys) keys() error {
@@ -59,6 +75,12 @@ func (f *fakeKeys) lines() {
 	defer f.mu.Unlock()
 	f.on = false
 	f.events = append(f.events, "lines")
+}
+
+func (f *fakeKeys) flush() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "flush")
 }
 
 func (f *fakeKeys) stop() error {
@@ -82,16 +104,28 @@ func (f *fakeKeys) history() []string {
 
 func (f *fakeKeys) read(p []byte, wait time.Duration) (int, error) {
 	f.mu.Lock()
-	if wait >= 0 {
+	if len(f.chunks) == 0 {
+		f.mu.Unlock()
+		if wait >= 0 {
+			return 0, nil
+		}
+		return 0, io.EOF
+	}
+	chunk := f.chunks[0]
+	if rest, ok := strings.CutPrefix(chunk, fakeAfter); ok {
+		delay, data, _ := strings.Cut(rest, "\x00")
+		d, _ := strconv.ParseInt(delay, 10, 64)
+		if wait >= 0 && time.Duration(d) > wait {
+			// Waited out before it arrived.
+			f.mu.Unlock()
+			return 0, nil
+		}
+		chunk, f.chunks[0] = data, data
+	} else if wait >= 0 && !f.arrived {
 		// The burst is over.
 		f.mu.Unlock()
 		return 0, nil
 	}
-	if len(f.chunks) == 0 {
-		f.mu.Unlock()
-		return 0, io.EOF
-	}
-	chunk := f.chunks[0]
 	if strings.HasPrefix(chunk, "\x00") {
 		f.chunks = f.chunks[1:]
 		f.mu.Unlock()
@@ -102,7 +136,8 @@ func (f *fakeKeys) read(p []byte, wait time.Duration) (int, error) {
 		return 0, errors.New("read a key with key mode off")
 	}
 	n := copy(p, chunk)
-	if n < len(chunk) {
+	f.arrived = n < len(chunk)
+	if f.arrived {
 		f.chunks[0] = chunk[n:]
 	} else {
 		f.chunks = f.chunks[1:]
@@ -114,6 +149,9 @@ func (f *fakeKeys) read(p []byte, wait time.Duration) (int, error) {
 func (f *fakeKeys) event(event fakeEvent) (int, error) {
 	switch event {
 	case fakeResize:
+		if f.onResize != nil {
+			f.onResize()
+		}
 		return 0, errWindowResized
 	case fakeSuspend:
 		return 0, errSuspended
@@ -408,7 +446,7 @@ func TestKeysSuspendRestoresTheTerminal(t *testing.T) {
 	if err != nil || ok || strings.Count(out.String(), screenBreak) != 1 {
 		t.Fatalf("ok=%v err=%v:\n%s", ok, err, out.String())
 	}
-	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "lines"}; !reflect.DeepEqual(got, want) {
+	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "flush", "lines"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("terminal modes %v, want %v", got, want)
 	}
 }
@@ -523,7 +561,8 @@ func TestKeyDetailsSingleKeys(t *testing.T) {
 		t.Fatalf("alternate screen entered %d times, want 3", n)
 	}
 	history := fake.history()
-	if want := []string{"keys", "lines", "keys", "lines", "keys", "lines"}; !reflect.DeepEqual(history, want) {
+	// Input is flushed only as the browser ends, not before a pager.
+	if want := []string{"keys", "lines", "keys", "lines", "keys", "flush", "lines"}; !reflect.DeepEqual(history, want) {
 		t.Fatalf("terminal modes %v, want %v", history, want)
 	}
 }
@@ -532,7 +571,7 @@ func TestKeyDetailsSingleKeys(t *testing.T) {
 // left; q and Ctrl-D quit.
 func TestKeyDetailsBackAndQuit(t *testing.T) {
 	t.Parallel()
-	for _, back := range []string{"b", "B", "\r", "\x7f", "\x1b"} {
+	for _, back := range []string{"b", "B", "\r", "\x7f"} {
 		out, _, _ := browseKeys(t, fixedTerminal{100, 60}, newFakeKeys("1\r", back, "1\r", "\x04"))
 		if n := strings.Count(out, "Enter number"); n != 2 || len(keyDetailsScreens(out)) != 2 || !strings.Contains(out, keyDetailsPrompt) {
 			t.Fatalf("%q: list shown %d times:\n%s", back, n, out)
@@ -637,7 +676,7 @@ func TestKeyBrowserSignalRestoresTheTerminal(t *testing.T) {
 	close(fake.release)
 	<-done
 	// Closed once by the handler; the browser's own close does nothing.
-	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "lines"}) {
+	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines"}) {
 		t.Fatalf("terminal modes %v", history)
 	}
 }

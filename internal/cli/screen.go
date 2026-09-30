@@ -133,6 +133,16 @@ func (s *altScreen) reenter() {
 	}
 }
 
+// hide shows the normal screen while the process is stopped (Ctrl-Z);
+// reenter shows the browser's again.
+func (s *altScreen) hide() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active {
+		terminal.Print(s.out, leaveAltScreenSequence)
+	}
+}
+
 // exitForSignal restores the screen and exits as sig would have.
 func (s *altScreen) exitForSignal(sig os.Signal) {
 	s.leave()
