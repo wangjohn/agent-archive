@@ -1,0 +1,12 @@
+# Written by agent-archive setup; setup and setup --refresh rewrite this file.
+[Unit]
+Description=agent-archive background collector schedule
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Unit=agent-archive-collector.service
+
+[Install]
+WantedBy=timers.target
