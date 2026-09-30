@@ -39,7 +39,9 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/handoff/SKILL.md`). It runs
   `agent-archive handoff --to <agent>`, defaulting to another agent than the
   one you are in. Setup leaves a file it did not write, uninstall removes
-  only its own, and `status --json` lists them in `agent_commands`.
+  only its own, and `status --json` lists them in `agent_skills`. After an
+  upgrade, `status` warns about a skill file an earlier release wrote and lists
+  it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -215,6 +217,18 @@ follow [Semantic Versioning](https://semver.org/).
   `--by day`, `week` and `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
+- `handoff` takes a title as well as a session ID: `handoff "fix the auth
+  bug" --harness codex`. It matches as `show` does (a title substring or a
+  short session ID; a full ID wins), in this Mac's sessions first, with no
+  network, then in the archive. Only the title (the first prompt) is
+  matched, never the rest of the conversation; a session on this Mac has its
+  title read from its transcript file, which stays on the Mac. Several
+  matches (the newest 20 are shown) open the picker on them on a terminal;
+  without one they are listed on stderr with exit code 1 instead of
+  guessing. Run from inside a Claude Code or Codex session, a title never
+  matches that session itself (as `--latest` skips it).
+  `handoff` no longer rejects an argument that is not shaped like a session
+  ID up front; one that matches nothing says so and points to `list`.
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
