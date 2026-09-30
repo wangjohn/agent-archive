@@ -41,12 +41,12 @@ func snapshotRootPath() string {
 	return snapshotLocations(platform.Current(), os.Getenv).SnapshotRoot()
 }
 
-// snapshotLocations are the locations of goos, reading the environment
+// snapshotLocations are the locations of system, reading the environment
 // through getenv and the system's per-user temporary directory as this
 // package finds it. There is no home: nothing about the snapshot root
 // depends on one.
-func snapshotLocations(goos platform.OS, getenv func(string) string) platform.Locations {
-	return platform.NewLocations(goos, "", getenv, platform.LocationDeps{
+func snapshotLocations(system platform.OS, getenv func(string) string) platform.Locations {
+	return platform.NewLocations(system, "", getenv, platform.LocationDeps{
 		DarwinUserTempDir: darwinUserTempDir,
 		ProcessTempDir:    os.TempDir,
 		UID:               os.Getuid(),

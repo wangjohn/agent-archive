@@ -36,9 +36,9 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     reached. Set Env.Credentials (newFakeKeychain).
 //
 //   - The platform the credential store is named for: credentialOS is
-//     "darwin", so the many tests whose fake stands for the Keychain see the
-//     Keychain's wording on every runner, Linux CI included. A test of the
-//     other platform's wording sets it to "linux" (useCredentialOS).
+//     platform.Darwin, so the many tests whose fake stands for the Keychain
+//     see the Keychain's wording on every runner, Linux CI included. A test
+//     of another platform's wording sets it (useCredentialOS).
 //
 //   - less: detectLessVersion panics. Set Env.LessVersion (testEnv does).
 //

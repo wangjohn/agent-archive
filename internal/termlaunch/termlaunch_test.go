@@ -43,10 +43,10 @@ type call struct {
 }
 
 // fakeEnv records every command and fails those failing names.
-func fakeEnv(goos platform.OS, vars map[string]string, failing string) (Environment, *[]call) {
+func fakeEnv(system platform.OS, vars map[string]string, failing string) (Environment, *[]call) {
 	var calls []call
 	return Environment{
-		GOOS: goos,
+		OS: system,
 		LookupEnv: func(k string) (string, bool) {
 			v, ok := vars[k]
 			return v, ok
@@ -93,38 +93,38 @@ func osascript(lines []string, argv ...string) call {
 func TestOpenPicksTheTerminal(t *testing.T) {
 	tests := []struct {
 		name    string
-		goos    platform.OS
+		system  platform.OS
 		vars    map[string]string
 		failing string
 		where   string
 		calls   func(script, dir string) []call
 	}{
 		{
-			name:  "tmux",
-			goos:  platform.Linux,
-			vars:  map[string]string{"TMUX": "/tmp/tmux-501/default,1,0", "TERM_PROGRAM": "iTerm.app"},
-			where: "a new tmux window",
+			name:   "tmux",
+			system: platform.Linux,
+			vars:   map[string]string{"TMUX": "/tmp/tmux-501/default,1,0", "TERM_PROGRAM": "iTerm.app"},
+			where:  "a new tmux window",
 			calls: func(script, _ string) []call {
 				return []call{{"tmux", []string{"new-window", "-c", "/work/app ##1", "'" + script + "'"}}}
 			},
 		},
 		{
-			name:  "iTerm2",
-			goos:  platform.Darwin,
-			vars:  map[string]string{"TERM_PROGRAM": "iTerm.app"},
-			where: "a new iTerm2 tab",
-			calls: func(script, _ string) []call { return []call{osascript(iTermScript, script)} },
+			name:   "iTerm2",
+			system: platform.Darwin,
+			vars:   map[string]string{"TERM_PROGRAM": "iTerm.app"},
+			where:  "a new iTerm2 tab",
+			calls:  func(script, _ string) []call { return []call{osascript(iTermScript, script)} },
 		},
 		{
-			name:  "Ghostty",
-			goos:  platform.Darwin,
-			vars:  map[string]string{"TERM_PROGRAM": "ghostty"},
-			where: "a new Ghostty tab",
-			calls: func(script, dir string) []call { return []call{osascript(ghosttyScript, script, dir)} },
+			name:   "Ghostty",
+			system: platform.Darwin,
+			vars:   map[string]string{"TERM_PROGRAM": "ghostty"},
+			where:  "a new Ghostty tab",
+			calls:  func(script, dir string) []call { return []call{osascript(ghosttyScript, script, dir)} },
 		},
 		{
 			name:    "Ghostty before 1.3 falls back to Terminal.app",
-			goos:    platform.Darwin,
+			system:  platform.Darwin,
 			vars:    map[string]string{"TERM_PROGRAM": "ghostty"},
 			failing: "Ghostty",
 			where:   "a new Terminal window",
@@ -133,24 +133,24 @@ func TestOpenPicksTheTerminal(t *testing.T) {
 			},
 		},
 		{
-			name:  "Terminal.app",
-			goos:  platform.Darwin,
-			vars:  map[string]string{"TERM_PROGRAM": "Apple_Terminal"},
-			where: "a new Terminal window",
-			calls: func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
+			name:   "Terminal.app",
+			system: platform.Darwin,
+			vars:   map[string]string{"TERM_PROGRAM": "Apple_Terminal"},
+			where:  "a new Terminal window",
+			calls:  func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
 		},
 		{
-			name:  "an unknown terminal on macOS",
-			goos:  platform.Darwin,
-			vars:  map[string]string{"TERM_PROGRAM": "vscode", "TMUX": ""},
-			where: "a new Terminal window",
-			calls: func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
+			name:   "an unknown terminal on macOS",
+			system: platform.Darwin,
+			vars:   map[string]string{"TERM_PROGRAM": "vscode", "TMUX": ""},
+			where:  "a new Terminal window",
+			calls:  func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := testSpec(t)
-			env, calls := fakeEnv(tt.goos, tt.vars, tt.failing)
+			env, calls := fakeEnv(tt.system, tt.vars, tt.failing)
 			where, err := Open(context.Background(), spec, env)
 			if err != nil {
 				t.Fatal(err)

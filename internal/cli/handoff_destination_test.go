@@ -389,7 +389,7 @@ func TestHandoffWithoutATerminalPrintsAsBefore(t *testing.T) {
 func openInFakeTmux(spec *termlaunch.Spec, tmux *[]string) func(termlaunch.Spec) (string, error) {
 	return func(s termlaunch.Spec) (string, error) {
 		*spec = s
-		env := termlaunch.Environment{GOOS: platform.Darwin, LookupEnv: agentEnv(map[string]string{"TMUX": "/tmp/tmux-501/default,1,0"}),
+		env := termlaunch.Environment{OS: platform.Darwin, LookupEnv: agentEnv(map[string]string{"TMUX": "/tmp/tmux-501/default,1,0"}),
 			Run: func(_ context.Context, name string, args ...string) error {
 				*tmux = append([]string{name}, args...)
 				return nil
@@ -639,7 +639,7 @@ func TestHandoffWithNoTerminalToOpenNamesTheCommand(t *testing.T) {
 	var spec termlaunch.Spec
 	f.env.OpenTerminal = func(s termlaunch.Spec) (string, error) {
 		spec = s
-		return termlaunch.Open(context.Background(), s, termlaunch.Environment{GOOS: platform.Linux, LookupEnv: agentEnv(nil),
+		return termlaunch.Open(context.Background(), s, termlaunch.Environment{OS: platform.Linux, LookupEnv: agentEnv(nil),
 			Run: func(context.Context, string, ...string) error { return errors.New("ran a command") }})
 	}
 	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "codex")

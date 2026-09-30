@@ -337,8 +337,11 @@ func (e Env) userHomeDir() (string, error) {
 }
 
 // cursorDatabase is Cursor's state.vscdb under the user's home, which
-// cursor-sqlite sessions are read from; "" (the process's own home) only
-// when the home can't be resolved.
+// cursor-sqlite sessions are read from, for Env.OS. It is "" when the home
+// can't be resolved or the system is not one the program knows; the collector
+// reads "" as "the default for this process" (cursorstore.StateDatabase of
+// the process's own home and platform.Current), which on an unknown system is
+// "" again, so Cursor reads as not installed.
 func (e Env) cursorDatabase() string {
 	home, err := e.userHomeDir()
 	if err != nil {
