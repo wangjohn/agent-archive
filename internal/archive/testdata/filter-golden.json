@@ -14,6 +14,9 @@
   "claude-parent-with-sidechain.jsonl": {
     "sha256": "2dbb7772752bb226a41c6c6f3eb3f1b681bf3fd2332d5ad720ef3165658a6ab5"
   },
+  "claude-session-name.jsonl": {
+    "sha256": "a9563e163b77d2370b3025dda4874d48f4c2c7652aa9cebdfb0c03d400978f56"
+  },
   "claude-shell-command.jsonl": {
     "sha256": "b227945ea82c819cdb1fbec210135ea75593747ef021f4e8d8ff84050d0d6108"
   },

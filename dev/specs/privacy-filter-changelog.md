@@ -5,6 +5,60 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 13
+
+Adapter version 0.13.0 goes with it; the parser is unchanged (it reads none
+of what is newly kept until parser 0.17.0). What is newly kept is the name a
+session was given and the pull request it is linked to, in the three places
+below. Nothing else that was dropped is kept.
+
+- **Claude Code's `custom-title` record.** `type`, `customTitle`, and, when
+  they are strings, `sessionId` and `timestamp`. `customTitle` is the name in
+  the app's sidebar, set automatically or by `/rename`: text the model wrote
+  from the person's prompt, or the person typed. It is kept when it is a
+  string with something in it, and passes the same value rules as a prompt
+  (injected-instruction stripping, credential redaction, the 64 KB cap). Every
+  other key of the record (`uuid`, `cwd`, …) is dropped and its name listed
+  in the `unknown_field_omitted` gap. A record with no title, an empty or
+  blank one, or one that is not a string is dropped, with an
+  `unsupported_value_omitted` gap (`record omitted`).
+- **Claude Code's `pr-link` record.** `type`, `prNumber`, `prRepository`,
+  `prUrl`, and, when they are strings, `sessionId` and `timestamp`.
+  - `prRepository` must be `owner/name`, each part matching the pattern
+    `git_activity` requires of a repository (letters, digits, `_`, `.`, `-`).
+  - `prNumber` must be a whole number from 1 to 2^30, written as a string of
+    digits (as Claude Code writes it) or as a number. It is kept as a JSON
+    integer either way, so the retained record has one shape.
+  - `prUrl` is kept only when it is exactly `https://github.com/<prRepository>/pull/<prNumber>`.
+    Any other value (another host, a query string, a fragment, a value
+    that is not a string) is dropped, the rest of the record is kept, and
+    `prUrl` is listed in the `unknown_field_omitted` gap.
+  - A `pr-link` whose repository or number is missing or out of shape is
+    dropped whole, with an `unsupported_value_omitted` gap (`record
+    omitted`). So is one whose repository the value rules would rewrite.
+  - Every other key is dropped and listed in the `unknown_field_omitted` gap.
+- **Cursor's chat name.** The composer's chat-level `name` is written as
+  `name` on the `session` record of a chat read from Cursor's database, and
+  passes the same value rules as a prompt. It is no longer listed as the
+  omitted key `chat.name`. A chat Cursor has not named, or whose `name` is
+  empty, has no `name`; a `name` that is not a string is still reported as
+  `chat.name` in the gap. The session record is the first record, so a chat
+  named (or renamed) after an earlier snapshot of it was taken no longer
+  extends that snapshot, and the collector replaces the snapshot and records
+  a `cursor_chat_rewritten` gap, as it does for any change to an earlier
+  record.
+
+Still dropped: Claude Code's `agent-name` (a copy of the custom title) and
+`last-prompt` (derivable from the turns), as unknown record types. The keys
+are admitted on those two record types only; `customTitle`, `prNumber`,
+`prRepository`, and `prUrl` on any other record are still dropped as unknown
+keys.
+
+A filter bump makes the collector read and republish every session whose
+transcript still exists, which is how a session's name and pull requests
+reach sessions archived before this version. A session whose transcript is
+gone keeps what it had.
+
 ## Source filter version 12
 
 Adapter version 0.12.0 goes with it; the parser is unchanged.

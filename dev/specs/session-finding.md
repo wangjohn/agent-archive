@@ -1,8 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-not started. Where this plan and the code differ once packages merge, the
-code is the reference and differences go under Deviations.
+PR 2 (filter 13) in review, the rest not started. Where this plan and the
+code differ once packages merge, the code is the reference and differences go
+under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -653,3 +654,32 @@ guide. Live check on the owner's Mac:
   need admitting, or the parser would need to keep the last human prompt.
 - A configured default scope (always all projects), if `a` and
   `--all-projects` prove not enough.
+
+## Deviations
+
+- PR 2: `custom-title` and `pr-link` are rebuilt from typed values
+  (`internal/archive/filter_session_labels.go`, as `compact_boundary` is) and
+  their keys are admitted for those two records only, instead of adding
+  `customTitle`, `prNumber`, `prRepository`, and `prUrl` to `allowedKeys`.
+  `allowedKeys` applies to every record, so adding the keys there would have
+  kept an unvalidated `prUrl` on a `user` record, and could not check the URL
+  against the repository and number.
+- PR 2: `prNumber` is written as a JSON integer whether Claude Code wrote a
+  string (`"213"`, what real data holds) or a number, so PR 3 reads one
+  shape: an integer in `prNumber`, not a string.
+- PR 2: a dropped `pr-link` (or a `custom-title` with no usable text) is
+  recorded as `unsupported_value_omitted` with the detail `record omitted`,
+  not `unknown_record_type`, which stays the code for record types the
+  filter does not know. A `prUrl` dropped for not matching is named in the
+  `unknown_field_omitted` gap, like any other dropped key.
+- PR 2: Cursor's `name` is written as `name` on the `session` record, the
+  first record of the chat. That record is part of what a later snapshot must
+  extend, so a chat named or renamed after an earlier snapshot is replaced
+  and gets one `cursor_chat_rewritten` gap (the collector's existing
+  handling of a changed earlier record). No collector change was made; if
+  the gap on a first naming is noise, the collector could ignore a change
+  that only adds `name` to the session record.
+- PR 2: `parsePRNumber` and `splitRepository` were extracted from
+  `pullRequestEvent` in `git_activity.go` so the filter and `git_activity`
+  share one definition of a repository and a number; behaviour of
+  `git_activity` is unchanged.

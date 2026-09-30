@@ -432,11 +432,31 @@ func validBranch(branch string) string {
 	return branch
 }
 
+// parsePRNumber reads a pull request number written as decimal digits. False
+// when it is not all digits or is outside 1 to maxPRNumber.
+func parsePRNumber(digits string) (int, bool) {
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	return n, err == nil && n >= 1 && n <= maxPRNumber
+}
+
+// splitRepository splits "owner/name" into its parts when both have the
+// published shape (repoPartPattern), as a git_activity repository does.
+func splitRepository(repository string) (owner, name string, ok bool) {
+	owner, name, found := strings.Cut(repository, "/")
+	if !found || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
+		return "", "", false
+	}
+	return owner, name, true
+}
+
 // pullRequestEvent builds a pull request event from a parsed URL's parts,
 // rebuilding the URL from them. False when a part is out of shape.
 func pullRequestEvent(kind GitEventKind, host, owner, name, number string) (GitEvent, bool) {
-	n, err := strconv.Atoi(number)
-	if err != nil || n < 1 || n > maxPRNumber || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
+	n, ok := parsePRNumber(number)
+	if !ok || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
 		return GitEvent{}, false
 	}
 	event := GitEvent{Kind: kind, Repository: owner + "/" + name, PRNumber: n}
