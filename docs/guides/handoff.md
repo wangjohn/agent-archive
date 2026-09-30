@@ -52,6 +52,11 @@ prompt follows one), after any set for it in `config.json`
 agent-archive handoff SESSION_ID --to codex -- --model o3
 ```
 
+Give every option its value (`--model o3` or `--model=o3`). The prompt comes
+right after these arguments, so an option left without its value at the end
+would take the launcher's `--` (Claude Code, Codex) or the prompt itself
+(Cursor) as its value.
+
 The session is read as for any handoff: this Mac's transcript when there is
 one, else the archive's copy. It never starts a remote agent. The receiving
 agent is told that Agent Archive exists, where to
