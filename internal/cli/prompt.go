@@ -296,8 +296,12 @@ func (p *prompter) secret(label string) (string, error) {
 			}
 		}()
 		terminal.Print(p.out, p.labelText(label))
-		value, err := term.ReadPassword(fd)
+		value, err := readSecret(fd)
 		terminal.Println(p.out)
+		if errors.Is(err, io.EOF) {
+			// As for a line: no more input is an error, never a blank.
+			return "", fmt.Errorf("no more input: %w", err)
+		}
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}

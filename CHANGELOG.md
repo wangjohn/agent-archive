@@ -380,6 +380,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `setup`'s hidden prompt for a secret access key no longer spins at full
+  CPU forever on macOS when its terminal goes away without a hangup signal
+  (a closed pseudo-terminal, for example). It now ends as every other prompt
+  does at the end of input, with "no more input", and so does Ctrl-D on an
+  empty answer, which the prompt used to ignore.
 - The `handoff` picker no longer offers archived subagent sessions. They
   filled the first screen under their orchestrator (one had 45 of them) and
   were counted in "Showing 50 of 659", though only top-level sessions can be
