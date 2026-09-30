@@ -97,6 +97,22 @@ Environment=E=%% AGENT_ARCHIVE_HOME=/data
 	if want := map[string]string{"E": "%", "AGENT_ARCHIVE_HOME": "/data"}; !maps.Equal(env, want) {
 		t.Errorf("environment %q, want %q", env, want)
 	}
+	// A continued line goes on past comment lines, which are dropped rather
+	// than joined, and a backslash that is itself escaped continues nothing.
+	program, env, err = readService([]byte(`[Service]
+ExecStart=\
+  # a comment, even one ending in a backslash \
+  ; and another
+  /bin/x _collect
+Environment=A=1 \
+# B=2
+  C=3
+Environment=D=\\
+Environment=E=5
+`))
+	if want := map[string]string{"A": "1", "C": "3", "D": `\`, "E": "5"}; err != nil || program != "/bin/x" || !maps.Equal(env, want) {
+		t.Errorf("continued lines read as program %q, environment %q (%v); want /bin/x, %q", program, env, err, want)
+	}
 	for _, bad := range []string{"", "not a unit", "[Service]\nExecStart=\n", "[Service]\nExecStart=\"open\n", "[Unit]\nExecStart=/bin/x\n", "[Service]\nExecStart=/bin/x\nEnvironment=\"open\n"} {
 		if program, env, err := readService([]byte(bad)); err == nil {
 			t.Errorf("readService(%q) = %q, %q; want an error", bad, program, env)
@@ -124,11 +140,17 @@ func TestPlanRefusesWhatAUnitCannotHold(t *testing.T) {
 		"relative executable": func(s *scheduler.JobSpec) { s.Executable = "agent-archive" },
 		"relative data home":  func(s *scheduler.JobSpec) { s.DataHome = "data" },
 		"dollar in program":   func(s *scheduler.JobSpec) { s.Executable = "/opt/$bin/agent-archive" },
-		"a newline in a path": func(s *scheduler.JobSpec) { s.DataHome = "/da\nta" },
+		// systemd refuses these in a program's path, quoted or not.
+		"an apostrophe in program": func(s *scheduler.JobSpec) { s.Executable = "/home/o'brien/bin/agent-archive" },
+		"a quote in program":       func(s *scheduler.JobSpec) { s.Executable = `/opt/"x"/agent-archive` },
+		"a backslash in program":   func(s *scheduler.JobSpec) { s.Executable = `/opt/x\y/agent-archive` },
+		"a newline in a path":      func(s *scheduler.JobSpec) { s.DataHome = "/da\nta" },
 		"a newline in a value": func(s *scheduler.JobSpec) {
 			s.Env = map[string]string{"A": "x\nExecStart=/bin/evil"}
 		},
 		"invalid UTF-8":       func(s *scheduler.JobSpec) { s.Env = map[string]string{"A": "\xff"} },
+		"a DEL in a value":    func(s *scheduler.JobSpec) { s.Env = map[string]string{"A": "x\x7f"} },
+		"a non-character":     func(s *scheduler.JobSpec) { s.Env = map[string]string{"A": "x￾"} },
 		"a name with a space": func(s *scheduler.JobSpec) { s.Env = map[string]string{"A B": "x"} },
 		"an empty name":       func(s *scheduler.JobSpec) { s.Env = map[string]string{"": "x"} },
 		"a digit first":       func(s *scheduler.JobSpec) { s.Env = map[string]string{"1A": "x"} },

@@ -65,46 +65,52 @@ func TestRefIsTheUnitName(t *testing.T) {
 	}
 }
 
-// The unit files are where systemd looks for the user's own: under
-// $XDG_CONFIG_HOME when the process has it as an absolute path and the site is
-// the process's own home, else under <home>/.config. A site that is not the
-// process's home (a sandbox, a test) never reaches the real configuration
-// directory, and Locate finds a job's site from either kind of path.
-func TestUnitDirHonorsXDGConfigHome(t *testing.T) {
+// The unit files are in <home>/.config/systemd/user, the directory the user
+// manager searches unless its own environment (not the shell's) sets
+// XDG_CONFIG_HOME, and Locate finds a job's site and ref from either file's
+// path, for any home, the root included.
+func TestUnitDirAndLocate(t *testing.T) {
 	t.Parallel()
-	site := scheduler.Site{UserHome: "/home/u"}
-	for _, tc := range []struct {
-		name string
-		env  map[string]string
-		site scheduler.Site
-		dir  string
-	}{
-		{"no XDG_CONFIG_HOME", map[string]string{"HOME": "/home/u"}, site, "/home/u/.config/systemd/user"},
-		{"an absolute XDG_CONFIG_HOME", map[string]string{"HOME": "/home/u", "XDG_CONFIG_HOME": "/cfg"}, site, "/cfg/systemd/user"},
-		{"a relative XDG_CONFIG_HOME", map[string]string{"HOME": "/home/u", "XDG_CONFIG_HOME": "cfg"}, site, "/home/u/.config/systemd/user"},
-		{"another home than the process's", map[string]string{"HOME": "/home/u", "XDG_CONFIG_HOME": "/cfg"}, scheduler.Site{UserHome: "/tmp/sandbox"}, "/tmp/sandbox/.config/systemd/user"},
-		{"no HOME", map[string]string{"XDG_CONFIG_HOME": "/cfg"}, site, "/home/u/.config/systemd/user"},
+	s := Scheduler{}
+	for home, dir := range map[string]string{
+		"/home/u":      "/home/u/.config/systemd/user",
+		"/tmp/sandbox": "/tmp/sandbox/.config/systemd/user",
+		"/":            "/.config/systemd/user",
 	} {
-		s := Scheduler{Getenv: func(name string) string { return tc.env[name] }}
-		if got := s.UnitDir(tc.site); got != tc.dir {
-			t.Errorf("%s: unit directory %s, want %s", tc.name, got, tc.dir)
+		site := scheduler.Site{UserHome: home}
+		if got := s.UnitDir(site); got != dir {
+			t.Errorf("UnitDir(%s) = %s, want %s", home, got, dir)
 		}
-		inst, spec := collector("/data")
-		plan, err := s.Plan(tc.site, inst, spec)
-		must(t, err)
-		for _, artifact := range plan.Artifacts {
-			path, _ := artifact.Path()
-			if gotSite, ref, err := s.Locate(path); err != nil || gotSite != tc.site || ref != plan.Ref || filepath.Dir(path) != tc.dir {
-				t.Errorf("%s: Locate(%s) = %+v, %q, %v; want %+v, %q", tc.name, path, gotSite, ref, err, tc.site, plan.Ref)
+		for _, inst := range []scheduler.Installation{{DataHome: "/data", Default: true}, {DataHome: "/other"}} {
+			_, spec := collector(inst.DataHome)
+			plan, err := s.Plan(site, inst, spec)
+			must(t, err)
+			for i, ext := range []string{".service", ".timer"} {
+				path, _ := plan.Artifacts[i].Path()
+				if path != filepath.Join(dir, string(plan.Ref)+ext) {
+					t.Errorf("artifact %d is %s, want the %s in %s", i, path, ext, dir)
+				}
+				if gotSite, ref, err := s.Locate(path); err != nil || gotSite != site || ref != plan.Ref {
+					t.Errorf("Locate(%s) = %+v, %q, %v; want %+v, %q", path, gotSite, ref, err, site, plan.Ref)
+				}
 			}
 		}
 	}
-	// A path in a directory the unit directory is not now is refused: a
-	// journal recorded while XDG_CONFIG_HOME was another is left as it is.
-	s := Scheduler{Getenv: func(name string) string { return map[string]string{"HOME": "/home/u", "XDG_CONFIG_HOME": "/cfg"}[name] }}
-	for _, path := range []string{"/home/u/.config/systemd/user/agent-archive-collector.service", "/cfg/systemd/user/other.timer", "/cfg/systemd/user/agent-archive-collector.socket", "/cfg/systemd/agent-archive-collector.timer", "/cfg/systemd/user/../user/agent-archive-collector.timer"} {
-		if _, _, err := s.Locate(path); err == nil {
-			t.Errorf("Locate(%s) accepted a path no plan writes now", path)
+	// A path no plan writes is refused.
+	for _, path := range []string{
+		"/home/u/.config/systemd/user/other.timer",
+		"/home/u/.config/systemd/user/agent-archive-collector.socket",
+		"/home/u/.config/systemd/user/agent-archive-collector-0123.service",
+		"/home/u/.config/systemd/agent-archive-collector.timer",
+		"/cfg/systemd/user/agent-archive-collector.timer",
+		"/home/u/config/systemd/user/agent-archive-collector.timer",
+		"/home/u/.config/systemd/user/../user/agent-archive-collector.timer",
+		"home/u/.config/systemd/user/agent-archive-collector.timer",
+		".config/systemd/user/agent-archive-collector.service",
+		"/home/u/.config/systemd/user/agent-archive-collector.service/x.timer",
+	} {
+		if site, ref, err := s.Locate(path); err == nil {
+			t.Errorf("Locate(%s) = %+v, %q; want a refusal", path, site, ref)
 		}
 	}
 }
@@ -178,6 +184,11 @@ func TestUnitFilesAreTheRecordedOnes(t *testing.T) {
 		for i, ext := range []string{".service", ".timer"} {
 			if path, _ := plan.Artifacts[i].Path(); !strings.HasSuffix(path, string(plan.Ref)+ext) {
 				t.Errorf("%s: artifact %d is %s, want the %s", name, i, path, ext)
+			}
+			// Private, as launchd's plists are: the environment may hold a
+			// proxy address with a password in it.
+			if mode := plan.Artifacts[i].Mode; mode != 0o600 {
+				t.Errorf("%s: the %s is mode %o, want 0600", name, ext, mode)
 			}
 			golden.Check(t, filepath.Join("testdata", "conformance", name+ext), plan.Artifacts[i].After)
 		}

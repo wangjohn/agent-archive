@@ -17,13 +17,19 @@ import (
 //   - a `%` in any value starts a specifier (%h, %t...), so it is written
 //     doubled (`%%`);
 //   - ExecStart= expands `$VAR` and `${VAR}` in its arguments, so a `$` there
-//     is written doubled (`$$`); Environment= does not expand, and the
-//     program itself is not expanded either, so a program whose path has a
-//     `$` is refused rather than written in a way that may not read back;
+//     is written doubled (`$$`); Environment= does not expand ("the `$`
+//     character has no special meaning", systemd.exec(5)). The program's
+//     path is not expanded but the argv[0] made from it is ("the program to
+//     execute may not be a variable", systemd.service(5)), so a program
+//     whose path has a `$` is refused rather than written in a way that
+//     does not run what it names;
 //   - Environment= and ExecStart= split their value into words on white
 //     space, honoring single and double quotes and C-style backslash
 //     escapes, so a word with anything but the plainest characters is
-//     written in double quotes, with `\` and `"` escaped.
+//     written in double quotes, with `\` and `"` escaped. A program's path
+//     is the exception: systemd refuses one with a quote or a backslash in
+//     it, however it is written ("Executable name contains special
+//     characters", load-fragment.c), so Plan refuses it too.
 //
 // StandardOutput=append: takes the rest of the line as a path, with only its
 // specifiers expanded, so a path is written as it is with `%` doubled.
@@ -41,6 +47,9 @@ func renderService(executable, dataHome string, environment map[string]string) (
 	}
 	if strings.Contains(executable, "$") {
 		return nil, fmt.Errorf("a systemd unit cannot run %q: a `$` in the program's path is expanded in ways that cannot be relied on", executable)
+	}
+	if strings.ContainsAny(executable, `"'\`) {
+		return nil, fmt.Errorf("a systemd unit cannot run %q: systemd refuses a program whose path has a quote or a backslash in it", executable)
 	}
 	texts := []string{executable, dataHome}
 	var env strings.Builder
@@ -163,7 +172,7 @@ func readService(data []byte) (program string, environment map[string]string, er
 	inService := false
 	for _, line := range logicalLines(string(data)) {
 		line = strings.TrimLeft(line, " \t")
-		if line == "" || line[0] == '#' || line[0] == ';' {
+		if line == "" {
 			continue
 		}
 		if line[0] == '[' {
@@ -216,11 +225,16 @@ func readService(data []byte) (program string, environment map[string]string, er
 
 // logicalLines are the lines of a unit file with each line that ends in an
 // unescaped backslash joined to the next by a space, as systemd reads them.
+// A comment line is dropped before lines are joined, so a comment between a
+// line and its continuation is skipped, not joined (systemd.syntax(7)).
 func logicalLines(text string) []string {
 	var lines []string
 	var pending string
 	for raw := range strings.SplitSeq(text, "\n") {
 		raw = strings.TrimSuffix(raw, "\r")
+		if trimmed := strings.TrimLeft(raw, " \t"); trimmed != "" && (trimmed[0] == '#' || trimmed[0] == ';') {
+			continue
+		}
 		if (len(raw)-len(strings.TrimRight(raw, `\`)))%2 == 1 {
 			pending += raw[:len(raw)-1] + " "
 			continue
