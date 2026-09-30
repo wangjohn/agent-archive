@@ -326,6 +326,18 @@ plist: @USER_HOME@/Library/LaunchAgents/@LABEL@.plist
 -- after
 (skill file)
 
+== @USER_HOME@/.claude/skills/agent-archive/SKILL.md (existed true, mode 0600, delete false)
+-- before
+(skill file)
+-- after
+(skill file)
+
+== @USER_HOME@/.agents/skills/agent-archive/SKILL.md (existed true, mode 0600, delete false)
+-- before
+(skill file)
+-- after
+(skill file)
+
 == @USER_HOME@/Library/LaunchAgents/@LABEL@.plist (existed true, mode 0600, delete false)
 -- before
 <?xml version="1.0" encoding="UTF-8"?>

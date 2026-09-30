@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -113,10 +114,12 @@ func TestRefreshAbsentAndInvalidPlistsAreDifferent(t *testing.T) {
 	if calls := r.launchd.argv(); len(calls) != 0 {
 		t.Errorf("launchctl: %v", calls)
 	}
-	// Absent, the same refresh goes ahead without it.
+	// Absent, the same refresh goes ahead without it. (How many skill files
+	// there are is the skills' business, pinned with them.)
 	must(t, os.Remove(r.plist))
 	code, stdout, stderr := r.run(t)
-	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks and 2 skill files;") || strings.Contains(stdout, "collector") {
+	first, _, _ := strings.Cut(stdout, "\n")
+	if code != 0 || stderr != "" || !regexp.MustCompile(`^refreshed Codex and Claude Code hooks and \d+ skill files;`).MatchString(first) || strings.Contains(stdout, "collector") {
 		t.Fatalf("absent: exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	if _, err := os.Stat(r.plist); !os.IsNotExist(err) {
