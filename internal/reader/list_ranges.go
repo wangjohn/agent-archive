@@ -2,7 +2,6 @@ package reader
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"sync"
 
@@ -60,16 +59,17 @@ func planRanges(known []string) []string {
 
 // listRanges lists the ranges bounds make with at most rangeConcurrency in
 // flight and joins them in range order, so the result is in key order like a
-// single listing. The first range to fail cancels the rest, and the error
-// returned is the failure of the lowest range in key order among those that
-// failed on their own (a range cancelled by another's failure is not one).
-// It returns only after every range it started has finished.
+// single listing. The first range to fail cancels the rest, and its error is
+// the one returned: errors that arrive after it, whatever they wrap, may be
+// only the echo of that cancellation. It returns only after every range it
+// started has finished.
 func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string) ([]storage.Object, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	count := len(bounds) + 1
 	results := make([][]storage.Object, count)
-	errs := make([]error, count)
+	var failed sync.Once
+	var failure error
 	slots := make(chan struct{}, rangeConcurrency)
 	var wg sync.WaitGroup
 	dispatched := 0
@@ -95,28 +95,18 @@ func listRanges(ctx context.Context, store storage.RangeLister, prefix string, b
 			defer func() { <-slots }()
 			objects, err := store.ListRange(ctx, prefix, after, through)
 			if err != nil {
-				errs[index] = err
-				cancel()
+				failed.Do(func() {
+					failure = err
+					cancel()
+				})
 				return
 			}
 			results[index] = objects
 		}()
 	}
 	wg.Wait()
-	var cancelled error
-	for _, err := range errs {
-		switch {
-		case err == nil:
-		case errors.Is(err, context.Canceled) && cancelled == nil:
-			// Possibly only the echo of another range's failure; report
-			// it only if nothing failed on its own.
-			cancelled = err
-		case !errors.Is(err, context.Canceled):
-			return nil, err
-		}
-	}
-	if cancelled != nil {
-		return nil, cancelled
+	if failure != nil {
+		return nil, failure
 	}
 	if dispatched < count {
 		// Dispatch stopped early without a range failing: the caller's

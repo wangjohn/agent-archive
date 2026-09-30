@@ -168,10 +168,22 @@ func TestS3StoreListRangeEnforcesBoundsWhenStartAfterIsIgnored(t *testing.T) {
 	}
 }
 
-func TestS3StoreListRangeRejectsAnUnsafeStart(t *testing.T) {
-	store := newPagingStore(t, &pagingS3{pageSize: 3})
-	if _, err := store.ListRange(context.Background(), "sessions", "../escape", ""); err == nil {
-		t.Fatal("ListRange accepted a start key outside the store prefix")
+// A boundary the key rules refuse is not sent as StartAfter (it could name a
+// key outside the store prefix), and the range is still enforced, so the
+// listing succeeds rather than failing on every run until the cache is
+// cleared.
+func TestS3StoreListRangeWithAnUnusableStartStillEnforcesTheRange(t *testing.T) {
+	fake := &pagingS3{keys: rangeTestKeys(6), pageSize: 4}
+	store := newPagingStore(t, fake)
+	got, err := store.ListRange(context.Background(), "sessions", "sessions/claude/k03/./x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"sessions/claude/k04", "sessions/claude/k05"}; !slices.Equal(objectKeys(got), want) {
+		t.Fatalf("ListRange = %v, want %v", objectKeys(got), want)
+	}
+	if requests := fake.requestLog(); requests[0] != "|" {
+		t.Fatalf("an unusable start key was sent as start-after: %v", requests)
 	}
 }
 

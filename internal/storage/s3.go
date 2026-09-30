@@ -311,19 +311,18 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 // through] (see RangeLister). The provider starts at after through
 // ListObjectsV2's StartAfter, and paging stops at the first page that passes
 // through. The range is also enforced here, key by key, so a provider that
-// ignored StartAfter would cost extra pages but never return a key twice
-// across ranges.
+// ignored StartAfter (or a start key it could not be given) would cost extra
+// pages but never return a key twice across ranges.
 func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through string) ([]Object, error) {
 	prefix, err := s.keyForList(relativePrefix)
 	if err != nil {
 		return nil, err
 	}
+	// A start key the prefix rules refuse (a boundary a newer release would
+	// no longer write, say) only costs the provider's head start: the range
+	// is still enforced below, key by key.
 	var start *string
-	if after != "" {
-		key, err := s.key(after)
-		if err != nil {
-			return nil, err
-		}
+	if key, err := s.key(after); after != "" && err == nil {
 		start = aws.String(key)
 	}
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start})

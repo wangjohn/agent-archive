@@ -118,9 +118,11 @@ func TestListRangesEqualsListForAnyKeysAndBoundaries(t *testing.T) {
 // many ran at once, and can hold every range until released or fail one.
 type rangeRecorder struct {
 	*storagetest.MemoryStore
-	hold    chan struct{}
-	failAt  string // the through bound of a range that fails at once
-	failErr error
+	hold      chan struct{}
+	ignoreCtx bool   // held ranges wait for hold alone, like a store that never observes cancellation
+	echoErr   error  // what a held range returns when cancelled, instead of ctx.Err()
+	failAt    string // the through bound of a range that fails at once
+	failErr   error
 
 	mu          sync.Mutex
 	ranges      [][2]string
@@ -150,10 +152,18 @@ func (s *rangeRecorder) ListRange(ctx context.Context, prefix, after, through st
 	if s.failErr != nil && through == s.failAt {
 		return nil, s.failErr
 	}
-	if s.hold != nil {
+	switch {
+	case s.hold != nil && s.ignoreCtx:
+		<-s.hold
+		// Succeed whatever happened to ctx meanwhile.
+		return s.MemoryStore.ListRange(context.WithoutCancel(ctx), prefix, after, through)
+	case s.hold != nil:
 		select {
 		case <-s.hold:
 		case <-ctx.Done():
+			if s.echoErr != nil {
+				return nil, s.echoErr
+			}
 			return nil, ctx.Err()
 		}
 	}
@@ -176,19 +186,7 @@ func TestListRangesBoundsConcurrency(t *testing.T) {
 		done <- err
 	}()
 	// Wait for the first wave to fill every slot, then release them all.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		store.mu.Lock()
-		inFlight := store.inFlight
-		store.mu.Unlock()
-		if inFlight == rangeConcurrency {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("only %d ranges in flight, want %d", inFlight, rangeConcurrency)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitInFlight(t, store, rangeConcurrency)
 	close(store.hold)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -212,6 +210,57 @@ func TestListRangesReturnsTheFailureNotTheCancellationItCaused(t *testing.T) {
 	defer store.mu.Unlock()
 	if store.inFlight != 0 {
 		t.Fatalf("%d ranges still running after listRanges returned", store.inFlight)
+	}
+}
+
+// A cancelled range can fail with an error that doesn't wrap
+// context.Canceled (a body read cut off mid-response). Arriving after the
+// real failure, it must not replace it, even from a range lower in key order.
+func TestListRangesReturnsTheFirstFailureNotALaterEcho(t *testing.T) {
+	failure := errors.New("403 forbidden")
+	bounds := boundsN(5)
+	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}),
+		echoErr: errors.New("connection reset"), failAt: bounds[4], failErr: failure}
+	if _, err := listRanges(context.Background(), store, "sessions", bounds); !errors.Is(err, failure) {
+		t.Fatalf("listRanges error = %v, want the first failure", err)
+	}
+}
+
+// waitInFlight waits until n ranges are running.
+func waitInFlight(t *testing.T, store *rangeRecorder, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		store.mu.Lock()
+		inFlight := store.inFlight
+		store.mu.Unlock()
+		if inFlight == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d ranges in flight, want %d", inFlight, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A store that ignores cancellation lets every range already started
+// succeed; the ranges never started still make the listing incomplete, so
+// it must fail rather than return part of the archive (which would also let
+// cache eviction forget sessions that still exist).
+func TestListRangesFailsWhenCancelledBeforeEveryRangeStarted(t *testing.T) {
+	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}), ignoreCtx: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := listRanges(ctx, store, "sessions", boundsN(3*rangeConcurrency))
+		done <- err
+	}()
+	waitInFlight(t, store, rangeConcurrency)
+	cancel()
+	close(store.hold)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("listRanges error = %v, want context.Canceled", err)
 	}
 }
 

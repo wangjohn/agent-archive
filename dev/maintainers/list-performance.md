@@ -37,5 +37,6 @@ archive whose index isn't ready. On R2 a listing page of 1,000 keys takes
 split into contiguous key ranges listed concurrently: at most 16 in flight,
 each about 200 of the sidecars the metadata cache knows (one page). The
 ranges cover every key whatever the boundaries, so the cache only decides
-how evenly the work is spread. With under 400 cached sidecars, or with
+how evenly the work is spread. With under 400 cached sidecars under the
+listed prefix (a `--harness` listing counts only that harness's), or with
 `--no-cache`, the scan is the single sequential listing.

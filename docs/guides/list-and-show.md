@@ -156,8 +156,9 @@ The JSON documents are described in [JSON output](../reference/json-output.md).
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
 it). Once the cache knows a few hundred sessions, it also splits a full
 listing into key ranges that are listed in parallel, so a large archive is
-listed in a fraction of the time. A session whose metadata can't be read, for example because a newer
-version wrote it, is left out with a warning on stderr; the rest are listed.
+listed in a fraction of the time. A session whose metadata can't be read,
+for example because a newer version wrote it, is left out with a warning on
+stderr; the rest are listed.
 
 `list` shows each session's `title` when metadata has one (a short preview of
 the first filtered human prompt, derived at publish time). Older sidecars

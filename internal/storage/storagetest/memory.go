@@ -146,7 +146,10 @@ func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string,
 
 // ListRange returns the objects under prefix, with the same prefix rule as
 // List, whose keys are greater than after and at most through (either bound
-// empty means unbounded), sorted by key.
+// empty means unbounded), sorted by key. It reads the map directly, so a test
+// wrapper that overrides List (to count or rewrite listings) must override
+// ListRange too: a reader lists in ranges once its metadata cache knows a few
+// hundred sidecars.
 func (s *MemoryStore) ListRange(ctx context.Context, prefix, after, through string) ([]storage.Object, error) {
 	objects, err := s.List(ctx, prefix)
 	if err != nil {
