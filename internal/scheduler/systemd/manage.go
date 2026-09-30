@@ -141,7 +141,7 @@ func (s Scheduler) probe(ctx context.Context, site scheduler.Site, ref scheduler
 	defer cancel()
 	p := probed{state: scheduler.Unknown, timerFile: s.timerPath(site, ref), serviceFile: s.servicePath(site, ref)}
 	cannotTell := func(reason, fix string) probed {
-		p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: p.timerFile, Reason: reason, Fix: fix}
+		p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: p.timerFile, Reason: reason, Fix: fix, Manual: manualStop(ref)}
 		return p
 	}
 	output, err := s.Run(ctx, "systemctl", "--version")
@@ -200,7 +200,7 @@ func (s Scheduler) judge(p probed, ref scheduler.Ref) probed {
 			fix = "Run `systemctl --user status " + names[i] + "` to see why systemd cannot load it (" + string(u.load) + ")"
 		}
 		if fix != "" {
-			p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: ours[i], Reason: reason, Fix: fix}
+			p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: ours[i], Reason: reason, Fix: fix, Manual: manualStop(ref)}
 			return p
 		}
 	}
@@ -227,6 +227,18 @@ func (s Scheduler) judge(p probed, ref scheduler.Ref) probed {
 		}
 	}
 	return p
+}
+
+// manualStop is the command that stops the job ref names by hand, from a
+// session that has the user's systemd bus, less the ownership check the manager
+// cannot be asked for here. It stops both units rather than run Unload's
+// `disable --now`: uninstall --skip-scheduler prints it after deleting the unit
+// files, and systemctl refuses to disable a unit whose file is gone ("Unit file
+// ... does not exist", so a `disable --now ... &&` stops nothing), while a stop
+// still ends the timer the manager holds. With the files gone, nothing starts
+// the job again.
+func manualStop(ref scheduler.Ref) string {
+	return "systemctl --user stop " + string(ref) + ".timer " + string(ref) + ".service"
 }
 
 // ownDropIns are the drop-ins that name u: those in a directory other than
