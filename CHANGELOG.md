@@ -35,8 +35,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). Parser version is now `0.13.0`, so existing sessions gain them on
-  the next metadata refresh.
+  paths). They arrive with parser `0.13.0`; this release ships `0.14.0`,
+  so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a
