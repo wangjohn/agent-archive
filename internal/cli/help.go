@@ -13,7 +13,7 @@ import (
 
 var commandHelp = map[string]string{
 	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
@@ -22,11 +22,12 @@ their current sources for deletion. Pause every Mac uploading to this prefix
 before apply. A versioned bucket keeps noncurrent versions and delete markers.
 `,
 	"purge plan": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
 
 Read metadata and list source objects without deleting anything. Old-filter
 mode selects only unreferenced sources whose filter version is below VERSION;
-both modes report still-current older-filter sessions separately.
+both modes report still-current older-filter sessions separately. On a
+terminal, the plan is paged through $PAGER unless --no-pager.
 `,
 	"purge apply": `Usage: agent-archive purge apply PLAN [--yes]
 
@@ -75,7 +76,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
   --r2-account ACCOUNT_ID --bucket BUCKET --r2-access-key-id KEY_ID \
   --project ~/src/app --apps codex,claude
 `,
-	"status": `Usage: agent-archive status [APP] [--verbose] [--json]
+	"status": `Usage: agent-archive status [APP] [--verbose] [--json] [--no-pager]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
@@ -86,6 +87,7 @@ session and a table of its projects.
 --verbose adds each project's progress, skill evidence, imports and
 every error, then a Details section with the codes, exact times, full
 paths and raw errors behind each line.
+On a terminal, status is paged through $PAGER unless --no-pager.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
@@ -117,8 +119,9 @@ Example: agent-archive resume
 `,
 	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--yes]
 
-Remove hooks and the background collector. Keep local evidence, settings,
-and credentials by default, so setup can restore the installation.
+Remove hooks, the /handoff skill, and the background collector. Keep local
+evidence, settings, and credentials by default, so setup can restore the
+installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
 --yes skips the confirmations; it is required without a terminal.
@@ -132,7 +135,8 @@ Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Piped or --json output is
+transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
+wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
 never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
 is inside coding agents (see the configuration reference). On a terminal
 without interactive stdin, text is paged through $PAGER unless --no-pager.
@@ -176,9 +180,11 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit. Nothing is asked when
-AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give a
-SESSION_ID.
+its transcript, Enter or b to go back, or q to quit. On a terminal, the
+summary and transcript are paged; in the default less, scroll with the mouse
+wheel, arrows, or space, search with /, and quit with q. Nothing is asked
+when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
+a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -193,8 +199,8 @@ SESSION_ID.
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
                         normalized conversation
-  --no-pager            Print a transcript directly; do not page through
-                        $PAGER
+  --no-pager            Print the summary or transcript directly; do not
+                        page through $PAGER
   --normalized          Deprecated: the same as --transcript --json
 Example: agent-archive show SESSION_ID --transcript
 `,
@@ -255,11 +261,15 @@ prints conversation content, filtered as it is for the archive: injected
 instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
-With no selector on a terminal, pick an archived session from the same
-numbered session browser as show. Without a terminal, or when
-AGENT_ARCHIVE_NONINTERACTIVE is on (automatic inside coding agents), give a
-SESSION_ID, --latest, or --file PATH. The picker lists archived sessions
-only; --latest can also find a local session that has not uploaded yet.
+With no selector on a terminal, pick a session from a numbered list of this
+Mac's sessions (including ones not yet uploaded) and archived ones, newest
+first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
+(automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
+On a terminal without --to, --output, or --format json, it then asks where
+to continue: an installed agent (default: handoff.default_to in
+config.json, else Codex for a Claude Code session and Claude Code for the
+others), or print, copy to the clipboard, or write to a file. Piped, or
+with AGENT_ARCHIVE_NONINTERACTIVE on, it prints the handoff as it always has.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -279,13 +289,37 @@ only; --latest can also find a local session that has not uploaded yet.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Launch local claude, codex, or cursor with the handoff
-                        in a private temporary file. Reads only a local session;
-                        requires the target CLI installed on this Mac
+  --to NAME             Launch local claude, codex, or cursor with the handoff.
+                        The agent reads a copy kept in the data directory for
+                        7 days (before setup, in a private temporary folder);
+                        needs the agent's CLI (claude, codex, or agent) on
+                        PATH. With no selector, hands off the Claude Code,
+                        Codex, or Cursor session it runs in, or picks one on
+                        a terminal. On a terminal the agent runs there;
+                        otherwise, or inside a coding agent, it opens in a
+                        new tmux window, or a new iTerm2, Ghostty, or
+                        Terminal tab, and the command returns. If the source
+                        session was active in the last 2 minutes in this
+                        checkout, a terminal is asked whether to continue
+                        here, cancel, or use a worktree (inside an agent it
+                        only warns)
+  --here                Run the launched agent in this terminal
+  --new-window          Open the launched agent in a new window or tab
+  --worktree            Launch in a new git worktree beside the checkout
+                        (its directory name plus -handoff- and the first 8
+                        characters of SESSION_ID), on a new branch at HEAD,
+                        with uncommitted changes and untracked (not ignored)
+                        files copied in
+  --branch NAME         With --worktree, the new branch (default: handoff/
+                        and the first 8 characters of SESSION_ID)
+  -- ARGS               Everything after -- goes to the launched agent, after
+                        any arguments set in config.json's handoff.args
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
+Example: agent-archive handoff SESSION_ID --to claude -- --model opus
+Example: agent-archive handoff SESSION_ID --to codex --worktree
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history

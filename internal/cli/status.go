@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -182,8 +184,11 @@ type statusView struct {
 	SkillEvidence            string                 `json:"skill_evidence,omitempty"`
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
-	Collector                state.Status           `json:"collector"`
-	CaptureDiagnostics       []capture.Diagnostic   `json:"capture_diagnostics,omitempty"`
+	// AgentCommands lists the in-agent command files (the /handoff skill)
+	// setup installed that are there now.
+	AgentCommands      []string             `json:"agent_commands,omitempty"`
+	Collector          state.Status         `json:"collector"`
+	CaptureDiagnostics []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -221,6 +226,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
+	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	appArg, ok := fs.parseWithArgument(args)
 	if !ok {
 		return 2
@@ -249,12 +255,21 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
+	// The style is the terminal's, not the pager buffer's.
 	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
-	if app != "" {
-		return printAppStatus(stdout, stderr, view, app, sc)
+	code := 0
+	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if app != "" {
+			code = printAppStatus(w, stderr, view, app, sc)
+			return nil
+		}
+		printStatus(w, view, sc)
+		return nil
+	}); err != nil {
+		terminal.Printf(stderr, "Cannot show archive status: %v\n", err)
+		return 1
 	}
-	printStatus(stdout, view, sc)
-	return 0
+	return code
 }
 
 // storageAccessConfirmer is what last confirmed access to the destination,
@@ -434,6 +449,9 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.Authentication.State = "stale"
 	}
 	view.Paused = cfg.Paused
+	if userHome, err := env.userHomeDir(); err == nil {
+		view.AgentCommands = agentcommands.Installed(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome())
+	}
 	for _, p := range cfg.Archive.Projects {
 		if p.Included {
 			view.Projects = append(view.Projects, p.Root)
@@ -2304,6 +2322,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	}
 	for _, app := range view.Apps {
 		printAppDetails(out, app)
+	}
+	for _, command := range view.AgentCommands {
+		terminal.Printf(out, "  /handoff:      %s\n", displayPath(command, view.userHome))
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))

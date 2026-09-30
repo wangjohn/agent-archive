@@ -98,7 +98,7 @@ and left in place.
 | `collector.log`, `collector-error.log` | cli | The background collector's output. The error log is trimmed in place to its most recent part once it grows past a limit. |
 | `collector-lock.json` | cli | Which command holds `collector.lock`, its process ID, and since when; `status` uses it to report stuck collection. |
 | `cache/` | reader | A disposable cache of metadata sidecars for `list`. Safe to delete. |
-| `handoffs/` | cli | Untrimmed handoffs, and untrimmed `show --transcript` output (`*.transcript.txt`, `*.transcript.json`), saved when output was trimmed; removed after 7 days. |
+| `handoffs/` | cli | Untrimmed handoffs, and untrimmed `show --transcript` output (`*.transcript.txt`, `*.transcript.json`), saved when output was trimmed, and the copies `handoff --to` launches agents with (one `launch-*/` folder each); removed after 7 days. |
 | `collector.lock`, `hooks.lock`, `setup.lock` | local | File locks coordinating processes. |
 
 ## What uninstall removes

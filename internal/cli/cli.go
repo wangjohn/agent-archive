@@ -34,6 +34,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -100,6 +101,11 @@ type Env struct {
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
+	// openKeys, set only by tests, stands in for stdin read a key at a time
+	// on the session browser's screens (see keyTerminal), or reports that
+	// keys cannot be read, which keeps the browser reading lines. Defaults
+	// to stdin itself when it is a terminal.
+	openKeys func(stdin io.Reader) (keyTerminal, bool)
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after
@@ -188,14 +194,42 @@ type Env struct {
 	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
 	// the file descriptor.
 	IsTerminal func(any) bool
-	// RunPager runs a pager command with stdin as its input and stdout/
-	// stderr as its output, until it exits or ctx is cancelled. list and
-	// show use it for text listings and transcripts. Defaults to `sh -c
-	// command`. Tests set it so a listing never spawns less.
-	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
-	// LaunchHandoff runs a local coding-agent CLI with a short prompt naming
-	// the private handoff file. Tests replace it to avoid starting an agent.
-	LaunchHandoff func(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error
+	// TerminalSize reports the columns and rows of the terminal out writes
+	// to, and ok=false when out is not a terminal or its size is unknown.
+	// The session browser and pickers read it before each redraw to fit
+	// the window. Defaults to asking the terminal.
+	TerminalSize func(out io.Writer) (width, height int, ok bool)
+	// RunPager runs a pager command with environment ("NAME=value") added
+	// to the process's own, stdin as its input and stdout/stderr as its
+	// output, until it exits or ctx is cancelled. list, show, status, and
+	// purge plan use it for long text. Defaults to `sh -c command`. Tests
+	// set it so a listing never spawns less.
+	RunPager func(ctx context.Context, command string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LessVersion reports the version of program (less on PATH, or a path
+	// to it), which chooses the default pager's options; known is false
+	// when it cannot be told. Defaults to running `program --version` once
+	// per process and program.
+	LessVersion func(program string) (version int, known bool)
+	// LaunchHandoff runs a destination agent attached to this terminal and
+	// waits for it to exit. Defaults to running spec.Binary with spec.Args
+	// in spec.Dir with spec.Env. Tests replace it to avoid starting an agent.
+	LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error
+	// LookPath finds a destination agent's executable. Defaults to
+	// exec.LookPath.
+	LookPath func(string) (string, error)
+	// RunGit runs `git -C dir args...` and returns its stdout, with its
+	// stderr in the error. `handoff --worktree` uses it. Defaults to the git
+	// on PATH; tests point it at temporary repositories.
+	RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)
+	// Environ is the process environment a launched agent starts from,
+	// less the calling agent's session variables. Defaults to os.Environ.
+	Environ func() []string
+	// OpenTerminal starts a launched agent in a new terminal window or tab
+	// and returns where it opened. Defaults to termlaunch.Open. Tests
+	// replace it so no window opens.
+	OpenTerminal func(termlaunch.Spec) (string, error)
+	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
+	Clipboard func([]byte) error
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.

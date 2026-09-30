@@ -30,12 +30,96 @@ agent-archive handoff SESSION_ID --output /tmp/handoff.md
 agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
 ```
 
-`--to` launches the installed local `claude`, `codex`, or `cursor-agent` CLI
-in the current directory (or `--project DIR` with `--latest`). It writes the
-filtered handoff to a private temporary file and sends the agent a short prompt
-to read it; the file is removed when the agent exits. The command reads only a
-local transcript; it never downloads a session from the archive or starts a
-remote agent. The receiving agent is told that Agent Archive exists, where to
+`--to` launches the installed local `claude`, `codex`, or Cursor `agent`
+(else `cursor-agent`) CLI in the current directory (or `--project DIR` with
+`--latest`). It writes the filtered handoff to
+`handoffs/launch-<session>-<time>-<random>/handoff.md` in the data directory (a
+private folder of its own, file mode 0600) and sends the agent a short
+prompt to read it. The file is kept so a resumed session can read it again,
+and removed after 7 days like other saved handoffs. With `--file` before setup there is no data directory, so the file
+goes to a private folder in the system's temporary directory, kept for the
+system to clear. Claude Code is given only that folder with `--add-dir`,
+since it reads outside the project only from an added directory.
+The launched agent does not inherit the calling agent's session variables
+(such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
+`CLAUDE_CODE_USE_BEDROCK`, pass through.
+
+On a terminal, the agent runs there and `handoff` returns when it exits.
+Anywhere else, such as when an agent runs `handoff --to` for you, it opens
+without asking in a new tmux window when `$TMUX` is set, else a new iTerm2,
+Ghostty, or Terminal tab (by `$TERM_PROGRAM`), else a new Terminal window,
+prints `handoff: opened codex in a new iTerm2 tab` (for example), and returns
+at once. `--here` forces this terminal (and fails without one);
+`--new-window` opens a new window even from a terminal. When no window can be
+opened (not macOS and not inside tmux), `handoff` exits 1 and prints the
+command to paste into a terminal; it never runs the agent without one.
+
+### Working in a separate checkout (`--worktree`)
+
+Two agents editing one checkout get in each other's way. `--worktree` gives
+the launched agent a checkout of its own:
+
+```sh
+agent-archive handoff SESSION_ID --to codex --worktree
+agent-archive handoff --worktree   # pick the session and agent on a terminal
+agent-archive handoff SESSION_ID --to claude --worktree --branch try-codex-fix
+```
+
+It runs `git worktree add -b handoff/<id> <repo>-handoff-<id> HEAD`, where
+`<id>` is the first 8 characters of the session ID and `<repo>-handoff-<id>`
+is a directory beside the checkout; `--branch NAME` names the branch instead.
+Your uncommitted changes and untracked files come along: the changes are
+recorded with `git stash create` and applied in the new worktree, which
+leaves your checkout and your stash list untouched, and untracked files are
+copied with their permissions (symlinks as symlinks). Changes you had staged
+arrive unstaged, except new files, which arrive staged. Ignored files, such
+as `.env` or `node_modules`, are not copied, and submodules are neither
+checked out nor carried (run `git submodule update --init` in the
+worktree). A checkout in the middle of a merge, rebase, cherry-pick, or
+revert is refused: finish or abort it first. Launched from a subdirectory, the agent starts in the same
+subdirectory of the worktree. The worktree's path and branch are printed:
+
+```text
+handoff: created worktree /Users/me/src/app-handoff-3f2a9c1e on branch handoff/3f2a9c1e (carried 2 changed and 1 untracked files)
+```
+
+An existing branch or directory of that name is an error, never reused;
+pick another branch with `--branch`, or remove the old worktree with
+`git worktree remove`. If copying your changes fails after the worktree was
+made, the worktree is left in place and the error says where. When you are
+done, merge or cherry-pick the branch and run `git worktree remove` on the
+directory.
+
+Without `--worktree`, if the session being handed off is on this Mac, was
+active in the last 2 minutes, and belongs to the checkout the agent would
+start in, a terminal asks first:
+
+```text
+The source session was active just now; continue in the same checkout? [y/N/w]
+```
+
+`y` continues, `N` (the default) cancels with nothing launched, and `w`
+creates a worktree as `--worktree` does. Without a terminal, `handoff` prints
+a warning and continues. When an agent hands off its own session with
+`--to`, it is active by definition; the note is printed once and nothing is
+asked.
+
+Arguments after `--` go to the agent (a second `--` is refused, since the
+prompt follows one), after any set for it in `config.json`
+(see [configuration](../reference/configuration.md)):
+
+```sh
+agent-archive handoff SESSION_ID --to codex -- --model o3
+```
+
+Give every option its value (`--model o3` or `--model=o3`). The prompt comes
+right after these arguments, so an option left without its value at the end
+would take the launcher's `--` (Claude Code, Codex) or the prompt itself
+(Cursor) as its value.
+
+The session is read as for any handoff: this Mac's transcript when there is
+one, else the archive's copy. It never starts a remote agent. The receiving
+agent is told that Agent Archive exists, where to
 find its executable, and how to ask for more context.
 `agent-archive show SESSION_ID --transcript` reads the published archive copy,
 which may lag the local transcript or not exist yet.
@@ -44,19 +128,77 @@ current, complete **filtered** local record. Neither command exposes
 unfiltered raw transcript data. The handoff uses the usual 120,000-byte
 default budget; `--max-bytes 0` includes all filtered content.
 
+## Where it goes
+
+On a terminal, with no `--to`, `--output`, `--format json`, or `--no-preamble`, `handoff` asks
+where to continue once the session is chosen:
+
+```text
+Continue in:
+  1) Codex (default)
+  2) Claude Code
+  p) print
+  c) copy to the clipboard
+  w) write to a file
+  q) quit
+Enter 1-2, p, c, w, or q [1]:
+```
+
+Only agents whose CLI is on `PATH` are numbered. Enter takes the default:
+`handoff.default_to` for the session's harness in `config.json` when that
+agent is installed, else Codex for a Claude Code session and Claude Code for
+a Codex or Cursor one, else the first listed. A number (or an agent's name)
+launches it as `--to` would, in this terminal unless `--new-window` is given.
+`p` prints the handoff, through the pager when it is longer than the screen;
+`c` copies it with `pbcopy`; `w` asks for a file name (default
+`handoff-<short id>.md` in the `--project` or current directory; `~/` is
+your home directory), writes it with mode 0600, and asks before replacing a
+file. A write that fails is reported and asked again; Enter or `q` then
+gives up. With no agent installed, Enter prints.
+
+Piped or redirected output never asks, so
+`codex "$(agent-archive handoff --latest)"` and `--output` work byte for byte
+as before.
+
+## From inside an agent: /handoff
+
+Setup installs a `handoff` skill for the apps it sets up:
+`~/.claude/skills/handoff/SKILL.md` (in `$CLAUDE_CONFIG_DIR` when set) for
+Claude Code, and `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor.
+In Claude Code, `/handoff codex` runs `agent-archive handoff --to codex` for
+the current session; in Codex, ask for `$handoff` (or pick it from `/skills`)
+and name the agent. With no agent named, the skill picks another agent than
+the one you are in. Each file carries a marker line: setup replaces and
+uninstall removes only a file with it, so delete that line to keep an edited
+copy. A file already at that path without it is left alone, and setup says
+so. An installation with `AGENT_ARCHIVE_HOME` set runs the command with it,
+and leaves the skill of another installation sharing the same home folder
+alone. `agent-archive status --verbose` lists the installed files.
+
 ## Where the session comes from
 
-With no session selector, `handoff` opens the same numbered session picker as
-`show` when stdin and stdout are terminals. The picker lists archived
-sessions; `--harness` narrows the list. Quit with `q` without producing a
-handoff. In a script or pipeline, pass a session ID, `--latest`, or `--file`.
+With no session selector, `handoff` opens a numbered session picker when
+stdin and stdout are terminals. It lists this Mac's sessions, including ones
+marked `not yet uploaded`, together with archived ones, most recently active
+first; a session that is both appears once. Sessions with no prompt yet are
+left out, and `--harness` narrows the list. When the archive cannot be read
+(offline, say), the picker lists this Mac's sessions and says why archived
+ones are missing. Quit with `q` without producing a handoff. In a script or
+pipeline, pass a session ID, `--latest`, or `--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
 prompts off, and `handoff` without a selector is a usage error (exit 2)
 instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
 [configuration](../reference/configuration.md#environment-variables).
-Use `--latest` to hand off a local session that has not uploaded yet.
+
+With `--to` and no selector, run from inside an agent, `handoff` hands off
+the session it is running in without asking: the one Claude Code names in
+`CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
+session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
+session for the current directory, as `--latest --harness cursor` would.
+That is not a prompt, so it works while prompts are off. Otherwise a terminal
+gets the picker, and anything else is told to name a session.
 
 A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is
