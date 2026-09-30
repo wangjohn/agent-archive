@@ -297,6 +297,33 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	}
 }
 
+// With several skills registered, the review reports each skill's files
+// under its own name: what was installed, and what was left alone.
+func TestSetupReportsEachSkillItsOwnFiles(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	skills := []agentskills.Skill{{Name: "handoff", Summary: "continues a session in another agent"}, {Name: "second"}}
+	file := func(skill, name, content string) agentskills.File {
+		path := filepath.Join(userHome, ".agents", "skills", skill, name)
+		must(t, os.MkdirAll(filepath.Dir(path), 0700))
+		must(t, os.WriteFile(path, []byte("on disk\n"), 0600))
+		return agentskills.File{Skill: skill, Path: path, Content: []byte(content)}
+	}
+	files := []agentskills.File{
+		file("handoff", "SKILL.md", "on disk\n"),
+		file("second", "SKILL.md", "on disk\n"),
+		file("second", "other.md", "not what is on disk\n"),
+	}
+	var out bytes.Buffer
+	printSkillFiles(newPrompter(strings.NewReader(""), &out), skills, files, userHome)
+	want := "Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md\n" +
+		"Left ~/.agents/skills/second/other.md as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /second is not installed there.\n" +
+		"Installed /second: ~/.agents/skills/second/SKILL.md\n"
+	if out.String() != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
 func readText(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

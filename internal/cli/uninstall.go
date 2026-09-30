@@ -395,7 +395,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 
 // planUninstallFiles is planUninstallHooks for the hook files setup
 // installed into (files) and their legacy paths, followed by removing the
-// /handoff command files setup wrote. A file at one of their paths that is
+// agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
 func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
 	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {

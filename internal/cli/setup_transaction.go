@@ -354,7 +354,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 			changes = append(changes, removal)
 		}
 	}
-	// The in-agent /handoff command, for the apps chosen. Only a file setup
+	// The agent skills (/handoff), for the apps chosen. Only a file setup
 	// wrote is replaced or removed (see agentskills.PlanInstall).
 	commands, _, err := agentskills.PlanInstall(userHome, claudeConfigDir(files), next.Harnesses, executable, env.installation(home, userHome).commandDataHome(), claudeConfigDir(previousFiles))
 	if err != nil {

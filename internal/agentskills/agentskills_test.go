@@ -646,3 +646,71 @@ func TestExportedFunctionsUseTheRegistry(t *testing.T) {
 		t.Errorf("Stale after a move = %v", got)
 	}
 }
+
+// A file replaced or removed keeps its permissions in the change, so that a
+// rollback puts the file back as it was, mode and all.
+func TestChangesCarryTheFilesPermissions(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "skills", "handoff", "SKILL.md")
+	write(t, path, "older wording\n"+marker+"\n")
+	must(t, os.Chmod(path, 0640))
+	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 1 || changes[0].Mode != 0640 || !changes[0].Existed {
+		t.Fatalf("replacement = %+v", changes)
+	}
+	removals, _, err := PlanRemoval(home, claudeDir(home), "")
+	must(t, err)
+	if len(removals) != 1 || removals[0].Mode != 0640 || !removals[0].Delete {
+		t.Fatalf("removal = %+v", removals)
+	}
+	// A new file is private.
+	fresh := t.TempDir()
+	changes, _, err = PlanInstall(fresh, claudeDir(fresh), []string{"claude"}, exe, "", claudeDir(fresh))
+	must(t, err)
+	if len(changes) != 1 || changes[0].Mode != 0600 {
+		t.Fatalf("new file = %+v", changes)
+	}
+}
+
+// When Claude Code's configuration directory moved since setup last ran,
+// the file in the old one goes, and the new one gets its own.
+func TestPlanInstallRemovesTheFileInThePreviousClaudeDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	previous, current := filepath.Join(home, "old-claude"), filepath.Join(home, "new-claude")
+	changes, _, err := PlanInstall(home, previous, []string{"claude"}, exe, "", previous)
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	changes, _, err = PlanInstall(home, current, []string{"claude"}, exe, "", previous)
+	must(t, err)
+	var written, deleted []string
+	for _, c := range changes {
+		if c.Delete {
+			deleted = append(deleted, c.Path)
+		} else {
+			written = append(written, c.Path)
+		}
+	}
+	if !reflect.DeepEqual(written, []string{filepath.Join(current, "skills", "handoff", "SKILL.md")}) || !reflect.DeepEqual(deleted, []string{filepath.Join(previous, "skills", "handoff", "SKILL.md")}) {
+		t.Fatalf("written=%v deleted=%v", written, deleted)
+	}
+}
+
+// The marker is a line of its own: a file that only mentions it (quotes it
+// in a sentence) is the person's.
+func TestAFileThatOnlyQuotesTheMarkerIsNotSetups(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "skills", "handoff", "SKILL.md")
+	write(t, path, "My own skill. Setup's marker line is: "+marker+" (I removed it).\n")
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 0 || !reflect.DeepEqual(foreign, []string{path}) {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
+	}
+	if got := Installed(home, claudeDir(home), ""); len(got) != 0 {
+		t.Fatalf("Installed = %v", got)
+	}
+}

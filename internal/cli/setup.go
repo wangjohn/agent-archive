@@ -650,8 +650,13 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 // agentskills.Registry) where setup installed it, and names each path it
 // left alone because it is not setup's.
 func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
-	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
-	for _, skill := range agentskills.Registry {
+	printSkillFiles(p, agentskills.Registry, agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome), userHome)
+}
+
+// printSkillFiles is printAgentSkills for the files of skills, each one
+// reported under its own skill.
+func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskills.File, userHome string) {
+	for _, skill := range skills {
 		var installed []string
 		for _, f := range files {
 			if f.Skill != skill.Name {
