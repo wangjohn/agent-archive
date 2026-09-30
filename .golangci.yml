@@ -207,6 +207,7 @@ linters:
             - "!$test"
             - "!**/internal/cli/*.go"
             - "!**/internal/cursorstore/*.go"
+            - "!**/internal/gitremote/*.go"
             - "!**/internal/scheduler/host/*.go"
             - "!**/internal/termlaunch/*.go"
             - "!**/internal/testutil/**"

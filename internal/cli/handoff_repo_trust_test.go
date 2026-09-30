@@ -167,14 +167,14 @@ func editRegistration(t *testing.T, f handoffFixture, id string, edit func(map[s
 	must(t, os.WriteFile(path, data, 0o600))
 }
 
-// countingStore counts reads of anything but metadata sidecars: a session's
+// sourceCountingStore counts reads of anything but metadata sidecars: a session's
 // source, the body of a handoff.
-type countingStore struct {
+type sourceCountingStore struct {
 	storage.ObjectStore
 	bodies atomic.Int32
 }
 
-func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
+func (s *sourceCountingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if !strings.HasSuffix(key, "/metadata.json") {
 		s.bodies.Add(1)
 	}
@@ -343,7 +343,7 @@ func TestHandoffRepositoryMatchReadsNoSourceBeforeConfirmation(t *testing.T) {
 			t.Parallel()
 			f := newRepoFixture(t, "codex", handoffTranscript)
 			otherMachine(t, &f, archive.RepoKey(widgetOrigin))
-			store := &countingStore{ObjectStore: f.mem}
+			store := &sourceCountingStore{ObjectStore: f.mem}
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 			var out, errOut bytes.Buffer
 			stdin := strings.NewReader(tc.answer)
