@@ -1123,14 +1123,14 @@ func chooseInstallationStep(view *statusView, background statusBackground) {
 			break
 		}
 	}
-	if !setupjournal.JobActive(view.Background) {
+	if !jobActive(scheduler.JobState(view.Background)) {
 		view.State = "Needs attention"
 		view.problem = "The background collector isn't running"
 		if view.Background == "unknown" {
 			view.problem = "The background collector couldn't be checked"
 		}
 		view.Next = "Run agent-archive setup to restore the background collector."
-		if view.Background == setupjournal.JobAnotherInstallation {
+		if view.Background == string(scheduler.AnotherInstallation) {
 			// setup refuses to replace that job, so it is not the way out.
 			view.problem = "Another installation's collector has this installation's label"
 			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's %s label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", background.words.Manager, background.ref)
@@ -2085,11 +2085,11 @@ func (sc statusScreen) backgroundRow(view statusView) statusRow {
 	switch {
 	case view.Background == backgroundBroken:
 		return statusRow{mark: s.failMark(), cells: []string{"Background collector is broken"}, detail: "the program it runs is gone or can't be run"}
-	case view.Background == setupjournal.JobAnotherInstallation:
+	case view.Background == string(scheduler.AnotherInstallation):
 		return statusRow{mark: s.warnMark(), cells: []string{"Background collector belongs to another installation"}}
 	case view.Background == "unknown":
 		return statusRow{mark: s.warnMark(), cells: []string{"Background collector state unknown"}, detail: "launchctl couldn't say"}
-	case !setupjournal.JobActive(view.Background):
+	case !jobActive(scheduler.JobState(view.Background)):
 		return statusRow{mark: s.warnMark(), cells: []string{"Background collector isn't running"}}
 	case view.Paused:
 		return statusRow{mark: sc.info(), cells: []string{"Background collector paused"}, detail: scan}

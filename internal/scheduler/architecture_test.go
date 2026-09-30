@@ -35,19 +35,14 @@ func TestSchedulerImportBoundary(t *testing.T) {
 }
 
 // adapterImporters are the packages that may import an adapter
-// (internal/scheduler/launchd, and the ones after it): host, which chooses
-// one for the system, and cli, for the launchd vocabulary the setup flows
-// still speak (plist labels, the plist codec, its paths). The second entry
-// goes when 5a-3 of dev/proposals/platform-abstraction.md moves that history
-// behind the adapter; a package that no longer imports one fails the test, so
-// the list only shrinks.
+// (internal/scheduler/launchd, and the ones after it): host, which chooses one
+// for the system, and nothing else. Everything that drives a scheduler names
+// the port (internal/scheduler) and is handed the adapter host chose.
 var adapterImporters = []string{
-	modulePath + "internal/cli",
 	hostPath,
 }
 
-// Only host imports the adapters, and cli for the launchd vocabulary it has
-// not yet moved behind the port. An adapter imports no other adapter.
+// Only host imports the adapters, and an adapter imports no other adapter.
 func TestOnlyHostImportsAdapters(t *testing.T) {
 	t.Parallel()
 	module := importgraph.ModuleImports(t)
@@ -60,7 +55,7 @@ func TestOnlyHostImportsAdapters(t *testing.T) {
 		for _, importer := range importgraph.Importers(module, adapter) {
 			seen[importer] = true
 			if !slices.Contains(adapterImporters, importer) && !slices.Contains(adapters, importer) {
-				t.Errorf("%s imports the adapter %s; only host does (and cli, for now)", importer, adapter)
+				t.Errorf("%s imports the adapter %s; only host does", importer, adapter)
 			}
 			if slices.Contains(adapters, importer) {
 				t.Errorf("the adapter %s imports the adapter %s", importer, adapter)

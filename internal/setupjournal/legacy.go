@@ -15,6 +15,11 @@ import (
 type LegacyJob struct {
 	Change    hooks.Change `json:"change"`
 	WasLoaded bool         `json:"was_loaded"`
+	// Backend and JobRef say which scheduler runs the job and what it calls
+	// it, as Journal's do for the collector; both are optional, and absent
+	// means DefaultBackend and the job Change.Path names.
+	Backend string `json:"backend,omitempty"`
+	JobRef  string `json:"job_ref,omitempty"`
 }
 
 // RetireeJobs is the journal's record of the jobs setup retires: the
@@ -31,7 +36,7 @@ func RetireeJobs(retirees []scheduler.Retiree) (legacy *LegacyJob, relabeled []*
 		if !ok {
 			return nil, nil, fmt.Errorf("cannot record the %s job %s: %s is not a file", r.Backend, r.Ref, r.Artifacts[0].ID)
 		}
-		job := &LegacyJob{Change: hooks.Change{Path: path, Before: r.Artifacts[0].After, Existed: true, Mode: r.Artifacts[0].Mode}, WasLoaded: r.WasLoaded}
+		job := &LegacyJob{Change: hooks.Change{Path: path, Before: r.Artifacts[0].After, Existed: true, Mode: r.Artifacts[0].Mode}, WasLoaded: r.WasLoaded, Backend: r.Backend, JobRef: string(r.Ref)}
 		if r.Alias == scheduler.Prototype && legacy == nil {
 			legacy = job
 			continue
@@ -41,7 +46,7 @@ func RetireeJobs(retirees []scheduler.Retiree) (legacy *LegacyJob, relabeled []*
 	return legacy, relabeled, nil
 }
 
-func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
+func retireLegacyJob(job *LegacyJob, backends Backends) error {
 	if job == nil {
 		return nil
 	}
@@ -53,7 +58,7 @@ func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
 		return fmt.Errorf("legacy upload job changed during setup; retry")
 	}
 	if job.WasLoaded {
-		if err := launchd.Unload(job.Change.Path); err != nil {
+		if err := backends.target(job.Backend, job.JobRef, job.Change.Path).unload(); err != nil {
 			return err
 		}
 	}
@@ -64,7 +69,7 @@ func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
 // a collector an earlier release installed under another label. name
 // says which in errors, and home is the data directory whose interrupted
 // setup is being recovered.
-func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd) error {
+func restoreLegacyJob(home string, job *LegacyJob, name string, backends Backends) error {
 	if job == nil {
 		return nil
 	}
@@ -77,12 +82,11 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd)
 		}
 	}
 	if job.WasLoaded {
-		state := launchd.JobState(job.Change.Path)
-		//lint:ignore LV1001 Launchd.JobState reports launchd states as plain strings, and tests stub it with string-returning funcs
-		switch state {
-		case "unknown":
-			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
-		case JobAnotherInstallation, "loaded", "running":
+		target := backends.target(job.Backend, job.JobRef, job.Change.Path)
+		switch target.state() {
+		case scheduler.Unknown:
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to %s and rerun setup", name, target.tool())}
+		case scheduler.AnotherInstallation, scheduler.Loaded, scheduler.Running:
 			// Running already; or launchd runs the label from another
 			// installation's plist now, a job that is not this one's and
 			// that launchd refuses to bootstrap over, so the plist is back
@@ -90,9 +94,9 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd)
 			// Stopping recovery there would only keep the record until
 			// --abandon-recovery, with the jobs after this one not put
 			// back; setup, run again, plans from what launchd runs then.
-		default:
-			if err := launchd.Load(job.Change.Path); err != nil {
-				return launchctlBlocked(home, "restart the "+name, err)
+		case scheduler.Missing:
+			if err := target.load(); err != nil {
+				return target.blocked(home, "restart the "+name, err)
 			}
 		}
 	}
