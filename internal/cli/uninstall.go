@@ -19,7 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -219,18 +219,20 @@ func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, pr
 // kept, and their jobs are left running.
 func stopCollectors(plists []string, out io.Writer, userHome string, env Env) (kept map[string]bool, err error) {
 	kept = map[string]bool{}
+	words := env.scheduler().Words()
 	for _, plist := range plists {
-		state := env.jobState(userHome, plist)
-		if state == "unknown" {
-			return nil, fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+		ref := jobRef(plist)
+		state := env.jobStatus(userHome, ref).State
+		if state == scheduler.Unknown {
+			return nil, fmt.Errorf("cannot determine background job state; restore access to %s and retry", words.Tool)
 		}
-		if state == setupjournal.JobAnotherInstallation {
-			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchd.Label(plist), plist)
+		if state == scheduler.AnotherInstallation {
+			terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, plist)
 			kept[plist] = true
 			continue
 		}
-		if setupjournal.JobActive(state) {
-			if err = env.unloadJob(userHome, plist); err != nil {
+		if jobActive(state) {
+			if err = env.unloadJob(userHome, ref); err != nil {
 				return nil, fmt.Errorf("stop collector: %w", err)
 			}
 		}
