@@ -1,0 +1,13 @@
+Id=@REF@.timer
+LoadState=masked
+ActiveState=failed
+SubState=failed
+FragmentPath=/home/testuser/.config/systemd/user.control/@REF@.timer
+DropInPaths=
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+FragmentPath=@SERVICE@
+DropInPaths=

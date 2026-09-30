@@ -163,10 +163,14 @@ jobs:
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
       # remove each as it gains a caller, and the exception once none is left).
+      # internal/scheduler/systemd is the Linux scheduler adapter, which no
+      # production code constructs yet (5b-1 adds the package; 5b-2 has
+      # internal/scheduler/host choose it on Linux): the whole package is
+      # excepted until then. Remove that exception in 5b-2, when host reaches it.
       - name: No unreachable production code
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
-          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
+          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/scheduler/systemd/[a-z_]+\.go:[0-9]+:[0-9]+: unreachable func: |^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.

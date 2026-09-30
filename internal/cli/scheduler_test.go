@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +13,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
+
+// jobRef is the job the plist at path defines, as launchd names it.
+func jobRef(plist string) scheduler.Ref { return scheduler.Ref(launchd.Label(plist)) }
 
 // launchd finds a job's definition from its ref and the user home
 // alone, so every plist a command names (this installation's own, an earlier
@@ -33,7 +35,7 @@ func TestLaunchdFindsEveryPlistFromRefAndSite(t *testing.T) {
 		t.Fatalf("previousCollectorPlists = %q, want %q", got, earlier)
 	}
 	site := scheduler.Site{UserHome: userHome}
-	prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+	prototype := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 	for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
 		if got := launchd.PlistPath(site, jobRef(plist)); got != plist {
 			t.Errorf("the job of %s is found at %s", plist, got)
@@ -80,129 +82,41 @@ func TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes(t *testing.T) {
 	}
 }
 
-// setupjournal names jobs by plist path; envLaunchd reads each job's ref off
-// the path and asks the scheduler about it at the home the plist is in, which
-// is not always the current user's (see
-// TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes).
-func TestEnvLaunchdNamesJobsByRefAtThePlistsHome(t *testing.T) {
-	t.Parallel()
-	sched := &siteRecorder{fakeScheduler: newFakeScheduler(t, "loaded")}
-	launchd := Env{Scheduler: sched}.launchd()
-	sandbox, account := filepath.Join("sandbox", "me"), "/Users/me"
-	plist := filepath.Join(sandbox, "Library", "LaunchAgents", "com.agent-archive.collector.plist")
-	other := filepath.Join(account, "Library", "LaunchAgents", "com.agent-archive.collector.0123456789ab.plist")
-	if got := launchd.JobState(plist); got != "loaded" {
-		t.Errorf("JobState = %q", got)
-	}
-	must(t, launchd.Unload(plist))
-	if got := launchd.JobState(plist); got != "missing" {
-		t.Errorf("JobState after Unload = %q", got)
-	}
-	must(t, launchd.Load(plist))
-	must(t, launchd.Unload(other))
-	want := []string{"state com.agent-archive.collector", "unload com.agent-archive.collector", "state com.agent-archive.collector", "load com.agent-archive.collector", "unload com.agent-archive.collector.0123456789ab"}
-	if got := sched.all(); !slices.Equal(got, want) {
-		t.Errorf("scheduler calls %q, want %q", got, want)
-	}
-	if want := []string{sandbox, sandbox, sandbox, sandbox, account}; !slices.Equal(sched.sites, want) {
-		t.Errorf("scheduler sites %q, want %q", sched.sites, want)
-	}
-	if got := sched.state("com.agent-archive.collector"); got != "loaded" {
-		t.Errorf("state after Load = %q", got)
-	}
-}
-
-// A plist that is not <home>/Library/LaunchAgents/<label>.plist names no job
-// a ref and site give back, so envLaunchd asks the scheduler nothing about it
-// rather than address another plist: its state is unknown, which
-// setupjournal changes nothing for, and loading or stopping it fails.
-func TestEnvLaunchdRefusesAPlistNoRefAndSiteName(t *testing.T) {
+// setupjournal drives the scheduler by name: the one this system has, and no
+// other. A journal that names another backend is refused, so its jobs are
+// never stopped or started through the wrong one.
+func TestBackendsResolveTheSystemsOwnScheduler(t *testing.T) {
 	t.Parallel()
 	sched := newFakeScheduler(t, "loaded")
-	launchd := Env{Scheduler: sched}.launchd()
-	for _, plist := range []string{
-		"/synthetic/job",
-		"/Users/me/Library/LaunchDaemons/com.agent-archive.collector.plist",
-		"/Users/me/Library/LaunchAgents/com.agent-archive.collector.PLIST",
-		"/Users/me/Library/LaunchAgents/../LaunchAgents/com.agent-archive.collector.plist",
-	} {
-		if got := launchd.JobState(plist); got != "unknown" {
-			t.Errorf("JobState(%s) = %q, want unknown", plist, got)
-		}
-		if err := launchd.Load(plist); err == nil || !strings.Contains(err.Error(), plist) {
-			t.Errorf("Load(%s) = %v", plist, err)
-		}
-		if err := launchd.Unload(plist); err == nil || !strings.Contains(err.Error(), plist) {
-			t.Errorf("Unload(%s) = %v", plist, err)
-		}
+	backends := Env{Scheduler: sched}.backends()
+	got, err := backends(setupjournal.DefaultBackend)
+	if err != nil || got != scheduler.Scheduler(sched) {
+		t.Errorf("backends(%q) = %v, %v; want the Env's scheduler", setupjournal.DefaultBackend, got, err)
 	}
-	if got := sched.all(); len(got) != 0 {
-		t.Errorf("the scheduler was asked %q", got)
+	if got, err = backends("systemd"); err == nil || got != nil || !strings.Contains(err.Error(), "systemd") || !strings.Contains(err.Error(), sched.Name()) {
+		t.Errorf("backends(systemd) = %v, %v; want a refusal naming both", got, err)
+	}
+	if len(sched.all()) != 0 {
+		t.Errorf("resolving a backend asked the scheduler %q", sched.all())
 	}
 }
 
-// A setup plans with the user home (Env.jobState) and commits and recovers
-// with the plist its journal records (envLaunchd), so both must name every
-// plist a release journals as the same job at the same site, however $HOME
-// is spelled; the refusal above never reaches one of them.
+// A setup plans with the user home (Env.jobStatus) and commits and recovers
+// with the definition its journal records (Locate), so both must name every
+// plist a release journals as the same job at the same site, however $HOME is
+// spelled.
 func TestEveryJournaledPlistIsOneJobAtOneSite(t *testing.T) {
 	t.Parallel()
 	for _, userHome := range []string{"/Users/me", "/Users/me/", "/Users/me//", "/Users/./me/../me", "/", "me", "./me/", "."} {
-		sched := &siteRecorder{fakeScheduler: newFakeScheduler(t, "loaded")}
-		env := Env{Scheduler: sched, AccountHome: func() (string, error) { return "/Users/account", nil }}
+		env := Env{Scheduler: newFakeScheduler(t, "loaded"), AccountHome: func() (string, error) { return "/Users/account", nil }}
 		in := env.installation("/Users/me/archive", userHome)
 		earlier := filepath.Join(userHome, "Library", "LaunchAgents", launchd.CollectorLabel("/Users/me/Archive", "")+".plist")
-		prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+		prototype := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 		for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
-			sched.sites = nil
-			sched.forget()
-			if got := env.jobState(userHome, plist); got != "loaded" {
-				t.Errorf("$HOME %q: jobState(%s) = %q", userHome, plist, got)
-			}
-			if got := env.launchd().JobState(plist); got != "loaded" {
-				t.Errorf("$HOME %q: the journal's JobState(%s) = %q", userHome, plist, got)
-			}
-			must(t, env.unloadJob(userHome, plist))
-			must(t, env.launchd().Unload(plist))
-			ref := string(jobRef(plist))
-			if want := []string{"state " + ref, "state " + ref, "unload " + ref, "unload " + ref}; !slices.Equal(sched.all(), want) {
-				t.Errorf("$HOME %q: scheduler calls %q, want %q", userHome, sched.all(), want)
-			}
-			if !slices.Equal(sched.sites, slices.Repeat(sched.sites[:1], len(sched.sites))) {
-				t.Errorf("$HOME %q: %s is addressed at sites %q", userHome, plist, sched.sites)
+			site, ref, err := env.scheduler().Locate(plist)
+			if err != nil || site != userSite(userHome) || ref != jobRef(plist) {
+				t.Errorf("$HOME %q: %s is the job %s at %+v (%v); a setup plans it at %+v", userHome, plist, ref, site, err, userSite(userHome))
 			}
 		}
-	}
-}
-
-// siteRecorder is a fakeScheduler that also records the user home of each
-// call's site, in order.
-type siteRecorder struct {
-	*fakeScheduler
-	sites []string
-}
-
-func (s *siteRecorder) JobState(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.JobState {
-	s.sites = append(s.sites, site.UserHome)
-	return s.fakeScheduler.JobState(ctx, site, ref)
-}
-
-func (s *siteRecorder) Load(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {
-	s.sites = append(s.sites, site.UserHome)
-	return s.fakeScheduler.Load(ctx, site, ref)
-}
-
-func (s *siteRecorder) Unload(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {
-	s.sites = append(s.sites, site.UserHome)
-	return s.fakeScheduler.Unload(ctx, site, ref)
-}
-
-// setupjournal names the state of a job launchd loaded from another plist
-// with its own constant, and the commands compare states as strings: it must
-// be the scheduler's word for it.
-func TestTheJournalSpeaksTheSchedulersStates(t *testing.T) {
-	t.Parallel()
-	if setupjournal.JobAnotherInstallation != string(scheduler.AnotherInstallation) {
-		t.Errorf("setupjournal.JobAnotherInstallation = %q, scheduler.AnotherInstallation = %q", setupjournal.JobAnotherInstallation, scheduler.AnotherInstallation)
 	}
 }

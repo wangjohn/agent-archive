@@ -10,6 +10,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -31,7 +32,7 @@ func New(system platform.OS, run scheduler.Runner) scheduler.Scheduler {
 	if system == platform.Darwin {
 		return launchd.Scheduler{Run: run}
 	}
-	return unsupported{system}
+	return unsupported{Scheduler: launchd.Scheduler{Run: noManager}, system: system}
 }
 
 // waitDelay is how long Exec waits for a program's output after its context
@@ -50,11 +51,19 @@ func Exec(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// unsupported is the scheduler of a system with no adapter yet.
-type unsupported struct{ system platform.OS }
+// unsupported is the scheduler of a system with no adapter yet. It defines
+// jobs and reads definitions in launchd's vocabulary, as every command did
+// before the port had a second adapter, so a system without one says what it
+// always has; it can ask a manager nothing (Inspect: unknown) and change
+// nothing (Load, Unload: refused).
+type unsupported struct {
+	launchd.Scheduler
+	system platform.OS
+}
 
-func (unsupported) JobState(context.Context, scheduler.Site, scheduler.Ref) scheduler.JobState {
-	return scheduler.Unknown
+// noManager is the Runner of a system with no scheduler: nothing to run.
+func noManager(context.Context, string, ...string) ([]byte, error) {
+	return nil, errors.New("no scheduler for this system")
 }
 
 func (u unsupported) Load(context.Context, scheduler.Site, scheduler.Ref) error { return u.refuse() }

@@ -1,15 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // installation locates one data directory's integrations: the hook command
@@ -20,10 +20,13 @@ type installation struct {
 	// accountHome is the account's own home directory from the user
 	// database, which a sandbox that only overrides $HOME does not change.
 	accountHome string
+	// sched is the scheduler that names this installation's job, made when
+	// asked (making one runs nothing, but most callers never need it).
+	sched func() scheduler.Scheduler
 }
 
 func (e Env) installation(home, userHome string) installation {
-	return installation{home: home, userHome: userHome, accountHome: e.accountHome()}
+	return installation{home: home, userHome: userHome, accountHome: e.accountHome(), sched: e.scheduler}
 }
 
 // defaultDataHome is the data directory of the account's own default
@@ -118,83 +121,23 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// label is the background collector's launchd label (see
-// launchd.CollectorLabel): the default label only for the default
-// installation.
-func (in installation) label() string {
-	if in.isDefault() {
-		return launchd.LaunchLabel
-	}
-	return launchd.CollectorLabel(local.CanonicalPath(in.home), "")
+// schedulerInstallation is the identity the scheduler derives this
+// installation's job from.
+func (in installation) schedulerInstallation() scheduler.Installation {
+	return scheduler.Installation{DataHome: local.CanonicalPath(in.home), Default: in.isDefault()}
 }
 
-// collectorPlist is the LaunchAgent path of the background collector; its
-// file name is its label.
-func (in installation) collectorPlist() string {
-	return filepath.Join(in.userHome, "Library", "LaunchAgents", in.label()+".plist")
-}
+// ref is the background collector's job: the scheduler names it from the
+// installation (launchd's label is the default one only for the default
+// installation).
+func (in installation) ref() scheduler.Ref { return in.sched().Ref(in.schedulerInstallation()) }
 
-// previousCollectorPlists are the LaunchAgents earlier releases installed
-// for this data directory under labels other than its own: every collector
-// plist (a label launchd.CollectorLabel can produce) that runs the collector
-// for this data directory. Earlier releases used two other labels. The
-// default one, which releases before labels were derived from the directory
-// gave a non-default data directory. And the label derived from the
-// directory as spelled (its symlinks resolved but not its case), which
-// releases before CanonicalPath gave a directory spelled in another case
-// than it is listed in, the default directory included; setup run with two
-// such spellings left one job for each. A plist for any other directory is
-// never returned, so another installation's is never touched, and stopping
-// the job one defines still needs launchd to have loaded it from that very
-// file (launchd.Scheduler.Unload).
-func (in installation) previousCollectorPlists() []string {
-	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	own := in.label()
-	var found []string
-	for _, entry := range entries {
-		label, ok := strings.CutSuffix(entry.Name(), ".plist")
-		if !ok || label == own || !isCollectorLabel(label) {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		dataHome, err := launchd.LaunchAgentDataHome(data)
-		if err != nil || dataHome == "" || !local.SameLocation(dataHome, in.home) {
-			continue
-		}
-		found = append(found, path)
-	}
-	return found
-}
-
-// isCollectorLabel reports whether label is one launchd.CollectorLabel
-// produces: the default label, or it followed by 12 hex digits.
-func isCollectorLabel(label string) bool {
-	if label == launchd.LaunchLabel {
-		return true
-	}
-	suffix, ok := strings.CutPrefix(label, launchd.LaunchLabel+".")
-	return ok && len(suffix) == 12 && strings.Trim(suffix, "0123456789abcdef") == ""
-}
-
-// installedCollectorPlist is the LaunchAgent status reports on: the one for
-// this installation's own label, or else one an earlier release installed
-// for it under another label.
-func (in installation) installedCollectorPlist() string {
-	current := in.collectorPlist()
-	if _, err := os.Stat(current); err != nil {
-		if previous := in.previousCollectorPlists(); len(previous) > 0 {
-			return previous[0]
-		}
-	}
-	return current
+// installed is the jobs this installation has under its scheduler: its own
+// current job first, then its aliases (see scheduler.Inspector.Installed).
+// The error is what blocks setup; status and uninstall ignore it, since they
+// never touch the prototype's job, and use the jobs returned with it.
+func (in installation) installed(userHome string) ([]scheduler.Job, error) {
+	return in.sched().Installed(context.Background(), userSite(userHome), in.schedulerInstallation())
 }
 
 // hookFiles resolves each app's hook file from the environment this command

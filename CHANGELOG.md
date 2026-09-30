@@ -394,6 +394,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`agent-archive stats` no longer says `--json` has every row of a list it
+  cut.** Under a cut list the screens said `(--json has them all)`, but plain
+  `--json` keeps only the top five projects. The projects screen now says `+ N
+  more (all in --json --by project)` (the by-project rows are never cut),
+  the models screen `(all in --json)` (`models` is never cut), and the
+  detail screen's day, week and month tables `N earlier rows not shown (all in
+  --json --by day)`; the interactive screen, which takes no command, says to
+  quit first and names the window on show (`+ N more (quit, then run
+  agent-archive stats --days 90 --json --by project)`). The skills and MCP
+  servers were never claimed to be in `--json`, which keeps only the top five
+  of each; `stats --help` and the guide now say the detail screen lists up to
+  40 of them.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

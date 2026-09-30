@@ -320,9 +320,9 @@ func (p *statsPrinter) grouped() []string {
 	}
 	switch {
 	case more > 0 && g.By == stats.GroupProject:
-		lines = append(lines, p.dim(fmt.Sprintf("+ %d more (--json has them all)", more)))
+		lines = append(lines, p.dimAll(p.wrap(fmt.Sprintf("+ %d more (all in %s)", more, allProjectsHint)))...)
 	case more > 0:
-		lines = append(lines, p.dim(fmt.Sprintf("%d earlier rows not shown (--json has them all)", more)))
+		lines = append(lines, p.dimAll(p.wrap(fmt.Sprintf("%d earlier rows not shown (all in --json --by %s)", more, g.By)))...)
 	}
 	return lines
 }

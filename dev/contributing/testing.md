@@ -106,21 +106,38 @@ In Go tests, everything goes through injection:
   folder of the run's own (`internal/testutil/isolation`). Its tests call
   `capture.HandleEvent` directly; tests that go through a command (`_hook`,
   `status`, `sync`, `setup`) stay in `internal/cli`.
-- `internal/setupjournal` (setup's journal, rollback and recovery) reaches
-  launchd only through the `Launchd` it is passed, so its tests pass a
-  `fakeLaunchd` (or `launchdSim`, which answers as launchd and cli's
-  ownership check do: a label loaded from another plist is never stopped,
-  and bootstrap and bootout can fail) and cannot reach launchctl; its
-  `TestMain` isolates the process as `internal/capture`'s does. Tests that
-  run `setup` itself stay in `internal/cli`.
+- `internal/setupjournal` (setup's journal, rollback and recovery) reaches a
+  scheduler only through the `Backends` it is passed, which resolve the backend
+  name each journal records, so its tests pass a `launchdSim` (a launchd's
+  ownership rules: a label loaded from another plist is never stopped, and
+  bootstrap and bootout can fail) or a `schedulertest.Model` (a second
+  backend, to see each job driven through the backend that made it) and cannot
+  reach launchctl; its `TestMain` isolates the process as `internal/capture`'s
+  does. Tests that run `setup` itself stay in `internal/cli`.
 - `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
   the `scheduler.Runner` it is given, so its tests pass a recording Runner and
-  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  cannot reach launchd. It passes `schedulertest.RunConformance`, the suite
+  every scheduler adapter must (the state matrix, refusing to stop what another
+  installation owns with typed errors, an idempotent unload, loads and unloads
+  that a cancelled context does not stop, `Plan`'s purity and
+  recorded output, the `Plan` to `Inspect` and refresh round trips, no
+  credential in a definition, `Installed` listing the installation's own job
+  first and its earlier jobs after), over a fake `launchctl` that prints the
+  recordings in `internal/cli/testdata/scheduler/launchctl-print`; the
+  `schedulertest.Model`, a scheduler with a vocabulary of its own, passes it
+  too, and is what code written against the port can be tested over. `internal/scheduler/host` owns the real Runner; its
   tests run a stand-in `launchctl` script found on a temporary `PATH`.
   `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
   set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
-  (and, for now, `cli`) imports an adapter; depguard says the same in
+  imports an adapter; depguard says the same in
   `.golangci.yml`.
+- `internal/scheduler/systemd` (the Linux adapter, not wired into any command
+  yet) is tested the same way: a recording or fake `Runner` and no `systemctl`.
+  It passes `schedulertest.RunConformance` for systemd 239, 245, 252 and 255
+  over a fake `systemctl` that answers `show` from the fixtures in
+  `internal/scheduler/systemd/testdata/systemctl` (captured from real user
+  managers in disposable containers; the README there says how), and the
+  state map is pinned over the same fixtures.
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
@@ -312,7 +329,7 @@ assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 counter (`state.PublishedStateLoads`), removes this process's Cursor
 snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
 within a production time bound that a busy parallel run can exceed (a
-hook's one-second lock wait, a version command's output deadline) stays
+hook's lock wait, a version command's output deadline) stays
 sequential, with a comment saying why when it is not obvious. Go runs every sequential test
 before it releases the parallel ones, so a package variable a sequential
 test changes and restores is never seen by a parallel test. Test seams
@@ -360,6 +377,13 @@ In `internal/scheduler/launchd`:
 | --- | --- | --- |
 | `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
 | `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
+
+In `internal/scheduler/systemd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzRenderServiceRoundTrip` | an executable, a data directory, and one environment variable | the unit reader gives back exactly what `renderService` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`), whatever `%`, `$`, quotes, backslashes and spaces the values hold, and every line of the unit is a setting the renderer writes, so a value cannot inject one |
+| `FuzzReadService` | any bytes | the reader never panics, and a unit it accepts has a program and an environment |
 
 In `internal/cli`:
 
