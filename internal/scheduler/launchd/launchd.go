@@ -199,6 +199,9 @@ func (s Scheduler) probe(ctx context.Context, plist string) (scheduler.JobState,
 	case scheduler.AnotherInstallation:
 		problem.Kind, problem.LoadedFrom = scheduler.ProblemNotOwned, printedPath(string(output))
 		problem.Fix = "Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own"
+		if problem.Ref == LegacyLaunchLabel {
+			problem.Fix = prototypeFix
+		}
 	case scheduler.Unknown:
 		problem.Kind = scheduler.ProblemCannotTell
 		problem.Fix = "Check that launchctl print gui/$(id -u) works in Terminal"

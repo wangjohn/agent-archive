@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // The journal's on-disk format is read across releases: a setup
@@ -106,7 +107,7 @@ func newTxFixture(t *testing.T) *txFixture {
 		own:      filepath.Join(agents, "com.agent-archive.collector.plist"),
 		settings: filepath.Join(userHome, ".claude", "settings.json"),
 		config:   filepath.Join(home, "config.json"),
-		legacy:   filepath.Join(agents, LegacyLaunchLabel+".plist"),
+		legacy:   filepath.Join(agents, legacyLaunchLabel+".plist"),
 		relabeled: []string{
 			filepath.Join(agents, "com.agent-archive.collector.aaaa.plist"),
 			filepath.Join(agents, "com.agent-archive.collector.bbbb.plist"),
@@ -131,17 +132,24 @@ func newTxFixture(t *testing.T) *txFixture {
 	f.sim.loaded[simLabel(f.relabeled[0])] = f.relabeled[0]
 	f.sim.loaded[simLabel(f.other)] = "/Users/real/Library/LaunchAgents/" + filepath.Base(f.other)
 
-	legacy, err := PlanLegacyMigration(userHome, f.sim)
-	if err != nil || legacy == nil || !legacy.WasLoaded {
-		t.Fatalf("legacy plan: %+v %v", legacy, err)
+	// The jobs the scheduler lists as this installation's aliases (another
+	// installation's job under an earlier label is not among them: it is not
+	// this setup's to retire), as found.
+	retiree := func(path string, alias scheduler.Alias) scheduler.Retiree {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scheduler.Retiree{Backend: "launchd", Ref: scheduler.Ref(simLabel(path)), Alias: alias, Artifacts: []scheduler.Artifact{scheduler.FileArtifact(path, data, 0o644)}, WasLoaded: JobActive(f.sim.JobState(path))}
 	}
-	relabeled, err := PlanRelabel(append(slices.Clone(f.relabeled), f.other), f.sim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Another installation's job is not this setup's to retire.
-	if len(relabeled) != 2 || relabeled[0].Change.Path != f.relabeled[0] || !relabeled[0].WasLoaded || relabeled[1].Change.Path != f.relabeled[1] || relabeled[1].WasLoaded {
-		t.Fatalf("relabel plan: %+v", relabeled)
+	legacy, relabeled, err := RetireeJobs([]scheduler.Retiree{
+		retiree(f.legacy, scheduler.Prototype),
+		retiree(f.relabeled[0], scheduler.EarlierLabel),
+		retiree(f.relabeled[1], scheduler.EarlierLabel),
+	})
+	if err != nil || legacy == nil || !legacy.WasLoaded || len(relabeled) != 2 || relabeled[0].Change.Path != f.relabeled[0] || !relabeled[0].WasLoaded || relabeled[1].Change.Path != f.relabeled[1] || relabeled[1].WasLoaded {
+		t.Fatalf("retirees: %+v %+v %v", legacy, relabeled, err)
 	}
 	f.journal = Journal{
 		Legacy:        legacy,

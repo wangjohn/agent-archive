@@ -1,6 +1,7 @@
 package schedulertest
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -23,6 +24,17 @@ func TestModelPassesTheConformanceSuite(t *testing.T) {
 		Golden: func(t *testing.T, name string, got []byte) {
 			t.Helper()
 			golden.Check(t, filepath.Join("testdata", "model", name+".job"), got)
+		},
+		Earlier: func(t *testing.T, site scheduler.Site, inst scheduler.Installation) scheduler.Ref {
+			t.Helper()
+			path := definitionPath(site, "model-earlier")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("job=model-earlier\nprogram=/opt/old/agent-archive\ndata="+inst.DataHome+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return "model-earlier"
 		},
 	})
 }
