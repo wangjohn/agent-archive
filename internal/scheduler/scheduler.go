@@ -290,7 +290,7 @@ type Controller interface {
 }
 
 // Scheduler is the background job manager as every command uses it. A test
-// stands in with a fake; the real one for this system is host.Default.
+// stands in with a fake; the real one for this system is host.Lookup("").
 type Scheduler interface {
 	Definer
 	Inspector

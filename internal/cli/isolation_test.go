@@ -90,10 +90,13 @@ func isolateProcessForTesting() func() {
 	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", envNonInteractive}, agentShellEnv()...) {
 		must(os.Unsetenv(name))
 	}
-	newScheduler = func() scheduler.Scheduler {
+	newScheduler = func(backend string) (scheduler.Scheduler, error) {
+		if backend != "" && backend != "launchd" {
+			return nil, fmt.Errorf("a test asked for the %s scheduler: set Env.Scheduler (testEnv does)", backend)
+		}
 		return launchd.Scheduler{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			panic(fmt.Sprintf("a test reached the real %s %q: set Env.Scheduler (testEnv does), or call stubLaunchctl", name, args))
-		}}
+		}}, nil
 	}
 	realOpenCredentialStore = openCredentialStore
 	openCredentialStore = func() (credentials.CredentialStore, error) {
@@ -197,13 +200,16 @@ func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
 func stubLaunchctlContext(t *testing.T, run func(ctx context.Context, args ...string) ([]byte, error)) {
 	t.Helper()
 	previous := newScheduler
-	newScheduler = func() scheduler.Scheduler {
+	newScheduler = func(backend string) (scheduler.Scheduler, error) {
+		if backend != "" && backend != "launchd" {
+			return nil, fmt.Errorf("a test asked for the %s scheduler: stubLaunchctl stands in for launchd alone", backend)
+		}
 		return launchd.Scheduler{ChangeTimeout: launchctlChangeTimeout, Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name != "launchctl" {
 				t.Errorf("the scheduler ran %q, not launchctl", name)
 			}
 			return run(ctx, args...)
-		}}
+		}}, nil
 	}
 	t.Cleanup(func() { newScheduler = previous })
 }

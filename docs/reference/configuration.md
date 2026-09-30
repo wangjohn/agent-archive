@@ -25,6 +25,7 @@ consistent with each other.
 | `declined_harnesses` | Apps you declined when setup offered them; setup doesn't offer them again. |
 | `hook_files` | Per app, the hook file setup installed into, resolved from `CLAUDE_CONFIG_DIR` and `CODEX_HOME` at setup time. |
 | `installed_executable` | The `agent-archive` path written into the hooks and the LaunchAgent. |
+| `background_backend` | The scheduler that runs the background collector, as setup recorded it: `systemd` on Linux. Status, uninstall, `setup --refresh` and recovery use this one and never pick another. Setup leaves it out for launchd, and an absent field means launchd on macOS and systemd on Linux, for all time, so a macOS `config.json` is what it always was. A build that predates the field ignores it. |
 | `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
