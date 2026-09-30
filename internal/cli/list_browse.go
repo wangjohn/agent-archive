@@ -431,6 +431,13 @@ func pickBrowseSession(env terminalSizeDependencies, p *prompter, stdout io.Writ
 	return list.pick(p, stdout, sessions, totalMatched, truncated, format, action)
 }
 
+// pickBrowseRow is pickBrowseSession for rows already built, which handoff
+// annotates with sessions not yet uploaded. format.Numbered must be set.
+func pickBrowseRow(env terminalSizeDependencies, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (row listRow, ok bool, err error) {
+	list := &sessionPicker{env: env}
+	return list.pickRows(p, stdout, rows, totalMatched, truncated, format, action)
+}
+
 // minPickerPageRows is the fewest rows a page of the picker shows, however
 // short the terminal.
 const minPickerPageRows = 3
@@ -481,15 +488,20 @@ type pickerPages struct {
 }
 
 func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	if l.keys != nil {
-		return l.pickKeys(p, stdout, sessions, totalMatched, truncated, format, action)
-	}
 	format.Numbered = true
-	rows := formatSessionRows(sessions, format)
+	return l.pickRows(p, stdout, formatSessionRows(sessions, format), totalMatched, truncated, format, action)
+}
+
+// pickRows is pick for rows already built, which handoff annotates with
+// sessions not yet uploaded. format.Numbered must be set.
+func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+	if l.keys != nil {
+		return l.pickKeys(p, stdout, rows, totalMatched, truncated, format, action)
+	}
 	groups := sessionTableGroups(rows, format)
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	var footer bytes.Buffer
-	printListFooter(&footer, len(sessions), totalMatched, truncated)
+	printListFooter(&footer, len(rows), totalMatched, truncated, format.NarrowHint)
 	notice := ""
 	for {
 		pages, width, sized := l.pages(stdout, groups, format, len(rows), footer.String(), question)
@@ -760,7 +772,7 @@ func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectSt
 	return shown, totalMatched, truncated, nil
 }
 
-// browseSessions is the newest sessions bare show and handoff offer, with
+// browseSessions is the newest sessions bare show offers, with
 // the format to list them in.
 type browseSessions struct {
 	sessions     []archive.Metadata
@@ -787,7 +799,8 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 	return browseSessions{sessions: shown, totalMatched: totalMatched, truncated: truncated, format: format}, true, 0
 }
 
-// selectArchivedSession is handoff's (and `show --json`'s) one-shot picker.
+// selectArchivedSession is `show --json`'s one-shot picker; handoff's also
+// lists local sessions (selectHandoffSession).
 // It returns selected=false when the archive is empty or the user quits.
 func selectArchivedSession(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, action string) (row listRow, selected bool, code int) {
 	found, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, command)

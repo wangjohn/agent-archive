@@ -238,7 +238,7 @@ const screenBreak = "\f"
 
 // runPicker runs picker on input and returns the chosen row and what each
 // screen showed.
-func runPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metadata, format listFormatOptions, input string) (row listRow, ok bool, screens []string) {
+func runSessionPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metadata, format listFormatOptions, input string) (row listRow, ok bool, screens []string) {
 	t.Helper()
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
@@ -293,7 +293,7 @@ func rowSpan(screen string) string {
 func TestPickerPagesATableTallerThanTheTerminal(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
-	row, ok, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "n\nn\np\n37\n")
+	row, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "n\nn\np\n37\n")
 	if !ok || row.Index != 37 || row.SessionID != sessions[36].SessionID {
 		t.Fatalf("picked %+v ok=%v", row, ok)
 	}
@@ -319,7 +319,7 @@ func TestPickerPagesATableTallerThanTheTerminal(t *testing.T) {
 func TestPickerPageLineNamesNoRowRangeWhenProjectsInterleave(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(30, func(i int) string { return []string{"alpha", "beta"}[i%2] })
-	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
 	checkScreensFit(t, screens, 120, 20)
 	first := rowNumbers(screens[0])
 	if len(first) < 2 || first[1] != 3 {
@@ -337,7 +337,7 @@ func TestPickerAcceptsAnyRowFromAnyPage(t *testing.T) {
 	sessions := pickerSessions(50, oneProject)
 	rows := formatSessionRows(sessions, listFormatOptions{Now: pickerNow})
 	for answer, want := range map[string]int{"46": 46, rows[45].ShortID: 46, "2": 2} {
-		row, ok, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "n\n"+answer+"\n")
+		row, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "n\n"+answer+"\n")
 		if !ok || row.Index != want {
 			t.Errorf("%q from the second page picked %+v ok=%v:\n%s", answer, row, ok, strings.Join(screens, "\n----\n"))
 		}
@@ -350,7 +350,7 @@ func TestPickerAcceptsAnyRowFromAnyPage(t *testing.T) {
 func TestPickerStopsAtTheFirstAndLastPage(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(12, oneProject)
-	_, ok, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nzz\nq\n")
+	_, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nzz\nq\n")
 	if ok || len(screens) != 6 {
 		t.Fatalf("ok=%v, %d screens:\n%s", ok, len(screens), strings.Join(screens, "\n----\n"))
 	}
@@ -397,7 +397,7 @@ func TestPickerRepeatsTheProjectHeadingOnAPageStartingMidProject(t *testing.T) {
 		}
 		return "beta"
 	})
-	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nn\nq\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nn\nq\n")
 	checkScreensFit(t, screens, 120, 20)
 	if !strings.HasPrefix(screens[0], "alpha (18)\n#") {
 		t.Fatalf("first page:\n%s", screens[0])
@@ -420,10 +420,10 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 	if err := printSessionTable(&want, formatSessionRows(sessions, format), format); err != nil {
 		t.Fatal(err)
 	}
-	printListFooter(&want, len(sessions), len(sessions), false)
+	printListFooter(&want, len(sessions), len(sessions), false, "")
 	want.WriteString("\nEnter number (or unique short SESSION_ID) to show, or q to quit: ")
 	for _, size := range []fixedTerminal{{}, {120, 40}, {200, 1000}} {
-		_, _, screens := runPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByProject: true}, "q\n")
+		_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByProject: true}, "q\n")
 		if len(screens) != 1 || screens[0] != want.String() {
 			t.Errorf("%v:\n%s\nwant:\n%s", size, screens[0], want.String())
 		}
@@ -432,7 +432,7 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 
 func TestPickerShowsAFewRowsOnATinyTerminal(t *testing.T) {
 	t.Parallel()
-	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 3}}, pickerSessions(10, oneProject), listFormatOptions{}, "q\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 3}}, pickerSessions(10, oneProject), listFormatOptions{}, "q\n")
 	if rowSpan(screens[0]) != "1-3" || !strings.Contains(screens[0], "Page 1 of 4 · 10 sessions · [n] next\n") {
 		t.Fatalf("tiny terminal:\n%s", screens[0])
 	}
@@ -447,8 +447,8 @@ func TestPickerCountsWrappedAndColoredLines(t *testing.T) {
 		sessions[i].SkillsUsed = []archive.SkillUse{{Name: "code-review"}}
 	}
 	color := listFormatOptions{Style: textStyle{color: true}}
-	_, _, wide := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, color, "q\n")
-	_, _, narrow := runPicker(t, &sessionPicker{env: fixedTerminal{40, 20}}, sessions, color, "q\n")
+	_, _, wide := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, color, "q\n")
+	_, _, narrow := runSessionPicker(t, &sessionPicker{env: fixedTerminal{40, 20}}, sessions, color, "q\n")
 	checkScreensFit(t, wide, 120, 20)
 	checkScreensFit(t, narrow, 40, 20)
 	if !strings.Contains(wide[0], "\x1b[2m") || rowSpan(wide[0]) != "1-15" {
@@ -464,7 +464,7 @@ func TestPickerCountsWrappedAndColoredLines(t *testing.T) {
 func TestPickerReadsTheSizeOnEveryRedraw(t *testing.T) {
 	t.Parallel()
 	size := &resizingTerminal{sizes: []fixedTerminal{{120, 30}, {120, 12}}}
-	_, _, screens := runPicker(t, &sessionPicker{env: size}, pickerSessions(50, oneProject), listFormatOptions{}, "n\nq\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, pickerSessions(50, oneProject), listFormatOptions{}, "n\nq\n")
 	// Row 26 starts the second page of 25 rows; 7 rows fit after the resize.
 	if rowSpan(screens[0]) != "1-25" || rowSpan(screens[1]) != "22-28" {
 		t.Fatalf("pages:\n%s", strings.Join(screens, "\n----\n"))
@@ -477,10 +477,10 @@ func TestPickerKeepsItsPageBetweenVisits(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
 	picker := &sessionPicker{env: fixedTerminal{120, 20}}
-	if row, ok, _ := runPicker(t, picker, sessions, listFormatOptions{}, "n\n20\n"); !ok || row.Index != 20 {
+	if row, ok, _ := runSessionPicker(t, picker, sessions, listFormatOptions{}, "n\n20\n"); !ok || row.Index != 20 {
 		t.Fatalf("picked %+v", row)
 	}
-	_, _, screens := runPicker(t, picker, sessions, listFormatOptions{}, "q\n")
+	_, _, screens := runSessionPicker(t, picker, sessions, listFormatOptions{}, "q\n")
 	if rowSpan(screens[0]) != "16-30" {
 		t.Fatalf("list reopened on another page:\n%s", screens[0])
 	}
@@ -494,14 +494,14 @@ func TestPickerSplitsALongListCheaplyAndOnce(t *testing.T) {
 	const n = 5000
 	sessions := pickerSessions(n, oneProject)
 	once := &sessionPicker{env: fixedTerminal{120, 20}}
-	runPicker(t, once, sessions, listFormatOptions{}, "q\n")
+	runSessionPicker(t, once, sessions, listFormatOptions{}, "q\n")
 	// A page holds 15 rows; its binary search draws a few pages' worth.
 	if once.rendered > 5*n {
 		t.Fatalf("drew %d rows to split %d", once.rendered, n)
 	}
 	moving := &sessionPicker{env: fixedTerminal{120, 20}}
-	runPicker(t, moving, sessions, listFormatOptions{}, "n\nn\np\nq\n")
-	runPicker(t, moving, sessions, listFormatOptions{}, "q\n")
+	runSessionPicker(t, moving, sessions, listFormatOptions{}, "n\nn\np\nq\n")
+	runSessionPicker(t, moving, sessions, listFormatOptions{}, "q\n")
 	if moving.rendered != once.rendered {
 		t.Fatalf("drew %d rows over five draws, %d for one", moving.rendered, once.rendered)
 	}
@@ -517,7 +517,7 @@ func TestPickerPageGolden(t *testing.T) {
 		}
 		return "beta"
 	})
-	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
+	_, _, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{80, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
 	golden.Check(t, filepath.Join("testdata", "browse", "list-page-2.txt"), []byte(screens[1]))
 }
 

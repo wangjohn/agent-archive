@@ -9,7 +9,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -67,13 +66,11 @@ type listScreen struct {
 // and End to the top and bottom. A group scrolled into keeps its heading,
 // marked continued, and its column header. Typed characters collect at the
 // prompt until Enter chooses the row they name.
-func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	format.Numbered = true
-	rows := formatSessionRows(sessions, format)
+func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	groups := sessionTableGroups(rows, format)
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	var footer bytes.Buffer
-	printListFooter(&footer, len(sessions), totalMatched, truncated)
+	printListFooter(&footer, len(rows), totalMatched, truncated, format.NarrowHint)
 	if len(rows) == 0 {
 		if err := printSessionGroups(stdout, groups, format); err != nil {
 			return listRow{}, false, err

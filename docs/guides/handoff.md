@@ -33,9 +33,9 @@ agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness c
 `--to` launches the installed local `claude`, `codex`, or `cursor-agent` CLI
 in the current directory (or `--project DIR` with `--latest`). It writes the
 filtered handoff to a private temporary file and sends the agent a short prompt
-to read it; the file is removed when the agent exits. The command reads only a
-local transcript; it never downloads a session from the archive or starts a
-remote agent. The receiving agent is told that Agent Archive exists, where to
+to read it; the file is removed when the agent exits. The session is read as
+for any handoff: this Mac's transcript when there is one, else the archive's
+copy. It never starts a remote agent. The receiving agent is told that Agent Archive exists, where to
 find its executable, and how to ask for more context.
 `agent-archive show SESSION_ID --transcript` reads the published archive copy,
 which may lag the local transcript or not exist yet.
@@ -46,17 +46,28 @@ default budget; `--max-bytes 0` includes all filtered content.
 
 ## Where the session comes from
 
-With no session selector, `handoff` opens the same numbered session picker as
-`show` when stdin and stdout are terminals. The picker lists archived
-sessions; `--harness` narrows the list. Quit with `q` without producing a
-handoff. In a script or pipeline, pass a session ID, `--latest`, or `--file`.
+With no session selector, `handoff` opens a numbered session picker when
+stdin and stdout are terminals. It lists this Mac's sessions, including ones
+marked `not yet uploaded`, together with archived ones, most recently active
+first; a session that is both appears once. Sessions with no prompt yet are
+left out, and `--harness` narrows the list. When the archive cannot be read
+(offline, say), the picker lists this Mac's sessions and says why archived
+ones are missing. Quit with `q` without producing a handoff. In a script or
+pipeline, pass a session ID, `--latest`, or `--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
 prompts off, and `handoff` without a selector is a usage error (exit 2)
 instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
 [configuration](../reference/configuration.md#environment-variables).
-Use `--latest` to hand off a local session that has not uploaded yet.
+
+With `--to` and no selector, run from inside an agent, `handoff` hands off
+the session it is running in without asking: the one Claude Code names in
+`CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
+session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
+session for the current directory, as `--latest --harness cursor` would.
+That is not a prompt, so it works while prompts are off. Otherwise a terminal
+gets the picker, and anything else is told to name a session.
 
 A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is
