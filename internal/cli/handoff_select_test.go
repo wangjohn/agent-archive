@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -417,6 +418,66 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if _, errOut, code := runHandoff(t, f.env, "--to", "claude"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
+}
+
+// publishArchivedSubagent puts a subagent of parent, last captured at
+// captured, in the archive, and returns its archive session ID.
+func (f handoffFixture) publishArchivedSubagent(t *testing.T, parent, native string, captured time.Time) string {
+	t.Helper()
+	id := fmt.Sprintf("%032x", sha256.Sum256([]byte(native)))[:32]
+	syntheticSession{id: id, harness: "codex", project: "sub-project", captured: captured, parent: parent}.publish(t, f.mem)
+	return id
+}
+
+// An archived subagent, newer than every session here, is not offered, from
+// the merged list or the archive alone.
+func TestHandoffPickerSkipsArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.publishArchivedSubagent(t, f.both, "native-archived-sub", f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+	for _, id := range []string{f.notUploaded, f.archiveOnly, f.both} {
+		pickerLine(t, out, id)
+	}
+	// Archive only: the subagent is not offered there either.
+	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("--source archive: code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+}
+
+// The footer's total counts top-level sessions only: the archived subagents
+// past the limit are not among the ones that can be offered.
+func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range defaultListLimit {
+		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
+	}
+	f.sync(t)
+	for i := range 3 {
+		f.publishArchivedSubagent(t, f.both, fmt.Sprintf("native-sub-%d", i), f.env.now().Add(-10*time.Hour))
+	}
+	out, errOut, code := runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A local subagent registration is skipped even when its parent is in the
+// archive, so a parent that is both registered and archived is offered once.
+func TestHandoffPickerSkipsSubagentRegistrationOfArchivedParent(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.both, "native-local-sub")
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
+	}
+	pickerLine(t, out, f.both)
 }
 
 // Picker titles come from the filtered record, never the raw transcript.
