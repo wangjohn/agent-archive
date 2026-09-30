@@ -3,6 +3,7 @@ package systemd
 import (
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,7 +114,8 @@ Environment=E=5
 	if want := map[string]string{"A": "1", "C": "3", "D": `\`, "E": "5"}; err != nil || program != "/bin/x" || !maps.Equal(env, want) {
 		t.Errorf("continued lines read as program %q, environment %q (%v); want /bin/x, %q", program, env, err, want)
 	}
-	for _, bad := range []string{"", "not a unit", "[Service]\nExecStart=\n", "[Service]\nExecStart=\"open\n", "[Unit]\nExecStart=/bin/x\n", "[Service]\nExecStart=/bin/x\nEnvironment=\"open\n"} {
+	// An empty line ends a continued line: this ExecStart= is empty.
+	for _, bad := range []string{"[Service]\nExecStart=\\\n\n/bin/x\n", "", "not a unit", "[Service]\nExecStart=\n", "[Service]\nExecStart=\"open\n", "[Unit]\nExecStart=/bin/x\n", "[Service]\nExecStart=/bin/x\nEnvironment=\"open\n"} {
 		if program, env, err := readService([]byte(bad)); err == nil {
 			t.Errorf("readService(%q) = %q, %q; want an error", bad, program, env)
 		}
@@ -144,7 +146,11 @@ func TestPlanRefusesWhatAUnitCannotHold(t *testing.T) {
 		"an apostrophe in program": func(s *scheduler.JobSpec) { s.Executable = "/home/o'brien/bin/agent-archive" },
 		"a quote in program":       func(s *scheduler.JobSpec) { s.Executable = `/opt/"x"/agent-archive` },
 		"a backslash in program":   func(s *scheduler.JobSpec) { s.Executable = `/opt/x\y/agent-archive` },
-		"a newline in a path":      func(s *scheduler.JobSpec) { s.DataHome = "/da\nta" },
+		// and these from v261.
+		"a star in program":     func(s *scheduler.JobSpec) { s.Executable = "/opt/*/agent-archive" },
+		"a question in program": func(s *scheduler.JobSpec) { s.Executable = "/opt/x?/agent-archive" },
+		"a bracket in program":  func(s *scheduler.JobSpec) { s.Executable = "/opt/[x]/agent-archive" },
+		"a newline in a path":   func(s *scheduler.JobSpec) { s.DataHome = "/da\nta" },
 		"a newline in a value": func(s *scheduler.JobSpec) {
 			s.Env = map[string]string{"A": "x\nExecStart=/bin/evil"}
 		},
@@ -158,6 +164,17 @@ func TestPlanRefusesWhatAUnitCannotHold(t *testing.T) {
 	} {
 		if plan, err := (Scheduler{}).Plan(site, inst, spec(change)); err == nil {
 			t.Errorf("Plan accepted %s: %+v", name, plan)
+		}
+	}
+	// A home with an apostrophe keeps its data directory there, and a program
+	// systemd cannot run is refused with what to do about it.
+	if _, err := (Scheduler{}).Plan(site, inst, spec(func(s *scheduler.JobSpec) { s.DataHome = "/home/o'brien/.local/share/agent-archive" })); err != nil {
+		t.Errorf("Plan refused a data directory with an apostrophe: %v", err)
+	}
+	for _, exe := range []string{"/home/o'brien/.local/bin/agent-archive", "/opt/$x/agent-archive"} {
+		_, err := (Scheduler{}).Plan(site, inst, spec(func(s *scheduler.JobSpec) { s.Executable = exe }))
+		if err == nil || !strings.Contains(err.Error(), "AGENT_ARCHIVE_INSTALL_DIR") {
+			t.Errorf("Plan(%s) = %v, want a refusal that says where to install instead", exe, err)
 		}
 	}
 }

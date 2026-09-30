@@ -101,13 +101,15 @@ var unitDir = filepath.Join(".config", "systemd", "user")
 // systemd/user, whatever this process's XDG_CONFIG_HOME says. The user
 // manager searches $XDG_CONFIG_HOME/systemd/user instead only when its own
 // environment has the variable (systemd.unit(5), "Unit File Load Path"),
-// and it reads that environment once, when it starts from the login's PAM
-// session, before any environment.d file is applied: a shell's export never
-// reaches it, so the shell's XDG_CONFIG_HOME would name a directory the
-// manager does not search. A manager that does have another XDG_CONFIG_HOME
-// (set by pam_env) does not find the units, Load fails with systemctl's
-// "unit file does not exist", and setup rolls back. A sandbox or a test that
-// names another home keeps its units under that home.
+// and then searches it in place of ~/.config/systemd/user, not as well. Its
+// own environment is the one it started with, from PID 1 and the login's
+// PAM session: environment.d files and `systemctl --user set-environment`
+// change only what its services get. A shell's export never reaches it, so
+// the shell's XDG_CONFIG_HOME would name a directory the manager does not
+// search. A manager that does have another XDG_CONFIG_HOME (set by pam_env
+// or a user@.service drop-in) does not find the units, Load fails with
+// systemctl's "unit file ... does not exist", and setup rolls back. A
+// sandbox or a test that names another home keeps its units under that home.
 func (Scheduler) UnitDir(site scheduler.Site) string {
 	return filepath.Join(site.UserHome, unitDir)
 }
