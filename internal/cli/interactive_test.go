@@ -335,7 +335,7 @@ func TestHandoffInAnAgentNeverPicks(t *testing.T) {
 	f := newHandoffFixture(t, true)
 	for _, key := range agentVariables {
 		for _, args := range [][]string{{"handoff"}, {"handoff", "--harness", "codex"}, {"handoff", "--to", "codex"}, {"handoff", "--to", "claude", "--harness", "cursor"}} {
-			f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+			f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 				t.Errorf("%s %v: launched without a session", key, args)
 				return nil
 			}
@@ -361,7 +361,7 @@ func TestHandoffToFromInsideAnAgentUsesTheCallingSession(t *testing.T) {
 	f := newHandoffFixture(t, false)
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
 	launched := 0
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		launched++
 		return nil
 	}

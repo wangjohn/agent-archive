@@ -191,7 +191,8 @@ at the top level. Read the rules below before using a number:
   A day without sessions costs a known `0`; a day whose sessions record no
   tokens (Cursor), or whose tokens are all of models the price table lacks,
   has `usd: null`, and `partial` with `unpriced_tokens` says the second.
-  The days' `usd` add up to `overview.cost.value`. `peak_spend` is the day
+  The days' `usd` add up to `overview.cost.value` (to within floating-point
+  rounding). `peak_spend` is the day
   with the highest priced cost (the earliest on a tie), left out when no day
   cost more than zero; `peak` is still the day with the most tokens.
 - **`overview.cache_share`** is the part of all tokens that were cache reads
@@ -212,7 +213,7 @@ at the top level. Read the rules below before using a number:
   | `kind` | Applies when | Fields |
   | --- | --- | --- |
   | `subagent_share` | subagents used 25% or more of the window's tokens | `share` (0 to 1), `tokens`, `runs` (subagent runs rolled into their parents, which are not sessions of their own) |
-  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project`, `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`) |
+  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
   | `unmetered_sessions` | any session reports no token counts | `sessions`, `by_agent` (`harness`, `label`, `sessions`; most sessions first) |
   | `low_cache_hit` | the window's cache-hit rate is under 60%, over at least 50,000 input-side tokens | `hit_rate`, `input_tokens` |
 
