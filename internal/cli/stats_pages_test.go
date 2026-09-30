@@ -681,7 +681,7 @@ func TestStatsListScreensAreBounded(t *testing.T) {
 	if len(lines) > statsMaxListRows+10 {
 		t.Errorf("%d lines for %d projects", len(lines), len(s.Projects))
 	}
-	if out := strings.Join(lines, "\n"); !strings.Contains(out, "+ 40 more (--json has them all)") {
+	if out := strings.Join(lines, "\n"); !strings.Contains(out, "+ 40 more (all in --json --by project)") {
 		t.Errorf("the screen does not say what it left out:\n%s", lines[len(lines)-4:])
 	}
 }
