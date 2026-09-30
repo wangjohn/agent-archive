@@ -30,6 +30,7 @@ differ, the code and the user documentation describe current behavior.
 | [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Proposed. Parts 1 and 2 in progress; Part 3 (Linux) planned. |
 | [Git activity in metadata](proposals/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
+| [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phase 1 (parallel range listing) of 4. |
 
 ## Maintainers
 
