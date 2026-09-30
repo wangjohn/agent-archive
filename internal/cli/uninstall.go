@@ -19,7 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -125,8 +125,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
-	plists := append([]string{in.collectorPlist()}, in.previousCollectorPlists()...)
-	kept, err := stopCollectors(plists, out, userHome, env)
+	remove, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env)
 	if err != nil {
 		return err
 	}
@@ -144,11 +143,8 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
-	for _, plist := range plists {
-		if kept[plist] {
-			continue
-		}
-		if err = os.Remove(plist); err != nil && !os.IsNotExist(err) {
+	for _, path := range remove {
+		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -213,29 +209,45 @@ func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, pr
 	return previewPending, true, nil
 }
 
-// stopCollectors stops the background collectors plists define. A plist
-// whose label launchd runs from another plist stays: removing it would leave
-// this installation with nothing to reinstall from. Those are returned in
-// kept, and their jobs are left running.
-func stopCollectors(plists []string, out io.Writer, userHome string, env Env) (kept map[string]bool, err error) {
-	kept = map[string]bool{}
-	for _, plist := range plists {
-		state := env.jobState(userHome, plist)
-		if state == "unknown" {
-			return nil, fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+// collectorRefs are the jobs uninstall stops: the installation's own and the
+// collectors earlier releases installed for it, and never the prototype's job.
+// What blocks setup about the prototype's does not block uninstall, which
+// leaves it alone.
+func collectorRefs(in installation, userHome string) []scheduler.Ref {
+	jobs, _ := in.installed(userHome)
+	var refs []scheduler.Ref
+	for _, job := range jobs {
+		if job.Alias != scheduler.Prototype {
+			refs = append(refs, job.Ref)
 		}
-		if state == setupjournal.JobAnotherInstallation {
-			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchd.Label(plist), plist)
-			kept[plist] = true
+	}
+	return refs
+}
+
+// stopCollectors stops the background collectors the jobs ref name, and
+// returns the files of their definitions to remove once the rest of uninstall
+// is done. A job the scheduler runs from another installation's definition
+// stays, and so do its files: removing them would leave this installation with
+// nothing to reinstall from.
+func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env) (remove []string, err error) {
+	words := env.scheduler().Words()
+	for _, ref := range refs {
+		status := env.jobStatus(userHome, ref)
+		if status.State == scheduler.Unknown {
+			return nil, fmt.Errorf("cannot determine background job state; restore access to %s and retry", words.Tool)
+		}
+		if status.State == scheduler.AnotherInstallation {
+			terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
 			continue
 		}
-		if setupjournal.JobActive(state) {
-			if err = env.unloadJob(userHome, plist); err != nil {
+		if jobActive(status.State) {
+			if err = env.unloadJob(userHome, ref); err != nil {
 				return nil, fmt.Errorf("stop collector: %w", err)
 			}
 		}
+		remove = append(remove, status.Paths...)
 	}
-	return kept, nil
+	return remove, nil
 }
 
 // purgeLocalData runs once hooks and the LaunchAgent are gone. It deletes

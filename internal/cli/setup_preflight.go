@@ -10,8 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -116,7 +115,7 @@ type preflightScope struct {
 type preflightDependencies interface {
 	hookFiles(userHome string) hooks.Files
 	installation(home, userHome string) installation
-	jobState(userHome, plist string) string
+	jobStatus(userHome string, ref scheduler.Ref) scheduler.Status
 	credentialStore() (credentials.CredentialStore, error)
 }
 
@@ -138,17 +137,21 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 		return fix
 	})
 
-	plist := env.installation(home, userHome).collectorPlist()
-	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
-	switch env.jobState(userHome, plist) {
-	case "unknown":
+	in := env.installation(home, userHome)
+	ref, words := in.ref(), in.sched().Words()
+	job := preflightCheck{Label: "Background job", Detail: words.Tool + " responds", OK: true}
+	status := env.jobStatus(userHome, ref)
+	problem := problemOf(status)
+	switch status.State {
+	case scheduler.Unknown:
 		job.OK = false
-		job.Detail = "launchctl did not say whether the " + launchd.Label(plist) + " job is loaded, and setup loads it only when it can tell"
-		job.Fix = "Check that launchctl print gui/$(id -u) works in Terminal, then run agent-archive setup again."
-	case setupjournal.JobAnotherInstallation:
+		job.Detail = fmt.Sprintf("%s did not say whether the %s job is loaded, and setup loads it only when it can tell", words.Tool, ref)
+		job.Fix = problem.Fix + ", then run agent-archive setup again."
+	case scheduler.AnotherInstallation:
 		job.OK = false
-		job.Detail = fmt.Sprintf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation", launchd.Label(plist), displayPath(plist, userHome))
-		job.Fix = "Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own."
+		job.Detail = fmt.Sprintf("%s's %s job was loaded from a %s other than %s, so it belongs to another installation", words.Manager, ref, words.Definition, displayPath(problem.Expected, userHome))
+		job.Fix = problem.Fix + "."
+	case scheduler.Loaded, scheduler.Running, scheduler.Missing:
 	}
 	checks = append(checks, job)
 

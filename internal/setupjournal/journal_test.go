@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // The journal's on-disk format is read across releases: a setup
@@ -106,7 +107,7 @@ func newTxFixture(t *testing.T) *txFixture {
 		own:      filepath.Join(agents, "com.agent-archive.collector.plist"),
 		settings: filepath.Join(userHome, ".claude", "settings.json"),
 		config:   filepath.Join(home, "config.json"),
-		legacy:   filepath.Join(agents, LegacyLaunchLabel+".plist"),
+		legacy:   filepath.Join(agents, legacyLaunchLabel+".plist"),
 		relabeled: []string{
 			filepath.Join(agents, "com.agent-archive.collector.aaaa.plist"),
 			filepath.Join(agents, "com.agent-archive.collector.bbbb.plist"),
@@ -131,17 +132,24 @@ func newTxFixture(t *testing.T) *txFixture {
 	f.sim.loaded[simLabel(f.relabeled[0])] = f.relabeled[0]
 	f.sim.loaded[simLabel(f.other)] = "/Users/real/Library/LaunchAgents/" + filepath.Base(f.other)
 
-	legacy, err := PlanLegacyMigration(userHome, f.sim)
-	if err != nil || legacy == nil || !legacy.WasLoaded {
-		t.Fatalf("legacy plan: %+v %v", legacy, err)
+	// The jobs the scheduler lists as this installation's aliases (another
+	// installation's job under an earlier label is not among them: it is not
+	// this setup's to retire), as found.
+	retiree := func(path string, alias scheduler.Alias) scheduler.Retiree {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scheduler.Retiree{Backend: "launchd", Ref: scheduler.Ref(simLabel(path)), Alias: alias, Artifacts: []scheduler.Artifact{scheduler.FileArtifact(path, data, 0o644)}, WasLoaded: JobActive(f.sim.JobState(path))}
 	}
-	relabeled, err := PlanRelabel(append(slices.Clone(f.relabeled), f.other), f.sim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Another installation's job is not this setup's to retire.
-	if len(relabeled) != 2 || relabeled[0].Change.Path != f.relabeled[0] || !relabeled[0].WasLoaded || relabeled[1].Change.Path != f.relabeled[1] || relabeled[1].WasLoaded {
-		t.Fatalf("relabel plan: %+v", relabeled)
+	legacy, relabeled, err := RetireeJobs([]scheduler.Retiree{
+		retiree(f.legacy, scheduler.Prototype),
+		retiree(f.relabeled[0], scheduler.EarlierLabel),
+		retiree(f.relabeled[1], scheduler.EarlierLabel),
+	})
+	if err != nil || legacy == nil || !legacy.WasLoaded || len(relabeled) != 2 || relabeled[0].Change.Path != f.relabeled[0] || !relabeled[0].WasLoaded || relabeled[1].Change.Path != f.relabeled[1] || relabeled[1].WasLoaded {
+		t.Fatalf("retirees: %+v %+v %v", legacy, relabeled, err)
 	}
 	f.journal = Journal{
 		Legacy:        legacy,
@@ -215,7 +223,7 @@ func (f *txFixture) crash(t *testing.T, applied bool) {
 func TestCommitRetiresEveryOwnedJobAndNothingElse(t *testing.T) {
 	t.Parallel()
 	f := newTxFixture(t)
-	if err := Commit(f.home, f.journal, f.sim); err != nil {
+	if err := Commit(f.home, f.journal, backends(f.sim)); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range f.journal.Changes {
@@ -258,7 +266,7 @@ func TestCommitRollsBackAFailureAtEachStep(t *testing.T) {
 			t.Parallel()
 			f := newTxFixture(t)
 			tc.fail(f)
-			err := Commit(f.home, f.journal, f.sim)
+			err := Commit(f.home, f.journal, backends(f.sim))
 			if err == nil || !strings.Contains(err.Error(), "previous installation restored") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v", err)
 			}
@@ -283,7 +291,7 @@ func TestCommitRollbackLeavesAnotherInstallationsCollectorAlone(t *testing.T) {
 	elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
 	f.sim.loaded[simLabel(f.own)] = elsewhere
 	f.loaded[simLabel(f.own)] = elsewhere
-	err := Commit(f.home, f.journal, f.sim)
+	err := Commit(f.home, f.journal, backends(f.sim))
 	var blocked *RecoveryBlockedError
 	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "previous installation restored") || !strings.Contains(err.Error(), "belongs to another installation") || strings.Contains(err.Error(), "launchctl") {
 		t.Fatalf("err = %v", err)
@@ -303,7 +311,7 @@ func TestCommitReportsAnIncompleteRollback(t *testing.T) {
 	f := newTxFixture(t)
 	f.sim.failLoad[f.own] = 1
 	f.sim.failLoad[f.legacy] = 1
-	err := Commit(f.home, f.journal, f.sim)
+	err := Commit(f.home, f.journal, backends(f.sim))
 	var blocked *RecoveryBlockedError
 	if err == nil || !strings.Contains(err.Error(), "start background collector") || !strings.Contains(err.Error(), "rollback incomplete; run setup again") || !errors.As(err, &blocked) {
 		t.Fatalf("err = %v", err)
@@ -314,7 +322,7 @@ func TestCommitReportsAnIncompleteRollback(t *testing.T) {
 	if !TransactionPending(f.home) {
 		t.Fatal("an incomplete rollback removed its journal")
 	}
-	if err := Recover(f.home, f.sim, noLock); err != nil {
+	if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 		t.Fatal(err)
 	}
 	f.requireAsFound(t)
@@ -356,7 +364,7 @@ func TestRestoreRefusesBeforeTouchingAnything(t *testing.T) {
 				f.crash(t, applied)
 				tc.edit(t, f)
 				before, loaded := f.snapshot(), maps.Clone(f.sim.loaded)
-				err := Recover(f.home, f.sim, noLock)
+				err := Recover(f.home, backends(f.sim), noLock)
 				var blocked *RecoveryBlockedError
 				if !errors.As(err, &blocked) || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("err = %v", err)
@@ -390,7 +398,7 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 		f.crash(t, true)
 		elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
 		f.sim.loaded[simLabel(f.own)] = elsewhere
-		if err := Recover(f.home, f.sim, noLock); err != nil {
+		if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 			t.Fatal(err)
 		}
 		f.loaded[simLabel(f.own)] = elsewhere
@@ -416,14 +424,14 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 			// too; since then, another installation loaded this one's
 			// label from its own plist.
 			for _, job := range append([]*LegacyJob{f.journal.Legacy}, f.journal.relabeled()...) {
-				if err := retireLegacyJob(job, f.sim); err != nil {
+				if err := retireLegacyJob(job, backends(f.sim)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(plist)
 			f.sim.loaded[simLabel(plist)] = elsewhere
 			f.sim.calls = nil
-			if err := Recover(f.home, f.sim, noLock); err != nil {
+			if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 				t.Fatal(err)
 			}
 			f.loaded[simLabel(plist)] = elsewhere
@@ -447,13 +455,13 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 	home := t.TempDir()
 	sim := newLaunchdSim()
 	var taken bool
-	if err := Recover(home, sim, locked(&taken)); err != nil || taken {
+	if err := Recover(home, backends(sim), locked(&taken)); err != nil || taken {
 		t.Fatalf("no journal: err=%v lock taken=%v", err, taken)
 	}
 	if err := os.WriteFile(JournalPath(home), []byte(`{"changes":[`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := Recover(home, sim, locked(&taken))
+	err := Recover(home, backends(sim), locked(&taken))
 	var blocked *RecoveryBlockedError
 	if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "could not be read") || taken || len(sim.calls) != 0 {
 		t.Fatalf("corrupt journal: err=%v lock taken=%v calls=%v", err, taken, sim.calls)
@@ -465,7 +473,7 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	busy := errors.New("a collector pass is running")
-	if err := Recover(home, sim, func() (func(), error) { return nil, busy }); !errors.Is(err, busy) || len(sim.calls) != 0 || !TransactionPending(home) {
+	if err := Recover(home, backends(sim), func() (func(), error) { return nil, busy }); !errors.Is(err, busy) || len(sim.calls) != 0 || !TransactionPending(home) {
 		t.Fatalf("lock held: err=%v calls=%v", err, sim.calls)
 	}
 }
@@ -475,10 +483,16 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 // loaded job: it neither starts nor stops it.
 func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 	t.Parallel()
-	// The fake fails every load and unload, and records every question.
-	newQuiet := func() (launchd fakeLaunchd, asked func() []string) {
+	// The fake fails every load and unload, and records every question, and
+	// every backend a job is resolved through: a files-only journal names no
+	// job to drive, so it never resolves one, whatever backend it records.
+	newQuiet := func() (backends Backends, asked func() []string) {
 		var questions []string
-		return fakeLaunchd{state: func(plist string) string { questions = append(questions, plist); return "running" }}, func() []string { return questions }
+		launchd := fakeLaunchd{state: func(plist string) string { questions = append(questions, plist); return "running" }}
+		return func(name string) (scheduler.Scheduler, error) {
+			questions = append(questions, "the "+name+" backend")
+			return plistScheduler{launchd}, nil
+		}, func() []string { return questions }
 	}
 	newJournal := func(t *testing.T) (home string, journal Journal, settings, added string) {
 		t.Helper()

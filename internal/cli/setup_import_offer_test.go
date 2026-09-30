@@ -18,7 +18,7 @@ import (
 // setupImportAnswers set Claude Code up in ~/src/web-app, storing in S3,
 // and answer the import offer with importAnswer.
 func setupImportAnswers(importAnswer string) string {
-	return strings.Join([]string{"", "", "2", "work", "2", "", importAnswer}, "\n") + "\n"
+	return strings.Join([]string{"", "2", "work", "2", "", importAnswer}, "\n") + "\n"
 }
 
 // newImportOfferFixture is a Mac with Claude Code, run from ~/src/web-app,
@@ -318,7 +318,7 @@ func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: "/Users/alex/src/app", Included: true}}},
 	}
 	var out bytes.Buffer
-	printNextSteps(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex", false, false)
+	printAnotherMac(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
 	got := out.String()
 	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --project ~/src/app\nThen run agent-archive setup there and set the folder inside the bucket to team/.\n"
 	if !strings.HasSuffix(got, want) || strings.Contains(got, "ref-123") {

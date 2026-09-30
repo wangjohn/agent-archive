@@ -44,8 +44,8 @@ func TestNewChoosesLaunchdOnDarwin(t *testing.T) {
 	}
 	// It runs launchctl through the Runner it was given, never the real one.
 	site, ref := scheduler.Site{UserHome: "/Users/me"}, scheduler.Ref("com.agent-archive.collector")
-	if state := got.JobState(context.Background(), site, ref); state != scheduler.Missing || len(calls) != 1 || !strings.HasPrefix(calls[0], "launchctl print ") {
-		t.Errorf("JobState = %q after %q, want missing through the given Runner", state, calls)
+	if state := got.Inspect(context.Background(), site, ref).State; state != scheduler.Missing || len(calls) != 1 || !strings.HasPrefix(calls[0], "launchctl print ") {
+		t.Errorf("Inspect = %q after %q, want missing through the given Runner", state, calls)
 	}
 }
 
@@ -58,8 +58,8 @@ func TestNewRefusesSystemsWithoutAScheduler(t *testing.T) {
 	var unset platform.OS
 	for _, system := range []platform.OS{platform.Linux, platform.Unknown, unset} {
 		s := New(system, failRunner(t))
-		if got := s.JobState(context.Background(), site, ref); got != scheduler.Unknown {
-			t.Errorf("%q: JobState = %q, want unknown", system, got)
+		if got := s.Inspect(context.Background(), site, ref); got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell {
+			t.Errorf("%q: Inspect = %+v, want unknown with a problem", system, got)
 		}
 		for name, err := range map[string]error{"Load": s.Load(context.Background(), site, ref), "Unload": s.Unload(context.Background(), site, ref)} {
 			if err == nil || !strings.Contains(err.Error(), "no scheduler for this system yet") {

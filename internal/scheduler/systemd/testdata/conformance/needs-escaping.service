@@ -1,0 +1,12 @@
+# Written by agent-archive setup; setup and setup --refresh rewrite this file.
+[Unit]
+Description=agent-archive background collector
+
+[Service]
+Type=oneshot
+ExecStart=/Users/test/bin/agent-archive _collect
+Environment="AGENT_ARCHIVE_HOME=/Users/test/a & <b> \"c\""
+Environment="HTTPS_PROXY=http://proxy.example:3128/?a&b<2>"
+Environment=PATH=/usr/bin
+StandardOutput=append:/Users/test/a & <b> "c"/collector.log
+StandardError=append:/Users/test/a & <b> "c"/collector-error.log

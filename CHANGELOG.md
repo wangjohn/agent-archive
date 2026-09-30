@@ -358,6 +358,25 @@ follow [Semantic Versioning](https://semver.org/).
   `ripgrep_raw_search`, and `glob_file_search` tools, so edits in chats
   imported from Cursor's database are listed and counted in
   `counts.files_touched`.
+- A first `setup` run inside a Git project, with apps found, asks one
+  question for the apps and that project ("Archive Codex and Claude Code
+  sessions in ~/src/app?") instead of two; the review still lets you add
+  projects, drop apps, or change how long sessions are kept, and setup says
+  how many other projects your apps have sessions in. Answer no to choose
+  them one at a time as before. Setup no longer pre-selects a repository that
+  is your home folder or holds it, or that is a temporary folder (`/tmp`,
+  `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds one: it says so and
+  asks for the projects instead. A repository inside a temporary folder is
+  still offered.
+- `setup` offers to import past sessions after it has said how to check that
+  capture works, not before, and `setup` ends with the command for another
+  Mac after that offer. `setup --yes` is unchanged.
+- The storage instructions in `setup` are now two lines and a link to the
+  bucket guide, instead of the full steps.
+- `setup` checks a new storage key or profile with one small listing before
+  it writes its test file, so a wrong account ID, key, or profile fails at
+  once with the usual explanation. The full write, read, and delete check
+  still decides that storage works.
 
 ### Fixed
 
@@ -367,6 +386,18 @@ follow [Semantic Versioning](https://semver.org/).
   session's removal record while holding the lock the hook waits a second
   for, and that write's disk syncs could take longer; it now writes the
   record first and holds the lock only to recheck and forget the session.
+- **`agent-archive stats` no longer says `--json` has every row of a list it
+  cut.** Under a cut list the screens said `(--json has them all)`, but plain
+  `--json` keeps only the top five projects. The projects screen now says `+ N
+  more (all in --json --by project)` (the by-project rows are never cut),
+  the models screen `(all in --json)` (`models` is never cut), and the
+  detail screen's day, week and month tables `N earlier rows not shown (all in
+  --json --by day)`; the interactive screen, which takes no command, says to
+  quit first and names the window on show (`+ N more (quit, then run
+  agent-archive stats --days 90 --json --by project)`). The skills and MCP
+  servers were never claimed to be in `--json`, which keeps only the top five
+  of each; `stats --help` and the guide now say the detail screen lists up to
+  40 of them.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

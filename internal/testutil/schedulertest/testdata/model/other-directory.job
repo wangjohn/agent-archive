@@ -1,0 +1,9 @@
+job=model-6a14b540
+program=/Users/test/bin/agent-archive
+args=_collect
+data=/Users/test/other data
+interval=1m0s
+run_at_load=true
+env.AWS_CONFIG_FILE=/Users/test/.aws/config
+env.AWS_PROFILE=work
+env.PATH=/opt/tools/bin:/usr/bin
