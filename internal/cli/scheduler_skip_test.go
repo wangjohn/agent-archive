@@ -119,6 +119,27 @@ func TestLinuxUninstallSkippingTheSchedulerRemovesWhatItCanAndSaysSo(t *testing.
 	}
 }
 
+// The summary names the scheduler the job was under even after
+// --delete-local-data has deleted the configuration that recorded it.
+func TestLinuxUninstallSkippingTheSchedulerAndDeletingLocalData(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.setup()
+	l.manager.noBus = true
+	code, output := l.uninstall("--skip-scheduler", "--delete-local-data")
+	if code != 0 {
+		t.Fatalf("uninstall: exit %d\n%s", code, output)
+	}
+	if _, err := os.Stat(l.home + "/config.json"); !os.IsNotExist(err) {
+		t.Errorf("the configuration is left after --delete-local-data (%v)", err)
+	}
+	for _, want := range []string{"Not verified stopped: the systemd job " + l.ref(), "To stop it, run this from a session that can reach systemd: " + l.manualStop()} {
+		if !strings.Contains(output, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, output)
+		}
+	}
+}
+
 // With a scheduler that can be reached, the flag changes nothing: the job is
 // stopped and verified, the files go, and the summary is the usual one.
 func TestLinuxUninstallSkippingTheSchedulerStillStopsAJobItCanReach(t *testing.T) {

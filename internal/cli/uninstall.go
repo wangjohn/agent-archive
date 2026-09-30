@@ -168,7 +168,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		}
 	}
 	if len(unverified) > 0 {
-		printUnverifiedJobs(out, env.scheduler().Words(), unverified)
+		printUnverifiedJobs(out, unverified)
 		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
 		return nil
 	}
@@ -235,6 +235,10 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 // stopped, because the scheduler could not be reached (--skip-scheduler).
 type unverifiedJob struct {
 	ref scheduler.Ref
+	// words are the nouns of the scheduler that could not be reached, kept here
+	// because the summary is printed after a purge has deleted the
+	// configuration that names the scheduler.
+	words scheduler.Words
 	// why is what stopped the scheduler from answering or stopping the job.
 	why string
 	// manual is the command that stops the job by hand, "" when the
@@ -265,7 +269,7 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 			// The scheduler said it cannot tell; asking it to stop the job
 			// is the attempt, and whether it worked is the answer.
 			if err := env.unloadJob(userHome, ref); err != nil {
-				unverified = append(unverified, unverifiedJob{ref: ref, why: cmp.Or(problem.Reason, words.Tool+" did not say whether the job is loaded"), manual: problem.Manual})
+				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: cmp.Or(problem.Reason, words.Tool+" did not say whether the job is loaded"), manual: problem.Manual})
 			}
 			remove = append(remove, status.Paths...)
 			continue
@@ -279,7 +283,7 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 				if !skipScheduler {
 					return nil, nil, fmt.Errorf("stop collector: %w", err)
 				}
-				unverified = append(unverified, unverifiedJob{ref: ref, why: err.Error()})
+				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: err.Error()})
 			}
 		}
 		remove = append(remove, status.Paths...)
@@ -305,8 +309,9 @@ func uninstallUnknownMessage(words scheduler.Words, problem scheduler.Problem) s
 // printUnverifiedJobs says which background jobs uninstall went on without
 // verifying stopped, why, and the command that stops each by hand: deleting a
 // definition under a job that is still loaded leaves it running.
-func printUnverifiedJobs(out io.Writer, words scheduler.Words, jobs []unverifiedJob) {
+func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 	for _, job := range jobs {
+		words := job.words
 		terminal.Printf(out, "Not verified stopped: the %s job %s may still be running, because %s.\n", words.Manager, job.ref, job.why)
 		if job.manual != "" {
 			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
