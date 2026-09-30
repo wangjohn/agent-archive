@@ -10,7 +10,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - **Handoff without copying.** Continuing a session in another coding agent
   is one step: inside Claude Code, `/handoff codex` opens Codex in a new
-  terminal tab with the session as its context (in Codex, ask for
+  terminal tab or window with the session as its context (in Codex, ask for
   `$handoff`); on a terminal, `agent-archive handoff` picks a session, asks
   where to continue, and starts the agent there. See the
   [handoff guide](docs/guides/handoff.md).

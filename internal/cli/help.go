@@ -194,7 +194,7 @@ where to continue: an installed agent starts in this terminal with the
 session as its context (Enter takes handoff.default_to in config.json, else
 Codex for a Claude Code session and Claude Code for the others), or print,
 copy to the clipboard, or write to a file. Inside Claude Code, /handoff codex
-runs handoff --to codex, which opens Codex in a new terminal tab.
+runs handoff --to codex, which opens Codex in a new terminal tab or window.
 The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
 this Mac is read from its transcript now; otherwise it is downloaded from

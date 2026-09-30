@@ -8,8 +8,8 @@ anything.
 There are two ways to do it:
 
 - **Inside an agent.** In Claude Code, type `/handoff codex`. In Codex, ask
-  for `$handoff`. The other agent opens in a new terminal tab with this
-  session as its context.
+  for `$handoff`. The other agent opens in a new terminal tab (a new window
+  in Terminal) with this session as its context.
 - **From a terminal.** Run `agent-archive handoff`, pick a session, and press
   Enter at `Continue in:`. The other agent starts in this terminal.
 
@@ -22,12 +22,13 @@ There are two ways to do it:
 Setup installs a `handoff` skill for the apps it sets up. In Claude Code,
 `/handoff codex` hands off the session you are in; `/handoff claude` and
 `/handoff cursor` work too. In Codex, ask for `$handoff` (or pick it from
-`/skills`) and name the agent. With no agent named, the skill picks another
+`/skills`) and name the agent. In Cursor, ask the agent to hand off; it
+reads the same skill as Codex. With no agent named, the skill picks another
 agent than the one you are in: Codex from Claude Code, Claude Code from Codex
 or Cursor.
 
 The skill runs `agent-archive handoff --to <agent>`, which opens the agent in
-a new tab and returns at once. The agent you are in reports where it opened:
+a new tab or window (see [what happens](#what-happens)) and returns at once. The agent you are in reports where it opened:
 
 ```text
 handoff: opened codex in a new iTerm2 tab
@@ -91,8 +92,8 @@ agent-archive handoff SESSION_ID --to claude
 agent-archive handoff SESSION_ID --to cursor
 ```
 
-`handoff` asks only on a terminal, and not with `--to`, `--output`,
-`--format json`, or `--no-preamble`. See
+`handoff` asks where to continue only on a terminal, and not with `--to`,
+`--output`, `--format json`, or `--no-preamble`. See
 [scripting and other outputs](#scripting-and-other-outputs).
 
 ## What happens
