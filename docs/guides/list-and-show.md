@@ -63,11 +63,12 @@ claude · agent-archive · 2h ago                                      ✓ compl
             1 compaction · 14 files edited
   Tools     Bash 42 · Edit 18 · Read 12 · Grep 9 ·
             mcp__github__create_pull_request 1
+  Git       2 commits · 1 push · PR #155 opened · PR #155 merged
   Skills    code-review, simplify
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.15.0 (partial) · filter 12
+     origin hook · parser 0.16.0 (partial) · filter 12
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -175,6 +176,11 @@ gain them when the collector next refreshes their metadata. See
 From parser `0.14.0` metadata also counts reasoning tokens and tool errors,
 splits token counts by model, and counts MCP calls by server; these are for
 scripts and are not shown by `show` yet.
+
+From parser `0.15.0` metadata records the commits, pushes, and pull
+requests the session created or merged, when its own tool calls confirmed
+them; the `Git` row counts commits and pushes and names each pull request.
+See [JSON output](../reference/json-output.md#show).
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its

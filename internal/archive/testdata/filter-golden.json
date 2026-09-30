@@ -5,6 +5,9 @@
   "claude-compaction.jsonl": {
     "sha256": "a32aef4e79698cea84a1d9d91068f539f3df13bfdce4d47afb05d0b2978cce06"
   },
+  "claude-git-activity.jsonl": {
+    "sha256": "aa7b0dd2b78280576860e21abdac21019e0db4a1e749aea2b560ab401f3e5790"
+  },
   "claude-local-command.jsonl": {
     "sha256": "b83a0fb3faaba35210af550eb796532054814969b8f02a9644daef8e58c9e567"
   },

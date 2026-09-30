@@ -8,13 +8,35 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Handoff without copying.** Continuing a session in another coding agent
+  is one step: inside Claude Code, `/handoff codex` opens Codex in a new
+  terminal tab or window with the session as its context (in Codex, ask for
+  `$handoff`); on a terminal, `agent-archive handoff` picks a session, asks
+  where to continue, and starts the agent there. See the
+  [handoff guide](docs/guides/handoff.md).
+- Metadata may include, from parser `0.15.0`, `git_activity`: the commits,
+  pushes, and pull requests created or merged that the session's own tool
+  calls confirmed (`git` and `gh` commands, and GitHub MCP tools), each with
+  its time and, when known, the commit SHA, branch, `owner/repo`, pull
+  request number, and a URL. Only work whose result shows it succeeded is
+  recorded, never a failed, rejected, or dry-run attempt. `counts.commits`,
+  `counts.pushes`, `counts.prs_created`, and `counts.prs_merged` count it,
+  and `show` has a `Git` row. Commit messages and pull request text are not
+  kept. Existing sessions gain the fields on the next metadata refresh;
+  nothing is re-uploaded but the metadata.
+- Setup installs the `handoff` skill for Claude Code
+  (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/handoff/SKILL.md`). It runs
+  `agent-archive handoff --to <agent>`, defaulting to another agent than the
+  one you are in. Setup leaves a file it did not write, uninstall removes
+  only its own, and `status --json` lists them in `agent_commands`.
 - Sessions in a git repository now carry a `repo_key` in their metadata: a
   hash of the repository's `origin` address (credentials, scheme, port, and
   `.git` removed, so SSH and HTTPS clones of one repository agree), which
   identifies the repository wherever it is checked out. Only the hash is
   stored, never the address; the
   [privacy page](docs/security/privacy.md) explains what a hash of a known
-  address does and does not hide. Parser version is now `0.15.0`, so existing
+  address does and does not hide. Parser version is now `0.16.0`, so existing
   sessions gain the field on the next metadata refresh, on the Mac that
   captured them and only while the repository is still there. Nothing uses it
   yet: a later release matches `handoff` to a session by repository rather
@@ -67,21 +89,42 @@ follow [Semantic Versioning](https://semver.org/).
   `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set, so a coding agent whose shell is
   a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
   turns it off, and a refusal caused by it says so.
-- `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record. The session can be local or archived. With no
-  session named, run inside Claude Code, Codex, or Cursor, it hands off that
-  agent's own session; otherwise a terminal gets the picker. The receiving
-  agent is told how to inspect the archived or current local record with
-  Agent Archive. The record is kept in the data directory's `handoffs/` for 7
-  days, so a resumed session can read it again (before setup, in a private
-  temporary folder the system clears). Each launch's copy has a folder of its
-  own, which is all Claude Code gets with `--add-dir`; Codex and Cursor get
-  the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
-  before `cursor-agent`. The launched agent does not inherit the calling
-  agent's session variables.
-- Arguments after `--` go to the agent `handoff --to` launches, and
-  `config.json` may set per-agent arguments (`handoff.args`) and a default
-  destination per source harness (`handoff.default_to`).
+- On a terminal, `handoff` asks where to continue once the session is
+  chosen: an installed agent (default: `handoff.default_to` in `config.json`,
+  else another agent than the session's), print (paged when long), copy to
+  the clipboard, or write to a file. Pipes, `--output`, `--format json`, and
+  `--no-preamble` print as before, so `codex "$(agent-archive handoff
+  --latest)"` still works, and so does a run inside an agent, where
+  `handoff` never asks anything.
+- `handoff --to claude|codex|cursor` starts that agent without asking, with
+  the filtered session record, local or archived. With no session named, run
+  inside Claude Code, Codex, or Cursor, it hands off that agent's own
+  session; otherwise a terminal gets the picker. The agent reads the record
+  from a private file kept 7 days in the data directory's `handoffs/`, so a
+  resumed session can read it again (before setup, in a temporary folder the
+  system clears), and is told how to get more context with Agent Archive.
+  Claude Code gets only that file's folder with `--add-dir`; Codex and
+  Cursor get the checkout with `--cd` and `--workspace`. Cursor's `agent`
+  CLI is tried before `cursor-agent`. The launched agent does not inherit
+  the calling agent's session variables.
+- On a terminal the agent runs there. Without one, or inside an agent (or
+  with `AGENT_ARCHIVE_NONINTERACTIVE=1`) even when its shell is a
+  pseudo-terminal, it opens in a new tmux window, iTerm2 or Ghostty tab, or
+  Terminal window, and `handoff` returns; `--here` and `--new-window` choose
+  explicitly. Where no window can be opened it prints the command to run
+  instead.
+- Arguments after `--` go to the launched agent, and `config.json` may set
+  per-agent arguments (`handoff.args`) and a default destination per source
+  harness (`handoff.default_to`).
+- `handoff --worktree` starts the agent in a new git worktree beside the
+  checkout, on a new branch (`handoff/<id>`, or `--branch NAME`), with your
+  uncommitted changes (staged ones arrive unstaged) and untracked, not
+  ignored, files carried over. Your checkout and stash list are left as
+  they were. On a terminal `--to` may be left out: the agent chosen at the
+  prompt starts in the worktree, and printing, copying, or writing the
+  handoff creates none. Without `--worktree`, handing off a session active
+  in the last 2 minutes in the same checkout asks on a terminal whether to
+  continue there, cancel, or use a worktree, and warns otherwise.
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a

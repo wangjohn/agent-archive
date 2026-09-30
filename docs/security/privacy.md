@@ -94,7 +94,10 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   session's last record time, counts (including how many distinct files were
   edited, never which), models, skills used, the names of the ten most-called
   tools (MCP tool names included) with their call counts, the MCP servers
-  called and how often, token counts (in total and per model), and the
+  called and how often, token counts (in total and per model), the git work
+  the session's tool calls confirmed (commit SHAs, branch names, `owner/repo`,
+  pull request numbers and links; never commit messages, pull request text,
+  or commands), and the
   capture gaps the filter recorded (the names of omitted fields, never their
   values).
 - **Repository key** (`repo_key`, in the metadata): when a project is a git
