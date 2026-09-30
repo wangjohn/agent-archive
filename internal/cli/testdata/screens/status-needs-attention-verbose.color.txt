@@ -38,6 +38,7 @@ $ agent-archive status --verbose
     Installed version: unknown; support unknown.
     Project /Users/alex/src/web-app: verified_at_recorded_time.
     Read-back verified: 2026-09-25T12:00:00Z; evidence is for that publication.
+  /handoff:      ~/.agents/skills/handoff/SKILL.md
   Last error:    list registrations: AccessDenied: Access Denied
 
 \e[2mAs JSON:\e[0m \e[36magent-archive status --json\e[0m

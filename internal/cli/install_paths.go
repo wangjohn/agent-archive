@@ -56,6 +56,11 @@ func (in installation) hook(executable string) hooks.Hook {
 	return hooks.Hook{Executable: executable, DataHome: dataHome, DefaultDataHome: defaultHome}
 }
 
+// commandDataHome is the AGENT_ARCHIVE_HOME this installation's commands
+// run with (see hook): "" for the default one. Its /handoff skills name it
+// too, which is how each installation tells its own apart.
+func (in installation) commandDataHome() string { return in.hook("").DataHome }
+
 // owner identifies this installation's hook handlers, for removing them;
 // the executable they run does not matter there.
 func (in installation) owner() hooks.Hook { return in.hook("") }

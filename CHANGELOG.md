@@ -18,6 +18,12 @@ follow [Semantic Versioning](https://semver.org/).
   bare name, with `total_skills`, `total_display_skills` and
   `mcp.total_servers` counting every row. Existing fields and the screen and
   page are unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
+- Setup installs a `/handoff` skill for Claude Code
+  (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/handoff/SKILL.md`) that runs
+  `agent-archive handoff --to <agent>` from inside the agent. Setup leaves a
+  file it did not write, uninstall removes only its own, and
+  `status --json` lists them in `agent_commands`.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -78,9 +84,26 @@ follow [Semantic Versioning](https://semver.org/).
   the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
   before `cursor-agent`. The launched agent does not inherit the calling
   agent's session variables.
+- On a terminal, `handoff` asks where to continue: an installed agent
+  (default: another agent than the session's, or `handoff.default_to`),
+  print (paged when long), copy to the clipboard, or write to a file. Pipes,
+  `--output`, `--format json`, and `--no-preamble` print as before.
+- Without a terminal, as when an agent runs it, `handoff --to` opens the
+  agent in a new tmux window or iTerm2, Ghostty, or Terminal tab and returns;
+  `--here` and `--new-window` choose explicitly. Where no window can be
+  opened it prints the command to run instead.
 - Arguments after `--` go to the agent `handoff --to` launches, and
   `config.json` may set per-agent arguments (`handoff.args`) and a default
   destination per source harness (`handoff.default_to`).
+- `handoff --to NAME --worktree` launches the agent in a new git worktree
+  beside the checkout, on a new branch (`handoff/<id>`, or `--branch NAME`),
+  with your uncommitted changes (staged ones arrive unstaged) and untracked,
+  not ignored, files carried over. Your checkout and stash list are left as
+  they were. On a terminal `--to` may be left out: the agent chosen at the
+  prompt starts in the worktree, and printing, copying, or writing the
+  handoff creates none. Without `--worktree`, handing off a session active in the last
+  2 minutes in the same checkout asks on a terminal whether to continue
+  there, cancel, or use a worktree, and warns otherwise.
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a
