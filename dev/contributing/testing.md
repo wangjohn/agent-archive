@@ -329,7 +329,7 @@ assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 counter (`state.PublishedStateLoads`), removes this process's Cursor
 snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
 within a production time bound that a busy parallel run can exceed (a
-hook's one-second lock wait, a version command's output deadline) stays
+hook's lock wait, a version command's output deadline) stays
 sequential, with a comment saying why when it is not obvious. Go runs every sequential test
 before it releases the parallel ones, so a package variable a sequential
 test changes and restores is never seen by a parallel test. Test seams
