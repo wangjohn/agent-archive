@@ -325,13 +325,16 @@ func (s Scheduler) systemctl(ctx context.Context, args ...string) error {
 // removal of ones a rollback deleted), then enables the timer and starts it.
 // The timer's first run is at once, since a minute after boot has passed (in
 // a container, OnBootSec= counts from the manager's own start instead, so the
-// first run may wait up to a minute). A failure is reported as an incomplete setup, with rollback and a retry path.
+// first run may wait up to a minute). A failure is reported as an incomplete
+// setup, with rollback and a retry path; one where the manager found no unit
+// file names the directory the units are in and the XDG_CONFIG_HOME that
+// would have sent the manager elsewhere (see UnitDir).
 //
 // It runs on a context of its own, bounded by the change timeout, that
 // neither ctx's cancellation nor its deadline reaches (context.WithoutCancel):
 // an interrupt never stops a change halfway, since the setup journal handles
 // what is half applied.
-func (s Scheduler) Load(ctx context.Context, _ scheduler.Site, ref scheduler.Ref) error {
+func (s Scheduler) Load(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {
 	if !validRef(ref) {
 		return fmt.Errorf("%q is not a job of this tool", ref)
 	}
@@ -340,7 +343,13 @@ func (s Scheduler) Load(ctx context.Context, _ scheduler.Site, ref scheduler.Ref
 	if err := s.systemctl(ctx, "daemon-reload"); err != nil {
 		return err
 	}
-	return s.systemctl(ctx, "enable", "--now", string(ref)+".timer")
+	err := s.systemctl(ctx, "enable", "--now", string(ref)+".timer")
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		// The manager did not find the units where they were written: see
+		// UnitDir.
+		return fmt.Errorf("%w (the units are in %s, which a user manager whose own environment sets XDG_CONFIG_HOME does not search; `systemctl --user show --property=UnitPath` lists where it looks)", err, s.UnitDir(site))
+	}
+	return err
 }
 
 // Unload stops the job ref names, only when systemd loaded it from this

@@ -120,7 +120,8 @@ var unitDir = filepath.Join(".config", "systemd", "user")
 // the shell's XDG_CONFIG_HOME would name a directory the manager does not
 // search. A manager that does have another XDG_CONFIG_HOME (set by pam_env
 // or a user@.service drop-in) does not find the units, Load fails with
-// systemctl's "unit file ... does not exist", and setup rolls back. A
+// systemctl's "unit file ... does not exist" and this directory, and setup
+// rolls back. A
 // sandbox or a test that names another home keeps its units under that home.
 func (Scheduler) UnitDir(site scheduler.Site) string {
 	return filepath.Join(site.UserHome, unitDir)

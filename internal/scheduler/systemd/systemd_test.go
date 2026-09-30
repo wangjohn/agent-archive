@@ -328,7 +328,10 @@ func TestLingeringOffIsDegraded(t *testing.T) {
 }
 
 // Load reloads the manager, which has not seen the unit files, then enables
-// the timer and starts it; a failure carries systemctl's own words.
+// the timer and starts it; a failure carries systemctl's own words, and one
+// where the manager found no unit file (the recorded "Unit file ... does not
+// exist.") also where the units are and the XDG_CONFIG_HOME that would have
+// sent the manager elsewhere.
 func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
 	t.Parallel()
 	f := newFakeSystemctl(t, "252")
@@ -341,8 +344,14 @@ func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
 	}
 	must(t, os.Remove(s.timerPath(site, ref)))
 	err := s.Load(context.Background(), site, ref)
-	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist") {
+	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "the units are in "+s.UnitDir(site)) || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
 		t.Errorf("Load of a missing unit file: %v", err)
+	}
+	refused := func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("Failed to enable unit: Access denied"), errors.New("exit status 1")
+	}
+	if err := (Scheduler{Run: refused}).Load(context.Background(), site, ref); err == nil || strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
+		t.Errorf("Load refused for another reason: %v", err)
 	}
 	if err := s.Load(context.Background(), site, "not-a-job"); err == nil {
 		t.Error("Load accepted a ref no plan makes")
