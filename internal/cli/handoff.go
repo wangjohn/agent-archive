@@ -127,6 +127,9 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return 1
 		}
 		if choice.action != handoffLaunch {
+			if opts.worktree {
+				terminal.Println(stderr, "handoff: nothing launched, so no worktree was created")
+			}
 			return 0
 		}
 		dest = choice.dest
@@ -135,7 +138,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		// Run from inside an agent (interaction is off there), without a
 		// terminal, or asked to, the new agent gets a terminal of its own.
 		here := interactive && !opts.newWindow
-		if err := launchPreparedHandoff(rendered, h, target, dest, here, opts, home, stdin, stdout, stderr, env); err != nil {
+		if err := launchPreparedHandoff(rendered, h, target, dest, here, opts, home, stdin, answers, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}

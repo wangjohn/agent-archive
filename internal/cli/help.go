@@ -295,11 +295,22 @@ with AGENT_ARCHIVE_NONINTERACTIVE on, it prints the handoff as it always has.
                         PATH. With no selector, hands off the Claude Code,
                         Codex, or Cursor session it runs in, or picks one on
                         a terminal. On a terminal the agent runs there;
-                        otherwise it opens in a new tmux window, or a new
-                        iTerm2, Ghostty, or Terminal tab, and the command
-                        returns
+                        otherwise, or inside a coding agent, it opens in a
+                        new tmux window, or a new iTerm2, Ghostty, or
+                        Terminal tab, and the command returns. If the source
+                        session was active in the last 2 minutes in this
+                        checkout, a terminal is asked whether to continue
+                        here, cancel, or use a worktree (inside an agent it
+                        only warns)
   --here                Run the launched agent in this terminal
   --new-window          Open the launched agent in a new window or tab
+  --worktree            Launch in a new git worktree beside the checkout
+                        (its directory name plus -handoff- and the first 8
+                        characters of SESSION_ID), on a new branch at HEAD,
+                        with uncommitted changes and untracked (not ignored)
+                        files copied in
+  --branch NAME         With --worktree, the new branch (default: handoff/
+                        and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff
@@ -307,6 +318,7 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
 Example: agent-archive handoff SESSION_ID --to claude -- --model opus
+Example: agent-archive handoff SESSION_ID --to codex --worktree
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history

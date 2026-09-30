@@ -217,6 +217,10 @@ type Env struct {
 	// LookPath finds a destination agent's executable. Defaults to
 	// exec.LookPath.
 	LookPath func(string) (string, error)
+	// RunGit runs `git -C dir args...` and returns its stdout, with its
+	// stderr in the error. `handoff --worktree` uses it. Defaults to the git
+	// on PATH; tests point it at temporary repositories.
+	RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)
 	// Environ is the process environment a launched agent starts from,
 	// less the calling agent's session variables. Defaults to os.Environ.
 	Environ func() []string
