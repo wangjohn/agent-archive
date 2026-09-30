@@ -18,6 +18,7 @@ import "strings"
 //	heads-up      yellow bullets
 //	token types   cache read blue, cache write yellow, input green, output magenta
 //	labels        dim; emphasis bold
+//	key bar       keys bold, labels dim, the active view in reverse video
 //
 // Yellow carries three meanings (Claude Code, a heads-up bullet and a rise in
 // spend, and the haiku and cache-write colors on other screens). They are far
@@ -65,6 +66,9 @@ const (
 	roleCacheWrite
 	roleFreshInput
 	roleOutput
+	// roleKeyActive is the interactive screen's key bar item for the view
+	// on show, in reverse video.
+	roleKeyActive
 )
 
 // statsRoleCodes is the SGR code of each role.
@@ -80,6 +84,7 @@ var statsRoleCodes = map[statsRole]string{
 	roleCacheWrite: "33",
 	roleFreshInput: "32",
 	roleOutput:     "35",
+	roleKeyActive:  "7",
 }
 
 // statsAgentCodes is the color of each agent, by the archive's harness name.

@@ -563,7 +563,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":
-		return runStatsCommand(args[1:], stdout, stderr, env)
+		return runStatsCommand(args[1:], stdin, stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
+  a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
+  overview, detail, projects, models and agents views, `w` cycles the window
+  (7, 30, 90 days) instantly from what was already read, the arrows, `j` `k`,
+  PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
+  `h` saves the redacted page as HTML (it asks for a file name and never
+  replaces a file) and `q` or Ctrl-C quit, leaving the terminal as it
+  was. The bar names the window `w` moves to next. It opens only when
+  standard input and output are terminals (not a dumb one) and
+  `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,
+  `--by`, `--no-pager`, `--json` or `--html`; those print as before. See the
+  [stats guide](docs/guides/stats.md#the-interactive-screen).
 - `agent-archive stats --json` carries more of what the screen is built from:
   each day's estimated cost (`daily[].cost`, adding up to the overview's) and
   the dearest day (`peak_spend`), the share of tokens that were cache reads
