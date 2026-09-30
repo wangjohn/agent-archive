@@ -63,6 +63,8 @@ Setup edits each included app's hook settings and adds one LaunchAgent; for Curs
 | `backfill` | Preview sessions already on this Mac for import. | `agent-archive backfill --dry-run` |
 | `handoff` | Continue a session in another agent; inside Claude Code, `/handoff codex`. | `agent-archive handoff` |
 
+Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you ([agent skills](docs/guides/agent-skills.md)).
+
 Use a session ID from `list` with `show`. For every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
 [Install](docs/getting-started/install.md) ·
