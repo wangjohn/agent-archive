@@ -29,9 +29,9 @@ func hookEvidence(turn string, at time.Time) archive.SupplementalEvidence {
 // turn's evidence.
 func TestRequestLockedWritesSyncWithTheLockFree(t *testing.T) {
 	at := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
-	// The session whose lock the seam tries: a new registration's is the ID
-	// it is given.
-	var lockID string
+	// The lock the seam tries: a new registration's is its given ID's, and
+	// a subagent candidate's is its own.
+	var lockName string
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, local *Store)
@@ -68,12 +68,16 @@ func TestRequestLockedWritesSyncWithTheLockFree(t *testing.T) {
 			}
 		}, func(local *Store) error {
 			_, err := local.RegisterNewSession("native-1", func(id string) archive.SessionRegistration {
-				lockID = id
+				lockName = requestLockName(id)
 				reg := registration(t)
 				reg.ArchiveSessionID = id
 				return reg
 			})
 			return err
+		}},
+		{"a subagent candidate", nil, func(local *Store) error {
+			lockName = subagentLockName("child")
+			return local.SaveSubagentCandidate(SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-1:subagent:agent", ParentArchiveSessionID: "session-1", ParentNativeSessionID: "native-1", ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/unused", ObservedAt: at})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,12 +88,12 @@ func TestRequestLockedWritesSyncWithTheLockFree(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, local)
 			}
-			lockID = "session-1"
+			lockName = requestLockName("session-1")
 			syncs := 0
 			var busy error
-			local.onRequestWriteSync = func() {
+			local.onWriteSync = func() {
 				syncs++
-				unlock, err := aalocal.NamedLock(local.home, requestLockName(lockID))
+				unlock, err := aalocal.NamedLock(local.home, lockName)
 				if err != nil {
 					busy = err
 					return
@@ -100,7 +104,7 @@ func TestRequestLockedWritesSyncWithTheLockFree(t *testing.T) {
 				t.Fatal(err)
 			}
 			if busy != nil {
-				t.Fatalf("the request lock was held while the write synced: %v", busy)
+				t.Fatalf("the lock was held while the write synced: %v", busy)
 			}
 			if syncs != 2 {
 				t.Fatalf("the write synced outside the lock %d times, want 2 (its temporary file and its directory)", syncs)
@@ -123,12 +127,16 @@ func TestHookRequestLandingDuringACollectorWriteIsKept(t *testing.T) {
 	if err := collector.SaveRequest("session-1", "stop", at, hookEvidence("published", at)); err != nil {
 		t.Fatal(err)
 	}
-	publishing := mustRequestTokenOf(t, collector, "session-1")
-	hook := OpenReadOnly(collector.home)
+	publishing := mustRequestToken(t, collector, "session-1")
+	hook := OpenReadOnly(collector.home).ForHook()
 	var hookTurns []string
-	collector.onRequestWriteSync = func() {
-		// At both of the collector's syncs, before and after its rename.
-		if len(hookTurns) >= 4 {
+	syncs := 0
+	collector.onWriteSync = func() {
+		// The collector syncs its first staged file, which the hook then
+		// overtakes; its second, which lands; and its directory, after the
+		// rename, when the hook writes again.
+		syncs++
+		if syncs == 2 {
 			return
 		}
 		turn := fmt.Sprintf("turn-%d", len(hookTurns))
@@ -140,8 +148,8 @@ func TestHookRequestLandingDuringACollectorWriteIsKept(t *testing.T) {
 	if err := collector.SaveRequest("session-1", "subagent-published", at, hookEvidence("child", at)); err != nil {
 		t.Fatal(err)
 	}
-	if len(hookTurns) < 2 {
-		t.Fatalf("the hook ran %d times, want at least one overtaking write and one after the rename", len(hookTurns))
+	if len(hookTurns) != 2 || syncs != 3 {
+		t.Fatalf("the hook ran %d times over %d syncs, want one overtaking write and one after the rename", len(hookTurns), syncs)
 	}
 	request, found, err := collector.LoadRequest("session-1")
 	if err != nil || !found {
@@ -171,8 +179,8 @@ func TestRequestForASessionForgottenMidWriteIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	forgetter := OpenReadOnly(local.home)
-	local.onRequestWriteSync = func() {
-		local.onRequestWriteSync = nil
+	local.onWriteSync = func() {
+		local.onWriteSync = nil
 		if err := forgetter.ForgetSession(reg.ArchiveSessionID, reg.NativeSessionID); err != nil {
 			t.Fatal(err)
 		}
@@ -189,31 +197,63 @@ func TestRequestForASessionForgottenMidWriteIsRefused(t *testing.T) {
 	assertNoWriteTemporaries(t, local)
 }
 
-// A write that another writer overtakes on every attempt with the lock free
-// makes its last attempt holding the lock, so it lands: a writer committing
-// back to back cannot starve it. Nothing either writer wrote is lost.
-func TestRequestWriteOvertakenOnEveryAttemptLandsHoldingTheLock(t *testing.T) {
+// A writer that is not a hook never syncs holding the lock: overtaken on
+// every attempt, it gives up with errWriteOvertaken, for its caller to retry,
+// and leaves nothing of the write behind.
+func TestNonHookWriteOvertakenOnEveryAttemptGivesUp(t *testing.T) {
 	at := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	local := newTestStore(t)
 	if err := local.SaveRegistration(registration(t)); err != nil {
 		t.Fatal(err)
 	}
+	other := OpenReadOnly(local.home).ForHook()
+	overtakes := 0
+	local.onWriteSync = func() {
+		overtakes++
+		if err := other.SaveRequest("session-1", fmt.Sprintf("other-%d", overtakes), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := local.SaveRequest("session-1", "stop", at); !errors.Is(err, errWriteOvertaken) {
+		t.Fatalf("err=%v, want errWriteOvertaken", err)
+	}
+	if overtakes != unlockedWriteAttempts {
+		t.Fatalf("overtaken %d times, want %d", overtakes, unlockedWriteAttempts)
+	}
+	request, _, err := local.LoadRequest("session-1")
+	if err != nil || slices.Contains(request.Reasons, "stop") {
+		t.Fatalf("reasons=%v err=%v: the abandoned write landed", request.Reasons, err)
+	}
+	assertNoWriteTemporaries(t, local)
+}
+
+// A hook, whose write cannot be retried later and must fit its budget, is
+// overtaken at most once: its next attempt holds the lock, so a writer
+// committing back to back cannot starve it. Nothing either writer wrote is
+// lost.
+func TestHookWriteOvertakenOnceLandsHoldingTheLock(t *testing.T) {
+	at := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	local := newTestStore(t)
+	if err := local.SaveRegistration(registration(t)); err != nil {
+		t.Fatal(err)
+	}
+	hook := local.ForHook()
 	other := OpenReadOnly(local.home)
 	var reasons []string
-	local.onRequestWriteSync = func() {
+	hook.onWriteSync = func() {
 		reason := fmt.Sprintf("other-%d", len(reasons))
 		reasons = append(reasons, reason)
 		if err := other.SaveRequest("session-1", reason, at); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := local.SaveRequest("session-1", "stop", at); err != nil {
+	if err := hook.SaveRequest("session-1", "stop", at); err != nil {
 		t.Fatal(err)
 	}
-	// One overtaking write per attempt with the lock free, and one more
-	// after the locked attempt's rename.
-	if len(reasons) != requestWriteAttempts {
-		t.Fatalf("the seam ran %d times, want %d", len(reasons), requestWriteAttempts)
+	// One overtaking write with the lock free, and one more after the
+	// locked attempt's rename.
+	if len(reasons) != hookUnlockedWriteAttempts+1 {
+		t.Fatalf("the seam ran %d times, want %d", len(reasons), hookUnlockedWriteAttempts+1)
 	}
 	request, _, err := local.LoadRequest("session-1")
 	if err != nil {
@@ -227,13 +267,37 @@ func TestRequestWriteOvertakenOnEveryAttemptLandsHoldingTheLock(t *testing.T) {
 	assertNoWriteTemporaries(t, local)
 }
 
-func mustRequestTokenOf(t *testing.T, local *Store, id string) string {
-	t.Helper()
-	request, found, err := local.LoadRequest(id)
-	if err != nil || !found || request.Token == "" {
-		t.Fatalf("request=%#v found=%t err=%v", request, found, err)
+// A new registration does not depend on what the file held, so a change to
+// the file while it is written does not make it stage and sync again.
+func TestNewRegistrationIsNotRewrittenWhenTheFileChangesMidWrite(t *testing.T) {
+	local := newTestStore(t)
+	syncs := 0
+	var id string
+	local.onWriteSync = func() {
+		syncs++
+		if syncs == 1 {
+			changed := registration(t)
+			changed.ArchiveSessionID, changed.TranscriptPath = id, "/changed"
+			if err := aalocal.Write(local.registrationPath(id), changed); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	return request.Token
+	reg, err := local.RegisterNewSession("native-1", func(assigned string) archive.SessionRegistration {
+		id = assigned
+		reg := registration(t)
+		reg.ArchiveSessionID = assigned
+		return reg
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if syncs != 2 {
+		t.Fatalf("the registration synced %d times, want 2 (one temporary file and its directory)", syncs)
+	}
+	if saved, found, err := local.LoadRegistration(id); err != nil || !found || saved.TranscriptPath != reg.TranscriptPath {
+		t.Fatalf("saved=%#v found=%t err=%v, want the new registration", saved, found, err)
+	}
 }
 
 func assertNoWriteTemporaries(t *testing.T, local *Store) {

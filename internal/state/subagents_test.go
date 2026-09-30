@@ -3,6 +3,8 @@ package state
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,19 +71,24 @@ func TestDuplicateSubagentStopsKeepTheFirstType(t *testing.T) {
 // Forgetting a session scans the subagent candidates under its request lock,
 // which hooks wait a second for, so the scan does not wait for the lock of a
 // candidate that does not decode. Another session's is left where it is
-// and the forget goes on; the session's own fails the forget at once, for
-// the next attempt to retry.
+// and the forget goes on. The session's own means a writer is replacing it:
+// a forget retention would defer for work keeps the session quietly, like
+// any held candidate lock, and any other fails at once for the next attempt
+// to retry.
 //
 // Regression: the scan waited a second for that lock before moving the
 // candidate aside, all under the request lock.
 func TestForgettingASessionDoesNotWaitForAnUndecodableCandidatesLock(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		candidate string
-		forgotten bool
+		name         string
+		candidate    string
+		deferForWork bool
+		forgotten    bool
+		busy         bool
 	}{
-		{"another session's candidate", "other", true},
-		{"the session's own candidate", "session-1", false},
+		{"another session's candidate", "other", false, true, false},
+		{"the session's own candidate", "session-1", false, false, true},
+		{"the session's own candidate, deferring for work", "session-1", true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
@@ -96,17 +103,14 @@ func TestForgettingASessionDoesNotWaitForAnUndecodableCandidatesLock(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			started := time.Now()
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, false, nil)
-			took := time.Since(started)
+			waits := recordLockWaits(local)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, tc.deferForWork, nil)
 			unlock()
-			// A wait for the lock lasts its full second before giving up, so
-			// anything shorter did not wait.
-			if took >= 950*time.Millisecond {
-				t.Fatalf("the forget waited %v for the candidate's lock", took)
+			if len(*waits) != 0 {
+				t.Fatalf("the forget waited for %v under the request lock", *waits)
 			}
-			if forgotten != tc.forgotten || (tc.forgotten && err != nil) || (!tc.forgotten && !errors.Is(err, aalocal.ErrBusy)) {
-				t.Fatalf("forgotten=%t err=%v, want forgotten=%t", forgotten, err, tc.forgotten)
+			if forgotten != tc.forgotten || errors.Is(err, aalocal.ErrBusy) != tc.busy || (!tc.busy && err != nil) {
+				t.Fatalf("forgotten=%t err=%v, want forgotten=%t busy=%t", forgotten, err, tc.forgotten, tc.busy)
 			}
 			if _, registered, _ := local.LoadRegistration(reg.ArchiveSessionID); registered == tc.forgotten {
 				t.Fatalf("registered=%t after forgotten=%t", registered, forgotten)
@@ -116,6 +120,19 @@ func TestForgettingASessionDoesNotWaitForAnUndecodableCandidatesLock(t *testing.
 			}
 		})
 	}
+}
+
+// recordLockWaits collects the names of the locks local waits for from now
+// on, other than the request lock a forget takes first.
+func recordLockWaits(local *Store) *[]string {
+	var waits []string
+	local.onLockWait = func(name string) {
+		if !strings.HasPrefix(filepath.Base(name), "subagent-") {
+			return
+		}
+		waits = append(waits, name)
+	}
+	return &waits
 }
 
 // Forgetting an orphaned session does not wait, under its request lock, for
@@ -136,13 +153,11 @@ func TestForgettingAnOrphanDoesNotWaitForASubagentCandidateLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
+	waits := recordLockWaits(local)
 	forgotten, err := local.ForgetOrphan("orphan")
-	took := time.Since(started)
 	unlock()
-	// A wait for the lock lasts its full second before giving up.
-	if took >= 950*time.Millisecond {
-		t.Fatalf("the forget waited %v for the candidate's lock", took)
+	if len(*waits) != 0 {
+		t.Fatalf("the forget waited for %v under the request lock", *waits)
 	}
 	if forgotten || !errors.Is(err, aalocal.ErrBusy) {
 		t.Fatalf("forgotten=%t err=%v, want ErrBusy", forgotten, err)

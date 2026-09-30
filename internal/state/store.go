@@ -46,11 +46,15 @@ import (
 // what the published source bundle itself already contains.
 type Store struct {
 	home string
-	// onRequestWriteSync, when set by a test, runs where
-	// writeUnderRequestLock syncs to disk outside the request lock: once its
-	// temporary file is synced, and once it is renamed into place, before
-	// the directory is synced.
-	onRequestWriteSync func()
+	// hook marks a Store from ForHook.
+	hook bool
+	// onWriteSync, when set by a test, runs where writeUnderLock syncs to
+	// disk outside the lock: once its temporary file is synced, and once it
+	// is renamed into place, before the directory is synced.
+	onWriteSync func()
+	// onLockWait, when set by a test, runs before any wait for a lock that
+	// can last (see namedLockWait), with the lock's name.
+	onLockWait func(name string)
 	// collectorPass marks a Store from ForCollectorPass, which may move a
 	// corrupt collector-owned file aside.
 	collectorPass bool
@@ -126,7 +130,9 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 // calling update, when the registration is gone: a hook that looked the
 // session up before the lock must then treat it as never seen. Otherwise
 // update edits the loaded registration and it is saved; an error from update
-// saves nothing and is returned as is. update may run more than once, each
+// saves nothing and is returned as is, with found true. Any other error
+// reports found false, whatever was read: only a nil error or update's own
+// says whether the registration exists. update may run more than once, each
 // time on a freshly loaded registration, when another writer changes it
 // meanwhile.
 //
@@ -137,17 +143,18 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	updateFailed := false
 	err = s.writeUnderRequestLock(archiveSessionID, s.registrationPath(archiveSessionID), nil, func(current fileSnapshot) (any, bool, error) {
-		found = current.found
+		found, updateFailed = current.found, false
 		if !found {
 			return nil, false, nil
 		}
 		var reg archive.SessionRegistration
 		if err := json.Unmarshal(current.data, &reg); err != nil {
-			found = false
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
 		if err := update(&reg); err != nil {
+			updateFailed = true
 			return nil, false, err
 		}
 		if reg.ArchiveSessionID != archiveSessionID {
@@ -158,6 +165,9 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		}
 		return reg, true, nil
 	})
+	if err != nil && !updateFailed {
+		return false, err
+	}
 	return found, err
 }
 
@@ -197,14 +207,20 @@ func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string)
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
-	err := s.writeUnderRequestLock(id, s.registrationPath(id), func() error {
-		current, found, err := s.ArchiveSessionID(nativeSessionID)
-		if err == nil && (!found || current != id) {
-			return errIndexMoved
-		}
-		return err
-	}, func(fileSnapshot) (any, bool, error) {
-		return reg, true, nil
+	// The registration is built without reading the file, so another
+	// writer's change to it cannot overtake this one.
+	err := s.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return s.lockRequest(id) },
+		path: s.registrationPath(id),
+		check: func() error {
+			current, found, err := s.ArchiveSessionID(nativeSessionID)
+			if err == nil && (!found || current != id) {
+				return errIndexMoved
+			}
+			return err
+		},
+		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
+		blind:  true,
 	})
 	if errors.Is(err, errIndexMoved) {
 		return archive.SessionRegistration{}, false, nil

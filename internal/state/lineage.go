@@ -205,7 +205,7 @@ func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, defer
 	case busy && deferForWork:
 		return false, nil
 	case busy:
-		return false, fmt.Errorf("forget session %q: a subagent of it is being recorded: %w", archiveSessionID, local.ErrBusy)
+		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
 	return true, s.forgetSession(archiveSessionID, nativeSessionID, false)
 }
@@ -305,7 +305,7 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	case err != nil:
 		return false, err
 	case busy:
-		return false, fmt.Errorf("forget session %q: a subagent of it is being recorded: %w", archiveSessionID, local.ErrBusy)
+		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
 	if err := s.forgetSession(archiveSessionID, "", false); err != nil {
 		return false, err

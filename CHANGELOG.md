@@ -403,9 +403,9 @@ follow [Semantic Versioning](https://semver.org/).
   `agent-archive feedback` writes to the same session at the same moment on a
   busy Mac. Those writers held the session's lock, which a hook waits only a
   second for, through the write's disk syncs, which can take longer; they now
-  sync first and hold the lock only to check and rename the file. Forgetting a
-  session also no longer waits, under that lock, for a subagent record that
-  another process is rewriting.
+  sync first and hold the lock only to check and rename the file. Subagent
+  records are written the same way. Forgetting a session also no longer
+  waits, under that lock, for a subagent record another process is writing.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

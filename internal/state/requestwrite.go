@@ -3,7 +3,9 @@ package state
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -30,29 +32,77 @@ func (f fileSnapshot) equal(other fileSnapshot) bool {
 	return f.found == other.found && bytes.Equal(f.data, other.data)
 }
 
-// requestWriteAttempts bounds how many times writeUnderRequestLock tries a
-// write. Each attempt costs one disk sync, and a conflict needs another
-// writer to commit to the same session's file within it (hooks are
-// serialized by hooks.lock, so one side is the collector, backfill, or
-// feedback). A writer overtaken on every earlier attempt makes its last one
-// holding the lock, so a writer that keeps committing cannot starve it.
-const requestWriteAttempts = 4
+const (
+	// unlockedWriteAttempts is how many times writeUnderLock stages a write
+	// with the lock free for a writer that is not a hook. Each attempt costs
+	// one disk sync, and a conflict needs another writer to commit to the
+	// same file within it; a writer overtaken on every one gives up with
+	// errWriteOvertaken, for its caller to retry later (the collector on its
+	// next pass), rather than sync while holding a lock hooks wait on.
+	unlockedWriteAttempts = 4
+	// hookUnlockedWriteAttempts is the same for a hook (see ForHook), which
+	// cannot retry later and has a two-second budget: after one overtaken
+	// attempt it writes holding the lock.
+	hookUnlockedWriteAttempts = 1
+)
 
-// writeUnderRequestLock replaces path, one of the files a session's request
-// lock guards (its request or its registration), with what change computes
-// from the file's current content, holding that lock only to check and
-// rename, never across a disk sync.
+// errWriteOvertaken reports that other writers changed the file during every
+// attempt of a writer that is not a hook.
+var errWriteOvertaken = errors.New("other writers kept changing it while it was written; the next attempt retries")
+
+// ForHook returns a Store for a hook's writes. A hook's evidence is lost if
+// its write fails, so a hook overtaken by another writer writes holding the
+// lock on its next attempt (see writeUnderLock). Hooks are serialized by
+// hooks.lock, so that hold can only delay a writer that is not a hook, which
+// retries.
+func (s *Store) ForHook() *Store {
+	hook := *s
+	hook.hook = true
+	return &hook
+}
+
+// lockedWrite is one read-modify-write for writeUnderLock.
+type lockedWrite struct {
+	// lock takes the lock guarding path.
+	lock func() (func(), error)
+	path string
+	// check, if not nil, runs under the lock right before the rename; an
+	// error from it is returned as is, with nothing written.
+	check func() error
+	// change computes the new content from the file's current content;
+	// write false leaves the file as it is.
+	change func(current fileSnapshot) (value any, write bool, err error)
+	// blind marks a write whose value does not depend on the file's content:
+	// the file is neither read nor compared, and change gets an empty
+	// snapshot, so no other writer can overtake it.
+	blind bool
+}
+
+// writeUnderRequestLock is writeUnderLock for path, one of the files a
+// session's request lock guards (its request or its registration).
+func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func() error, change func(current fileSnapshot) (value any, write bool, err error)) error {
+	return s.writeUnderLock(lockedWrite{
+		lock:   func() (func(), error) { return s.lockRequest(archiveSessionID) },
+		path:   path,
+		check:  check,
+		change: change,
+	})
+}
+
+// writeUnderLock replaces w.path with what w.change computes from the file's
+// current content, holding w.lock only to check and rename, never across a
+// disk sync, except for a hook overtaken by another writer (see below).
 //
-// Hooks wait a second for the request lock (lockRequest), inside the
-// harness's two-second hook budget, and the turn's evidence is lost when the
-// lock stays held longer. A durable write syncs the file and then its
-// directory, each an F_FULLFSYNC on macOS, and together they have been
-// measured past two seconds on a loaded Mac. So no holder of the lock may
-// sync under it:
+// Hooks wait a second for the request lock (lockRequest) and for a subagent
+// candidate's lock, inside the harness's two-second hook budget, and the
+// turn's evidence is lost when the lock stays held longer. A durable write
+// syncs the file and then its directory, each an F_FULLFSYNC on macOS, and
+// together they have been measured past two seconds on a loaded Mac. So no
+// holder of the lock may sync under it:
 //
 //  1. The file is read without the lock, change computes the new content
 //     from it, and that content is written and synced to a temporary file
-//     beside path (local.Stage).
+//     beside the path (local.Stage).
 //  2. Under the lock, check runs, and the file is read again. If it still
 //     holds exactly what change saw, the temporary is renamed over it: the
 //     commit point, which every other holder of the lock sees atomically,
@@ -78,12 +128,14 @@ const requestWriteAttempts = 4
 // session) was still correct for content that existed. A reader never sees
 // a partial file, as the temporary is synced before it is renamed.
 //
-// The last of requestWriteAttempts holds the lock from its read through its
-// rename, and so across the temporary file's sync: without it, a writer
-// committing back to back beats every staged attempt of another (a stress
-// run with the collector writing continuously lost hook writes that way).
-// That hold happens only after a writer was overtaken on every earlier
-// attempt, and the directory sync still waits until the lock is released.
+// A writer committing back to back would beat every staged attempt of
+// another (a stress run with the collector writing continuously lost hook
+// writes that way). So a hook (ForHook), whose write cannot be retried, is
+// overtaken at most once: its next attempt holds the lock from its read
+// through its rename, and so across the temporary file's sync. Any other
+// writer never syncs under the lock; after unlockedWriteAttempts it returns
+// errWriteOvertaken for its caller to retry. The directory sync always waits
+// until the lock is released.
 //
 // change may run more than once, so it must compute only from its argument
 // and the caller's inputs, and record its results afresh on every run.
@@ -91,24 +143,31 @@ const requestWriteAttempts = 4
 // the file must still be unchanged, so a decision not to write is as atomic
 // as a write. An error from change or check is returned as is, with nothing
 // written.
-func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func() error, change func(current fileSnapshot) (value any, write bool, err error)) error {
-	for range requestWriteAttempts - 1 {
-		before, err := readSnapshot(path)
-		if err != nil {
-			return err
+func (s *Store) writeUnderLock(w lockedWrite) error {
+	attempts := unlockedWriteAttempts
+	if s.hook {
+		attempts = hookUnlockedWriteAttempts
+	}
+	for range attempts {
+		var before fileSnapshot
+		if !w.blind {
+			var err error
+			if before, err = readSnapshot(w.path); err != nil {
+				return err
+			}
 		}
-		value, write, err := change(before)
+		value, write, err := w.change(before)
 		if err != nil {
 			return err
 		}
 		var staged *local.Staged
 		if write {
-			if staged, err = local.Stage(path, value); err != nil {
+			if staged, err = local.Stage(w.path, value); err != nil {
 				return err
 			}
-			s.requestWriteSynced()
+			s.writeSynced()
 		}
-		committed, err := s.commitUnderRequestLock(archiveSessionID, path, before, staged, check)
+		committed, err := commitUnderLock(w, before, staged)
 		staged.Discard()
 		if err != nil {
 			return err
@@ -119,36 +178,40 @@ func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func(
 		if staged == nil {
 			return nil
 		}
-		s.requestWriteSynced()
+		s.writeSynced()
 		return staged.SyncDir()
 	}
-	return s.writeHoldingRequestLock(archiveSessionID, path, check, change)
+	if !s.hook {
+		return fmt.Errorf("write %s: %w", w.path, errWriteOvertaken)
+	}
+	return s.writeHoldingLock(w)
 }
 
-// writeHoldingRequestLock is writeUnderRequestLock's last attempt: the read,
-// change, and staging happen under the lock, so no other writer can overtake
-// it. Only the directory sync waits until the lock is released.
-func (s *Store) writeHoldingRequestLock(archiveSessionID, path string, check func() error, change func(current fileSnapshot) (value any, write bool, err error)) error {
+// writeHoldingLock is a hook's attempt at writeUnderLock after it was
+// overtaken: the read, change, and staging happen under the lock, so no
+// other writer can overtake it. Only the directory sync waits until the lock
+// is released.
+func (s *Store) writeHoldingLock(w lockedWrite) error {
 	staged, err := func() (*local.Staged, error) {
-		unlock, err := s.lockRequest(archiveSessionID)
+		unlock, err := w.lock()
 		if err != nil {
 			return nil, err
 		}
 		defer unlock()
-		if check != nil {
-			if err := check(); err != nil {
+		if w.check != nil {
+			if err := w.check(); err != nil {
 				return nil, err
 			}
 		}
-		current, err := readSnapshot(path)
+		current, err := readSnapshot(w.path)
 		if err != nil {
 			return nil, err
 		}
-		value, write, err := change(current)
+		value, write, err := w.change(current)
 		if err != nil || !write {
 			return nil, err
 		}
-		staged, err := local.Stage(path, value)
+		staged, err := local.Stage(w.path, value)
 		if err != nil {
 			return nil, err
 		}
@@ -161,26 +224,28 @@ func (s *Store) writeHoldingRequestLock(archiveSessionID, path string, check fun
 	if err != nil || staged == nil {
 		return err
 	}
-	s.requestWriteSynced()
+	s.writeSynced()
 	return staged.SyncDir()
 }
 
-// commitUnderRequestLock is writeUnderRequestLock's step under the lock.
-// committed is false when the file no longer holds before.
-func (s *Store) commitUnderRequestLock(archiveSessionID, path string, before fileSnapshot, staged *local.Staged, check func() error) (committed bool, err error) {
-	unlock, err := s.lockRequest(archiveSessionID)
+// commitUnderLock is writeUnderLock's step under the lock. committed is
+// false when the file no longer holds before.
+func commitUnderLock(w lockedWrite, before fileSnapshot, staged *local.Staged) (committed bool, err error) {
+	unlock, err := w.lock()
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
-	if check != nil {
-		if err := check(); err != nil {
+	if w.check != nil {
+		if err := w.check(); err != nil {
 			return false, err
 		}
 	}
-	current, err := readSnapshot(path)
-	if err != nil || !current.equal(before) {
-		return false, err
+	if !w.blind {
+		current, err := readSnapshot(w.path)
+		if err != nil || !current.equal(before) {
+			return false, err
+		}
 	}
 	if staged == nil {
 		return true, nil
@@ -188,10 +253,19 @@ func (s *Store) commitUnderRequestLock(archiveSessionID, path string, before fil
 	return true, staged.Commit()
 }
 
-// requestWriteSynced runs the test seam, if any, where writeUnderRequestLock
-// syncs outside the lock.
-func (s *Store) requestWriteSynced() {
-	if s.onRequestWriteSync != nil {
-		s.onRequestWriteSync()
+// writeSynced runs the test seam, if any, where writeUnderLock syncs outside
+// the lock.
+func (s *Store) writeSynced() {
+	if s.onWriteSync != nil {
+		s.onWriteSync()
 	}
+}
+
+// namedLockWait is local.NamedLockWait under home, telling the test seam, if
+// any, about a wait that can last (a timeout above zero).
+func (s *Store) namedLockWait(name string, timeout time.Duration) (func(), error) {
+	if timeout > 0 && s.onLockWait != nil {
+		s.onLockWait(name)
+	}
+	return local.NamedLockWait(s.home, name, timeout)
 }

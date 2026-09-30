@@ -200,7 +200,7 @@ func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait ti
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
-	unlock, lockErr := local.NamedLockWait(s.home, lockName, lockWait)
+	unlock, lockErr := s.namedLockWait(lockName, lockWait)
 	if lockErr != nil {
 		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %w)", err, lockErr)
 	}
