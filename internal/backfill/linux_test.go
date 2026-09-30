@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,17 +15,18 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Linux support, PR 3: Cursor keeps its data under the XDG config home
 // instead of ~/Library/Application Support, and the macOS-only inputs
 // (desktop-app folders, TCC-protected folders) are not consulted. Every test
-// injects Environment.GOOS, so both branches run on any OS.
+// injects Environment.OS, so both branches run on any OS.
 
 func linuxEnv(tr *tree, xdg string) Environment {
 	env := tr.env()
-	env.GOOS = "linux"
+	env.OS = platform.Linux
 	env.Getenv = func(key string) string {
 		if key == "XDG_CONFIG_HOME" {
 			return xdg
@@ -39,19 +41,19 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 	home := filepath.FromSlash("/home/me")
 	for _, tc := range []struct {
 		name    string
-		goos    string
+		system  platform.OS
 		xdg     string
 		wantDir string
 	}{
-		{"darwin", "darwin", "", "/home/me/Library/Application Support/Cursor"},
-		{"darwin ignores XDG_CONFIG_HOME", "darwin", "/xdg", "/home/me/Library/Application Support/Cursor"},
-		{"linux", "linux", "", "/home/me/.config/Cursor"},
-		{"linux with XDG_CONFIG_HOME", "linux", "/xdg", "/xdg/Cursor"},
-		{"linux with a relative XDG_CONFIG_HOME", "linux", "xdg", "/home/me/.config/Cursor"},
+		{"darwin", platform.Darwin, "", "/home/me/Library/Application Support/Cursor"},
+		{"darwin ignores XDG_CONFIG_HOME", platform.Darwin, "/xdg", "/home/me/Library/Application Support/Cursor"},
+		{"linux", platform.Linux, "", "/home/me/.config/Cursor"},
+		{"linux with XDG_CONFIG_HOME", platform.Linux, "/xdg", "/xdg/Cursor"},
+		{"linux with a relative XDG_CONFIG_HOME", platform.Linux, "xdg", "/home/me/.config/Cursor"},
 	} {
-		env := Environment{Home: home, GOOS: tc.goos, Getenv: func(string) string { return tc.xdg }}
+		env := Environment{Home: home, OS: tc.system, Getenv: func(string) string { return tc.xdg }}
 		wantDir := filepath.FromSlash(tc.wantDir)
-		if got := env.cursorAppDir(); got != wantDir {
+		if got := env.locations().CursorAppDir; got != wantDir {
 			t.Errorf("%s: data folder %q, want %q", tc.name, got, wantDir)
 		}
 		if got, want := cursorWorkspaceStorage(env), filepath.Join(wantDir, "User", "workspaceStorage"); got != want {
@@ -60,18 +62,15 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 		if got, want := env.cursorStateDatabase(), filepath.Join(wantDir, "User", "globalStorage", "state.vscdb"); got != want {
 			t.Errorf("%s: state.vscdb %q, want %q", tc.name, got, want)
 		}
-		if got, want := env.cursorStateDatabase(), cursorstore.StateDatabaseFor(home, env.getenv, tc.goos); got != want {
-			t.Errorf("%s: %q differs from cursorstore's %q", tc.name, got, want)
-		}
 	}
 }
 
-// On macOS the paths are what they always were, byte for byte, with GOOS
+// On macOS the paths are what they always were, byte for byte, with OS
 // unset (the real system) or "darwin".
 func TestCursorPathsOnMacOSAreUnchanged(t *testing.T) {
 	t.Parallel()
 	home := "/Users/me"
-	env := Environment{Home: home, GOOS: "darwin"}
+	env := Environment{Home: home, OS: platform.Darwin}
 	if got, want := cursorWorkspaceStorage(env), "/Users/me/Library/Application Support/Cursor/User/workspaceStorage"; got != want {
 		t.Errorf("workspaceStorage %q, want %q", got, want)
 	}
@@ -100,7 +99,7 @@ func TestCursorWorkspaceFoldersLinux(t *testing.T) {
 		{"linux", linuxEnv(tr, ""), []string{linuxFolder}},
 		{"linux with XDG_CONFIG_HOME", linuxEnv(tr, tr.path("xdg")), []string{xdgFolder}},
 		{"linux with a relative XDG_CONFIG_HOME", linuxEnv(tr, "xdg"), []string{linuxFolder}},
-		{"darwin", func() Environment { e := tr.env(); e.GOOS = "darwin"; return e }(), []string{macFolder}},
+		{"darwin", func() Environment { e := tr.env(); e.OS = platform.Darwin; return e }(), []string{macFolder}},
 	} {
 		if got := cursorWorkspaceFolders(tc.env); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
@@ -109,7 +108,7 @@ func TestCursorWorkspaceFoldersLinux(t *testing.T) {
 }
 
 // A Cursor transcript's project slug is resolved through the Linux
-// workspaceStorage when GOOS is linux, and is unresolved when only the
+// workspaceStorage when OS is Linux, and is unresolved when only the
 // Library location has the file (and vice versa on macOS).
 func TestCursorSlugResolvesThroughLinuxWorkspaceStorage(t *testing.T) {
 	t.Parallel()
@@ -123,7 +122,7 @@ func TestCursorSlugResolvesThroughLinuxWorkspaceStorage(t *testing.T) {
 		t.Fatalf("linux: %+v", c)
 	}
 	mac := tr.env()
-	mac.GOOS = "darwin"
+	mac.OS = platform.Darwin
 	if c := candidate(t, plan(t, mac, nil, config.Config{}, Filters{}), "chat-ws"); c.Skip != SkipProjectUnknown {
 		t.Fatalf("darwin must not read ~/.config/Cursor: %+v", c)
 	}
@@ -157,7 +156,7 @@ func TestDesktopAppWorkspaceFoldersAreMacOSOnly(t *testing.T) {
 	scratch := tr.mkdir("home/Library/Application Support/Claude/scratch-workspaces/a-b/scratch-1")
 	codexDir := tr.mkdir("home/Documents/Codex/2026-09-20/plan-trip")
 	mac := tr.env()
-	mac.GOOS = "darwin"
+	mac.OS = platform.Darwin
 	linux := linuxEnv(tr, "")
 
 	if got := workspaceFolders(linux); len(got) != 0 {
@@ -187,13 +186,13 @@ func TestPrivacyProtectedFoldersAreMacOSOnly(t *testing.T) {
 	t.Parallel()
 	home := "/home/me"
 	id := func(p string) (string, error) { return p, nil }
-	if got := privacyProtectedFolders(Environment{Home: home, GOOS: "linux", EvalSymlinks: id}); len(got) != 0 {
+	if got := privacyProtectedFolders(Environment{Home: home, OS: platform.Linux, EvalSymlinks: id}); len(got) != 0 {
 		t.Fatalf("linux protected folders: %v", got)
 	}
-	if got := privacyProtectedFolders(Environment{Home: home, GOOS: "darwin", EvalSymlinks: id}); len(got) == 0 {
+	if got := privacyProtectedFolders(Environment{Home: home, OS: platform.Darwin, EvalSymlinks: id}); len(got) == 0 {
 		t.Fatal("darwin protected folders: none")
 	}
-	if protectedOutside("/home/me/Documents/x", "/home/me", privacyProtectedFolders(Environment{Home: home, GOOS: "linux", EvalSymlinks: id})) {
+	if protectedOutside("/home/me/Documents/x", "/home/me", privacyProtectedFolders(Environment{Home: home, OS: platform.Linux, EvalSymlinks: id})) {
 		t.Fatal("~/Documents is protected on Linux")
 	}
 }
@@ -237,7 +236,7 @@ func TestNestedLookReadsEveryFolderOnLinux(t *testing.T) {
 
 	// The same tree on macOS keeps iCloud Drive and containers out unread.
 	mac := tr.env()
-	mac.GOOS = "darwin"
+	mac.OS = platform.Darwin
 	nested, err = newResolver(mac, config.Config{}, Filters{}).findNested(context.Background(), library, nil)
 	if err != nil || len(nested.Unchecked) != 2 {
 		t.Fatalf("darwin: %+v, %v", nested, err)
@@ -246,27 +245,76 @@ func TestNestedLookReadsEveryFolderOnLinux(t *testing.T) {
 
 func TestDefaultTempDirsByOS(t *testing.T) {
 	t.Parallel()
-	if got, want := defaultTempDirs("darwin"), []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("darwin %v, want %v", got, want)
+	mac := []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+	linux := []string{"/tmp", "/var/tmp"}
+	if got := (Environment{OS: platform.Darwin}).DefaultTempDirs(); !reflect.DeepEqual(got, mac) {
+		t.Errorf("darwin %v, want %v", got, mac)
 	}
-	for _, goos := range []string{"linux", "freebsd"} {
-		if got, want := defaultTempDirs(goos), []string{"/tmp", "/var/tmp"}; !reflect.DeepEqual(got, want) {
-			t.Errorf("%s %v, want %v", goos, got, want)
+	if got := (Environment{OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
+		t.Errorf("linux %v, want %v", got, linux)
+	}
+	// An unknown system errs toward more temporary directories, so it skips
+	// every folder either system would.
+	unknown := (Environment{OS: platform.Unknown}).DefaultTempDirs()
+	for _, dir := range append(slices.Clone(mac), linux...) {
+		if !slices.Contains(unknown, dir) {
+			t.Errorf("unknown system does not skip %s: %v", dir, unknown)
 		}
 	}
 	// An Environment without TempDirs answers for its own system.
-	if got := (Environment{GOOS: "linux"}).tempDirs(); !reflect.DeepEqual(got, []string{"/tmp", "/var/tmp"}) {
+	if got := (Environment{OS: platform.Linux}).tempDirs(); !reflect.DeepEqual(got, linux) {
 		t.Errorf("linux environment %v", got)
 	}
-	if got := (Environment{GOOS: "darwin"}).tempDirs(); !reflect.DeepEqual(got, defaultTempDirs("darwin")) {
+	if got := (Environment{OS: platform.Darwin}).tempDirs(); !reflect.DeepEqual(got, mac) {
 		t.Errorf("darwin environment %v", got)
+	}
+	// The result is the caller's to change.
+	first := (Environment{OS: platform.Linux}).DefaultTempDirs()
+	first[0] = "/changed"
+	if got := (Environment{OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
+		t.Errorf("a caller's change reached the next answer: %v", got)
+	}
+}
+
+// An operating system the program does not know is not the Linux layout: it
+// has no Cursor database or workspace storage (Cursor reads as not
+// installed), no desktop-app workspace folders and no protected folders, and
+// nothing is looked for under XDG_CONFIG_HOME.
+func TestUnknownSystemFailsClosed(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	xdg := tr.path("xdg")
+	tr.write("home/.config/Cursor/User/workspaceStorage/aaa/workspace.json", `{"folder":"file://`+tr.path("home/linux-app")+`"}`)
+	tr.write("xdg/Cursor/User/workspaceStorage/ccc/workspace.json", `{"folder":"file://`+tr.path("home/xdg-app")+`"}`)
+	env := linuxEnv(tr, xdg)
+	env.OS = platform.Unknown
+
+	if got := env.cursorStateDatabase(); got != "" {
+		t.Errorf("state.vscdb %q, want none", got)
+	}
+	if got := cursorWorkspaceStorage(env); got != "" {
+		t.Errorf("workspaceStorage %q, want none", got)
+	}
+	if got := cursorWorkspaceFolders(env); len(got) != 0 {
+		t.Errorf("workspace folders %v, want none", got)
+	}
+	if got := workspaceFolders(env); len(got) != 0 {
+		t.Errorf("desktop app workspaces %v, want none", got)
+	}
+	if got := privacyProtectedFolders(env); len(got) != 0 {
+		t.Errorf("protected folders %v, want none", got)
+	}
+	res, err := CursorDatabaseReaderFor(env)(context.Background())
+	// A missing database is checked with no chats: Cursor is not installed.
+	if err != nil || !res.Checked || len(res.Chats) != 0 || res.Reason != "" {
+		t.Errorf("Cursor's database on an unknown system: %+v, %v; want Cursor not installed", res, err)
 	}
 }
 
 func TestVarTmpIsATemporaryDirectoryOnLinux(t *testing.T) {
 	t.Parallel()
 	tr := newTree(t)
-	env := Environment{Home: tr.home, GOOS: "linux", EvalSymlinks: func(p string) (string, error) { return p, nil }}
+	env := Environment{Home: tr.home, OS: platform.Linux, EvalSymlinks: func(p string) (string, error) { return p, nil }}
 	got := newResolver(env, config.Config{}, Filters{}).resolve("/var/tmp/run-1")
 	if got.kind != ProjectKindTemporary || got.skip != SkipTemporaryDirectory {
 		t.Fatalf("/var/tmp/run-1: %+v", got)
@@ -274,7 +322,7 @@ func TestVarTmpIsATemporaryDirectoryOnLinux(t *testing.T) {
 }
 
 // Undo reads a resumed Cursor chat's lastUpdatedAt from the database at the
-// Environment's location: the Linux one when GOOS is linux, so a database
+// Environment's location: the Linux one when OS is Linux, so a database
 // under ~/Library is not consulted there.
 func TestUndoReadsTheLinuxCursorDatabase(t *testing.T) {
 	t.Parallel()
@@ -287,10 +335,10 @@ func TestUndoReadsTheLinuxCursorDatabase(t *testing.T) {
 	reg := archive.SessionRegistration{ArchiveSessionID: "s-new", NativeSessionID: "new", Harness: archive.Harness{Name: "cursor"},
 		SourceKind: archive.SourceKindCursorSQLite, SourceKey: "new", AdmittedAt: admitted, Origin: archive.SessionOriginImport}
 	rows := chatRows("new", map[string]any{"lastUpdatedAt": admitted.Add(time.Hour).UnixMilli()}, "a")
-	env := Environment{Home: home, GOOS: "linux", Getenv: func(string) string { return "" }}
+	env := Environment{Home: home, OS: platform.Linux, Getenv: func(string) string { return "" }}
 
 	// A database only at the macOS location is not seen on Linux.
-	writeCursorDB(t, cursorstore.StateDatabaseFor(home, nil, "darwin"), false, rows)
+	writeCursorDB(t, platform.NewLocations(platform.Darwin, home, nil, platform.LocationDeps{}).CursorStateDB, false, rows)
 	if resumed, unknown, err := resumedSinceImport(env, store, reg, state.Request{}); err != nil || resumed || unknown {
 		t.Fatalf("macOS-location database on Linux: resumed %v, unknown %v, err %v", resumed, unknown, err)
 	}

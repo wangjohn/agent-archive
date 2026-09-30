@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -174,7 +175,7 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 		t.Fatal(err)
 	}
 	var claude []string
-	for _, candidate := range claudeVersionCandidates(userHome, "darwin") {
+	for _, candidate := range claudeVersionCandidates(userHome, platform.Darwin) {
 		claude = append(claude, candidate[0])
 	}
 	want := []string{"claude", filepath.Join(userHome, ".local", "bin", "claude"), filepath.Join(userHome, ".claude", "local", "claude"), filepath.Join(bundled, "claude.app", "Contents", "MacOS", "claude")}
@@ -182,7 +183,7 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 		t.Fatalf("claude candidates %v", claude)
 	}
 	var codex []string
-	for _, candidate := range codexVersionCandidates(userHome, "darwin") {
+	for _, candidate := range codexVersionCandidates(userHome, platform.Darwin) {
 		codex = append(codex, candidate[0])
 	}
 	want = []string{
@@ -197,7 +198,8 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 	}
 }
 
-// On Linux no macOS app location is probed: the candidates are the CLIs on
+// On Linux, and on a system the program does not know, no macOS app
+// location is probed: the candidates are the CLIs on
 // PATH and the standalone install paths, even when a Claude desktop folder
 // exists under the home directory.
 func TestVersionCandidatesSkipMacOSAppLocationsOnLinux(t *testing.T) {
@@ -207,7 +209,7 @@ func TestVersionCandidatesSkipMacOSAppLocationsOnLinux(t *testing.T) {
 	if err := os.MkdirAll(bundled, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, goos := range []string{"linux", "freebsd"} {
+	for _, goos := range []platform.OS{platform.Linux, platform.Unknown} {
 		var claude, codex []string
 		for _, candidate := range claudeVersionCandidates(userHome, goos) {
 			claude = append(claude, candidate[0])
@@ -225,7 +227,8 @@ func TestVersionCandidatesSkipMacOSAppLocationsOnLinux(t *testing.T) {
 	}
 }
 
-// Cursor is found only through its macOS app bundle. On Linux the probe is
+// Cursor is found only through its macOS app bundle. On Linux (and on a
+// system the program does not know) the probe is
 // skipped and says so: neither installed nor absent, so setup shows "version
 // not detected" rather than "not found", and version support is "unknown"
 // rather than "absent". The same bundle in the home folder is found on macOS.
@@ -236,7 +239,7 @@ func TestDiscoverCursorVersionOnLinuxClaimsNothing(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bundle, "Contents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, goos := range []string{"linux", "freebsd"} {
+	for _, goos := range []platform.OS{platform.Linux, platform.Unknown} {
 		got := discoverApplicationsFor(userHome, goos)["cursor"]
 		if got.Installed || got.VersionState != "unknown" || got.Version != "" {
 			t.Errorf("%s: %+v, want not installed with state unknown", goos, got)
@@ -248,7 +251,7 @@ func TestDiscoverCursorVersionOnLinuxClaimsNothing(t *testing.T) {
 			t.Errorf("%s: review row %q", goos, appWithVersion("cursor", got))
 		}
 	}
-	if got := discoverCursorVersion(userHome, "darwin"); !got.Installed || got.VersionKind != versionKindAppBundle {
+	if got := discoverCursorVersion(userHome, platform.Darwin); !got.Installed || got.VersionKind != versionKindAppBundle {
 		t.Errorf("darwin: a bundle in ~/Applications is not found: %+v", got)
 	}
 }

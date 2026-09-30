@@ -15,9 +15,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 
 	// modernc.org/sqlite is a pure-Go SQLite, so builds and tests need no
 	// cgo (spec, "Phase 2: Cursor database chats", decision 4).
@@ -25,49 +26,12 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// AppSupportDir is Cursor's per-user application-data folder, the parent of
-// its User folder, for home. goos and getenv are the operating system and
-// environment lookup to answer for; production callers pass runtime.GOOS and
-// os.Getenv (StateDatabase does), and only tests pass anything else, so both
-// layouts are tested on any OS.
-//
-//   - darwin: <home>/Library/Application Support/Cursor.
-//   - Anything else, Linux above all: Cursor is a VS Code fork and keeps its
-//     data where VS Code does, under the XDG config home:
-//     $XDG_CONFIG_HOME/Cursor when that is set to an absolute path, else
-//     <home>/.config/Cursor. The XDG Base Directory specification says a
-//     relative $XDG_CONFIG_HOME is invalid and must be ignored, as is an
-//     empty one. Windows keeps its data under %APPDATA%, which this does not
-//     model: agent-archive does not run there.
-//
-// Only the exact string "darwin" selects the macOS layout: an empty or
-// unknown goos gets the Linux one, so a caller that means the real system
-// must pass runtime.GOOS (StateDatabase and Env.goos do); it is not defaulted
-// here.
-//
-// The Linux layout is the VS Code convention and has not been confirmed on a
-// real Cursor install.
-func AppSupportDir(home string, getenv func(string) string, goos string) string {
-	if goos == "darwin" {
-		return filepath.Join(home, "Library", "Application Support", "Cursor")
-	}
-	if getenv != nil {
-		if dir := getenv("XDG_CONFIG_HOME"); dir != "" && filepath.IsAbs(dir) {
-			return filepath.Join(dir, "Cursor")
-		}
-	}
-	return filepath.Join(home, ".config", "Cursor")
-}
-
-// StateDatabase is where Cursor keeps its chats under home on this machine.
+// StateDatabase is where Cursor keeps its chats under home on this machine:
+// platform.Locations.CursorStateDB for the running system and environment, ""
+// when this system is not one the program knows (Cursor's data is not looked
+// for there, and Read of "" is ErrNoDatabase).
 func StateDatabase(home string) string {
-	return StateDatabaseFor(home, os.Getenv, runtime.GOOS)
-}
-
-// StateDatabaseFor is StateDatabase for the operating system and
-// environment given (see AppSupportDir).
-func StateDatabaseFor(home string, getenv func(string) string, goos string) string {
-	return filepath.Join(AppSupportDir(home, getenv, goos), "User", "globalStorage", "state.vscdb")
+	return platform.NewLocations(platform.Current(), home, os.Getenv, platform.LocationDeps{}).CursorStateDB
 }
 
 // Reason says why Cursor's database was not checked.
@@ -210,8 +174,16 @@ type source struct {
 // is read as closed (it has nothing to replay), and the check afterwards
 // requires the -wal to be still empty and still the only side file.
 //
+// An empty link is a system with no known location for the database
+// (platform.Locations.CursorStateDB): ErrNoDatabase, as if Cursor were not
+// installed.
+//
 // No error names the path: a path error is kept only for Unwrap.
 func resolve(link string) (source, error) {
+	if link == "" {
+		// No location: Cursor's data is not looked for on this system.
+		return source{}, ErrNoDatabase
+	}
 	path, err := filepath.EvalSymlinks(link)
 	if errors.Is(err, os.ErrNotExist) {
 		return source{}, ErrNoDatabase

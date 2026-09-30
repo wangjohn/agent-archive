@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // keychainProbe stands in for the Keychain store, so no test touches the real
@@ -20,19 +22,47 @@ func (*keychainProbe) Load(context.Context, string) (R2Credentials, error) {
 
 func (*keychainProbe) Delete(context.Context, string) error { return nil }
 
+// Values that are not any system the program knows, however they got here.
+const (
+	otherSystem platform.OS = "freebsd"
+	noSystem    platform.OS = ""
+)
+
 func TestStoreNameAndUsesKeychain(t *testing.T) {
-	for goos, want := range map[string]string{
-		"darwin":  "Keychain",
-		"linux":   "credentials file",
-		"freebsd": "credentials file",
-		"windows": "credentials file",
-		"":        "credentials file",
+	for system, want := range map[platform.OS]string{
+		platform.Darwin:  "Keychain",
+		platform.Linux:   "credentials file",
+		platform.Unknown: "credential store",
+		otherSystem:      "credential store",
+		noSystem:         "credential store",
 	} {
-		if got := StoreName(goos); got != want {
-			t.Errorf("StoreName(%q) = %q, want %q", goos, got, want)
+		if got := StoreName(system); got != want {
+			t.Errorf("StoreName(%q) = %q, want %q", system, got, want)
 		}
-		if got := UsesKeychain(goos); got != (goos == "darwin") {
-			t.Errorf("UsesKeychain(%q) = %v", goos, got)
+		if got := UsesKeychain(system); got != (system == platform.Darwin) {
+			t.Errorf("UsesKeychain(%q) = %v", system, got)
+		}
+	}
+}
+
+// An operating system the program does not know has no credential store:
+// OpenDefault refuses, and neither opens a file store nor asks for a
+// Keychain, rather than guess where R2 secrets go.
+func TestOpenDefaultRefusesAnUnknownPlatform(t *testing.T) {
+	for _, system := range []platform.OS{platform.Unknown, otherSystem, noSystem} {
+		store, err := OpenDefault(OpenOptions{
+			OS: system,
+			Dir: func() (string, error) {
+				t.Errorf("%q: the credentials folder was asked for", system)
+				return t.TempDir(), nil
+			},
+			NewKeychain: func(string) (CredentialStore, error) {
+				t.Errorf("%q asked for the Keychain", system)
+				return nil, errors.New("unused")
+			},
+		})
+		if !errors.Is(err, ErrUnsupportedPlatform) || store != nil {
+			t.Errorf("OpenDefault(%q) = %v, %v; want ErrUnsupportedPlatform and no store", system, store, err)
 		}
 	}
 }
@@ -41,7 +71,7 @@ func TestOpenDefaultOnMacOSIsTheKeychainAndNothingElse(t *testing.T) {
 	probe := &keychainProbe{}
 	var service string
 	got, err := OpenDefault(OpenOptions{
-		GOOS: "darwin",
+		OS: platform.Darwin,
 		NewKeychain: func(name string) (CredentialStore, error) {
 			service = name
 			return probe, nil
@@ -71,7 +101,7 @@ func TestOpenDefaultOnMacOSIsTheKeychainAndNothingElse(t *testing.T) {
 	}
 
 	failure := errors.New("no keychain")
-	if _, err = OpenDefault(OpenOptions{GOOS: "darwin", NewKeychain: func(string) (CredentialStore, error) { return nil, failure }}); !errors.Is(err, failure) {
+	if _, err = OpenDefault(OpenOptions{OS: platform.Darwin, NewKeychain: func(string) (CredentialStore, error) { return nil, failure }}); !errors.Is(err, failure) {
 		t.Fatalf("OpenDefault with a failing Keychain = %v", err)
 	}
 }
@@ -81,7 +111,7 @@ func TestOpenDefaultKeychainConstructorIsTheRealOneByDefault(t *testing.T) {
 	// build without a Keychain reports is its ErrUnavailable, never a nil
 	// interface holding a nil store. (With a Keychain, only NewKeychainStore's
 	// own tests touch it; this asks for the store and does not use it.)
-	store, err := OpenDefault(OpenOptions{GOOS: "darwin"})
+	store, err := OpenDefault(OpenOptions{OS: platform.Darwin})
 	if err != nil {
 		if !errors.Is(err, ErrUnavailable) || store != nil {
 			t.Fatalf("OpenDefault = %v, %v", store, err)
@@ -94,13 +124,13 @@ func TestOpenDefaultKeychainConstructorIsTheRealOneByDefault(t *testing.T) {
 }
 
 func TestOpenDefaultOffMacOSIsAFileStoreWithAnEnvironmentFallback(t *testing.T) {
-	for _, goos := range []string{"linux", "freebsd"} {
+	for _, goos := range []platform.OS{platform.Linux} {
 		dir := filepath.Join(t.TempDir(), CredentialsDirName)
 		lookups := 0
 		env := map[string]string{}
 		store, err := OpenDefault(OpenOptions{
-			GOOS: goos,
-			Dir:  func() (string, error) { return dir, nil },
+			OS:  goos,
+			Dir: func() (string, error) { return dir, nil },
 			LookupEnv: func(name string) (string, bool) {
 				lookups++
 				value, ok := env[name]
@@ -169,7 +199,7 @@ func TestOpenDefaultOffMacOSIsAFileStoreWithAnEnvironmentFallback(t *testing.T) 
 func TestOpenDefaultDoesNotFallBackFromAFileItCannotTrust(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), CredentialsDirName)
 	env := map[string]string{EnvR2AccessKeyID: "env-id", EnvR2SecretAccessKey: "env-secret"}
-	store, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
+	store, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +252,7 @@ func TestOpenDefaultReportsWhatIsMissingWhenNeitherHasTheKey(t *testing.T) {
 		"only a secret":  {EnvR2SecretAccessKey: "env-secret"},
 		"wrong variable": {"AWS_ACCESS_KEY_ID": "x", "AWS_SECRET_ACCESS_KEY": "y"},
 	} {
-		store, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
+		store, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -238,14 +268,14 @@ func TestOpenDefaultReportsWhatIsMissingWhenNeitherHasTheKey(t *testing.T) {
 }
 
 func TestOpenDefaultOffMacOSNeedsAFolder(t *testing.T) {
-	if _, err := OpenDefault(OpenOptions{GOOS: "linux"}); err == nil {
+	if _, err := OpenDefault(OpenOptions{OS: platform.Linux}); err == nil {
 		t.Error("OpenDefault with no folder succeeded")
 	}
 	failure := errors.New("no data directory")
-	if _, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return "", failure }}); !errors.Is(err, failure) {
+	if _, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return "", failure }}); !errors.Is(err, failure) {
 		t.Errorf("OpenDefault with a failing folder = %v", err)
 	}
-	if _, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return "relative/credentials", nil }}); err == nil {
+	if _, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return "relative/credentials", nil }}); err == nil {
 		t.Error("OpenDefault with a relative folder succeeded")
 	}
 	if _, err := NewFileStore(""); err == nil {

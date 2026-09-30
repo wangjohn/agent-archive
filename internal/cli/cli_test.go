@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -37,7 +38,7 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		LookupEnv: func(string) (string, bool) { return "", false },
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
-		BackfillGOOS: "darwin",
+		OS: platform.Darwin,
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
