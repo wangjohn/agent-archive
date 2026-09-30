@@ -629,6 +629,12 @@ func TestStatsPagesOnATerminal(t *testing.T) {
 			t.Fatalf("%v was paged: stdout=%q pager=%q", args, out, pagerInput)
 		}
 	}
+	// Inside an agent (or with the switch on) nothing is paged, even on a
+	// terminal.
+	env.LookupEnv = func(key string) (string, bool) { return "1", key == envNonInteractive }
+	if out := mustRunStats(t, env, 120); pagerInput != "" || !strings.Contains(out, "OVERVIEW") {
+		t.Fatalf("paged with %s=1: stdout=%q pager=%q", envNonInteractive, out, pagerInput)
+	}
 }
 
 // --prices puts the person's own prices on top of the built-in table, and
