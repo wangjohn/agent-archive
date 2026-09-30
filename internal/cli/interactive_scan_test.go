@@ -43,6 +43,11 @@ var rawTerminalChecks = classifiedCalls{
 	// backfill's progress line redraws in place on a terminal; that is
 	// presentation. It asks nothing.
 	"backfill_import.go": {"isTerminal": 1},
+	// stats --html refuses to write a web page onto a terminal (it asks for
+	// --output instead). That is a refusal, not a prompt, and it holds inside
+	// an agent too, where a page on the pty would land in the agent's
+	// context, so it asks the terminal itself rather than Env.interactive.
+	"stats.go": {"isTerminal": 1},
 }
 
 // injectedTerminalChecks are mentions of the Env.IsTerminal field itself,
@@ -60,7 +65,20 @@ var terminalPackageUses = classifiedCalls{
 	"cli.go": {"term.IsTerminal": 1},
 	// styleFor: colour, redrawing, and width. Presentation, governed by
 	// NO_COLOR and TERM.
-	"ui.go": {"term.IsTerminal": 1, "term.GetSize": 1},
+	// and Env.terminalSize, the window size the browser and pickers fit.
+	"ui.go": {"term.IsTerminal": 2, "term.GetSize": 2},
+	// Key mode: the session browser reads keys one at a time. It is set up
+	// only by runSessionBrowser, which runs after browseInteractive, and
+	// its terminal is restored on every way out.
+	"keys_unix.go": {
+		"term.IsTerminal": 1, "unix.IoctlGetTermios": 3, "unix.IoctlSetTermios": 2,
+		"unix.ICANON": 1, "unix.ECHO": 1, "unix.ECHONL": 1, "unix.IEXTEN": 1, "unix.ISIG": 1,
+		"unix.VMIN": 1, "unix.VTIME": 1, "unix.VQUIT": 1,
+		"unix.Select": 1, "unix.FdSet": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
+		"unix.Kill": 2, "unix.SIGSTOP": 2,
+	},
+	"keys_darwin.go": {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
+	"keys_linux.go":  {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
 	// saveTerminalState restores modes the pager or a prompt changed; it does
 	// nothing unless something interactive already ran.
 	"list_browse.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 1},
@@ -109,6 +127,8 @@ var inputReads = classifiedCalls{
 	// copyRootFile: a file copied into the new worktree.
 	"handoff_worktree.go": {"io.Copy": 1},
 	"feedback.go":         {"io.ReadAll": 1},
+	// stats --prices: a file the person names, read in full, bounded.
+	"stats.go": {"io.ReadAll": 1},
 }
 
 // terminalImports are packages whose only use here is to ask about, or

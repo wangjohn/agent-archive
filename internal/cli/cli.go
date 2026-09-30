@@ -3,21 +3,23 @@
 // and LaunchAgent invoke, and the user-facing
 // setup/status/sync/pause/resume/uninstall, read-only list/show, and
 // handoff commands. Process-level state (args, stdio, the clock, the home
-// directory, launchctl, the Keychain) reaches commands through Env, so a test
+// directory, launchctl, the credential store) reaches commands through Env, so a test
 // can substitute every piece of it; a nil Env field means the real thing.
 // A few lower packages still read the process directly: local resolves the
 // data directory from AGENT_ARCHIVE_HOME and $HOME, credentials reads the AWS
-// configuration files and the Keychain, and cursorstore asks getconf for the
+// configuration files and the environment, and cursorstore asks getconf for the
 // user's temporary directory.
 package cli
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -99,6 +101,11 @@ type Env struct {
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
+	// openKeys, set only by tests, stands in for stdin read a key at a time
+	// on the session browser's screens (see keyTerminal), or reports that
+	// keys cannot be read, which keeps the browser reading lines. Defaults
+	// to stdin itself when it is a terminal.
+	openKeys func(stdin io.Reader) (keyTerminal, bool)
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after
@@ -163,30 +170,46 @@ type Env struct {
 	// already loaded, and stops the collector during uninstall. Defaults to
 	// shelling out to launchctl, like LoadLaunchAgent.
 	UnloadLaunchAgent func(plistPath string) error
-	// Keychain opens the credential store setup saves R2 secrets to and
-	// uninstall deletes them from.
-	// Defaults to credentials.NewKeychainStore, which is only available on
-	// a darwin+cgo build.
-	Keychain func() (credentials.CredentialStore, error)
+	// Credentials opens the credential store setup saves R2 secrets to and
+	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
+	// Keychain on macOS (which needs a cgo build), a private file under the
+	// data directory elsewhere.
+	Credentials func() (credentials.CredentialStore, error)
 	// LookupEnv reads the process environment. `handoff --latest` uses it to
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
-	// means the macOS defaults plus $TMPDIR; tests set it because their
-	// files live in one.
+	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
+	// $TMPDIR; tests set it because their files live in one.
 	BackfillTempDirs []string
+	// BackfillGOOS is the operating system backfill and the collector look
+	// for apps of: the macOS-only backfill inputs and where Cursor keeps its
+	// data (Cursor's database included) depend on it. Empty means
+	// runtime.GOOS; tests set it so a Mac's layout is exercised on any OS.
+	BackfillGOOS string
 	// IsTerminal reports whether stdin or stdout is a terminal. backfill
 	// redraws its progress line only on one; whether a command may also ask
 	// questions there is Env.interactive, which the
 	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
 	// the file descriptor.
 	IsTerminal func(any) bool
-	// RunPager runs a pager command with stdin as its input and stdout/
-	// stderr as its output, until it exits or ctx is cancelled. list and
-	// show use it for text listings and transcripts. Defaults to `sh -c
-	// command`. Tests set it so a listing never spawns less.
-	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// TerminalSize reports the columns and rows of the terminal out writes
+	// to, and ok=false when out is not a terminal or its size is unknown.
+	// The session browser and pickers read it before each redraw to fit
+	// the window. Defaults to asking the terminal.
+	TerminalSize func(out io.Writer) (width, height int, ok bool)
+	// RunPager runs a pager command with environment ("NAME=value") added
+	// to the process's own, stdin as its input and stdout/stderr as its
+	// output, until it exits or ctx is cancelled. list, show, status, and
+	// purge plan use it for long text. Defaults to `sh -c command`. Tests
+	// set it so a listing never spawns less.
+	RunPager func(ctx context.Context, command string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LessVersion reports the version of program (less on PATH, or a path
+	// to it), which chooses the default pager's options; known is false
+	// when it cannot be told. Defaults to running `program --version` once
+	// per process and program.
+	LessVersion func(program string) (version int, known bool)
 	// LaunchHandoff runs a destination agent attached to this terminal and
 	// waits for it to exit. Defaults to running spec.Binary with spec.Args
 	// in spec.Dir with spec.Env. Tests replace it to avoid starting an agent.
@@ -262,14 +285,14 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStore(cfg, e.keychain)
+	return openConfiguredStore(cfg, e.credentialStore)
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStoreContext(ctx, cfg, e.keychain)
+	return openConfiguredStoreContext(ctx, cfg, e.credentialStore)
 }
 
 func (e Env) executable() (string, error) {
@@ -321,7 +344,21 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	return cursorstore.StateDatabase(home)
+	return cursorstore.StateDatabaseFor(home, e.getenv, e.goos())
+}
+
+// getenv reads one variable of the Env's environment (LookupEnv; the process
+// environment unless a test injects one). backfillEnvironment and
+// cursorDatabase both read through it, so they can never disagree.
+func (e Env) getenv(key string) string {
+	v, _ := e.lookupEnv(key)
+	return v
+}
+
+// goos is the operating system whose app locations backfill and the
+// collector look for: BackfillGOOS, else the real one.
+func (e Env) goos() string {
+	return cmp.Or(e.BackfillGOOS, runtime.GOOS)
 }
 
 func (e Env) detectHarnesses(userHome string) []string {
@@ -352,23 +389,34 @@ func (e Env) unloadLaunchAgent(plistPath string) error {
 	return unloadLaunchAgent(plistPath)
 }
 
-func (e Env) keychain() (credentials.CredentialStore, error) {
-	if e.Keychain != nil {
-		return e.Keychain()
+func (e Env) credentialStore() (credentials.CredentialStore, error) {
+	if e.Credentials != nil {
+		return e.Credentials()
 	}
-	return openKeychain()
+	return openCredentialStore()
 }
 
-// openKeychain opens the login Keychain's agent-archive items: Env.Keychain's
-// default. The package's tests replace it with one that fails the test, so a
-// test that forgets to set Env.Keychain can never reach the real Keychain.
-var openKeychain = func() (credentials.CredentialStore, error) {
-	store, err := credentials.NewKeychainStore(credentials.KeychainService)
-	if err != nil {
-		// Never a non-nil interface holding a nil store.
-		return nil, err
-	}
-	return store, nil
+// credentialGOOS is the platform whose credential store is opened and named:
+// runtime.GOOS. It is a variable so a test can see both platforms' wording
+// and choices (credentialWords, credentials.OpenDefault) on any OS.
+var credentialGOOS = runtime.GOOS
+
+// openCredentialStore opens the platform's credential store (see
+// credentials.OpenDefault): Env.Credentials's default. The package's tests
+// replace it with one that fails the test, so a test that forgets to set
+// Env.Credentials can never reach the real Keychain or write a credentials
+// file into a real data directory.
+var openCredentialStore = func() (credentials.CredentialStore, error) {
+	return credentials.OpenDefault(credentials.OpenOptions{
+		GOOS: credentialGOOS,
+		Dir: func() (string, error) {
+			home, err := local.ReadHome()
+			if err != nil {
+				return "", err
+			}
+			return credentials.FileStoreDir(home), nil
+		},
+	})
 }
 
 // notSetUp reports whether this Mac is not archiving: it has no saved
@@ -397,6 +445,7 @@ Manage capture
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive show        Read a session's summary or transcript
+  agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -479,6 +528,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
+	case "stats":
+		return runStatsCommand(args[1:], stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

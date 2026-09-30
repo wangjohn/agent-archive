@@ -669,18 +669,21 @@ func configFingerprint(cfg config.Config) string {
 // system, and Cursor's database is opened read-only to count the chats only
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
-	temps := e.BackfillTempDirs
-	if temps == nil {
-		temps = append([]string(nil), backfill.DefaultTempDirs...)
+	claude, codex := e.appSessionDirs(userHome, cfg)
+	env := backfill.Environment{
+		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
+		TempDirs: e.BackfillTempDirs, Now: e.now, GOOS: e.BackfillGOOS,
+		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
+		Getenv: e.getenv,
+	}
+	if env.TempDirs == nil {
+		env.TempDirs = env.DefaultTempDirs()
 		if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
-			temps = append(temps, strings.TrimSpace(tmp))
+			env.TempDirs = append(env.TempDirs, strings.TrimSpace(tmp))
 		}
 	}
-	claude, codex := e.appSessionDirs(userHome, cfg)
-	return backfill.Environment{
-		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
-		TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome),
-	}
+	env.CursorDatabase = backfill.CursorDatabaseReaderFor(env)
+	return env
 }
 
 // appSessionDirs are the folders Claude Code and Codex keep their sessions
