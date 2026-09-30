@@ -115,7 +115,7 @@ func spendCellOf(days []stats.Day, peak float64) spendCell {
 	case best <= 0 || peak <= 0:
 		return spendCell{}
 	}
-	level := int(math.Round(best / peak * chartLevels))
+	level := int(math.Round(math.Min(best/peak, 1) * chartLevels))
 	return spendCell{level: min(max(level, chartMinLevel), chartLevels)}
 }
 

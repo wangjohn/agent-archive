@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -689,5 +690,33 @@ func TestStatsHostileNamesInPages(t *testing.T) {
 			out := strings.Join(pageLines(page, hostileStats(), width, true, false), "\n")
 			checkTerminalSafe(t, fmt.Sprintf("%s %d", page, width), stripANSI(out), width)
 		}
+	}
+}
+
+// A float past the int64 range is shown as the same bound on every platform
+// (converting it directly is left to the CPU: amd64 wraps, arm64 saturates).
+func TestStatsRoundIntSaturates(t *testing.T) {
+	t.Parallel()
+	type roundCase struct {
+		in   float64
+		want int64
+	}
+	for _, tc := range []roundCase{
+		{0, 0}, {2.5, 3}, {-2.5, -3}, {1e18, 1e18}, {math.MaxInt64, math.MaxInt64}, {1e30, math.MaxInt64},
+		{math.Inf(1), math.MaxInt64}, {-1e30, math.MinInt64}, {math.Inf(-1), math.MinInt64}, {math.NaN(), 0},
+	} {
+		if got := roundInt(tc.in); got != tc.want {
+			t.Errorf("roundInt(%v) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+	// A change of more than the int64 range reads as a bound, never wraps.
+	p := newStatsPrinter(stats.Stats{}, statsView{glyphs: unicodeGlyphs})
+	huge := stats.Measure{Value: f64(1e30), Previous: f64(1), ChangePct: f64(1e32)}
+	if got := p.changeText(huge); !strings.HasPrefix(got, "▲ 9,223,372,036,854,775,807%") {
+		t.Errorf("a huge rise reads %q", got)
+	}
+	huge.ChangePct = f64(-1e32)
+	if got := p.changeText(huge); !strings.HasPrefix(got, "▼ 9,223,372,036,854,775,807%") {
+		t.Errorf("a huge fall reads %q", got)
 	}
 }

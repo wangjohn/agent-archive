@@ -70,10 +70,10 @@ func (p *statsPrinter) sessionsCell() headCell {
 	o := p.s.Overview
 	value, sub := p.bold("sessions unknown"), ""
 	if o.Sessions.Value != nil {
-		value = p.bold(count(int64(math.Round(*o.Sessions.Value)), "session"))
+		value = p.bold(count(roundInt(*o.Sessions.Value), "session"))
 	}
 	if o.Prompts.Value != nil {
-		sub = p.dim(count(int64(math.Round(*o.Prompts.Value)), "prompt"))
+		sub = p.dim(count(roundInt(*o.Prompts.Value), "prompt"))
 	}
 	return headCell{value, sub}
 }
@@ -87,7 +87,7 @@ func (p *statsPrinter) tokensCell() headCell {
 	if o.CacheShare != nil {
 		sub = p.dim(statsfmt.Percent(*o.CacheShare) + " served from cache")
 	}
-	return headCell{p.bold(statsfmt.TokenCount(int64(math.Round(*o.Tokens.Value))) + " tokens"), sub}
+	return headCell{p.bold(statsfmt.TokenCount(roundInt(*o.Tokens.Value)) + " tokens"), sub}
 }
 
 // deltaText is a measure's change against the previous period: an arrow, the
@@ -108,12 +108,12 @@ func (p *statsPrinter) changeText(m stats.Measure) string {
 	if m.Value == nil || m.Previous == nil || m.ChangePct == nil || math.IsNaN(*m.ChangePct) || math.IsInf(*m.ChangePct, 0) {
 		return ""
 	}
-	pct := math.Round(*m.ChangePct)
+	pct := roundInt(*m.ChangePct)
 	switch {
 	case pct > 0:
-		return p.role(roleDeltaUp, p.g.up+" "+statsfmt.CommaInt(int64(pct))+"%")
+		return p.role(roleDeltaUp, p.g.up+" "+statsfmt.CommaInt(pct)+"%")
 	case pct < 0:
-		return p.role(roleDeltaDown, p.g.down+" "+statsfmt.CommaInt(int64(-pct))+"%")
+		return p.role(roleDeltaDown, p.g.down+" "+statsfmt.CommaInt(-max(pct, -math.MaxInt64))+"%")
 	}
 	return p.dim("no change")
 }

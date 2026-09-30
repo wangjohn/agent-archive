@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/stats"
@@ -48,13 +47,13 @@ func (p *statsPrinter) numbersTable() []string {
 		m     stats.Measure
 		text  func(float64) string
 	}
-	count := func(v float64) string { return statsfmt.CommaInt(int64(math.Round(v))) }
+	count := func(v float64) string { return statsfmt.CommaInt(roundInt(v)) }
 	rows := []row{
 		{"Est. spend", o.Cost.Measure, func(v float64) string { return p.estimate(v) }},
 		{"Sessions", o.Sessions, count},
 		{"Prompts", o.Prompts, count},
-		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(int64(math.Round(v))) }},
-		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", int(math.Round(v)), o.DaysInWindow) }},
+		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(roundInt(v)) }},
+		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", roundInt(v), o.DaysInWindow) }},
 	}
 	hasPrior := false
 	for _, r := range rows {
