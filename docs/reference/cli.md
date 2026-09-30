@@ -328,7 +328,7 @@ estimate at list price, not a bill, from a dated price table. Tokens and cost
 say "unknown" for sessions that record none (Cursor). A subagent's tokens
 count with its session. Sessions are placed by capture time, so imported
 sessions appear on the day they were imported.
-On a terminal of 100 columns or more, bars; narrower, a compact table. Text is
+On a terminal of 80 columns or more, bars; narrower, a compact table. Text is
 paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
   --days N                       Window of N calendar days ending today
                                  (default 30; up to 3660)

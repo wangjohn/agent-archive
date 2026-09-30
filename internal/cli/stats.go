@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -115,16 +117,9 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	stopReading := func() {}
-	if !*jsonOut {
-		stopReading = startActivity(stdout, "Reading sessions…")
-	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0,
-		reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "stats")})
-	stopReading()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
-		return 1
+	listed, code := readStatsSessions(stdout, stderr, env, store, opts, *jsonOut)
+	if code != 0 {
+		return code
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
 	computed := stats.Compute(sessions, stats.Options{
@@ -155,6 +150,64 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return 1
 	}
 	return 0
+}
+
+// readStatsSessions reads the sessions stats counts. On a terminal it shows
+// a spinner with how many sidecars are read, since the first run downloads
+// and caches every one. Ctrl-C (or SIGTERM or SIGHUP) stops the read at
+// once, leaves nothing on the screen and exits as the signal would have;
+// the cache is only ever written by atomic renames, so an interrupted read
+// leaves nothing damaged. A non-zero code is the command's exit code.
+func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, store storage.ObjectStore, opts listOptions, jsonOut bool) (reader.RecentResult, int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals, stopSignals := env.interrupts()
+	defer stopSignals()
+	interrupted := make(chan os.Signal, 1)
+	go func() {
+		select {
+		case sig := <-signals:
+			interrupted <- sig
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	var done, total atomic.Int64
+	listOpts := reader.ListOptions{
+		Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "stats"),
+		// Calls come from several goroutines, out of order: keep the highest.
+		Progress: func(d, t int) {
+			total.Store(int64(t))
+			for cur := done.Load(); int64(d) > cur; cur = done.Load() {
+				if done.CompareAndSwap(cur, int64(d)) {
+					break
+				}
+			}
+		},
+	}
+	stopReading := func() {}
+	if !jsonOut {
+		style := activityStyle(stdout)
+		stopReading = style.spinLabelEvery(stdout, func() string {
+			if n := total.Load(); n > 0 {
+				return fmt.Sprintf("Reading sessions… %s of %s", commaInt(done.Load()), commaInt(n))
+			}
+			return "Reading sessions…"
+		}, spinnerInterval).stop
+	}
+	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	stopReading()
+	if err != nil {
+		select {
+		case sig := <-interrupted:
+			return reader.RecentResult{}, signalExitCode(sig)
+		default:
+		}
+		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
+		return reader.RecentResult{}, 1
+	}
+	return listed, 0
 }
 
 // statsWindowDays is the window's length in calendar days: --days, or the

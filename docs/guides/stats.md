@@ -41,7 +41,7 @@ changed. `--no-cache` reads everything again.
   month ranks against your last six.
 
 `--by day|week|month|project` adds a table of the window broken down that
-way (weeks start on Monday). On a terminal of 100 columns or more the screen
+way (weeks start on Monday). On a terminal of 80 columns or more the screen
 draws bars; narrower, it is a compact table. It is paged through `$PAGER` on a
 terminal (`--no-pager` to print directly), plain text when piped, and ASCII
 instead of block characters in a locale that is not UTF-8.
@@ -62,10 +62,13 @@ instead of block characters in a locale that is not UTF-8.
   cost what output costs. Cache writes use the five-minute rate.
 - **`--prices FILE`** puts your own entries on top of the built-in table, in
   the same JSON shape (`internal/stats/prices.json` in the source shows it):
-  a `version`, an `as_of` date, and `models` with `id`, and the four prices
-  per million tokens (`input_per_mtok`, `output_per_mtok`,
-  `cache_read_per_mtok`, `cache_write_per_mtok`; `0` for a token type that
-  costs nothing). The output says your prices were applied.
+  a `version` (up to 64 bytes), an `as_of` date, an optional `currency`
+  (a three-letter code such as `EUR`; default `USD`; a file in another
+  currency replaces the built-in prices rather than mixing with them), and
+  `models` with `id`, and the four prices per million tokens
+  (`input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`,
+  `cache_write_per_mtok`; `0` for a token type that costs nothing). The
+  output says your prices were applied.
 - **Days and time.** The window is whole calendar days in your time zone,
   ending today. `--since` starts it on the local day it names (a date is a
   local day here, unlike `list --since`, which reads it as UTC), so

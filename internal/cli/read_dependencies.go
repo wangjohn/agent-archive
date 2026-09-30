@@ -51,6 +51,7 @@ type listCommandDependencies interface {
 type statsCommandDependencies interface {
 	readOnlyStoreDependencies
 	pagerDependencies
+	interrupts() (<-chan os.Signal, func())
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
