@@ -188,8 +188,11 @@ type statusView struct {
 	// other in agentskills.Registry) setup installed that are there now;
 	// AgentSkillsOutOfDate is those an upgrade has outdated, which setup
 	// refreshes.
+	// AgentSkillsDisabled is set when the person opted out of the skills
+	// (setup --no-skills), which setup then neither installs nor refreshes.
 	AgentSkills          []string             `json:"agent_skills,omitempty"`
 	AgentSkillsOutOfDate []string             `json:"agent_skills_out_of_date,omitempty"`
+	AgentSkillsDisabled  bool                 `json:"agent_skills_disabled,omitempty"`
 	Collector            state.Status         `json:"collector"`
 	CaptureDiagnostics   []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
@@ -411,6 +414,7 @@ func readSetupProgress(view *statusView, home string) {
 func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
 	view.configured = true
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
+	view.AgentSkillsDisabled = cfg.NoSkills
 	view.Background = "unknown"
 	view.Storage = storageLabel(cfg.Storage)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
@@ -455,9 +459,18 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	if userHome, err := env.userHomeDir(); err == nil {
 		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
 		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
-		view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
-		for _, path := range view.AgentSkillsOutOfDate {
-			view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup to refresh it.", skillLabel(path), path))
+		if cfg.NoSkills {
+			// Setup removes a file of its own here rather than refreshing it,
+			// so it is left over (a restored backup, an interrupted removal),
+			// not out of date.
+			for _, path := range view.AgentSkills {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
+			}
+		} else {
+			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			for _, path := range view.AgentSkillsOutOfDate {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup --refresh to refresh it.", skillLabel(path), path))
+			}
 		}
 	}
 	for _, p := range cfg.Archive.Projects {
@@ -842,7 +855,7 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		binaryProblem = executableProblem(cfg.InstalledExecutable)
 	}
 	if binaryProblem != "" {
-		view.Warnings = append(view.Warnings, fmt.Sprintf("The agent-archive executable that setup installed at %s is %s; every app hook runs it, so capture has stopped.", cfg.InstalledExecutable, binaryProblem))
+		view.Warnings = append(view.Warnings, fmt.Sprintf("The agent-archive executable that setup installed at %s is %s; every app hook runs it, so capture has stopped. Run agent-archive setup --refresh, from an installed agent-archive, to point the hooks at it.", cfg.InstalledExecutable, binaryProblem))
 	}
 	discovered, err := readApplicationDiscoveries(home)
 	if err != nil {
@@ -1018,7 +1031,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		}
 		view.State = "Needs attention"
 		view.problem = "agent-archive can't run from where setup installed it"
-		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup from the binary's new location to point the hooks and background collector at it.", moved)
+		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup --refresh from the binary's new location to point the hooks and background collector at it.", moved)
 	}
 	if !cfg.Archive.Enabled {
 		view.State = "Not installed"
@@ -1077,6 +1090,11 @@ func chooseInstallationStep(view *statusView, plist string) {
 				view.problem = appName(app.Name) + " hooks couldn't be checked"
 			}
 			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
+			if app.Hooks != "unknown" {
+				// Missing, incomplete, or running an executable that is gone:
+				// refresh reinstalls what setup saved, with no questions.
+				view.Next = "Run agent-archive setup --refresh to reinstall the hooks for " + appName(app.Name) + "."
+			}
 			if len(app.OtherInstallations) > 0 {
 				// setup refuses to install beside them, so it is not the way out.
 				view.problem = "Another installation's hooks are in " + appName(app.Name)
@@ -1437,6 +1455,9 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
+	if view.AgentSkillsDisabled {
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
+	}
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("Imported (all destinations): %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -2335,10 +2356,13 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, app := range view.Apps {
 		printAppDetails(out, app)
 	}
+	if view.AgentSkillsDisabled {
+		terminal.Println(out, "  Agent skills:  turned off (agent-archive setup --skills turns them on)")
+	}
 	for _, path := range view.AgentSkills {
 		line := displayPath(path, view.userHome)
 		if slices.Contains(view.AgentSkillsOutOfDate, path) {
-			line += " (out of date; run agent-archive setup)"
+			line += " (out of date; run agent-archive setup --refresh)"
 		}
 		terminal.Printf(out, "  %-14s %s\n", skillLabel(path)+":", line)
 	}

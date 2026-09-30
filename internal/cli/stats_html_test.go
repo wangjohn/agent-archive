@@ -21,7 +21,7 @@ func TestStatsHTMLToStdoutIsJustThePage(t *testing.T) {
 	if !strings.HasPrefix(out, "<!DOCTYPE html>") || !strings.HasSuffix(strings.TrimSpace(out), "</html>") {
 		t.Fatalf("stdout is not just a page:\n%.300s", out)
 	}
-	for _, want := range []string{"Tokens by day", "Cost by model", "project A", "Generated 2026-09-29 12:00 UTC"} {
+	for _, want := range []string{"Daily spend", "By model", "Where it went", "project A", "Generated 2026-09-29 12:00 UTC"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page lacks %q", want)
 		}
@@ -174,7 +174,7 @@ func TestStatsHTMLEmptyWindowAndFilters(t *testing.T) {
 	}
 	publishStatsFixture(t, mem)
 	filtered := mustRunStats(t, env, 0, "--html", "--model", `<b>none</b>`, "--hook-captured")
-	for _, want := range []string{"No archived sessions match these filters", "Filtered to model model A", "hook-captured sessions"} {
+	for _, want := range []string{"No archived sessions match these filters", "Filtered to model A", "hook-captured sessions"} {
 		if !strings.Contains(filtered, want) {
 			t.Errorf("the filtered empty page lacks %q\n%s", want, filtered)
 		}
@@ -197,8 +197,14 @@ func TestStatsHTMLNamesTheOverriddenPrices(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	out := mustRunStats(t, env, 0, "--html", "--prices", goldenPrices)
+	out := mustRunStats(t, env, 0, "--html", "--include-names", "--prices", goldenPrices)
 	if !strings.Contains(out, "Prices golden-1, as of 2026-09-29, with your own price file applied.") {
 		t.Errorf("the footer does not name the prices:\n%s", out[max(strings.Index(out, `<footer`), 0):])
+	}
+	// The version is text from the person's own file: a shareable page says
+	// that the file was used, not what it calls itself.
+	shareable := mustRunStats(t, env, 0, "--html", "--prices", goldenPrices)
+	if strings.Contains(shareable, "golden-1") || !strings.Contains(shareable, "Prices are from your own price file") {
+		t.Errorf("the shareable footer names the person's price file version:\n%s", shareable[max(strings.Index(shareable, `<footer`), 0):])
 	}
 }

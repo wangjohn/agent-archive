@@ -229,10 +229,57 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
+- `--no-skills` installs no [agent skills](#what-setup-changes-on-your-mac)
+  (such as `/handoff`) and removes the ones setup wrote earlier; a file that
+  is not setup's is left alone and named. It works with or without `--yes`
+  (without it, setup on a finished installation first asks what to change,
+  so `agent-archive setup --yes --no-skills` changes only this). It is saved
+  (`no_skills` in the [configuration](../reference/configuration.md)), and
+  later setup runs keep the skills off. `--skills` turns them back on and
+  installs them. Giving both is an error.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
 
 [CLI reference](../reference/cli.md#agent-archive-setup) lists every flag.
+
+## Refreshing after an upgrade
+
+The hooks, the background collector's plist, and the skill files name the
+`agent-archive` binary and its flags, so a new binary needs them rewritten.
+`agent-archive setup --refresh` does that, and nothing else: it asks
+nothing, needs no terminal, and never touches storage, credentials,
+projects, retention, or your saved answers. It prints `nothing to refresh`
+(exit 0) when all is current, or one line saying what it refreshed
+(`--verbose` lists the files). [The installer](install.md#install-with-the-script)
+runs it for you when it finds a set-up Mac.
+
+- It uses the saved settings and the hook files setup recorded, and the
+  executable you run it from. If the recorded executable differs (it moved,
+  or was deleted, the case `status` calls "capture has stopped"), it points
+  the hooks, the plist, and the skills at the running one and records it.
+  It refuses a temporary build (`go run`) or a file that cannot run.
+- Skills follow the same rules as in setup: a stale file of setup's is
+  replaced, a file that is not setup's is left and named, and with
+  `--no-skills` saved none are installed. It writes what setup would, so a
+  skill or hook file you deleted by hand is written again (to keep the
+  skills off, use `--no-skills`; to stop capture, use `agent-archive
+  uninstall` or `pause`, not deleting the hooks).
+- It changes the LaunchAgent's job only when the plist itself changes (a
+  moved binary) for a job that is loaded: that job is stopped and started
+  again so it runs the new plist. A job that is not loaded stays that way,
+  and an unchanged plist leaves launchd alone.
+- All of it is one transaction with setup's journal, so a failure puts every
+  file back, and a Ctrl-C or closed terminal while it writes does not stop
+  it halfway. It waits up to ten seconds for a background collection pass
+  that is running, then refuses and asks you to retry.
+- It refuses, changing nothing and exiting 1 with one line on standard
+  error, when setup never finished, an interrupted setup needs recovery, the
+  archive was uninstalled, another installation's hooks are in a hook file
+  it would write, another installation owns the background job, another
+  setup is running, or it runs as root (`sudo`) in a home directory that
+  belongs to another user, where it would leave root-owned files. Run it as
+  yourself. Any other flag except `--verbose` is a usage error
+  (exit 2).
 
 ## What setup changes on your Mac
 
@@ -275,7 +322,11 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   removes only a file with it (naming this installation's data directory),
   and leaves any other file at that path alone, saying so. After you upgrade
   `agent-archive`, `status` warns about a skill file written by an earlier
-  release; `agent-archive setup` refreshes it.
+  release; [`agent-archive setup --refresh`](#refreshing-after-an-upgrade)
+  refreshes it (the installer runs that). Setup installs them without
+  asking and says how to opt out: `agent-archive setup --no-skills` removes
+  the files it wrote and keeps them off in later runs (`status` says they are
+  turned off), and `agent-archive setup --skills` turns them on again.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
   see [local state](../reference/local-state.md)), private to your account.
   It holds registrations, frozen uploads, and caches; transcripts are read in

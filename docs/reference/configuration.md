@@ -28,6 +28,7 @@ consistent with each other.
 | `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
+| `no_skills` | `true` after `agent-archive setup --no-skills`: setup installs no agent skills (such as `/handoff`) and removes the ones it wrote, and later setup runs keep it. `setup --skills` removes the field. Absent means skills are installed, as in a config from before the field. |
 | `paused` | Set by `pause`, cleared by `resume`. |
 | `handoff.args` | Optional, edited by hand; setup keeps it. Per destination (`claude`, `codex`, `cursor`), arguments `handoff --to` passes before any given after `--`, for example `{"codex": ["--model", "o3"]}`. |
 | `handoff.default_to` | Optional, edited by hand. Per source harness, the destination `handoff` offers first, for example `{"claude": "codex"}`. Unknown agent names are refused when the file is read. |
@@ -53,6 +54,7 @@ consistent with each other.
 | `NO_COLOR` | Disables colored output. |
 | `AGENT_ARCHIVE_PAGER`, `PAGER` | The pager for long output on a terminal (`list`, `show`, `status`, `purge plan`); `AGENT_ARCHIVE_PAGER` wins. Empty or `cat` disables paging. With neither set, or one set to a bare `less`, `less` with mouse-wheel scrolling and key hints. Any other pager runs as given, with `LESS=FRX` and `LV=-c` added when those are unset ([Scrolling](../guides/list-and-show.md#scrolling)). |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
+| `AGENT_ARCHIVE_HOME` (in `install.sh`) | The installer looks for `config.json` here (or in the default directory) to decide whether to run `agent-archive setup --refresh` after installing; see [the install guide](../getting-started/install.md). |
 
 Nothing else from your shell reaches the background collector. An S3 profile
 that works only with other variables set, such as another helper's settings

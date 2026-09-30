@@ -1,6 +1,7 @@
 package statshtml
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -161,25 +162,66 @@ func TestModelStandInsFollowTheRanking(t *testing.T) {
 func TestModelFilterIsRedactedLikeTheTable(t *testing.T) {
 	t.Parallel()
 	s := modelStats(t, modelSessions(), "", stats.GroupNone)
+	standIn := regexp.MustCompile(`^Filtered to model [A-Z]\.$`)
 	cases := []struct {
 		filter string
 		want   string
 	}{
 		{"claude-opus-5", "Filtered to model claude-opus-5."},
 		{"Claude-Opus-5-20250101", "Filtered to model Claude-Opus-5-20250101."},
-		{fineTune, "Filtered to model model A."},
-		{"FT:GPT-4O:ZQCORP::ABC", "Filtered to model model A."},
-		{deployment, "Filtered to model model B."},
-		{"never-seen-zqcorp", "Filtered to model model E."},
+		{"claude-opus-5[1m]", "Filtered to model claude-opus-5[1m]."},
+		{fineTune, "Filtered to model A."},
+		{"FT:GPT-4O:ZQCORP::ABC", "Filtered to model A."},
+		{deployment, "Filtered to model B."},
+		{"never-seen-zqcorp", "Filtered to model E."},
 	}
 	for _, c := range cases {
 		page := string(render(t, s, Options{Filters: Filters{Model: c.filter}}))
 		if !strings.Contains(page, c.want) {
 			t.Errorf("filter %q: the heading is not %q", c.filter, c.want)
 		}
-		if strings.Contains(c.want, "model model") && strings.Contains(strings.ToLower(page), strings.ToLower(c.filter)) {
+		if standIn.MatchString(c.want) && strings.Contains(strings.ToLower(page), strings.ToLower(c.filter)) {
 			t.Errorf("filter %q is on the shareable page", c.filter)
 		}
+	}
+}
+
+// The engine finds a listed model behind a path or a cloud vendor's prefix, and
+// what it drops can name a client: the heading names the family, never the
+// text as typed.
+func TestModelFilterWithAPrefixIsNotEchoed(t *testing.T) {
+	t.Parallel()
+	s := modelStats(t, modelSessions(), "", stats.GroupNone)
+	for _, filter := range []string{"zqcorp-client/claude-opus-5", "zqcorp-prod.anthropic.claude-opus-5-v1:0", "ZQCORP/GPT-5",
+		"claude-opus-5[zqcorp-client]", "claude-opus-5 [zqcorp]", "claude-opus-5-20251001[zqcorp]", "gpt-5.4[zqcorp]"} {
+		page := string(render(t, s, Options{Filters: Filters{Model: filter}}))
+		if leaked := leakedMarkers(page); len(leaked) > 0 {
+			t.Errorf("filter %q: the page names %q", filter, leaked)
+		}
+		if !strings.Contains(page, "Filtered to model opus.") && !strings.Contains(page, "Filtered to model gpt-5.") {
+			t.Errorf("filter %q: the heading does not name the model's family", filter)
+		}
+	}
+}
+
+// A price file of the person's own names itself: its version can name a client
+// or a contract, so a shareable page says that the file was used, not what it
+// is called; the built-in table's version is public.
+func TestOwnPriceFileVersionIsNotOnAShareablePage(t *testing.T) {
+	t.Parallel()
+	s := modelStats(t, modelSessions(), "", stats.GroupNone)
+	s.Prices.Version = "zqcorp-contract-7"
+	s.Prices.Overridden = true
+	if page := string(render(t, s, Options{})); leakedMarkers(page) != nil || !strings.Contains(page, "Prices are from your own price file") {
+		t.Errorf("the shareable footer names the price file: %q", leakedMarkers(page))
+	}
+	if page := string(render(t, s, Options{IncludeNames: true})); !strings.Contains(page, "Prices zqcorp-contract-7, as of 2026-09-29, with your own price file applied.") {
+		t.Error("--include-names does not show the price file's version")
+	}
+	s.Prices.Overridden = false
+	s.Prices.Version = "2026-09.3"
+	if page := string(render(t, s, Options{})); !strings.Contains(page, "Prices 2026-09.3, as of 2026-09-29.") {
+		t.Error("the built-in table's version is not shown")
 	}
 }
 
