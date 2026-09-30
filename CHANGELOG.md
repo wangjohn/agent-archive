@@ -8,6 +8,41 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- On a build without a Keychain (Linux), an R2 key is kept in a file with mode
+  0600 in a `credentials` folder (mode 0700) of the data directory, and
+  agent-archive refuses to read it, or save into the folder, when it is open
+  to other users, is a symbolic link, or is not yours, naming the `chmod` that
+  fixes it. Where no such file exists, `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
+  `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` are read as a read-only fallback. On
+  macOS nothing changes: the key stays in the Keychain. An S3 profile keeps
+  no secret of its own and is the better choice where you can use one. See
+  [privacy](docs/security/privacy.md#where-credentials-are-kept).
+- `agent-archive stats` shows how you use your coding agents over the last 30
+  days (`--days`, or `--since` for a start day): tokens by day, sessions,
+  prompts, estimated cost and active days with their change from the
+  previous period, agents, cost by model, top projects, what used your
+  tokens (cache reads and writes, input, output, subagents, skills, MCP),
+  and highlights. `--by day|week|month|project` breaks the window down,
+  `--json` prints a versioned document (`schema_version` 1), `--prices FILE`
+  puts your own model prices on top of the built-in table, and `--harness`,
+  `--model`, `--imported` and `--hook-captured` filter as `list` does. It
+  reads metadata only and prints no prompts or paths. Cost is an estimate at
+  list price from a dated price table, unpriced models are left out and
+  flagged, and what an agent does not record (Cursor's tokens) reads
+  "unknown", never zero. See [stats](docs/guides/stats.md).
+- `agent-archive stats --html` writes the same numbers as one self-contained
+  web page: a chart of tokens by day with its peak, overview cards, agents,
+  cost by model, top projects, a donut of what used your tokens, highlights,
+  and the scope, coverage and price-table notes. It is a single file with
+  inline styles and SVG, no script and no request to anything else; it
+  follows your light or dark setting, prints, and reads on a phone. Give
+  `--output FILE` to save it (mode 0600; an existing file is kept unless
+  `--force`; the file is written in one step, never half), or redirect
+  standard output. It holds counts and names only, never prompts, paths or
+  session IDs, and names each project, skill and MCP server, and each model
+  the built-in price table does not list (a fine-tune id, a custom deployment), "project A",
+  "skill A", "MCP server A", "model A" and so on unless you pass
+  `--include-names`, so the page can be shared. See [stats](docs/guides/stats.md#share-it-as-a-web-page).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known
   for Codex), `model_tokens` (token counts split by model, so a session that
@@ -74,6 +109,19 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window. The browser reads keys as you press them, without Enter: the
+  mouse wheel, the arrows, PgUp and PgDn (or space, `n`, `p`), and Home and
+  End scroll the list and a long summary at once, with a status line saying
+  where you are (Top, a percentage, Bottom) and, in the summary, how many
+  lines are above and below. Type a row number or short ID and press Enter
+  to open it; in the summary, `t`, `m` (the whole summary in the pager),
+  `b`, and `q` act on their own key, and Enter or Backspace go back
+  to the list. The wheel's arrows are no longer echoed into the prompt as
+  `^[[A`. The other pickers still read a line and show a list taller than
+  the terminal a page at a time (`n` and `p` move; any row number or short
+  ID still works).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
@@ -90,12 +138,51 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
+- `install.sh` and `scripts/install-from-source.sh` now recognise Linux release
+  assets (x86_64 and aarch64): the installer selects
+  `agent-archive-linux-<arch>`, skips the macOS-only Developer ID check for
+  it, and on every OS refuses to install unless the download matches its
+  entry in `SHA256SUMS`, which must be exactly one well-formed lowercase
+  SHA-256 line; an empty download also stops the install. The macOS Developer
+  ID check is unchanged. Other changes you can see on macOS: `sha256sum` is
+  preferred over `shasum` when both are present; an unset or empty `HOME` now
+  fails with a clear message when no install directory can be chosen
+  otherwise; `AGENT_ARCHIVE_VERSION` must look like a release tag (`latest`
+  is refused; leave it unset); a relative `AGENT_ARCHIVE_INSTALL_DIR` is
+  resolved to an absolute path; the installer refuses to install over a
+  directory named `agent-archive` (it used to move the file into it); it
+  stages the new binary with `mktemp` and removes it on failure; it prints
+  `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
+  reports a missing `curl` ("curl is required") and a failed temporary
+  file or directory creation with their own messages. Linux is not yet a
+  supported platform.
+
+- `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
+  terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
+  `show`'s `--no-pager` now covers the summary too. Piped output is
+  unchanged.
 
 ### Changed
 
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
+- The default pager scrolls on the mouse wheel and names its keys. With no
+  `AGENT_ARCHIVE_PAGER` or `PAGER` set, or one set to a bare `less`, `less`
+  551 or later runs with `--mouse` (hold Option while dragging to select
+  text in iTerm2), and `less` 530 to 550 runs on the alternate screen, where
+  the wheel scrolls it too. The prompt reads, for example, "lines 1-48 of
+  1210 - arrows/space scroll, / search, q quit" ("q back" from the
+  session browser). Any other pager you set runs as given, with `LESS=FRX`
+  and `LV=-c` added when those are unset, as git does.
+- Ctrl-C while a pager shows `list`, `show`, `status`, or `purge plan` now
+  goes to the pager (in `less`, it cancels a search) instead of ending
+  agent-archive and leaving the pager on the terminal.
+- Off macOS, Cursor's data folder is looked for where VS Code keeps its own,
+  `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
+  backfill inputs (Claude and Codex desktop app folders, the privacy-protected
+  folders, the `/Applications` probes) are skipped. On macOS nothing changes.
+  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or

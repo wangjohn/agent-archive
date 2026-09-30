@@ -68,6 +68,48 @@ func styleFor(out io.Writer) textStyle {
 	return terminalStyle(os.Getenv, width)
 }
 
+// terminalSize is the size of the terminal out writes to: ok is false when
+// out (unwrapped from a lockedWriter) is not a terminal or its size cannot
+// be read.
+func (e Env) terminalSize(out io.Writer) (width, height int, ok bool) {
+	if e.TerminalSize != nil {
+		return e.TerminalSize(out)
+	}
+	file, isFile := underlyingWriter(out).(*os.File)
+	if !isFile || !term.IsTerminal(int(file.Fd())) {
+		return 0, 0, false
+	}
+	width, height, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+// displayLines is how many terminal rows text takes when printed on a
+// terminal width columns wide: each line takes at least one row, and a
+// line wider than the terminal wraps onto more. Color codes take no room.
+// A width of 0 or less means lines never wrap.
+func displayLines(text string, width int) int {
+	if text == "" {
+		return 0
+	}
+	n := 0
+	for line := range strings.SplitSeq(strings.TrimSuffix(text, "\n"), "\n") {
+		n += lineRows(line, width)
+	}
+	return n
+}
+
+// lineRows is how many terminal rows one line takes, as displayLines.
+func lineRows(line string, width int) int {
+	w := visibleWidth(line)
+	if width <= 0 || w <= width {
+		return 1
+	}
+	return (w + width - 1) / width
+}
+
 // terminalStyle is the style for a terminal width columns wide, given the
 // process environment. A dumb terminal gets neither color nor redrawing.
 func terminalStyle(getenv func(string) string, width int) textStyle {
@@ -239,14 +281,17 @@ func (s textStyle) spin(out io.Writer, label string) *spinner {
 }
 
 func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *spinner {
+	return s.spinLabelEvery(out, func() string { return label }, every)
+}
+
+// spinLabelEvery is spinEvery for a label that changes while it runs (a
+// count of what is done): label is asked for on every frame, from the
+// spinner's goroutine, and must be safe for that. A frame that is shorter
+// than the last is padded so nothing of the last is left behind.
+func (s textStyle) spinLabelEvery(out io.Writer, label func() string, every time.Duration) *spinner {
 	sp := &spinner{}
 	if !s.live {
 		return sp
-	}
-	// A label wider than the terminal would wrap, and "\r" could not take
-	// the spinner's line back.
-	if s.width > 2 {
-		label = truncateVisible(label, s.width-3)
 	}
 	sp.done = make(chan struct{})
 	sp.finished = make(chan struct{})
@@ -254,8 +299,17 @@ func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *
 		defer close(sp.finished)
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
+		lastWidth := 0
 		for frame := 0; ; frame++ {
-			terminal.Printf(out, "\r%s %s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), label)
+			text := label()
+			// A label wider than the terminal would wrap, and "\r" could not
+			// take the spinner's line back.
+			if s.width > 2 {
+				text = truncateVisible(text, s.width-3)
+			}
+			width := visibleWidth(text)
+			terminal.Printf(out, "\r%s %s%s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), text, strings.Repeat(" ", max(lastWidth-width, 0)))
+			lastWidth = width
 			select {
 			case <-sp.done:
 				terminal.Print(out, "\r\x1b[K")
