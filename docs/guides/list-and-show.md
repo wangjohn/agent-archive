@@ -45,6 +45,8 @@ agent-archive show SESSION_ID --json         # the metadata sidecar, for scripts
 agent-archive show SESSION_ID --transcript          # prompts, replies, tool calls
 agent-archive show SESSION_ID --transcript --full   # also trimmed tool results
 agent-archive show SESSION_ID --transcript --json   # the normalized view as JSON
+agent-archive show SESSION_ID --transcript --max-bytes 40000  # a smaller limit
+agent-archive show SESSION_ID --transcript --max-bytes 0      # no limit
 ```
 
 A summary looks like this:
@@ -158,6 +160,49 @@ former name, still works and prints a deprecation note on stderr. If the
 same session ID was published under more than one harness, pass `--harness`
 to pick one. The object layout is in
 [bucket layout](../reference/bucket-layout.md).
+
+### Size
+
+`show SESSION_ID --transcript` prints at most 120,000 bytes (about 30k
+tokens), as `handoff` does, so a script or an agent that runs it on a long
+session gets an answer that fits. `--max-bytes N` changes the limit and `0`
+removes it; it applies to `--full` and to `--json` too, and to a terminal
+as much as to a pipe. The session browser's `t` key is not limited.
+
+Over the limit, the text form trims the oldest exchanges first, and only as
+far as needed, in this order: tool results and command output (with
+`--full`) are dropped, runs of tool calls collapse to counts by tool
+(`▸ 14 tool calls: Bash ×9, Read ×5`), agent messages are shortened to 300
+bytes, and long prompts and long shell and slash commands you typed are cut
+to 2,000. The last three exchanges (up to their last twenty steps) are kept
+whole through those steps. If that is still too much, long final responses a
+hook reported are cut to 2,000 bytes, the oldest of those are dropped (the
+newest is kept), and the oldest exchanges are dropped (the newest is always
+kept). When the newest exchange alone is too much, its long agent messages
+are cut to 2,000 bytes, oldest first, and then its oldest steps go. What was
+cut says so where it was cut (`…(shortened)`, `…(truncated)`), and the output
+ends with what was omitted, as a log of the steps in the order they ran
+(exchanges are counted from the session's first, so those it names may be
+among the ones dropped), and where to read all of it.
+
+`--json` output stays valid JSON: two documents, the sidecar and then the
+normalized view, whose size together is limited. The sidecar is never
+trimmed. In the normalized view the steps are: drop `tool_results` entries
+(sizes only; a linked result's size is also on its call), drop `hook_finals`
+entries (statuses only), drop each tool call's `input`, cut the `text` of turns other than the person's prompts to
+300 bytes, cut prompts to 2,000, and finally drop the oldest turns, tool
+calls, and tool results. Each goes to the oldest entries first and only as
+far as needed. A cut text has `text_truncated: true`, and a `trimmed` object
+at the end of the normalized view records the limit, what was omitted, and
+where the full output is. `trimmed` is absent when nothing was trimmed.
+
+When anything is trimmed, the untrimmed output is saved in the data
+directory's `handoffs/` folder as `SESSION_ID.transcript.txt`
+(`.transcript-full.txt` with `--full`, `.transcript.json` with `--json`),
+mode 0600, replaced by the next run that trims the same session the same
+way, removed after 7 days and by `uninstall --delete-local-data`. A limit too small for even the newest
+step, the header, or the sidecar alone, prints a warning on stderr and as much
+as it can. Nothing here prompts, and without a terminal nothing is paged.
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.
 

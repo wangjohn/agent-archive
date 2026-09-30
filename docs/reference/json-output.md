@@ -109,6 +109,17 @@ the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
 is unchanged, and it prints a deprecation note on stderr.
 
+Both documents together are limited to `--max-bytes` (default 120000; `0`
+for no limit). When that trims the normalized view, it gains a last field,
+`trimmed`: `{"max_bytes": N, "omitted": [{"kind", "count"}, ...],
+"full_record": PATH}`. The kinds, in the order they are applied, are
+`tool_results` and `hook_finals` (entries dropped), `tool_input` (calls
+whose `input` was dropped), `assistant_text` and `prompt_text` (turns whose
+`text` was cut, each with `"text_truncated": true`), and `oldest_records`
+(turns, calls, and results dropped, oldest first). `full_record` is the saved untrimmed output,
+kept 7 days, and is absent if it could not be saved. Neither field exists in
+untrimmed output. See [list and show](../guides/list-and-show.md#size).
+
 ## `status --json`
 
 Top-level fields (versioned by `schema_version`, currently `3`):
