@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,5 +175,31 @@ func TestSchedulerNamesItselfLaunchd(t *testing.T) {
 	s := Scheduler{}
 	if s.Name() != "launchd" || s.Words() != (scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl"}) || s.DefaultPATH() != "/usr/bin:/bin:/usr/sbin:/sbin" {
 		t.Errorf("Name %q, Words %+v, DefaultPATH %q", s.Name(), s.Words(), s.DefaultPATH())
+	}
+}
+
+// A plist is a job at a site only when it is <user home>/Library/LaunchAgents/<label>.plist,
+// as every plist a release has journaled is, however $HOME is spelled; any
+// other path names no job, and is refused rather than taken for another plist.
+func TestLocateNamesTheJobAndSiteOfAPlist(t *testing.T) {
+	t.Parallel()
+	for _, userHome := range []string{"/Users/me", "/Users/me/", "/Users/./me/../me", "/", "me", "./me/", "."} {
+		for _, label := range []string{LaunchLabel, LaunchLabel + ".0123456789ab", LegacyLaunchLabel} {
+			plist := filepath.Join(userHome, "Library", "LaunchAgents", label+".plist")
+			site, ref, err := Scheduler{}.Locate(plist)
+			if err != nil || PlistPath(site, ref) != plist || string(ref) != label || site.UserHome != filepath.Clean(userHome) {
+				t.Errorf("Locate(%s) = %+v, %q, %v; want the job %s at %s", plist, site, ref, err, label, filepath.Clean(userHome))
+			}
+		}
+	}
+	for _, plist := range []string{
+		"/synthetic/job",
+		"/Users/me/Library/LaunchDaemons/com.agent-archive.collector.plist",
+		"/Users/me/Library/LaunchAgents/com.agent-archive.collector.PLIST",
+		"/Users/me/Library/LaunchAgents/../LaunchAgents/com.agent-archive.collector.plist",
+	} {
+		if _, _, err := (Scheduler{}).Locate(plist); err == nil || !strings.Contains(err.Error(), plist) {
+			t.Errorf("Locate(%s) = %v; want a refusal that names it", plist, err)
+		}
 	}
 }

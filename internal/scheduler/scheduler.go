@@ -49,6 +49,10 @@ const (
 	AnotherInstallation JobState = "another_installation"
 )
 
+// Active reports whether the state is a job the scheduler has loaded, whether
+// or not it is running at the moment.
+func (s JobState) Active() bool { return s == Loaded || s == Running }
+
 // Installation is what an adapter derives a job's Ref from: the data
 // directory one installation of the tool archives into.
 type Installation struct {
@@ -238,6 +242,14 @@ type Definer interface {
 	Plan(site Site, inst Installation, spec JobSpec) (Plan, error)
 	// DefaultPATH is the PATH a job gets when its definition sets none.
 	DefaultPATH() string
+	// Locate is the job, and the site, that a recorded definition path names:
+	// the inverse of where Plan puts an artifact. The setup journal names a
+	// job by the path of its definition, and a journal is recovered by
+	// whichever setup runs next, perhaps under another $HOME (a sandbox
+	// overrides $HOME, and so where definitions are, but not the manager), so
+	// recovery addresses each job at the site its own definition is in, never
+	// at the current user home. A path no Plan could have written is refused.
+	Locate(definition string) (Site, Ref, error)
 }
 
 // Inspector asks what a scheduler knows, and changes nothing.

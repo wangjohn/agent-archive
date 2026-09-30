@@ -894,7 +894,7 @@ func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 // stops a refresh that would change the plist, before anything is written.
 func TestRefreshRefusesAPlistChangeItCannotSafelyRestart(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"unknown", setupjournal.JobAnotherInstallation} {
+	for _, state := range []string{"unknown", string(scheduler.AnotherInstallation)} {
 		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, state)

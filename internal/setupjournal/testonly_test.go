@@ -1,10 +1,80 @@
 package setupjournal
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
+
+// Launchd is a scheduler as these tests script it: jobs are named by the
+// plist that defines them, and a state is one of the scheduler's JobState
+// words. The journal drives schedulers by ref and site; backends adapts one of
+// these to that, naming each job by its plist, so the tests say which plist
+// they mean and never where its definition lives.
+type Launchd interface {
+	JobState(plist string) string
+	Load(plist string) error
+	Unload(plist string) error
+}
+
+// JobActive reports whether a state from Launchd.JobState is a loaded job.
+func JobActive(state string) bool { return scheduler.JobState(state).Active() }
+
+// JobAnotherInstallation is the state of a job the scheduler loaded from
+// another installation's definition.
+const JobAnotherInstallation = string(scheduler.AnotherInstallation)
+
+// backends is l as the journal's Backends: every name resolves to it, launchd's.
+func backends(l Launchd) Backends {
+	return func(string) (scheduler.Scheduler, error) { return plistScheduler{l}, nil }
+}
+
+// plistScheduler is a scheduler.Scheduler over a Launchd. Its site is the
+// plist itself (Locate refuses nothing) and its ref the plist's label, as
+// launchd's is; every call acts on the plist the site names.
+type plistScheduler struct{ l Launchd }
+
+func (plistScheduler) Name() string { return "launchd" }
+
+func (plistScheduler) Words() scheduler.Words {
+	return scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl"}
+}
+
+func (plistScheduler) Ref(scheduler.Installation) scheduler.Ref { panic("unused") }
+
+func (plistScheduler) Plan(scheduler.Site, scheduler.Installation, scheduler.JobSpec) (scheduler.Plan, error) {
+	panic("unused")
+}
+
+func (plistScheduler) DefaultPATH() string { return "" }
+
+func (plistScheduler) Locate(definition string) (scheduler.Site, scheduler.Ref, error) {
+	return scheduler.Site{UserHome: definition}, scheduler.Ref(simLabel(definition)), nil
+}
+
+func (p plistScheduler) Inspect(_ context.Context, site scheduler.Site, _ scheduler.Ref) scheduler.Status {
+	return scheduler.Status{State: scheduler.JobState(p.l.JobState(site.UserHome))}
+}
+
+func (plistScheduler) Definition(scheduler.Site, scheduler.Ref) scheduler.Status {
+	panic("unused")
+}
+
+func (plistScheduler) Installed(context.Context, scheduler.Site, scheduler.Installation) ([]scheduler.Job, error) {
+	panic("unused")
+}
+
+func (p plistScheduler) Load(_ context.Context, site scheduler.Site, _ scheduler.Ref) error {
+	return p.l.Load(site.UserHome)
+}
+
+func (p plistScheduler) Unload(_ context.Context, site scheduler.Site, _ scheduler.Ref) error {
+	return p.l.Unload(site.UserHome)
+}
 
 // fakeLaunchd stands in for launchd: each call goes to the matching func.
 // With none set, a job is missing, and loading or stopping one fails.
@@ -104,4 +174,11 @@ func (l *launchdSim) Unload(plist string) error {
 	}
 	delete(l.loaded, simLabel(plist))
 	return nil
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }

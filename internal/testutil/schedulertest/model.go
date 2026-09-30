@@ -74,6 +74,16 @@ func definitionPath(site scheduler.Site, ref scheduler.Ref) string {
 	return filepath.Join(site.UserHome, ".model", string(ref)+".job")
 }
 
+// Locate is the site and the job of a definition path: <user home>/.model/<ref>.job.
+func (*Model) Locate(definition string) (scheduler.Site, scheduler.Ref, error) {
+	site := scheduler.Site{UserHome: filepath.Dir(filepath.Dir(definition))}
+	ref, ok := strings.CutSuffix(filepath.Base(definition), ".job")
+	if !ok || definitionPath(site, scheduler.Ref(ref)) != definition {
+		return site, "", fmt.Errorf("%s is not a model job file (<home>/.model/<ref>.job)", definition)
+	}
+	return site, scheduler.Ref(ref), nil
+}
+
 // Plan is the definition of spec: one file, lines of `key=value`.
 func (m *Model) Plan(site scheduler.Site, inst scheduler.Installation, spec scheduler.JobSpec) (scheduler.Plan, error) {
 	if !filepath.IsAbs(spec.Executable) || !filepath.IsAbs(spec.DataHome) {
