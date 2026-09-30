@@ -228,11 +228,12 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   retains `body` until changed.
 - `--no-skills` installs no [agent skills](#what-setup-changes-on-your-mac)
   (such as `/handoff`) and removes the ones setup wrote earlier; a file that
-  is not setup's is left alone and named. It works with or without `--yes`,
-  is saved (`no_skills` in the
-  [configuration](../reference/configuration.md)), and later setup runs keep
-  the skills off. `--skills` turns them back on and installs them. Giving
-  both is an error.
+  is not setup's is left alone and named. It works with or without `--yes`
+  (without it, setup on a finished installation first asks what to change,
+  so `agent-archive setup --yes --no-skills` changes only this). It is saved
+  (`no_skills` in the [configuration](../reference/configuration.md)), and
+  later setup runs keep the skills off. `--skills` turns them back on and
+  installs them. Giving both is an error.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
 
