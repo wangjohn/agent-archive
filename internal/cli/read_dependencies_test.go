@@ -52,7 +52,7 @@ type pagerStub struct {
 	run int
 }
 
-func (*pagerStub) isTerminal(any) bool { return true }
+func (*pagerStub) interactive(any) bool { return true }
 
 func (*pagerStub) lookupEnv(string) (string, bool) { return "more", true }
 

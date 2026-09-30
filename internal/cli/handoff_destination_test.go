@@ -480,6 +480,47 @@ func TestHandoffToTerminalCombinations(t *testing.T) {
 	}
 }
 
+// Inside an agent the agent's shell may be a pseudo-terminal, but
+// interaction is off there: --to opens a new window instead of taking over
+// that terminal, nothing asks "Continue in:", and --here is refused naming
+// the switch.
+func TestHandoffInAnAgentOpensANewWindow(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "not-registered"})
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+		t.Error("ran in the agent's terminal")
+		return nil
+	}
+	opened := 0
+	f.env.OpenTerminal = func(termlaunch.Spec) (string, error) {
+		opened++
+		return "a new tmux window", nil
+	}
+	out, errOut, code := runPicker(t, f.env, "1\n", f.id, "--to", "codex")
+	if code != 0 || opened != 1 || out != "" || !strings.Contains(errOut, "opened codex in a new tmux window") {
+		t.Fatalf("--to: code=%d opened=%d stdout=%q stderr=%s", code, opened, out, errOut)
+	}
+	out, errOut, code = runPicker(t, f.env, "1\n", f.id)
+	if code != 0 || opened != 1 || strings.Contains(out, "Continue in") || !strings.Contains(out, "## Where it left off") {
+		t.Fatalf("no --to: code=%d opened=%d stderr=%s\n%s", code, opened, errOut, out)
+	}
+	if _, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex", "--here"); code != 2 || !strings.Contains(errOut, envNonInteractive) {
+		t.Fatalf("--here: code=%d stderr=%s", code, errOut)
+	}
+	// AGENT_ARCHIVE_NONINTERACTIVE=0 gives the terminal back.
+	launched := 0
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+		launched++
+		return nil
+	}
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "not-registered", envNonInteractive: "0"})
+	if _, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex"); code != 0 || launched != 1 || opened != 1 {
+		t.Fatalf("switch off: code=%d launched=%d opened=%d stderr=%s", code, launched, opened, errOut)
+	}
+}
+
 // Before setup the launch copy's private temporary directory is where the
 // script goes; it too must satisfy termlaunch.
 func TestHandoffToWithoutSetupOpensANewWindow(t *testing.T) {
