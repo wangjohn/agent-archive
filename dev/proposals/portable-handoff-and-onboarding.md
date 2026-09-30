@@ -49,7 +49,7 @@ Only the hash is stored (D1). The URL itself is never written to the sidecar, re
 1. At hook registration (`internal/capture/hook.go:~487`), store it on the registration as optional `RepoKey string json:"repo_key,omitempty"` (`internal/archive/types.go:~316`). The registration has no git fields today. The hook path must stay fast (2 s budget), so run `git` with a small timeout and skip on failure.
 2. At publish and refresh, if the registration has none, compute it from `reg.ProjectRoot` as a fallback (this is how already-registered sessions gain it).
 
-**Metadata.** Add `Metadata.RepoKey` (`json:"repo_key,omitempty"`) beside `ProjectName` (`types.go:~575`), an `ApplyRepoKey` beside `ApplyProjectName` (`internal/archive/metadata.go:451`), and call it in both places `ApplyProjectName` is called (`internal/collector/session.go:596`, `internal/collector/metadata.go:106`). Add it to `schemas/metadata.schema.json` (`additionalProperties: false`, so the schema must change in the same PR). Optional field: no `MetadataSchemaVersion` bump. Bump `DefaultParserVersion` to `0.15.0` (`0.14.0` went to the token fields first) (`internal/archive/adapters.go:67`) so existing sessions refresh and gain it.
+**Metadata.** Add `Metadata.RepoKey` (`json:"repo_key,omitempty"`) beside `ProjectName` (`types.go:~575`), an `ApplyRepoKey` beside `ApplyProjectName` (`internal/archive/metadata.go:451`), and call it in both places `ApplyProjectName` is called (`internal/collector/session.go:596`, `internal/collector/metadata.go:106`). Add it to `schemas/metadata.schema.json` (`additionalProperties: false`, so the schema must change in the same PR). Optional field: no `MetadataSchemaVersion` bump. Bump `DefaultParserVersion` to `0.16.0` (`0.14.0` and `0.15.0` went to the token fields and git activity first) (`internal/archive/adapters.go:67`) so existing sessions refresh and gain it.
 
 Limit: refresh can only add `repo_key` on the machine that owns the registration and still has the repo. Sessions from other machines, or with the repo gone, stay on `ProjectID` matching. That is acceptable: the field matters most for sessions captured from now on.
 
@@ -204,6 +204,8 @@ Independent of creation, these are sequencing changes over existing defaults:
 
 ## Part 3. Linux support (persistent capture)
 
+> **Update 2026-09-30.** PRs 5 to 7 below (scheduler refactor, systemd backend, terminology) are re-planned around one scheduler port and one OS value in [platform-abstraction.md](platform-abstraction.md), which supersedes sections 3c to 3e and the PR list here. PRs 1 to 4 stand.
+
 ### Scope
 
 Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.
@@ -304,7 +306,7 @@ Parts 1 and 2 are split into PRs with fixed names so parallel work does not coll
 
 | Package | Scope | Owns |
 | --- | --- | --- |
-| R1 | `repo_key`: normalizer, hash, registration field, metadata field, schema, parser 0.15.0, refresh. No CLI matching change | `internal/archive` (bundle.go, metadata.go, types.go, adapters.go), `internal/capture/hook.go`, `internal/collector/{session,metadata}.go`, `schemas/metadata.schema.json`, docs for metadata |
+| R1 | `repo_key`: normalizer, hash, registration field, metadata field, schema, parser 0.16.0, refresh. No CLI matching change | `internal/archive` (bundle.go, metadata.go, types.go, adapters.go), `internal/capture/hook.go`, `internal/collector/{session,metadata}.go`, `schemas/metadata.schema.json`, docs for metadata |
 | R2 | Handoff matching by `repo_key`, branch note, `--to` with archived sessions, `noMatch` text | `internal/cli/handoff*.go`, handoff render in `internal/archive`, handoff docs; depends on R1 |
 | S1 | Setup trims, immediate credential validation, cloud-variables printout | `internal/cli/setup*.go`, `internal/cli/prompt.go`, setup docs |
 | S2 | Cloudflare client and guided R2 creation | new `internal/cloudflare`, `internal/cli/setup_r2_create*.go`, minimal hooks into `setup.go`; depends on S1 landing first for `setup.go` |

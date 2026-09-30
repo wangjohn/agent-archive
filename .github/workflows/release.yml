@@ -241,10 +241,16 @@ jobs:
           requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\""
           for binary in dist/agent-archive-darwin-amd64 dist/agent-archive-darwin-arm64; do
             chmod 755 "$binary"
+            # The Keychain trusts a binary by identifier and team, so an
+            # "Always Allow" given to one release holds for the next only
+            # while this identifier stays the same. It is pinned here, not
+            # left to codesign, and scripts/local-signing.sh signs opted-in
+            # development builds with it too.
+            identifier="$(basename "$binary")"
             codesign --force --options runtime --timestamp \
-              --sign "$APPLE_SIGNING_IDENTITY" "$binary"
+              --identifier "$identifier" --sign "$APPLE_SIGNING_IDENTITY" "$binary"
             codesign --verify --strict --verbose "$binary"
-            codesign --verify --strict -R="$requirement" "$binary"
+            codesign --verify --strict -R="identifier \"${identifier}\" and ${requirement}" "$binary"
           done
 
       - name: Notarize

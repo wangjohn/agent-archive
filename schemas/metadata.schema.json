@@ -53,7 +53,7 @@
       "minLength": 1
     },
     "repo_key": {
-      "description": "From parser 0.15.0: identifies the git repository the session ran in, independent of where it is checked out. 'repo-' plus 16 hex digits of the SHA-256 of the normalized origin remote URL (host/owner/repo, credentials, scheme, port and .git removed); only this hash is stored, never the URL. Absent when the project had no origin remote a second machine could reach, or the project was gone when the metadata was derived.",
+      "description": "From parser 0.16.0: identifies the git repository the session ran in, independent of where it is checked out. 'repo-' plus 16 hex digits of the SHA-256 of the normalized origin remote URL (host/owner/repo, credentials, scheme, port and .git removed); only this hash is stored, never the URL. Absent when the project had no origin remote a second machine could reach, or the project was gone when the metadata was derived.",
       "type": "string",
       "pattern": "^repo-[0-9a-f]{16}$"
     },
@@ -229,6 +229,26 @@
           "description": "From parser 0.14.0: how many of tool_results the harness marked as errors (is_error true). Known wherever tool_results is, for Claude Code and Cursor. Absent for Codex, which writes no such flag: its count is unknown, not zero.",
           "type": "integer",
           "minimum": 0
+        },
+        "commits": {
+          "description": "From parser 0.15.0: commits the session's tool calls confirmed (git commit output naming the new commit, or a GitHub MCP tool that committed on the server). Present wherever tool_calls is; uncapped, unlike git_activity.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "pushes": {
+          "description": "From parser 0.15.0: refs a git push the session ran reported updating or creating. Rejected, up-to-date, and dry-run pushes are not counted.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "prs_created": {
+          "description": "From parser 0.15.0: pull requests the session created (gh pr create printing the new pull request's URL, or a GitHub MCP create_pull_request result).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "prs_merged": {
+          "description": "From parser 0.15.0: pull requests the session merged (gh pr merge's confirmation, or a GitHub MCP merge_pull_request result reporting the merge). Enabling auto-merge is not a merge.",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -246,6 +266,14 @@
       "maxItems": 50,
       "items": {
         "$ref": "#/$defs/tool_usage"
+      }
+    },
+    "git_activity": {
+      "description": "From parser 0.15.0: the commits, pushes, and pull requests created or merged that the session's own tool calls confirmed, in transcript order, at most 100 (counts.commits, pushes, prs_created, and prs_merged stay exact). An event is recorded only when the call's result was linked, is not an error, and its output shows the effect; a failed, rejected, or dry-run attempt is not an event. Shell commands (git, gh) and GitHub MCP tools are recognized. Only identifiers are kept: never a commit message, pull request text, or command line. Absent when no such event was observed or the counts are unknown.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/git_event"
       }
     },
     "tools_used": {
@@ -575,6 +603,74 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "git_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source"
+      ],
+      "properties": {
+        "kind": {
+          "description": "What happened. A reader must accept any other lowercase kind, which a newer writer may add.",
+          "anyOf": [
+            {
+              "enum": [
+                "commit",
+                "push",
+                "pr_created",
+                "pr_merged"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          ]
+        },
+        "at": {
+          "description": "The timestamp of the record carrying the confirming result. Absent when the harness wrote none.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "description": "Which recognizer confirmed the event: a shell command's output, or an MCP tool's result.",
+          "enum": [
+            "shell",
+            "mcp"
+          ]
+        },
+        "sha": {
+          "description": "A commit event's new commit (git commit prints it abbreviated), a push's new tip (absent for a new branch, whose report names none), or a merge's commit when the result reported one.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "branch": {
+          "description": "The branch committed to or pushed, or a pull request's head branch when known.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9._/+-]+$"
+        },
+        "repository": {
+          "description": "owner/repo, from the push remote, the pull request URL, or the MCP call's owner and repo.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "pr_number": {
+          "description": "The pull request's number; pull request kinds only.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "url": {
+          "description": "Rebuilt from the parsed host, repository, and branch or number (https://<host>/<owner>/<repo>/pull/<n>, or /tree/<branch> for a push), never copied from output. Absent when the host is unknown or is not a public DNS name (a local git proxy).",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        }
+      }
     }
   }
 }
