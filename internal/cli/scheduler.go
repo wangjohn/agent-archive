@@ -5,93 +5,49 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/host"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
-// schedulerRef names one background job to the scheduler. For launchd it is
-// the job's label, which is what launchLabel reads off a plist path. Callers
-// that still hold a plist path (they read or write its file) name the job with
-// jobRef.
-type schedulerRef string
-
-// schedulerSite is where the scheduler looks for job definitions: the user's
-// own home, which is not the data directory.
-type schedulerSite struct{ userHome string }
-
-// scheduler is the background job manager as every command uses it: launchd
-// today. A test stands in with fakeScheduler; Env.Scheduler nil means the
-// real one (launchdScheduler).
-//
-// The states are the strings status reports (jobState's result, which
-// setupjournal.JobActive and JobAnotherInstallation read): "loaded",
-// "running", "missing", "unknown", or setupjournal.JobAnotherInstallation.
-//
-// jobState is short (launchd: 2 s). load and unload run on a bounded context
-// of their own (launchd: launchctlChangeTimeout) that ctx's cancellation never
-// reaches, so an interrupt never stops a change halfway.
-type scheduler interface {
-	// jobState says whether the job ref names is loaded, without changing
-	// anything.
-	jobState(ctx context.Context, site schedulerSite, ref schedulerRef) string
-	// load loads (bootstraps) the definition on disk for ref, so scheduled
-	// collection starts without a login.
-	load(ctx context.Context, site schedulerSite, ref schedulerRef) error
-	// unload stops the job ref names, only when the scheduler loaded it from
-	// this site's own definition: nil when it is not loaded, and an error,
-	// stopping nothing, when it belongs to another installation or the
-	// scheduler cannot say.
-	unload(ctx context.Context, site schedulerSite, ref schedulerRef) error
-}
-
-// launchdScheduler is launchd, through launchctl (runLaunchctl). A job's
-// definition is <user home>/Library/LaunchAgents/<label>.plist, which is where
-// every collector plist, earlier release's plist and the prototype's job
-// lives.
-type launchdScheduler struct{}
-
-func (launchdScheduler) jobState(ctx context.Context, site schedulerSite, ref schedulerRef) string {
-	return launchdJobState(ctx, site.launchAgent(ref))
-}
-
-func (launchdScheduler) load(ctx context.Context, site schedulerSite, ref schedulerRef) error {
-	return loadLaunchAgent(ctx, site.launchAgent(ref))
-}
-
-func (launchdScheduler) unload(ctx context.Context, site schedulerSite, ref schedulerRef) error {
-	return unloadLaunchAgent(ctx, site.launchAgent(ref))
-}
-
-// launchAgent is the plist that defines the job ref names.
-func (s schedulerSite) launchAgent(ref schedulerRef) string {
-	return filepath.Join(s.userHome, "Library", "LaunchAgents", string(ref)+".plist")
-}
+// newScheduler is the scheduler a nil Env.Scheduler means: this system's own
+// (host.Default), made when a command needs it, and making it runs nothing.
+// It is a variable so that tests fail closed: isolateProcessForTesting
+// replaces it with one whose launchctl stops the test, so a test that builds a
+// bare Env{} can never reach the developer's real launchd (or, on Linux, its
+// systemd). A test that means to drive launchd's own code stubs launchctl with
+// stubLaunchctl.
+var newScheduler = host.Default
 
 // jobRef is the job the plist at path defines.
-func jobRef(plist string) schedulerRef { return schedulerRef(launchLabel(plist)) }
+func jobRef(plist string) scheduler.Ref { return scheduler.Ref(launchd.Label(plist)) }
 
-// scheduler is e's job scheduler: Env.Scheduler, or launchd itself.
-func (e Env) scheduler() scheduler {
+// scheduler is e's job scheduler: Env.Scheduler, or this system's own.
+func (e Env) scheduler() scheduler.Scheduler {
 	if e.Scheduler != nil {
 		return e.Scheduler
 	}
-	return launchdScheduler{}
+	return newScheduler()
 }
 
 // userSite is the site of the user home userHome, spelled as plistJob spells
 // the site of a plist in it (cleaned: $HOME may end in a separator), so a
 // setup that plans with one and commits with the other names its job at one
 // site.
-func userSite(userHome string) schedulerSite { return schedulerSite{filepath.Clean(userHome)} }
+func userSite(userHome string) scheduler.Site {
+	return scheduler.Site{UserHome: filepath.Clean(userHome)}
+}
 
 // jobState is the state of the job plist defines, for callers that hold the
 // plist's path.
 func (e Env) jobState(userHome, plist string) string {
-	return e.scheduler().jobState(context.Background(), userSite(userHome), jobRef(plist))
+	return string(e.scheduler().JobState(context.Background(), userSite(userHome), jobRef(plist)))
 }
 
-// unloadJob stops the job plist defines (see scheduler.unload).
+// unloadJob stops the job plist defines (see scheduler.Scheduler.Unload).
 func (e Env) unloadJob(userHome, plist string) error {
-	return e.scheduler().unload(context.Background(), userSite(userHome), jobRef(plist))
+	return e.scheduler().Unload(context.Background(), userSite(userHome), jobRef(plist))
 }
 
 // launchd is e's scheduler as internal/setupjournal drives it: the same one
@@ -106,7 +62,7 @@ func (e Env) unloadJob(userHome, plist string) error {
 // it restores, as it always has, and never one of the same label elsewhere.
 func (e Env) launchd() setupjournal.Launchd { return envLaunchd{e.scheduler()} }
 
-type envLaunchd struct{ scheduler scheduler }
+type envLaunchd struct{ scheduler scheduler.Scheduler }
 
 // plistJob is the site and ref of the job plist defines: plist is
 // <user home>/Library/LaunchAgents/<label>.plist, as every plist setup
@@ -114,9 +70,9 @@ type envLaunchd struct{ scheduler scheduler }
 // gives back whatever $HOME's spelling). Any other path names no job the
 // scheduler can be asked about, and is refused rather than taken for another
 // plist.
-func plistJob(plist string) (schedulerSite, schedulerRef, error) {
-	site, ref := schedulerSite{filepath.Dir(filepath.Dir(filepath.Dir(plist)))}, jobRef(plist)
-	if site.launchAgent(ref) != plist {
+func plistJob(plist string) (scheduler.Site, scheduler.Ref, error) {
+	site, ref := scheduler.Site{UserHome: filepath.Dir(filepath.Dir(filepath.Dir(plist)))}, jobRef(plist)
+	if launchd.PlistPath(site, ref) != plist {
 		return site, ref, fmt.Errorf("%s is not a LaunchAgent plist (<home>/Library/LaunchAgents/<label>.plist); launchd was left as it is", plist)
 	}
 	return site, ref, nil
@@ -127,9 +83,9 @@ func plistJob(plist string) (schedulerSite, schedulerRef, error) {
 func (l envLaunchd) JobState(plist string) string {
 	site, ref, err := plistJob(plist)
 	if err != nil {
-		return "unknown"
+		return string(scheduler.Unknown)
 	}
-	return l.scheduler.jobState(context.Background(), site, ref)
+	return string(l.scheduler.JobState(context.Background(), site, ref))
 }
 
 func (l envLaunchd) Load(plist string) error {
@@ -137,7 +93,7 @@ func (l envLaunchd) Load(plist string) error {
 	if err != nil {
 		return err
 	}
-	return l.scheduler.load(context.Background(), site, ref)
+	return l.scheduler.Load(context.Background(), site, ref)
 }
 
 func (l envLaunchd) Unload(plist string) error {
@@ -145,5 +101,5 @@ func (l envLaunchd) Unload(plist string) error {
 	if err != nil {
 		return err
 	}
-	return l.scheduler.unload(context.Background(), site, ref)
+	return l.scheduler.Unload(context.Background(), site, ref)
 }

@@ -12,12 +12,14 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 )
 
 // A launchctl that is killed when its context ends must not keep the caller
 // waiting on its output: a child it left holding the pipe would otherwise
-// hold execLaunchctl until it exited. The stand-in starts a sleep that lives
-// far longer than the test and then hangs itself; execLaunchctl gives up
+// hold host.Exec until it exited. The stand-in starts a sleep that lives
+// far longer than the test and then hangs itself; host.Exec gives up
 // (cmd.WaitDelay, two seconds) after the context kills the shell, though the
 // sleep still has the pipe. This waits those two seconds for real: it is the
 // only way to see the delay.
@@ -61,28 +63,28 @@ func TestExecLaunchctlDoesNotWaitForAChildThatOutlivesTheKill(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		_, err := execLaunchctl(ctx, "bootout", "gui/1/job")
+		_, err := host.Exec(ctx, "launchctl", "bootout", "gui/1/job")
 		done <- result{err, time.Now()}
 	}()
 	var got result
 	select {
 	case got = <-done:
 	case <-time.After(60 * time.Second):
-		t.Fatal("execLaunchctl never returned")
+		t.Fatal("host.Exec never returned")
 	}
 	if got.err == nil {
 		t.Fatal("a launchctl the context killed reported success")
 	}
 	if cancelled.Load() == 0 {
-		t.Fatalf("execLaunchctl returned (%v) before the stand-in started its child", got.err)
+		t.Fatalf("host.Exec returned (%v) before the stand-in started its child", got.err)
 	}
 	// Without WaitDelay it would wait for the child, 20 s; with it, 2 s. The
 	// bounds leave a loaded runner room on both sides.
 	elapsed := got.at.Sub(time.Unix(0, cancelled.Load()))
 	if elapsed > 10*time.Second {
-		t.Errorf("execLaunchctl waited %v for a child holding its pipe, want about two seconds after the context ended", elapsed)
+		t.Errorf("host.Exec waited %v for a child holding its pipe, want about two seconds after the context ended", elapsed)
 	}
 	if elapsed < time.Second {
-		t.Errorf("execLaunchctl returned %v after the context ended, before the child's pipe could have been given up on", elapsed)
+		t.Errorf("host.Exec returned %v after the context ended, before the child's pipe could have been given up on", elapsed)
 	}
 }

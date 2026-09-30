@@ -301,7 +301,7 @@ func planJobRestart(plan *refreshPlan, userHome string, env Env) error {
 	case job == "unknown":
 		return refuse("cannot determine the background job's state; restore access to launchctl and retry")
 	case job == setupjournal.JobAnotherInstallation:
-		return refuse("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", launchLabel(plist), plist)
+		return refuse("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", launchd.Label(plist), plist)
 	case setupjournal.JobActive(job):
 		plan.journal.FilesOnly, plan.journal.WasLoaded, plan.restarted = false, true, true
 	}
@@ -332,7 +332,7 @@ func refreshPlist(plistPath, home, exe string) (change hooks.Change, changed boo
 		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
 	}
 	delete(environment, "AGENT_ARCHIVE_HOME")
-	plist, err := launchd.LaunchAgent(exe, home, launchLabel(plistPath), environment)
+	plist, err := launchd.LaunchAgent(exe, home, launchd.Label(plistPath), environment)
 	if err != nil {
 		return change, false, err
 	}

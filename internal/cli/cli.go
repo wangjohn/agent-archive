@@ -31,6 +31,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -161,9 +162,9 @@ type Env struct {
 	// Scheduler is the background job manager: it reports the collector's job
 	// state, loads the LaunchAgent setup wrote so scheduled collection
 	// starts without a login/logout cycle, and stops it again (rolling setup
-	// back, or during uninstall). Defaults to launchd itself, through
-	// launchctl (runLaunchctl).
-	Scheduler scheduler
+	// back, or during uninstall). Defaults to this system's own, through
+	// newScheduler (launchd on macOS, through launchctl).
+	Scheduler scheduler.Scheduler
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the

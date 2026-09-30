@@ -134,12 +134,6 @@ func (in installation) collectorPlist() string {
 	return filepath.Join(in.userHome, "Library", "LaunchAgents", in.label()+".plist")
 }
 
-// launchLabel is the launchd label of the job a plist defines. Every job
-// this tool loads is named after its label, so the file name is the label.
-func launchLabel(plist string) string {
-	return strings.TrimSuffix(filepath.Base(plist), ".plist")
-}
-
 // previousCollectorPlists are the LaunchAgents earlier releases installed
 // for this data directory under labels other than its own: every collector
 // plist (a label launchd.CollectorLabel can produce) that runs the collector
@@ -152,7 +146,7 @@ func launchLabel(plist string) string {
 // such spellings left one job for each. A plist for any other directory is
 // never returned, so another installation's is never touched, and stopping
 // the job one defines still needs launchd to have loaded it from that very
-// file (launchdScheduler.unload).
+// file (launchd.Scheduler.Unload).
 func (in installation) previousCollectorPlists() []string {
 	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
 	entries, err := os.ReadDir(dir)

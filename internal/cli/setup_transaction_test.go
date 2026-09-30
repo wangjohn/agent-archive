@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -47,7 +48,7 @@ func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("bootstrap failed") }
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("bootstrap failed") }
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 1)
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("failed fresh setup left active config")

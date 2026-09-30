@@ -188,7 +188,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 			t.Helper()
 			plistPath := env.installation(home, userHome).collectorPlist()
 			executable, _ := env.executable()
-			plist, err := launchd.LaunchAgent(executable, home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": configFile})
+			plist, err := launchd.LaunchAgent(executable, home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": configFile})
 			if err != nil {
 				t.Fatal(err)
 			}

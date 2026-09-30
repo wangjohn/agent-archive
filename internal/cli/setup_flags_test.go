@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -175,7 +176,7 @@ func TestSetupYesKeepsTheKeyWhenApplyFails(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
-	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("cannot load the job") }
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("cannot load the job") }
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
 	if !strings.Contains(output, "run agent-archive setup to finish or discard it") || len(kc.items) != 1 {
 		t.Fatalf("%d keys\n%s", len(kc.items), output)
@@ -373,7 +374,7 @@ func TestSetupYesListsEveryMissingAnswer(t *testing.T) {
 			kc := newFakeKeychain()
 			env := setupTestEnv(t, home, userHome, kc, time.Now())
 			env.DetectHarnesses = func(string) []string { return nil }
-			fakeSched(env).stateFn = func(schedulerRef) string { t.Error("launchctl was asked"); return "missing" }
+			fakeSched(env).stateFn = func(scheduler.Ref) string { t.Error("launchctl was asked"); return "missing" }
 			env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 			env.IsTerminal = func(any) bool { return false }
 			var out, errOut bytes.Buffer
@@ -418,7 +419,7 @@ func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
 	t.Parallel()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, t.TempDir(), t.TempDir(), kc, time.Now())
-	fakeSched(env).stateFn = func(schedulerRef) string { t.Error("launchctl was asked"); return "missing" }
+	fakeSched(env).stateFn = func(scheduler.Ref) string { t.Error("launchctl was asked"); return "missing" }
 	env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex")
 	if !strings.Contains(output, "Setup incomplete: the R2 secret access key is needed") {

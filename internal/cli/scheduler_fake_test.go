@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // fakeScheduler is the scheduler every test but the ones of the real launchd
@@ -18,23 +20,23 @@ import (
 // not otherwise set is in def ("missing" unless the test says), load makes a
 // job "loaded" and unload makes it "missing". Every call is recorded, in
 // order, as "state REF", "load REF" or "unload REF". The tests of the real
-// launchd code (the argv characterization, launchdScheduler itself) do not
-// use it: they replace runLaunchctl and drive launchdScheduler.
+// launchd code (the argv characterization) do not use it: they stub launchctl
+// (stubLaunchctl) and drive launchd.Scheduler through a nil Env.Scheduler.
 type fakeScheduler struct {
 	t *testing.T
 	// forbidChanges makes a load or unload fail the test (and the call), for
 	// a test that must not start or stop a job (testEnv's).
 	forbidChanges bool
 	// stateFn, when set, answers jobState in place of the job's set state.
-	stateFn func(ref schedulerRef) string
+	stateFn func(ref scheduler.Ref) string
 	// beforeLoad and beforeUnload run when the call is made; an error they
 	// return is the call's, and the job's state stays as it was.
-	beforeLoad   func(ref schedulerRef) error
-	beforeUnload func(ref schedulerRef) error
+	beforeLoad   func(ref scheduler.Ref) error
+	beforeUnload func(ref scheduler.Ref) error
 
 	mu     sync.Mutex
 	def    string
-	states map[schedulerRef]string
+	states map[scheduler.Ref]string
 	calls  []string
 }
 
@@ -45,7 +47,7 @@ func newFakeScheduler(t *testing.T, state string) *fakeScheduler {
 	if state == "" {
 		state = "missing"
 	}
-	return &fakeScheduler{t: t, def: state, states: map[schedulerRef]string{}}
+	return &fakeScheduler{t: t, def: state, states: map[scheduler.Ref]string{}}
 }
 
 // fakeSched is the fakeScheduler of env, a test environment that has one.
@@ -61,7 +63,7 @@ func noLaunchd(t *testing.T) *fakeScheduler {
 }
 
 // set puts ref's job in state.
-func (f *fakeScheduler) set(ref schedulerRef, state string) *fakeScheduler {
+func (f *fakeScheduler) set(ref scheduler.Ref, state string) *fakeScheduler {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.states[ref] = state
@@ -69,13 +71,13 @@ func (f *fakeScheduler) set(ref schedulerRef, state string) *fakeScheduler {
 }
 
 // state is the state the fake holds for ref, whatever stateFn says.
-func (f *fakeScheduler) state(ref schedulerRef) string {
+func (f *fakeScheduler) state(ref scheduler.Ref) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stateLocked(ref)
 }
 
-func (f *fakeScheduler) stateLocked(ref schedulerRef) string {
+func (f *fakeScheduler) stateLocked(ref scheduler.Ref) string {
 	if state, ok := f.states[ref]; ok {
 		return state
 	}
@@ -88,15 +90,15 @@ func (f *fakeScheduler) record(call string) {
 	f.calls = append(f.calls, call)
 }
 
-func (f *fakeScheduler) jobState(_ context.Context, _ schedulerSite, ref schedulerRef) string {
+func (f *fakeScheduler) JobState(_ context.Context, _ scheduler.Site, ref scheduler.Ref) scheduler.JobState {
 	f.record("state " + string(ref))
 	if f.stateFn != nil {
-		return f.stateFn(ref)
+		return scheduler.JobState(f.stateFn(ref))
 	}
-	return f.state(ref)
+	return scheduler.JobState(f.state(ref))
 }
 
-func (f *fakeScheduler) load(_ context.Context, _ schedulerSite, ref schedulerRef) error {
+func (f *fakeScheduler) Load(_ context.Context, _ scheduler.Site, ref scheduler.Ref) error {
 	f.record("load " + string(ref))
 	if f.forbidChanges {
 		f.t.Errorf("unexpected load of the %s job: set Env.Scheduler", ref)
@@ -111,7 +113,7 @@ func (f *fakeScheduler) load(_ context.Context, _ schedulerSite, ref schedulerRe
 	return nil
 }
 
-func (f *fakeScheduler) unload(_ context.Context, _ schedulerSite, ref schedulerRef) error {
+func (f *fakeScheduler) Unload(_ context.Context, _ scheduler.Site, ref scheduler.Ref) error {
 	f.record("unload " + string(ref))
 	if f.forbidChanges {
 		f.t.Errorf("unexpected unload of the %s job: set Env.Scheduler", ref)
@@ -152,15 +154,15 @@ func (f *fakeScheduler) changing() []string {
 }
 
 // loaded and unloaded are the refs of the load and unload calls made, in order.
-func (f *fakeScheduler) loaded() []schedulerRef { return f.refsOf("load ") }
+func (f *fakeScheduler) loaded() []scheduler.Ref { return f.refsOf("load ") }
 
-func (f *fakeScheduler) unloaded() []schedulerRef { return f.refsOf("unload ") }
+func (f *fakeScheduler) unloaded() []scheduler.Ref { return f.refsOf("unload ") }
 
-func (f *fakeScheduler) refsOf(prefix string) []schedulerRef {
-	var refs []schedulerRef
+func (f *fakeScheduler) refsOf(prefix string) []scheduler.Ref {
+	var refs []scheduler.Ref
 	for _, call := range f.all() {
 		if ref, ok := strings.CutPrefix(call, prefix); ok {
-			refs = append(refs, schedulerRef(ref))
+			refs = append(refs, scheduler.Ref(ref))
 		}
 	}
 	return refs

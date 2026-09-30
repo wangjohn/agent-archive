@@ -1114,7 +1114,7 @@ func chooseInstallationStep(view *statusView, plist string) {
 		if view.Background == setupjournal.JobAnotherInstallation {
 			// setup refuses to replace that job, so it is not the way out.
 			view.problem = "Another installation's collector has this installation's label"
-			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchd.Label(plist))
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
@@ -271,7 +272,7 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 				t.Fatalf("exit %d\n%s", code, &errOut)
 			}
 			_, err := os.Stat(old)
-			want := []schedulerRef{jobRef(current)}
+			want := []scheduler.Ref{jobRef(current)}
 			if owner == "this" {
 				want = append(want, jobRef(old))
 				if !os.IsNotExist(err) {
@@ -308,11 +309,11 @@ func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
 		{"sandbox HOME pointed at the real data directory", accountDefault, sandbox, true},
 	} {
 		in := env.installation(tc.home, tc.userHome)
-		label := launchLabel(in.collectorPlist())
+		label := launchd.Label(in.collectorPlist())
 		if in.isDefault() != tc.isDefault || (label == launchd.LaunchLabel) != tc.isDefault {
 			t.Errorf("%s: default=%v label=%s", tc.name, in.isDefault(), label)
 		}
-		if got := serviceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {
+		if got := launchd.ServiceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {
 			t.Errorf("%s: service target %s", tc.name, got)
 		}
 	}
@@ -350,7 +351,7 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 			t.Fatalf("setup ran launchctl %s", call)
 		}
 	}
-	if err := (launchdScheduler{}).unload(context.Background(), schedulerSite{userHome}, jobRef(env.installation(home, userHome).collectorPlist())); err == nil || !strings.Contains(err.Error(), "another installation") {
+	if err := newScheduler().Unload(context.Background(), scheduler.Site{UserHome: userHome}, jobRef(env.installation(home, userHome).collectorPlist())); err == nil || !strings.Contains(err.Error(), "another installation") {
 		t.Fatalf("unload: %v", err)
 	}
 	for _, call := range calls {

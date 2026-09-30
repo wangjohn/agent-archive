@@ -113,6 +113,14 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
+  the `scheduler.Runner` it is given, so its tests pass a recording Runner and
+  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  tests run a stand-in `launchctl` script found on a temporary `PATH`.
+  `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
+  set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
+  (and, for now, `cli`) imports an adapter; depguard says the same in
+  `.golangci.yml`.
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and

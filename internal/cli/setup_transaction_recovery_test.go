@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
@@ -34,8 +35,8 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 				state = "loaded"
 			}
 			sched := newFakeScheduler(t, state)
-			sched.beforeLoad = func(schedulerRef) error { return errors.New("Bootstrap failed: 5: Input/output error") }
-			sched.beforeUnload = func(schedulerRef) error { return errors.New("Boot-out failed: 5: Input/output error") }
+			sched.beforeLoad = func(scheduler.Ref) error { return errors.New("Bootstrap failed: 5: Input/output error") }
+			sched.beforeUnload = func(scheduler.Ref) error { return errors.New("Boot-out failed: 5: Input/output error") }
 			env.Scheduler = sched
 			output := setupRun(t, env, "", 1)
 			if !strings.Contains(output, "agent-archive setup --abandon-recovery") || !strings.Contains(output, "launchctl could not") || !strings.Contains(output, setupjournal.JournalPath(home)) {

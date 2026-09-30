@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -277,7 +278,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 		before[p] = string(b)
 	}
 	calls := 0
-	fakeSched(env).beforeLoad = func(schedulerRef) error {
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error {
 		calls++
 		if calls == 1 {
 			return errors.New("cannot load new job")

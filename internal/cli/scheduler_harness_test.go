@@ -22,7 +22,7 @@ import (
 // scheduler port and the launchd history into its adapter; the tests must
 // pass through that without their assertions changing. So the tests observe
 // only public behavior: the launchctl argument vectors (through the
-// runLaunchctl seam, stubLaunchctl), the files on disk, the journal as JSON,
+// launchctl Runner seam, stubLaunchctl), the files on disk, the journal as JSON,
 // and what the commands print. This file is the only one of them that names
 // the code under test's internals (installation, hooks' labels and plists,
 // setupjournal; Env's launchd fields through launchdAnswering, which the
