@@ -91,6 +91,7 @@ func adapterPackages(module map[string][]string) []string {
 //   - cli: pager, capabilities (`claude --version`), and handoff's git and
 //     terminal launching
 //   - cursorstore: getconf, for macOS's per-user temporary directory
+//   - gitremote: git, to read a project's origin remote for its repo_key
 //   - scheduler/host: the default Runner
 //   - termlaunch: opens a terminal for handoff
 //   - testutil/importgraph and testutil/isolation: test helpers
@@ -99,7 +100,7 @@ func adapterPackages(module map[string][]string) []string {
 var osExecImporters = []string{
 	modulePath + "internal/cli",
 	modulePath + "internal/cursorstore",
-	modulePath + "internal/gitremote", // runs git to read a project's origin remote
+	modulePath + "internal/gitremote",
 	hostPath,
 	modulePath + "internal/termlaunch",
 	modulePath + "internal/testutil/importgraph",
