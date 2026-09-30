@@ -143,6 +143,14 @@ In Go tests, everything goes through injection:
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
   `TestKeychainRoundTrip` (`AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP=1`).
+  The file store and the environment store (what `OpenDefault` picks
+  off macOS) have no build tag, so their tests run on macOS and Ubuntu alike;
+  they write only under `t.TempDir()`, take the platform, the folder, the
+  environment and the Keychain constructor as arguments, and never open a
+  real Keychain. In `internal/cli`, `credentialGOOS` is `"darwin"` in every
+  test (the fake store stands for the Keychain, so its wording is pinned on
+  every runner); a test of the other platform's wording calls
+  `useCredentialGOOS` and must not be parallel.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
@@ -169,7 +177,7 @@ export AGENT_ARCHIVE_HOME="$scratch/data"   # a data directory of its own
 export HOME="$scratch/home"                 # app configs and LaunchAgents live here
 export PATH="$scratch/stub:$PATH"           # agent-archive runs `launchctl` from PATH
 # Variables that would point setup back at your real configuration:
-unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
+unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE XDG_CONFIG_HOME
 ```
 
 - `AGENT_ARCHIVE_HOME` gives the sandbox its own data directory and its own

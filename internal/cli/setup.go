@@ -86,7 +86,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 	}
 	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
 		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
-		"A Keychain item it staged, if any, stays in the Keychain (service "+credentials.KeychainService+").")
+		stagedCredentialLeftNote(credentialGOOS, home))
 	move, err := p.yesNo("Move it aside and continue?", true)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -449,9 +449,9 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		// The storage questions asked for a failed region again.
 		draft.FailedRegion = ""
 		if saveSecret {
-			keychain, e := env.keychain()
+			keychain, e := env.credentialStore()
 			if e != nil {
-				return false, fmt.Errorf("open Keychain: %w", e)
+				return false, openCredentialStoreError(credentialGOOS, e)
 			}
 			id, e := local.ID()
 			if e != nil {
@@ -484,11 +484,11 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 
 func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
 	if draft.Config.Storage.Provider == credentials.ProviderR2 {
-		kc, e := env.keychain()
+		kc, e := env.credentialStore()
 		if e != nil {
 			return false, e
 		}
-		if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
+		if _, e = credentials.LoadStored(context.Background(), kc, draft.Config.Storage.R2CredentialRef); e != nil {
 			draft.Step = 1
 			draft.Config.Storage.R2CredentialRef = ""
 			_ = save()
@@ -947,14 +947,16 @@ func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProjec
 	return out
 }
 
-// storedCredentialReadable reports whether the Keychain item ref can be
-// loaded now, without any Keychain prompt.
+// storedCredentialReadable reports whether the credential saved under ref
+// can be loaded now, without any Keychain prompt. It asks about what setup
+// saved, not about what could be loaded: a key in the environment is not
+// stored (credentials.LoadStored).
 func storedCredentialReadable(env Env, ref string) bool {
-	kc, err := env.keychain()
+	kc, err := env.credentialStore()
 	if err != nil {
 		return false
 	}
-	_, err = kc.Load(context.Background(), ref)
+	_, err = credentials.LoadStored(context.Background(), kc, ref)
 	return err == nil
 }
 
@@ -1012,7 +1014,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 					return cfg, secret, false, err
 				}
 			} else {
-				terminal.Println(p.out, "The stored R2 credentials can't be read from the Keychain; enter them again.")
+				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialGOOS)+"; enter them again.")
 			}
 		}
 		if !reuse {
