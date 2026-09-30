@@ -343,8 +343,10 @@ it renames the package.
   seconds for a collector pass (the collector starts one every minute)
   before refusing, and absorbs SIGINT, SIGTERM, and SIGHUP from the moment
   the journal is written until it is gone, so an interrupted installer
-  never leaves a transaction to recover; `launchctl bootstrap` and
-  `bootout` end after 30 seconds, so nothing that absorbs signals can hang.
+  never leaves a transaction to recover. `launchctl` runs in a process group
+  of its own, so a terminal's Ctrl-C does not kill it halfway, and
+  `bootstrap` and `bootout` end after 30 seconds, so nothing that absorbs
+  signals can hang.
   Only files whose
   content would change are written, so a current installation writes and
   asks nothing.
