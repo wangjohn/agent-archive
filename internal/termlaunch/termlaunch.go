@@ -1,5 +1,6 @@
 // Package termlaunch runs a command in a new terminal window or tab: a tmux
-// window inside tmux, else an iTerm2, Ghostty, or Terminal.app tab on macOS.
+// window inside tmux, else on macOS an iTerm2 or Ghostty tab, or a new
+// Terminal.app window.
 //
 // The command never passes through AppleScript or tmux string
 // interpolation. Open writes a private /bin/sh launcher script whose every
@@ -137,6 +138,9 @@ var (
 	ghosttyScript = []string{
 		"on run argv",
 		`tell application "Ghostty"`,
+		// Activated first so the tab is the last step: an error after it
+		// opened would fall back to Terminal.app and launch twice.
+		"activate",
 		"set cfg to new surface configuration",
 		"set initial working directory of cfg to (item 2 of argv)",
 		"set command of cfg to quoted form of (item 1 of argv)",
@@ -145,7 +149,6 @@ var (
 		"else",
 		"new tab in front window with configuration cfg",
 		"end if",
-		"activate",
 		"end tell",
 		"end run",
 	}

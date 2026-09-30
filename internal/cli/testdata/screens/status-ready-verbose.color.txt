@@ -33,6 +33,7 @@ $ agent-archive status --verbose
     Installed version: unknown; support unknown.
     Project /Users/alex/src/web-app: verified_at_recorded_time.
     Read-back verified: 2026-09-25T12:00:00Z; evidence is for that publication.
+  /handoff:      ~/.agents/skills/handoff/SKILL.md
 
 \e[2mNext:\e[0m Keep working. Run \e[36magent-archive list\e[0m to inspect archived sessions.
 \e[2mAs JSON:\e[0m \e[36magent-archive status --json\e[0m

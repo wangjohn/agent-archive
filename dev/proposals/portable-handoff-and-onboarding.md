@@ -204,6 +204,8 @@ Independent of creation, these are sequencing changes over existing defaults:
 
 ## Part 3. Linux support (persistent capture)
 
+> **Update 2026-09-30.** PRs 5 to 7 below (scheduler refactor, systemd backend, terminology) are re-planned around one scheduler port and one OS value in [platform-abstraction.md](platform-abstraction.md), which supersedes sections 3c to 3e and the PR list here. PRs 1 to 4 stand.
+
 ### Scope
 
 Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.

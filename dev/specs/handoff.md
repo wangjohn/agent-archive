@@ -551,6 +551,11 @@ Settled 2026-09-22.
 Planned 2026-09-29. Goal: continuing a session in another agent takes one
 command and no copying. #132 (picker) and #136 (`--to`) are the base.
 
+**Status: implemented.** 0 in #146, A in #150, B in #151, C in #147, D in
+#163, E in #162, F in #152, and G (docs) in the PR that adds this line.
+What shipped differs from the plan below in the ways listed under
+[Deviations](#deviations); the rest is as written.
+
 ### Target experience
 
 ```text
@@ -660,11 +665,19 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `allowed-tools` for that command only. Setup writes it as a
    `hooks.Change` in the setup journal, so a failed setup rolls it back.
    The journal is deleted once setup commits, so it is not what later
-   commands read: a file at that path is setup's when its content equals
-   what `agentcommands.Files` renders for the current executable or
-   `config.InstalledExecutable`. Setup replaces only such a file; uninstall
-   removes only such a file; status lists them. Any other file at that
-   path (the person's own, or one they edited) is left alone and reported.
+   commands read: a file at that path is setup's when it carries the
+   marker line every rendering has, and this installation's when its
+   command names the same `AGENT_ARCHIVE_HOME` (none for the default
+   installation), which a relocated installation's skill sets as its hooks
+   do. Setup replaces only such a file; uninstall removes only such a
+   file; status lists them, and reports one whose text differs from what
+   this release renders as out of date. Any other file at that path (the
+   person's own, one they edited and unmarked, or another installation's)
+   is left alone and reported. The installer is `internal/agentskills`: it
+   installs a registry of skills, of which `handoff` is one, with its text
+   in `internal/agentskills/skills/handoff/SKILL.md.tmpl`. It was
+   `internal/agentcommands` when this package landed; the plan for the
+   registry and the other skills is [agent-skill.md](agent-skill.md).
 
 ### Shared names
 
@@ -678,8 +691,8 @@ Packages rely on these; change them only in this section first.
 | B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitzero"`: `omitempty` never omits a struct): `Args map[string][]string`, `DefaultTo map[string]string` |
 | C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
-| E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
-| F `internal/agentcommands` | `Files(userHome string, harnesses []string, executable string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
+| E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
+| F `internal/agentskills` (was `agentcommands`) | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Skill string; Harnesses []string; Path string; Content []byte }`; `var Registry []Skill`; the rest of the shared names are in [agent-skill.md](agent-skill.md#shared-names) |
 
 Each `Env` field gets an unexported method with a default (as
 `Env.launchHandoff` does today), and callers take a small
@@ -728,3 +741,45 @@ CI's `deadcode` step fails on any function `main` cannot reach, tests
 aside. Every PR wires what it adds into the command, except C, whose
 package has no caller until D: C adds `^internal/termlaunch/` to the
 exception pattern in `.github/workflows/test.yml`, and D removes it.
+
+### Deviations
+
+Recorded when the packages merged; the code is the reference.
+
+- **`agentskills.Files`** (`agentcommands.Files` until the agent skills plan renamed the package) takes `claudeDir` (Claude Code's configuration
+  directory, `$CLAUDE_CONFIG_DIR` when set) and `dataHome` (the
+  installation's `AGENT_ARCHIVE_HOME`, empty for the default):
+  `Files(userHome, claudeDir string, harnesses []string, executable,
+  dataHome string) []File`. Claude Code's skill lists `allowed-tools` only
+  when the command is the bare executable path; a quoted path or an
+  `AGENT_ARCHIVE_HOME=` prefix would not read back as a permission rule, so
+  the command is then asked about.
+- **Ownership** of a skill file is decided by the marker line plus the data
+  directory its command names (item 6), not by a record of what setup
+  wrote: the setup journal is deleted once setup commits. Setup also
+  removes its file from Claude Code's previous configuration directory
+  when `$CLAUDE_CONFIG_DIR` changed.
+- **`launchSpec.HandoffFile`** was added (the launch copy's path) so D can
+  pass its directory as termlaunch's `ScriptDir` and name it when no
+  terminal opens.
+- **`prepareLaunchDir`** takes an `answers io.Reader` beside `stdin`:
+  `stdin` is only checked for a terminal, and every prompt of one command
+  (picker, destination, active source) reads through one shared
+  `bufio.Reader`, so answers typed ahead are not lost. The worktree is made
+  after the launch command is built, so a missing agent or bad arguments
+  fail before any worktree exists; a failed launch removes its launch-copy
+  directory.
+- **`--worktree` without `--to`** is accepted on a terminal where the
+  destination prompt is offered; the worktree is made only if an agent is
+  chosen (print, copy, and write say none was created). `--here` and
+  `--new-window` are accepted the same way. Elsewhere all three still need
+  `--to`.
+- **`--no-preamble`** also suppresses the destination prompt (item 4):
+  `--to` refuses it, so printing is its only use.
+- **Choosing an agent at the prompt** runs it in this terminal unless
+  `--new-window` is given; only without a terminal does a launch open a new
+  window by default.
+- **Terminal.app** gets a new window, not a tab (`do script` with no target
+  window), and so does the fallback from a Ghostty older than 1.3. iTerm2
+  and Ghostty 1.3+ get tabs. The launcher script also waits for Enter when
+  it cannot `cd` to the directory.
