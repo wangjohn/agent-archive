@@ -136,13 +136,18 @@ can catch up, including activity written during the pause. For an immediate
 pass, run agent-archive sync.
 Example: agent-archive resume
 `,
-	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--yes]
+	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
