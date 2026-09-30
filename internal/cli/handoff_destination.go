@@ -58,9 +58,10 @@ var handoffDefaultDestination = map[string]handoffDestination{
 // offersDestinations reports whether the command asks where the handoff
 // goes: on a terminal, when nothing already says. A pipe, --output, and
 // JSON print as they always have, so `codex "$(agent-archive handoff
-// --latest)"` still works.
+// --latest)"` still works. So does --no-preamble: a launched agent needs the
+// preamble (--to refuses it), so the only use left for it is printing.
 func offersDestinations(opts handoffOptions, interactive bool) bool {
-	return interactive && opts.to == "" && opts.output == "" && opts.format == "markdown"
+	return interactive && opts.to == "" && opts.output == "" && opts.format == "markdown" && !opts.noPreamble
 }
 
 // installedDestinations returns the agents whose CLI is on PATH, in

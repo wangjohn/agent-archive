@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -138,8 +139,12 @@ func TestHandoffPromptLaunchesTheDefaultHere(t *testing.T) {
 	claude := f.addSession(t, "claude", "claude-native", "A Claude task", f.env.now().Add(time.Hour))
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
 	var got launchSpec
-	f.env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+	f.env.LaunchHandoff = func(spec launchSpec, stdin io.Reader, _, _ io.Writer) error {
 		got = spec
+		// The agent reads the terminal itself, not the prompts' buffer.
+		if _, buffered := stdin.(*bufio.Reader); buffered {
+			t.Error("launched with the prompts' buffered reader as stdin")
+		}
 		return nil
 	}
 	out, errOut, code := runPicker(t, f.env, claude[:minShortSessionID]+"\n\n")
@@ -283,7 +288,7 @@ func TestHandoffWithoutATerminalPrintsAsBefore(t *testing.T) {
 	if code := Run([]string{"handoff", "--latest"}, stdin, &piped, &pipedErr, env); code != 0 || piped.String() != string(want) {
 		t.Fatalf("piped: code=%d stderr=%s\n%s", code, pipedErr.String(), piped.String())
 	}
-	for _, args := range [][]string{{"--latest", "--format", "json"}, {"--latest", "--output", filepath.Join(t.TempDir(), "x.md")}} {
+	for _, args := range [][]string{{"--latest", "--format", "json"}, {"--latest", "--output", filepath.Join(t.TempDir(), "x.md")}, {"--latest", "--no-preamble"}} {
 		out, errOut, code := runPicker(t, f.env, "", args...)
 		if code != 0 || strings.Contains(out, "Continue in") {
 			t.Fatalf("%v on a terminal: code=%d stderr=%s\n%s", args, code, errOut, out)
@@ -336,6 +341,56 @@ func TestHandoffToOffATerminalOpensANewWindow(t *testing.T) {
 	}
 	if len(tmux) != 5 || tmux[0] != "tmux" || tmux[3] != f.project {
 		t.Fatalf("tmux command %q", tmux)
+	}
+}
+
+// --to runs in this terminal only when stdin and stdout both are one. Either
+// alone (`codex "$(agent-archive handoff --to ...)"`, input piped in) opens a
+// new window, and --here is refused.
+func TestHandoffToTerminalCombinations(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		stdin, stdout bool
+		here          bool
+	}{
+		{"both terminals", true, true, true},
+		{"stdout piped", true, false, false},
+		{"stdin piped", false, true, false},
+		{"neither", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newHandoffFixture(t, false)
+			f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+			launched, opened := 0, 0
+			f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+				launched++
+				return nil
+			}
+			f.env.OpenTerminal = func(termlaunch.Spec) (string, error) {
+				opened++
+				return "a new tmux window", nil
+			}
+			stdin := strings.NewReader("")
+			var out, errOut bytes.Buffer
+			f.env.IsTerminal = func(stream any) bool {
+				return (tc.stdin && stream == any(stdin)) || (tc.stdout && stream == any(&out))
+			}
+			code := Run([]string{"handoff", f.id, "--to", "codex"}, stdin, &out, &errOut, f.env)
+			if code != 0 || out.Len() != 0 || strings.Contains(errOut.String(), "Continue in") {
+				t.Fatalf("code=%d stdout=%q stderr=%s", code, out.String(), errOut.String())
+			}
+			if tc.here && (launched != 1 || opened != 0) || !tc.here && (launched != 0 || opened != 1) {
+				t.Fatalf("launched here %d, opened %d windows", launched, opened)
+			}
+			out.Reset()
+			errOut.Reset()
+			code = Run([]string{"handoff", f.id, "--to", "codex", "--here"}, stdin, &out, &errOut, f.env)
+			if tc.here != (code == 0) {
+				t.Fatalf("--here: code=%d stderr=%s", code, errOut.String())
+			}
+		})
 	}
 }
 

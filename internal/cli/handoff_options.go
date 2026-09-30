@@ -92,7 +92,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if message := validateHandoffLaunchOptions(*to, *output, *format, *noPreamble); message != "" {
 		return usageError(message)
 	}
-	if message := validateHandoffWindowOptions(handoffOptions{to: *to, output: *output, format: *format, here: *here, newWindow: *newWindow}, interactive); message != "" {
+	if message := validateHandoffWindowOptions(handoffOptions{to: *to, output: *output, format: *format, noPreamble: *noPreamble, here: *here, newWindow: *newWindow}, interactive); message != "" {
 		return usageError(message)
 	}
 	canonical, ok := harnessFlag(*harness)
