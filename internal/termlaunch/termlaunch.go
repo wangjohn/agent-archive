@@ -1,5 +1,6 @@
 // Package termlaunch runs a command in a new terminal window or tab: a tmux
-// window inside tmux, else an iTerm2, Ghostty, or Terminal.app tab on macOS.
+// window inside tmux, else on macOS an iTerm2 or Ghostty tab, or a new
+// Terminal.app window.
 //
 // The command never passes through AppleScript or tmux string
 // interpolation. Open writes a private /bin/sh launcher script whose every
