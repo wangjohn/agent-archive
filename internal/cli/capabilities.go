@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // capabilityState is how well a capture capability is established.
@@ -136,19 +136,22 @@ func captureCapabilityProfile(name string) captureCapabilities {
 }
 
 func discoverApplications(userHome string) map[string]applicationDiscovery {
-	return discoverApplicationsFor(userHome, runtime.GOOS)
+	return discoverApplicationsFor(userHome, platform.Current())
 }
 
-// discoverApplicationsFor is discoverApplications for goos, which only tests
-// pass anything but the real one for. The app bundles under /Applications
-// and ~/Applications, and the Claude desktop app's folder, are macOS
-// locations: elsewhere they are not looked at, and Cursor, which is found
-// only through its macOS bundle, is reported neither installed nor absent.
-func discoverApplicationsFor(userHome, goos string) map[string]applicationDiscovery {
+// discoverApplicationsFor is discoverApplications for system, which only
+// tests pass anything but the real one for. The app bundles under
+// /Applications and ~/Applications, and the Claude desktop app's folder, are
+// macOS locations: elsewhere they are not looked at, and Cursor, which is
+// found only through its macOS bundle, is reported neither installed nor
+// absent. An Unknown system is treated as "not macOS": it is searched only
+// through PATH, which is not a Linux layout but the one lookup every system
+// has, so nothing is probed that cannot be there.
+func discoverApplicationsFor(userHome string, system platform.OS) map[string]applicationDiscovery {
 	return map[string]applicationDiscovery{
-		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome, goos)),
-		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome, goos)),
-		"cursor": discoverCursorVersion(userHome, goos),
+		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome, system)),
+		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome, system)),
+		"cursor": discoverCursorVersion(userHome, system),
 	}
 }
 
@@ -156,9 +159,9 @@ func discoverApplicationsFor(userHome, goos string) map[string]applicationDiscov
 // first. On macOS the ChatGPT desktop app bundles its own copy, which may be
 // the only one on a machine that never installed the CLI. Elsewhere only
 // PATH is searched.
-func codexVersionCandidates(userHome, goos string) [][]string {
+func codexVersionCandidates(userHome string, system platform.OS) [][]string {
 	paths := []string{"codex"}
-	if goos == "darwin" {
+	if system == platform.Darwin {
 		paths = []string{
 			"/Applications/Codex.app/Contents/Resources/codex",
 			filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
@@ -184,13 +187,13 @@ func codexVersionCandidates(userHome, goos string) [][]string {
 // whether status labels the installed version verified or unverified. The
 // same holds for the Codex copy inside ChatGPT.app. The desktop app's
 // copies exist only on macOS.
-func claudeVersionCandidates(userHome, goos string) [][]string {
+func claudeVersionCandidates(userHome string, system platform.OS) [][]string {
 	paths := []string{
 		"claude",
 		filepath.Join(userHome, ".local", "bin", "claude"),
 		filepath.Join(userHome, ".claude", "local", "claude"),
 	}
-	if goos == "darwin" {
+	if system == platform.Darwin {
 		paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
 	}
 	candidates := make([][]string, len(paths))
@@ -293,8 +296,8 @@ func discoverCommandVersion(name string, candidates [][]string) applicationDisco
 // neither: the discovery is not installed but its state is "unknown", not
 // "absent" (installedVersionSupportDetail then reports "unknown", and setup's
 // review says "version not detected" rather than "not found").
-func discoverCursorVersion(userHome, goos string) applicationDiscovery {
-	if goos != "darwin" {
+func discoverCursorVersion(userHome string, system platform.OS) applicationDiscovery {
+	if system != platform.Darwin {
 		return applicationDiscovery{VersionState: "unknown"}
 	}
 	for _, bundle := range []string{"/Applications/Cursor.app", filepath.Join(userHome, "Applications", "Cursor.app")} {
