@@ -656,7 +656,7 @@ func TestStatsListScreens(t *testing.T) {
 		t.Errorf("an unpriced model is not flagged:\n%s", out)
 	}
 	agents := strings.Join(pageLines(pageAgents, s, 100, false, false), "\n")
-	for _, want := range []string{"Claude Code", "Cursor", "Codex", "unknown", "97%", "Cursor: 8 of 8 have no token data", "Codex: MCP calls and tool errors are not recorded.", "Cache hit is cache reads"} {
+	for _, want := range []string{"Claude Code", "Cursor", "Codex", "unknown", "97%", "Cursor: 8 of 8 sessions have no token data", "Codex: MCP calls and tool errors are not recorded.", "Cache hit is cache reads"} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("the agents screen lacks %q:\n%s", want, agents)
 		}

@@ -229,9 +229,8 @@ AGENTS                            sessions  share   tokens  est. cost  cache hit
 ● Cursor       █                         8     9%  unknown        n/a        n/a
 ● Codex        █                         1     1%     100M        $49        90%
 
-Claude Code: 2 of 84 have no token data, so they are left out of tokens and
-spend.
-Cursor: 8 of 8 have no token data, so they are left out of tokens and spend.
+Claude Code: 2 of 84 sessions have no token data; left out of tokens and spend.
+Cursor: 8 of 8 sessions have no token data; left out of tokens and spend.
 Codex: MCP calls and tool errors are not recorded.
 Cache hit is cache reads over all input-side tokens.
 
