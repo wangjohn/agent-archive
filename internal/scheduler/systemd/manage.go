@@ -140,21 +140,21 @@ func (s Scheduler) probe(ctx context.Context, site scheduler.Site, ref scheduler
 	ctx, cancel := context.WithTimeout(ctx, stateTimeout)
 	defer cancel()
 	p := probed{state: scheduler.Unknown, timerFile: s.timerPath(site, ref), serviceFile: s.servicePath(site, ref)}
-	cannotTell := func(fix string) probed {
-		p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: p.timerFile, Fix: fix}
+	cannotTell := func(reason, fix string) probed {
+		p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: p.timerFile, Reason: reason, Fix: fix}
 		return p
 	}
 	output, err := s.Run(ctx, "systemctl", "--version")
 	if err != nil {
-		return cannotTell(unreachableFix(string(output) + " " + err.Error()))
+		return cannotTell(unreachable(string(output) + " " + err.Error()))
 	}
 	if version, ok := parseVersion(string(output)); ok && version < minVersion && !appendBackported(string(output)) {
-		return cannotTell(fmt.Sprintf("%s (this is systemd %d)", oldFix, version))
+		return cannotTell(fmt.Sprintf("this is systemd %d, older than %d, which the collector's logs need", version, minVersion), fmt.Sprintf("%s (this is systemd %d)", oldFix, version))
 	}
 	timerName, serviceName := string(ref)+".timer", string(ref)+".service"
 	output, err = s.Run(ctx, "systemctl", "--user", "show", timerName, serviceName, "--property=Id,LoadState,ActiveState,SubState,FragmentPath,DropInPaths")
 	if err != nil {
-		return cannotTell(unreachableFix(string(output) + " " + err.Error()))
+		return cannotTell(unreachable(string(output) + " " + err.Error()))
 	}
 	units := parseShow(string(output))
 	var found bool
@@ -162,7 +162,7 @@ func (s Scheduler) probe(ctx context.Context, site scheduler.Site, ref scheduler
 		p.service, found = units[serviceName]
 	}
 	if !found {
-		return cannotTell(genericFix)
+		return cannotTell("systemctl did not describe the job's units", genericFix)
 	}
 	return s.judge(p, ref)
 }
@@ -179,24 +179,28 @@ func (s Scheduler) judge(p probed, ref scheduler.Ref) probed {
 	names := [2]string{string(ref) + ".timer", string(ref) + ".service"}
 	units, ours := [2]unit{p.timer, p.service}, [2]string{p.timerFile, p.serviceFile}
 	for i, u := range units {
-		var fix string
+		var reason, fix string
 		switch u.load {
 		case loadLoaded, loadNotFound, loadStub, "":
 			switch {
 			case u.exists() && u.fragment == "":
+				reason = "systemd runs " + names[i] + " from no unit file"
 				fix = genericFix + "; systemd runs " + names[i] + " from no unit file"
 			case !u.exists() && u.busy():
 				// Its unit file was deleted and the manager reloaded while it
 				// ran: nothing says whose it was, and it runs on.
+				reason = "systemd still runs " + names[i] + ", whose unit file is gone"
 				fix = "Run `systemctl --user stop " + names[0] + " " + names[1] + "`: systemd still runs " + names[i] + ", whose unit file is gone"
 			}
 		case loadMasked:
+			reason = names[i] + " is masked"
 			fix = "Run `systemctl --user unmask " + names[0] + " " + names[1] + "`"
 		default:
+			reason = "systemd cannot load " + names[i] + " (" + string(u.load) + ")"
 			fix = "Run `systemctl --user status " + names[i] + "` to see why systemd cannot load it (" + string(u.load) + ")"
 		}
 		if fix != "" {
-			p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: ours[i], Fix: fix}
+			p.state, p.problem = scheduler.Unknown, &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Expected: ours[i], Reason: reason, Fix: fix}
 			return p
 		}
 	}
@@ -240,17 +244,19 @@ func ownDropIns(u unit) []string {
 	return own
 }
 
-// unreachableFix is the next step for a systemctl that failed, from what it
-// printed: no user bus (an SSH session, a container without one), no systemd
-// as the init system, or no systemctl at all.
-func unreachableFix(output string) string {
+// unreachable is what is wrong, and the next step, for a systemctl that failed,
+// from what it printed: no user bus (an SSH session, a container without one),
+// no systemd as the init system, or no systemctl at all.
+func unreachable(output string) (reason, fix string) {
 	switch {
-	case strings.Contains(output, "Failed to connect to"), strings.Contains(output, "not been booted"), strings.Contains(output, "Can't operate"):
-		return busFix
+	case strings.Contains(output, "Failed to connect to"):
+		return "the systemd user manager cannot be reached (this session has no user bus)", busFix
+	case strings.Contains(output, "not been booted"), strings.Contains(output, "Can't operate"):
+		return "this system was not booted with systemd, so there is no user manager to reach", busFix
 	case strings.Contains(output, "not found"):
-		return "Install systemd: systemctl was not found on PATH"
+		return "systemctl was not found on PATH", "Install systemd: systemctl was not found on PATH"
 	}
-	return genericFix
+	return "systemctl did not answer", genericFix
 }
 
 // parseVersion reads the version from the first line of `systemctl
@@ -311,11 +317,12 @@ func (s Scheduler) Inspect(ctx context.Context, site scheduler.Site, ref schedul
 }
 
 // systemctl runs `systemctl --user args...` and says what it printed when it
-// fails.
+// fails, without the newline it ends with, so what Load adds to the error
+// stays on its line.
 func (s Scheduler) systemctl(ctx context.Context, args ...string) error {
 	output, err := s.Run(ctx, "systemctl", append([]string{"--user"}, args...)...)
 	if err != nil {
-		return fmt.Errorf("systemctl %s: %w: %s", args[0], err, output)
+		return fmt.Errorf("systemctl %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
