@@ -1,0 +1,49 @@
+agent-archive stats - last 30 days - 3 agents - 22 sessions (19 with token data)
+
+TOKENS BY DAY                                          peak 29M - Sep 17
+__._._._._._._.?.#._._._._____
+Aug 31                  Sep 29
+
+OVERVIEW                                             vs previous 30 days
+Sessions        22  + 267%
+Prompts        246  + 486%
+Tokens         88M  + 533%
+Est. cost    $163+  + 486%  at list price
+Active days  18/30          no current streak (best 7)
+
+AGENTS                               sessions   tokens  est. cost
+Claude Code  #############.........   13  59%      83M       $158
+Codex        ######................    6  27%       5M     $5.69+
+Cursor       ###...................    3  14%  unknown        n/a
+
+COST BY MODEL                      est. cost
+opus               ############..       $136
+sonnet             ##............        $22
+gpt-5              #.............      $5.69
+codex-auto-review                   unpriced  110K tokens
+
+TOP PROJECTS                   sessions  tokens  est. cost
+proj-api       ######........         5     46M        $96
+agent-archive  ##############        11     37M        $62
+dotfiles       ########......         6      5M     $5.69+
+
+WHAT USED YOUR TOKENS
+########################################====----..
+# Cache read 81% 71M   = Cache write 8% 7.4M   - Input 7% 5.9M   . Output 4% 3.9M
+Subagents  11% of tokens (10M) in 2 sessions
+Skills     review-pr 13 - create-skill 1
+MCP        github 102 - linear 12
+Skills count sessions that used each one; MCP counts calls.
+MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.
+
+HIGHLIGHTS
+Busiest day  Sep 17 (2 sessions)      Favorite model  opus
+Costliest    $65.10  proj-api  (long context, 2 subagents)
+Tool errors  5.5% of 1,700 tool results, 13 sessions measured (9 do not record errors)
+This month so far is your heaviest of the last 6 months
+
+Scope: this archive only. Sessions with no token data are left out of token and cost totals (Cursor:
+3).
+Cost is an estimate at list price, not a bill. Prices 2026-09.1, as of 2026-09-29.
++ leaves out tokens of models the price table does not list (codex-auto-review).
+--by day|week|month|project - --json

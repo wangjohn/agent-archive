@@ -1,0 +1,1 @@
+No archived sessions in the last 30 days (2026-08-31 to 2026-09-29). If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture). Try a longer window, for example agent-archive stats --days 90.
