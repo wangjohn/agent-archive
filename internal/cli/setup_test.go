@@ -305,7 +305,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
-	journal := setupjournal.Journal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
+	journal := setupjournal.Journal{Changes: []hooks.Change{c}, Plist: filepath.Join(userHome, "Library", "LaunchAgents", "com.agent-archive.collector.plist")}
 	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if err := os.WriteFile(path, []byte("user edit"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverSetup(home, userHome, env); err == nil {
+	if err := recoverSetup(home, env); err == nil {
 		t.Fatal("must refuse concurrent edit")
 	}
 	b, _ := os.ReadFile(path)
@@ -325,7 +325,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if err := os.WriteFile(path, []byte("after"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverSetup(home, userHome, env); err != nil {
+	if err := recoverSetup(home, env); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(path)

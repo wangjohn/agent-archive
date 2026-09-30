@@ -171,7 +171,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	// Registering for the signals absorbs them until Commit returns.
 	_, stopSignals := env.interrupts()
 	defer stopSignals()
-	err = setupjournal.Commit(home, plan.journal, env.launchd(userHome))
+	err = setupjournal.Commit(home, plan.journal, env.launchd())
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err

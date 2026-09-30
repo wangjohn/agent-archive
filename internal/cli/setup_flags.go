@@ -158,7 +158,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err != nil {
 		return err
 	}
-	if err = recoverSetup(home, userHome, env); err != nil {
+	if err = recoverSetup(home, env); err != nil {
 		return err
 	}
 	existing, found, err := config.Load(home)
