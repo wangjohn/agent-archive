@@ -27,14 +27,11 @@ func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
 		t.Fatalf("first publication repo_key = %q, want %q", got.RepoKey, widgetKey)
 	}
 
+	content := codexTranscript
 	grow := func(extra string) {
 		t.Helper()
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		if _, err := f.WriteString(extra); err != nil {
+		content += extra
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		now = now.Add(time.Hour)
