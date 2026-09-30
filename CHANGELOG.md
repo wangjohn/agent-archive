@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
