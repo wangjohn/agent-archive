@@ -418,16 +418,35 @@ func TestActiveSourceDoesNotAskTheCallingAgent(t *testing.T) {
 		!strings.Contains(stderr.String(), "is the agent running this command") {
 		t.Fatalf("dir=%q err=%v stderr=%q", dir, err, stderr.String())
 	}
-	// Another agent's session variable does not make it the caller.
-	f.env.LookupEnv = func(key string) (string, bool) {
-		if key == "CLAUDE_CODE_SESSION_ID" {
-			return "native-1", true
-		}
-		return "", false
+	// Another agent's session variable does not make it the caller. That
+	// variable also switches prompts off, so it warns instead of asking...
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "native-1"})
+	stderr.Reset()
+	if dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader("n\n"), &stderr); err != nil || dir != f.project ||
+		strings.Contains(stderr.String(), "[y/N/w]") || !strings.Contains(stderr.String(), "warning: the source session was active") {
+		t.Fatalf("other harness's variable: dir=%q err=%v stderr=%q", dir, err, stderr.String())
 	}
+	// ...and with them switched back on, it asks.
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "native-1", envNonInteractive: "0"})
 	stderr.Reset()
 	if _, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader("n\n"), &stderr); !errors.Is(err, errHandoffCanceled) {
-		t.Fatalf("other harness's variable: err=%v stderr=%q", err, stderr.String())
+		t.Fatalf("other harness's variable, prompts on: err=%v stderr=%q", err, stderr.String())
+	}
+}
+
+// Inside an agent the question is never asked, even on a terminal: it warns
+// and continues in the same checkout.
+func TestActiveSourceWarnsInsteadOfAskingInAnAgent(t *testing.T) {
+	t.Parallel()
+	f, target := activeFixture(t)
+	f.env.IsTerminal = func(any) bool { return true }
+	for _, vars := range []map[string]string{{cursorAgentEnv: "1"}, {envNonInteractive: "1"}} {
+		f.env.LookupEnv = agentEnv(vars)
+		var stderr bytes.Buffer
+		dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader("n\n"), &stderr)
+		if err != nil || dir != f.project || strings.Contains(stderr.String(), "[y/N/w]") || !strings.Contains(stderr.String(), "warning: the source session was active") {
+			t.Errorf("%v: dir=%q err=%v stderr=%q", vars, dir, err, stderr.String())
+		}
 	}
 }
 
