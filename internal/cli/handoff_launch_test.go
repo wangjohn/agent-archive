@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // handoffPathFromPrompt reads the handoff document's path out of the
@@ -107,9 +108,10 @@ func TestHandoffLaunchLatestIncludesCallingSession(t *testing.T) {
 		return "", false
 	}
 	called := false
-	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+	// Inside an agent, a new window rather than the agent's terminal.
+	f.env.OpenTerminal = func(termlaunch.Spec) (string, error) {
 		called = true
-		return nil
+		return "a new tmux window", nil
 	}
 	_, errOut, code := runPicker(t, f.env, "", "--latest", "--harness", "codex", "--to", "claude")
 	if code != 0 || !called || !strings.Contains(errOut, f.id) {

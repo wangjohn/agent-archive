@@ -158,7 +158,7 @@ func validateHandoffWindowOptions(opts handoffOptions, interactive bool) string 
 	case (opts.here || opts.newWindow) && opts.to == "" && !offersDestinations(opts, interactive):
 		return "--here and --new-window apply to a launched agent: name it with --to, or choose one on a terminal"
 	case opts.here && !interactive:
-		return "--here needs a terminal: stdin and stdout must both be one"
+		return "--here needs a terminal: stdin and stdout must both be one, with " + envNonInteractive + " off (it is on inside coding agents)"
 	default:
 		return ""
 	}

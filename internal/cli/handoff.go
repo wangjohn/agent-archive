@@ -75,6 +75,9 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	// Every question below (the picker, "Continue in:", running a launched
+	// agent here) depends on this, which is false inside an agent's shell
+	// even when that shell is a pseudo-terminal.
 	interactive := browseInteractive(env, stdin, stdout)
 	opts, ok := parseHandoffOptions(args, stderr, env, interactive)
 	if !ok {
@@ -129,8 +132,8 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		dest = choice.dest
 	}
 	if dest != "" {
-		// Run from inside an agent, or asked to, the new agent gets a
-		// terminal of its own.
+		// Run from inside an agent (interaction is off there), without a
+		// terminal, or asked to, the new agent gets a terminal of its own.
 		here := interactive && !opts.newWindow
 		if err := launchPreparedHandoff(rendered, h, target, dest, here, opts, home, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)

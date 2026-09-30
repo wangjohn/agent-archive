@@ -19,7 +19,7 @@ const (
 )
 
 type altScreenDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
 }
@@ -49,7 +49,7 @@ type altScreen struct {
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
 	s := &altScreen{out: out, exit: env.exit}
-	if !env.isTerminal(out) {
+	if !env.interactive(out) {
 		return s
 	}
 	signals, stop := env.interrupts()
