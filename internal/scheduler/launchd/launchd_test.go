@@ -153,6 +153,8 @@ func TestParseJobStateComparesTheLoadedPlist(t *testing.T) {
 		{"\tstate = running\n", nil, scheduler.Unknown},
 		{"Could not find service \"x\" in domain for user gui: 501", fmt.Errorf("exit status 113"), scheduler.Missing},
 		{"boom", fmt.Errorf("exit status 1"), scheduler.Unknown},
+		// A print killed at its deadline may have written the path already.
+		{"\tpath = " + ours + "\n\tstate = running\n", fmt.Errorf("signal: killed"), scheduler.Unknown},
 	} {
 		if got := ParseJobState(tc.output, tc.err, ours); got != tc.want {
 			t.Errorf("%q: %s, want %s", tc.output, got, tc.want)

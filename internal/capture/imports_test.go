@@ -40,6 +40,7 @@ func TestCaptureImportBoundary(t *testing.T) {
 	direct, all := importgraph.Imports(t, captureImportPath)
 	importgraph.Forbid(t, "internal/capture (transitively)", all,
 		"github.com/wangjohn/agent-archive/internal/cli",
+		"github.com/wangjohn/agent-archive/internal/scheduler/host", // the real scheduler: a hook never constructs one
 		"github.com/wangjohn/agent-archive/internal/terminal",
 		"golang.org/x/term",
 	)

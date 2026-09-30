@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -23,15 +24,28 @@ func failRunner(t *testing.T) scheduler.Runner {
 // macOS is launchd, over the Runner it is given, and choosing it runs nothing
 // (the hook runtime has a two-second budget).
 func TestNewChoosesLaunchdOnDarwin(t *testing.T) {
-	t.Parallel()
-	run := failRunner(t)
+	// Should New ever run the real launchctl instead, it finds none.
+	t.Setenv("PATH", t.TempDir())
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return []byte("Could not find service"), errors.New("exit status 113")
+	}
 	got := New(platform.Darwin, run)
 	s, ok := got.(launchd.Scheduler)
 	if !ok {
 		t.Fatalf("New(Darwin) = %T, want launchd.Scheduler", got)
 	}
-	if s.Run == nil || s.ChangeTimeout != 0 {
-		t.Errorf("launchd scheduler %+v, want the given Runner and the default change timeout", s)
+	if len(calls) != 0 {
+		t.Fatalf("New ran %q", calls)
+	}
+	if s.ChangeTimeout != 0 {
+		t.Errorf("launchd scheduler %+v, want the default change timeout", s)
+	}
+	// It runs launchctl through the Runner it was given, never the real one.
+	site, ref := scheduler.Site{UserHome: "/Users/me"}, scheduler.Ref("com.agent-archive.collector")
+	if state := got.JobState(context.Background(), site, ref); state != scheduler.Missing || len(calls) != 1 || !strings.HasPrefix(calls[0], "launchctl print ") {
+		t.Errorf("JobState = %q after %q, want missing through the given Runner", state, calls)
 	}
 }
 
