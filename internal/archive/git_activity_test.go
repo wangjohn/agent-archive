@@ -85,7 +85,7 @@ func TestGitActivityFromShell(t *testing.T) {
 		{"push to a file url", `git push`, "To file:///tmp/remote.git\n * [new branch]      feature -> feature\n", false,
 			[]GitEvent{{Kind: GitEventPush, Source: shell, Branch: "feature"}}},
 		{"auto merge beside a real merge", `gh pr merge 41 --auto && gh pr merge 42 --squash`, "✓ Pull request example-org/widgets#41 will be automatically merged via squash when all requirements are met\n✓ Squashed and merged pull request example-org/widgets#42 (Fix size)\n", false,
-			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42}}},
 		{"push mentioned only in an echo", `echo "run git push later"`, "run git push later", false, nil},
 		{"commit and push chained", `git commit -am fix && git push`, "[main 3f9c2ab] fix\nTo github.com:example-org/widgets.git\n   1a2b3c4..3f9c2ab  main -> main\n", false,
 			[]GitEvent{
@@ -101,16 +101,20 @@ func TestGitActivityFromShell(t *testing.T) {
 			[]GitEvent{{Kind: GitEventPush, Source: shell, Branch: "feature", Repository: "example-org/widgets", URL: "https://github.com/example-org/widgets/tree/feature"}}},
 		{"pr create", `gh pr create --fill`, "Creating pull request for fix/widget-size into main in example-org/widgets\n\nhttps://github.com/example-org/widgets/pull/42\n", false,
 			[]GitEvent{{Kind: GitEventPRCreated, Source: shell, Branch: "fix/widget-size", Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+		{"pr create with a head flag", `gh pr create --fill --head feature-x`, "https://github.com/example-org/widgets/pull/43\n", false,
+			[]GitEvent{{Kind: GitEventPRCreated, Source: shell, Branch: "feature-x", Repository: "example-org/widgets", PRNumber: 43, URL: "https://github.com/example-org/widgets/pull/43"}}},
+		{"pr create from a fork", `gh pr create --fill -H someone:feature-x`, "https://github.com/example-org/widgets/pull/43\n", false,
+			[]GitEvent{{Kind: GitEventPRCreated, Source: shell, Branch: "feature-x", Repository: "example-org/widgets", PRNumber: 43, URL: "https://github.com/example-org/widgets/pull/43"}}},
 		{"pr already exists", `gh pr create --fill`, "a pull request for branch \"fix/widget-size\" into branch \"main\" already exists:\nhttps://github.com/example-org/widgets/pull/42", true, nil},
 		{"pr view is not a create", `gh pr view --json url`, "https://github.com/example-org/widgets/pull/42", false, nil},
 		{"pr merge naming the repository", `gh pr merge 42 --squash`, "✓ Squashed and merged pull request example-org/widgets#42 (Fix size)\n", false,
-			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42}}},
 		{"pr merge with a repo flag", `gh pr merge 42 --merge -R example-org/widgets`, "✓ Merged pull request #42 (Fix size)\n", false,
-			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42}}},
 		{"pr merge on an enterprise host", `gh pr merge 5 --squash -R ghe.example.com/example-org/widgets`, "✓ Squashed and merged pull request example-org/widgets#5 (Fix size)\n", false,
 			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 5, URL: "https://ghe.example.com/example-org/widgets/pull/5"}}},
 		{"pr merge piped", `gh pr merge 42 --squash 2>&1 | grep -v --auto-hint`, "✓ Squashed and merged pull request example-org/widgets#42 (Fix size)\n", false,
-			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, Repository: "example-org/widgets", PRNumber: 42}}},
 		{"pr merge with no repository", `gh pr merge 42 --rebase`, "✓ Rebased and merged pull request #42 (Fix size)\n", false,
 			[]GitEvent{{Kind: GitEventPRMerged, Source: shell, PRNumber: 42}}},
 		{"auto merge is not a merge", `gh pr merge 42 --auto --squash`, "✓ Pull request example-org/widgets#42 will be automatically merged via squash when all requirements are met\n", false, nil},
@@ -161,6 +165,10 @@ func TestGitActivityFromMCP(t *testing.T) {
 			`failed to create pull request: Validation Failed`, true, nil},
 		{"merge", "mcp__github__merge_pull_request",
 			map[string]any{"owner": "example-org", "repo": "widgets", "pullNumber": 42},
+			`{"sha":"9e01d4c7a2b35f6e8d9c0b1a2f3e4d5c6b7a8f90","merged":true,"message":"Pull Request successfully merged"}`, false,
+			[]GitEvent{{Kind: GitEventPRMerged, Source: mcp, SHA: "9e01d4c7a2b35f6e8d9c0b1a2f3e4d5c6b7a8f90", Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
+		{"merge through the reference server", "mcp__github__merge_pull_request",
+			map[string]any{"owner": "example-org", "repo": "widgets", "pull_number": 42},
 			`{"sha":"9e01d4c7a2b35f6e8d9c0b1a2f3e4d5c6b7a8f90","merged":true,"message":"Pull Request successfully merged"}`, false,
 			[]GitEvent{{Kind: GitEventPRMerged, Source: mcp, SHA: "9e01d4c7a2b35f6e8d9c0b1a2f3e4d5c6b7a8f90", Repository: "example-org/widgets", PRNumber: 42, URL: "https://github.com/example-org/widgets/pull/42"}}},
 		{"merge reported as text", "mcp__github__merge_pull_request",
@@ -318,5 +326,29 @@ func TestGitActivityInMetadata(t *testing.T) {
 	countIs(t, "commits", quiet.Counts.Commits, 0)
 	if quiet.GitActivity != nil {
 		t.Fatalf("git activity = %+v", quiet.GitActivity)
+	}
+}
+
+// A merge whose confirmation names the repository but whose host is unknown
+// takes the URL of the pull request the session created on an enterprise
+// host, and never a github.com URL of its own.
+func TestGitActivityMergeTakesTheCreatedURL(t *testing.T) {
+	t.Parallel()
+	bundle := claudeLines(t,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-09-22T10:00:01Z","message":{"id":"m1","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"gh pr create --fill"}}]}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-09-22T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"https://ghe.example.com/example-org/widgets/pull/7"}]}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-09-22T10:00:03Z","message":{"id":"m2","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"gh pr merge 7 --squash"}}]}}`,
+		`{"type":"user","uuid":"r2","timestamp":"2026-09-22T10:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"✓ Squashed and merged pull request example-org/widgets#7 (Fix size)"}]}}`,
+		`{"type":"assistant","uuid":"a3","timestamp":"2026-09-22T10:00:05Z","message":{"id":"m3","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"gh pr merge 7 --squash -R other-org/widgets"}}]}}`,
+		`{"type":"user","uuid":"r3","timestamp":"2026-09-22T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"✓ Squashed and merged pull request other-org/widgets#7 (Fix size)"}]}}`,
+	)
+	events, _ := gitActivityOf(t, bundle)
+	want := []GitEvent{
+		{Kind: GitEventPRCreated, Source: GitEventSourceShell, Repository: "example-org/widgets", PRNumber: 7, URL: "https://ghe.example.com/example-org/widgets/pull/7"},
+		{Kind: GitEventPRMerged, Source: GitEventSourceShell, Repository: "example-org/widgets", PRNumber: 7, URL: "https://ghe.example.com/example-org/widgets/pull/7"},
+		{Kind: GitEventPRMerged, Source: GitEventSourceShell, Repository: "other-org/widgets", PRNumber: 7},
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %+v\nwant %+v", events, want)
 	}
 }

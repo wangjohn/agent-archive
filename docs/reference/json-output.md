@@ -115,7 +115,9 @@ optional:
   attempt, and `gh pr merge --auto`, are not events. Every other field is
   optional: `sha` is abbreviated as `git commit` printed it and absent for a
   new branch's push; `url` is rebuilt from the parsed host and repository
-  and absent when the host is not a public DNS name (a local git proxy).
+  and absent when the host is unknown (a `gh pr merge` whose command names no
+  host, unless the session created that pull request) or is not a public DNS
+  name (a local git proxy).
   Commit messages, pull request text, and commands are never kept.
 - `counts.commits`, `counts.pushes`, `counts.prs_created`,
   `counts.prs_merged`: the same events counted, exact even beyond the 100

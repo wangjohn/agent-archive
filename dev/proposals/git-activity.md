@@ -124,7 +124,9 @@ GitHub MCP tool names are matched by suffix, whatever the server prefix (`mcp__g
 
 - **Parser version.** `0.14.0` was taken by per-model tokens and MCP calls (#160), so this ships as `0.15.0`.
 - **Remote userinfo.** The filter rewrites a remote's userinfo as `[REDACTED]@`, which is not a valid URL. The recognizer drops the userinfo before parsing, and never keeps it.
-- **gh without a host.** When `gh pr merge` names the repository (`owner/repo#n`) or takes `-R owner/repo` with no host, the URL is built on `github.com`, as gh itself assumes.
+- **gh merges and hosts.** `gh pr merge` never prints a host, and gh may have found the repository on an enterprise host through the checkout's remote. So a merge gets a URL only when the command names the host (`-R HOST/OWNER/REPO` or a pull request URL), or from the pull request the session created with the same number and repository. Otherwise it keeps the repository and number without a URL.
+- **Head branch.** `gh pr create --head` (`-H`, with a fork's `owner:` prefix removed) names the pull request's branch; without it, the branch is the one the session's record was on.
+- **MCP argument names.** `merge_pull_request` takes its number from `pullNumber` (GitHub's MCP server) or `pull_number` (the reference server).
 - **MCP hosts.** An MCP result carrying a pull request URL uses that URL's host. When the result has only a number, a URL is built on `github.com` only for a server whose name contains `github`.
 - **Exit codes.** Besides Codex's JSON wrapper, an `Exit code N` or `Process exited with code N` line with a non-zero code marks the command as failed.
 

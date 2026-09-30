@@ -101,6 +101,7 @@ var (
 	pullURLLine       = regexp.MustCompile(`(?m)^https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([0-9]+)\s*$`)
 	pullURLAnywhere   = regexp.MustCompile(`https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([0-9]+)`)
 	ghMergedLine      = regexp.MustCompile(`(?:Merged|Squashed and merged|Rebased and merged) pull request (?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#([0-9]+)`)
+	ghHeadFlag        = regexp.MustCompile(`(?:^|\s)(?:-H|--head)(?:=|\s+)["']?([^\s"']+)`)
 	ghRepoFlag        = regexp.MustCompile(`(?:-R|--repo)[= ]\s*(?:([A-Za-z0-9.-]+)/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:\s|$)`)
 	exitCodeLine      = regexp.MustCompile(`(?mi)^(?:exit code:?|process exited with code)\s+(-?[0-9]+)\s*$`)
 	commandSeparator  = regexp.MustCompile(`[|;&\n]`)
@@ -215,10 +216,14 @@ func shellGitEvents(command, output, branch string) []GitEvent {
 		}
 	}
 	events = append(events, pushEvents(command, output)...)
-	if ghPRCreateCommand.MatchString(command) {
+	if segments := commandSegments(command, ghPRCreateCommand); len(segments) > 0 {
+		head := branch
+		if flagged := ghHeadBranch(segments[0]); flagged != "" {
+			head = flagged
+		}
 		for _, match := range pullURLLine.FindAllStringSubmatch(output, -1) {
 			if event, ok := pullRequestEvent(GitEventPRCreated, match[1], match[2], match[3], match[4]); ok {
-				event.Source, event.Branch = GitEventSourceShell, branch
+				event.Source, event.Branch = GitEventSourceShell, head
 				events = append(events, event)
 			}
 		}
@@ -441,18 +446,32 @@ func pullRequestEvent(kind GitEventKind, host, owner, name, number string) (GitE
 	return event, true
 }
 
+// ghHeadBranch is the branch gh pr create's --head (-H) flag names, without
+// a fork owner's "owner:" prefix, or "" when the flag is absent or out of
+// shape. Without it gh uses the checked-out branch.
+func ghHeadBranch(segment string) string {
+	match := ghHeadFlag.FindStringSubmatch(segment)
+	if match == nil {
+		return ""
+	}
+	head := match[1]
+	if at := strings.LastIndex(head, ":"); at >= 0 {
+		head = head[at+1:]
+	}
+	return validBranch(head)
+}
+
 // ghMergeEvents reads gh pr merge's confirmation. The repository comes from
 // the confirmation when gh named it, else from the command's --repo flag or
 // pull request URL argument; fillMergedFromCreated may supply it later. The
-// host comes from the command, since the confirmation never names one;
-// without one gh means github.com.
+// host comes only from the command (a --repo HOST/OWNER/REPO or a pull
+// request URL), since the confirmation never names one: gh may have found
+// the repository on an enterprise host through the checkout's remote, so
+// without one no URL is built.
 func ghMergeEvents(segment, output string) []GitEvent {
-	host, commandOwner, commandName := "github.com", "", ""
+	host, commandOwner, commandName := "", "", ""
 	if flag := ghRepoFlag.FindStringSubmatch(segment); flag != nil {
-		commandOwner, commandName = flag[2], flag[3]
-		if flag[1] != "" {
-			host = flag[1]
-		}
+		host, commandOwner, commandName = flag[1], flag[2], flag[3]
 	} else if pr := pullURLAnywhere.FindStringSubmatch(segment); pr != nil {
 		host, commandOwner, commandName = pr[1], pr[2], pr[3]
 	}
@@ -515,7 +534,7 @@ func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
 		if !merged {
 			return nil
 		}
-		event, ok := mcpPullRequest(GitEventPRMerged, "", nil, owner, name, numberText(call.Input["pullNumber"]), githubServer)
+		event, ok := mcpPullRequest(GitEventPRMerged, "", nil, owner, name, mcpPullNumber(call.Input), githubServer)
 		if !ok {
 			return nil
 		}
@@ -560,17 +579,29 @@ func mcpPullRequest(kind GitEventKind, text string, result map[string]any, owner
 	return event, ok
 }
 
-// fillMergedFromCreated gives a merge event that could not name its
-// repository the repository and URL of the pull request the session created
-// with the same number, when exactly one did.
+// mcpPullNumber is a merge call's pull request number: the GitHub MCP
+// server's pullNumber, or the reference server's pull_number.
+func mcpPullNumber(input map[string]any) string {
+	if number := numberText(input["pullNumber"]); number != "" {
+		return number
+	}
+	return numberText(input["pull_number"])
+}
+
+// fillMergedFromCreated completes a merge event from the pull request the
+// session created with the same number (and, when the merge names one, the
+// same repository), when exactly one repository did: a merge that could not
+// name its repository takes it, and one that could not name its host takes
+// the created pull request's URL.
 func fillMergedFromCreated(events []GitEvent) {
 	for i := range events {
-		if events[i].Kind != GitEventPRMerged || events[i].Repository != "" {
+		if events[i].Kind != GitEventPRMerged || (events[i].Repository != "" && events[i].URL != "") {
 			continue
 		}
 		var source *GitEvent
 		for j := range events {
-			if events[j].Kind == GitEventPRCreated && events[j].PRNumber == events[i].PRNumber && events[j].Repository != "" {
+			if events[j].Kind == GitEventPRCreated && events[j].PRNumber == events[i].PRNumber && events[j].Repository != "" &&
+				(events[i].Repository == "" || events[j].Repository == events[i].Repository) {
 				if source != nil && source.Repository != events[j].Repository {
 					source = nil
 					break
