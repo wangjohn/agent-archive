@@ -1,0 +1,7 @@
+# setup whose stop of the job is refused: unknown when the commit asks
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=present own=present
+print gui/UID/com.agent-archive.collector  |  journal=present own=present
+# exit 1, end: journal=present own=present

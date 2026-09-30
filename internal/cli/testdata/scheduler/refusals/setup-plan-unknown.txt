@@ -1,0 +1,2 @@
+# exit 1
+Setup incomplete: cannot determine the background job's state; restore access to launchctl and retry
