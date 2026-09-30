@@ -8,6 +8,7 @@
 package backfill
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,12 +16,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // SkipReason says why a found session is not imported. Every session found is
@@ -270,40 +270,38 @@ type Environment struct {
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
-	// GOOS is the operating system whose app locations are looked in: the
+	// OS is the operating system whose app locations are looked in: the
 	// macOS desktop-app folders and privacy-protected folders only exist on
-	// "darwin", and Cursor keeps its data under ~/Library/Application Support
-	// there and under the XDG config home elsewhere. Empty means
-	// runtime.GOOS; only tests set it, so both branches run on any OS.
-	GOOS string
+	// platform.Darwin, and Cursor keeps its data under ~/Library/Application
+	// Support there and under the XDG config home on Linux (see
+	// platform.Locations, which answers for every OS, an unknown one
+	// included). Empty means platform.Current; only tests set it, so both
+	// branches run on any OS.
+	OS platform.OS
 	// Getenv reads the process environment (XDG_CONFIG_HOME, which places
 	// Cursor's data folder off macOS). Nil means os.Getenv.
 	Getenv func(string) string
 }
 
 // DefaultTempDirs are the temporary directories besides $TMPDIR on the
-// environment's operating system (see defaultTempDirs); a fresh slice.
+// environment's operating system (platform.Locations.TempRoots); a fresh
+// slice.
 func (e Environment) DefaultTempDirs() []string {
-	return defaultTempDirs(e.goos())
+	return slices.Clone(e.locations().TempRoots)
 }
 
-// defaultTempDirs are the temporary directories besides $TMPDIR for goos.
-// macOS has /tmp (a link to /private/tmp) and the per-user folders under
-// /var/folders, both spellings of each; elsewhere /tmp and /var/tmp are the
-// shared temporary directories.
-func defaultTempDirs(goos string) []string {
-	if goos == "darwin" {
-		return []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
-	}
-	return []string{"/tmp", "/var/tmp"}
+// operatingSystem is the operating system to answer for.
+func (e Environment) operatingSystem() platform.OS {
+	return cmp.Or(e.OS, platform.Current())
 }
 
-// goos is the operating system to answer for.
-func (e Environment) goos() string {
-	if e.GOOS != "" {
-		return e.GOOS
-	}
-	return runtime.GOOS
+// locations are where the environment's operating system keeps what backfill
+// looks for, under Home. Symlinks in the privacy-protected folders' home are
+// resolved the way the rest of backfill resolves them (resolved).
+func (e Environment) locations() platform.Locations {
+	return platform.NewLocations(e.operatingSystem(), e.Home, e.getenv, platform.LocationDeps{
+		ResolveSymlinks: e.resolved,
+	})
 }
 
 func (e Environment) getenv(key string) string {
@@ -313,19 +311,9 @@ func (e Environment) getenv(key string) string {
 	return os.Getenv(key)
 }
 
-// isMac reports whether the macOS-only inputs apply: the desktop apps' Mac
-// folders and the privacy-protected (TCC) folders.
-func (e Environment) isMac() bool { return e.goos() == "darwin" }
-
-// cursorAppDir is Cursor's per-user data folder under Home.
-func (e Environment) cursorAppDir() string {
-	return cursorstore.AppSupportDir(e.Home, e.getenv, e.goos())
-}
-
-// cursorStateDatabase is Cursor's state.vscdb under Home.
-func (e Environment) cursorStateDatabase() string {
-	return cursorstore.StateDatabaseFor(e.Home, e.getenv, e.goos())
-}
+// cursorStateDatabase is Cursor's state.vscdb under Home, "" where the
+// environment's operating system has no known place for it.
+func (e Environment) cursorStateDatabase() string { return e.locations().CursorStateDB }
 
 func (e Environment) now() time.Time {
 	if e.Now != nil {
@@ -416,7 +404,7 @@ func (e Environment) tempDirs() []string {
 	if e.TempDirs != nil {
 		return e.TempDirs
 	}
-	return defaultTempDirs(e.goos())
+	return e.locations().TempRoots
 }
 
 // exists reports whether path exists.
