@@ -47,6 +47,10 @@ func TestNonInteractiveResolution(t *testing.T) {
 		{name: "explicit off", vars: vars{envNonInteractive: "0"}},
 		{name: "empty means automatic, none set", vars: vars{envNonInteractive: ""}},
 		{name: "empty means automatic, agent set", vars: vars{envNonInteractive: "", "CODEX_THREAD_ID": "t"}, on: true},
+		{name: "whitespace around a spelling is ignored", vars: vars{envNonInteractive: " On\n"}, on: true},
+		{name: "whitespace only means automatic, none set", vars: vars{envNonInteractive: "  "}},
+		{name: "whitespace only means automatic, agent set", vars: vars{envNonInteractive: "\t", "CURSOR_AGENT": "1"}, on: true},
+		{name: "mixed case off beats an agent", vars: vars{envNonInteractive: " oFf ", "CLAUDE_CODE_SESSION_ID": "s"}},
 		{name: "an empty agent variable is not an agent", vars: vars{"CLAUDE_CODE_SESSION_ID": "  ", "CODEX_THREAD_ID": "", "CURSOR_AGENT": ""}},
 		{name: "invalid counts as on until reported", vars: vars{envNonInteractive: "ture"}, on: true, invalid: true},
 		{name: "invalid is invalid even with an agent variable", vars: vars{envNonInteractive: "2", "CURSOR_AGENT": "1"}, on: true, invalid: true},
@@ -454,5 +458,10 @@ func TestSetupYesDoesNotReadTheR2SecretFromATerminalInAnAgent(t *testing.T) {
 	}
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("saved a configuration")
+	}
+	// The refusal comes before the Keychain or launchd is asked anything, as
+	// for a script whose secret is missing.
+	if strings.Contains(out.String(), "Keychain") || strings.Contains(out.String(), "Background job") {
+		t.Fatalf("checks ran before the refusal:\n%s", &out)
 	}
 }

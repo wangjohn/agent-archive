@@ -410,10 +410,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	if !nonInteractiveSettingUsable(args, stderr, env) {
-		return 2
-	}
 	if len(args) == 0 {
+		if !nonInteractiveSettingUsable(args, stderr, env) {
+			return 2
+		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
@@ -426,6 +426,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
+	}
+	// After the preflight, which answers `list --help` and its kind without
+	// touching the environment, so the setting can still be looked up.
+	if !nonInteractiveSettingUsable(args, stderr, env) {
+		return 2
 	}
 
 	switch args[0] {

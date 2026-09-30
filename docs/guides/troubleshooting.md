@@ -249,7 +249,7 @@ Check that setup includes **Cursor** and the project where the Agent chat runs (
 ## No picker or prompt in an agent's terminal
 
 If `list` prints a table instead of opening the browser, bare `show` or
-`handoff` says to name a session, or `setup`, `uninstall`, or `backfill`
+`handoff` says to name a session, or `setup`, `uninstall`, `backfill`, or `purge apply`
 refuses with "Prompts are off because ...", agent-archive believes a coding
 agent is running it: `AGENT_ARCHIVE_NONINTERACTIVE` is set, or
 `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is (a terminal

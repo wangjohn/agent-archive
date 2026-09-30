@@ -218,7 +218,8 @@ environment switch overrides it, decided in one place:
   reads), since those mean an agent's shell is running the command. An
   explicit value wins over automatic in both directions. Any other value is
   one usage error (exit 2) before the command runs (not for the hidden
-  `_hook`/`_collect`, which must stay silent, nor help or version) and, until
+  `_hook`/`_collect`, which must stay silent, nor help, version, or a
+  subcommand's `--help`, which answer before the environment is read) and, until
   reported, counts as on: a typo never turns a prompt back on.
 - Read through `Env.lookupEnv`, so tests never see the process environment;
   `testEnv` gives an empty one, so the suite passes when run from inside an
@@ -228,8 +229,20 @@ environment switch overrides it, decided in one place:
   2); the pager and alternate screen are off; `setup`, `uninstall`, and
   `backfill` keep refusing without `--yes`, and when the switch (not a
   missing terminal) is why, the message names it and
-  `AGENT_ARCHIVE_NONINTERACTIVE=0`. `setup --yes` never reads the R2 secret
-  from a terminal it may not ask on.
+  `AGENT_ARCHIVE_NONINTERACTIVE=0`. `purge apply` without `--yes` refuses
+  too, terminal or pipe: it reads its typed digest from standard input
+  whatever that is, so it is refused explicitly instead of through
+  `interactive`. `setup --yes` never reads the R2 secret from a terminal it
+  may not ask on (a pipe is still read: a script's secret is not a prompt).
+- Not covered by the switch, on purpose: presentation (the spinner and
+  colour still draw on a pseudo-terminal; `NO_COLOR` governs them), a read
+  of standard input that is a pipe (`_hook` payloads, the `setup --yes`
+  secret), and credential helpers the AWS SDK runs for an S3 profile
+  (`credential_process`, aws-vault, `op`), which agent-archive does not
+  control. `TestTerminalChecksAreClassified` is syntactic: it counts every
+  mention of a terminal check, prompt, or stream read in this package, so
+  method values and renamed imports are caught, but not a check made in
+  another package and handed in.
 - `handoff --to <agent>` inside an agent (`/handoff`) needs no prompt: it
   resolves the caller's own session from the environment (handoff v2 A),
   `--latest --harness cursor` under `CURSOR_AGENT`, and otherwise is a usage

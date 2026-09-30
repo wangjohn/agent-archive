@@ -16,8 +16,8 @@ follow [Semantic Versioning](https://semver.org/).
   `counts.cache_write_tokens`. Existing sessions gain the new fields on the
   next metadata refresh; nothing is re-uploaded but the metadata.
 - `AGENT_ARCHIVE_NONINTERACTIVE=1` stops agent-archive from asking anything:
-  no session picker or browser, no pager, no confirmation prompt, even on a
-  terminal. It is on by itself when `CLAUDE_CODE_SESSION_ID`,
+  no session picker or browser, no pager, no confirmation prompt (`purge
+  apply` needs `--yes`), even on a terminal. It is on by itself when `CLAUDE_CODE_SESSION_ID`,
   `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set, so a coding agent whose shell is
   a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
   turns it off, and a refusal caused by it says so.
