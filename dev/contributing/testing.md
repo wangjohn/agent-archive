@@ -346,6 +346,13 @@ In `internal/hooks`:
 | `FuzzMergeRemove` | any hook file Merge accepts, per harness | merging twice changes nothing; Remove takes out exactly what Merge added |
 | `FuzzCommandDataHome` | any data directory | the hook command reads back the directory it was built with |
 
+In `internal/scheduler/launchd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
+| `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
+
 In `internal/cli`:
 
 | Target | Input | Properties |

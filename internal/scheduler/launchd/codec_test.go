@@ -3,6 +3,8 @@ package launchd
 import (
 	"strings"
 	"testing"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 // status reads back the program a LaunchAgent runs to notice a moved binary,
