@@ -101,8 +101,8 @@ const maxComposerVersion = 18
 const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'`
 
 // CursorDatabaseReaderFor returns the Environment.CursorDatabase reader for
-// the state.vscdb where env (its Home, GOOS and Getenv) says Cursor keeps it
-// (see cursorstore.AppSupportDir). A missing database is checked with no
+// the state.vscdb where env (its Home, OS and Getenv) says Cursor keeps it
+// (see platform.Locations). A missing database is checked with no
 // chats (Cursor is not installed). One that can't be read safely is not
 // checked, with a reason; that never fails the plan. Only a cancelled
 // context is an error. The chats are listed in place; each one the plan

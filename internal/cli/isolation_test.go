@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // testTempPrefix names the folder under /tmp that holds one test run's
@@ -34,10 +35,10 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     Keychain nor a credentials file in a real data directory can be
 //     reached. Set Env.Credentials (newFakeKeychain).
 //
-//   - The platform the credential store is named for: credentialGOOS is
-//     "darwin", so the many tests whose fake stands for the Keychain see the
-//     Keychain's wording on every runner, Linux CI included. A test of the
-//     other platform's wording sets it to "linux" (useCredentialGOOS).
+//   - The platform the credential store is named for: credentialOS is
+//     platform.Darwin, so the many tests whose fake stands for the Keychain
+//     see the Keychain's wording on every runner, Linux CI included. A test
+//     of another platform's wording sets it (useCredentialOS).
 //
 //   - less: detectLessVersion panics. Set Env.LessVersion (testEnv does).
 //
@@ -93,8 +94,8 @@ func isolateProcessForTesting() func() {
 	openCredentialStore = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real credential store: set Env.Credentials (newFakeKeychain)")
 	}
-	productionCredentialGOOS = credentialGOOS
-	credentialGOOS = "darwin"
+	productionCredentialOS = credentialOS
+	credentialOS = platform.Darwin
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
@@ -158,17 +159,17 @@ func TestIsolationFailsClosed(t *testing.T) {
 // (TestOpenCredentialStoreIsWiredToTheDataDirectory).
 var realOpenCredentialStore func() (credentials.CredentialStore, error)
 
-// productionCredentialGOOS is credentialGOOS as the program starts, before
-// isolateProcessForTesting pins it to "darwin" for the tests.
-var productionCredentialGOOS string
+// productionCredentialOS is credentialOS as the program starts, before
+// isolateProcessForTesting pins it to Darwin for the tests.
+var productionCredentialOS platform.OS
 
-// useCredentialGOOS names the credential store for another platform for one
+// useCredentialOS names the credential store for another platform for one
 // test. The test must not be parallel: the variable is shared.
-func useCredentialGOOS(t *testing.T, goos string) {
+func useCredentialOS(t *testing.T, system platform.OS) {
 	t.Helper()
-	previous := credentialGOOS
-	credentialGOOS = goos
-	t.Cleanup(func() { credentialGOOS = previous })
+	previous := credentialOS
+	credentialOS = system
+	t.Cleanup(func() { credentialOS = previous })
 }
 
 // stubLaunchctl replaces launchctl for one test.

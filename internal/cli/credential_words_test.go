@@ -14,9 +14,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
-// None of these tests is parallel: each may set credentialGOOS, which the
+// None of these tests is parallel: each may set credentialOS, which the
 // package's parallel tests read (they run after every serial test, so a
 // serial test that restores it can never race them).
 
@@ -50,7 +51,17 @@ func TestCredentialWordsOnBothPlatforms(t *testing.T) {
 		"undeleted locked":  "2 stored credential(s) could not be deleted from the credentials folder /data/agent-archive/credentials: " + credentials.ErrKeychainLocked.Error() + ". To remove them yourself, delete the files in that folder",
 		"store name in use": "the credentials file",
 	}
-	for goos, want := range map[string]map[string]string{"darwin": darwin, "linux": linux, "freebsd": linux} {
+	// An unknown platform has no store (credentials.OpenDefault refuses it),
+	// so its words never claim the Keychain or a file: the store is "the
+	// credential store", and what a Keychain is not is worded as the file
+	// store's.
+	unknown := map[string]string{}
+	for name, text := range linux {
+		unknown[name] = strings.ReplaceAll(strings.ReplaceAll(text, "open credentials file", "open credential store"), "open the credentials file", "open the credential store")
+	}
+	unknown["check label"] = "Credential store"
+	unknown["store name in use"] = "the credential store"
+	for goos, want := range map[platform.OS]map[string]string{platform.Darwin: darwin, platform.Linux: linux, platform.Unknown: unknown} {
 		got := map[string]string{
 			"open":              openCredentialStoreError(goos, cause).Error(),
 			"storage open":      storageOpenError(goos, cause).Error(),
@@ -68,7 +79,7 @@ func TestCredentialWordsOnBothPlatforms(t *testing.T) {
 				t.Errorf("%s: %s = %q, want %q", goos, name, got[name], wantText)
 			}
 		}
-		if goos != "darwin" {
+		if goos != platform.Darwin {
 			for name, text := range got {
 				if strings.Contains(text, "Keychain") && name != "undeleted locked" {
 					t.Errorf("%s: %s names the Keychain: %q", goos, name, text)
@@ -82,7 +93,7 @@ func TestCredentialWordsOnBothPlatforms(t *testing.T) {
 // cgo build, so it must not appear on Linux; there the failure's own message
 // says what to fix.
 func TestPreflightCredentialCheckOnLinux(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	dir := filepath.Join(t.TempDir(), credentials.CredentialsDirName)
 	store, err := credentials.NewFileStore(dir)
 	must(t, err)
@@ -96,7 +107,7 @@ func TestPreflightCredentialCheckOnLinux(t *testing.T) {
 	}
 	// No key saved yet: a folder that does not exist is not a failure.
 	if check := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) {
-		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return filepath.Join(t.TempDir(), "none"), nil }, LookupEnv: noEnv})
+		return credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return filepath.Join(t.TempDir(), "none"), nil }, LookupEnv: noEnv})
 	}}, ""); !check.OK {
 		t.Fatalf("check with nothing saved: %+v", check)
 	}
@@ -137,7 +148,7 @@ func (c credentialsOnly) credentialStore() (credentials.CredentialStore, error) 
 
 // macOS's check reads exactly as it did.
 func TestPreflightCredentialCheckOnMacOSKeepsItsWording(t *testing.T) {
-	useCredentialGOOS(t, "darwin")
+	useCredentialOS(t, platform.Darwin)
 	ok := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) { return newFakeKeychain(), nil }}, "")
 	if !ok.OK || ok.Label != "Keychain" || ok.Detail != "opens (for the R2 key)" {
 		t.Fatalf("check that opens: %+v", ok)
@@ -160,12 +171,12 @@ func TestPreflightCredentialCheckOnMacOSKeepsItsWording(t *testing.T) {
 // as a private file under the data directory, and uninstall deletes it with
 // the rest, without naming the Keychain.
 func TestSetupAndUninstallKeepTheR2KeyInAFileOnLinux(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	dir := credentials.FileStoreDir(home)
 	env.Credentials = func() (credentials.CredentialStore, error) {
-		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: noEnv})
+		return credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: noEnv})
 	}
 	output := setupYes(t, env, "linux-secret-value\n", 0, "--yes", "--provider", "r2", "--r2-account", "https://"+testR2Account+".r2.cloudflarestorage.com/my-bucket",
 		"--r2-access-key-id", "KEY", "--project", project, "--apps", "claude")
@@ -218,7 +229,7 @@ func TestSetupAndUninstallKeepTheR2KeyInAFileOnLinux(t *testing.T) {
 // gone, and saying otherwise would send the user to delete what is not there.
 // The rest of the purge still happens.
 func TestUninstallPurgeDoesNotReportCredentialFilesThePurgeRemovesOnLinux(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	fake := newFakeKeychain()
 	home, _, env := installedFixture(t, fake, r2SetupInput(t.TempDir(), "linux-secret-value"))
 	store, err := credentials.NewFileStore(credentials.FileStoreDir(home))
@@ -242,7 +253,7 @@ func TestUninstallPurgeDoesNotReportCredentialFilesThePurgeRemovesOnLinux(t *tes
 // A credentials folder that is a link is not followed: the purge removes the
 // link, the files it pointed to are still there, and uninstall says so.
 func TestUninstallPurgeReportsCredentialFilesBehindALinkOnLinux(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	home, _, env := installedFixture(t, newFakeKeychain(), r2SetupInput(t.TempDir(), "linux-secret-value"))
 	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
 	must(t, os.Mkdir(elsewhere, 0o700))
@@ -251,7 +262,7 @@ func TestUninstallPurgeReportsCredentialFilesBehindALinkOnLinux(t *testing.T) {
 	must(t, os.Symlink(elsewhere, credentials.FileStoreDir(home)))
 	// The real file store, which refuses a linked folder.
 	env.Credentials = func() (credentials.CredentialStore, error) {
-		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
+		return credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
 	}
 	cfg, _, _ := config.Load(home)
 	cfg.RetiredCredentialRefs = append(cfg.RetiredCredentialRefs, "setup-abc")
@@ -283,23 +294,23 @@ func TestUninstallPurgeReportsCredentialFilesBehindALinkOnLinux(t *testing.T) {
 func TestUndeletedCredentialsProblemFollowsTheFolder(t *testing.T) {
 	cause := errors.New("cause")
 	const dataDir = "/data/agent-archive"
-	still := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{remains: true})
+	still := undeletedCredentialsProblem(platform.Linux, dataDir, []string{"r"}, cause, credentialFolder{remains: true})
 	if want := "1 stored credential(s) could not be deleted from the credentials folder /data/agent-archive/credentials: cause. To remove them yourself, delete the files in that folder"; still != want {
 		t.Errorf("folder still there = %q", still)
 	}
-	if gone := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{}); gone != "" {
+	if gone := undeletedCredentialsProblem(platform.Linux, dataDir, []string{"r"}, cause, credentialFolder{}); gone != "" {
 		t.Errorf("folder removed with the purge = %q, want nothing to report", gone)
 	}
-	linked := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds"})
+	linked := undeletedCredentialsProblem(platform.Linux, dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds"})
 	if !strings.Contains(linked, "is a link to /mnt/creds") || !strings.Contains(linked, "delete the files in /mnt/creds") {
 		t.Errorf("linked folder = %q", linked)
 	}
 	// The link is reported whether or not anything is left at its path.
-	if got := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds", remains: true}); got != linked {
+	if got := undeletedCredentialsProblem(platform.Linux, dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds", remains: true}); got != linked {
 		t.Errorf("linked folder that remains = %q", got)
 	}
 	// macOS is unaffected by the folder.
-	if got := undeletedCredentialsProblem("darwin", dataDir, []string{"r"}, cause, credentialFolder{}); !strings.Contains(got, "security delete-generic-password") {
+	if got := undeletedCredentialsProblem(platform.Darwin, dataDir, []string{"r"}, cause, credentialFolder{}); !strings.Contains(got, "security delete-generic-password") {
 		t.Errorf("darwin = %q", got)
 	}
 
@@ -349,7 +360,7 @@ func TestOpenCredentialStoreIsWiredToTheDataDirectory(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "agent-archive")
 	t.Setenv("AGENT_ARCHIVE_HOME", home)
 
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	store, err := realOpenCredentialStore()
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +385,7 @@ func TestOpenCredentialStoreIsWiredToTheDataDirectory(t *testing.T) {
 
 	// On macOS it is the Keychain's store, or the unavailable error of a
 	// build without one; it does not need a data directory.
-	useCredentialGOOS(t, "darwin")
+	useCredentialOS(t, platform.Darwin)
 	t.Setenv("AGENT_ARCHIVE_HOME", filepath.Join(t.TempDir(), "not", "created"))
 	store, err = realOpenCredentialStore()
 	if err != nil {
@@ -393,11 +404,12 @@ func TestOpenCredentialStoreIsWiredToTheDataDirectory(t *testing.T) {
 func TestOpeningTheStoreForR2Failure(t *testing.T) {
 	cfg := config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}}
 	fail := func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
-	for goos, want := range map[string]string{
-		"darwin": "keychain unavailable: credential store unavailable",
-		"linux":  "open the credentials file: credential store unavailable",
+	for goos, want := range map[platform.OS]string{
+		platform.Darwin:  "keychain unavailable: credential store unavailable",
+		platform.Linux:   "open the credentials file: credential store unavailable",
+		platform.Unknown: "open the credential store: credential store unavailable",
 	} {
-		useCredentialGOOS(t, goos)
+		useCredentialOS(t, goos)
 		_, err := openConfiguredStore(cfg, fail)
 		if err == nil || err.Error() != want || !errors.Is(err, credentials.ErrUnavailable) {
 			t.Errorf("%s: %v, want %q", goos, err, want)
@@ -405,11 +417,18 @@ func TestOpeningTheStoreForR2Failure(t *testing.T) {
 	}
 }
 
-// The program's own credentialGOOS is the platform it runs on: the tests pin
-// it to "darwin", so a hard-coded value would otherwise go unseen.
-func TestCredentialGOOSIsTheRunningPlatform(t *testing.T) {
-	if productionCredentialGOOS != runtime.GOOS {
-		t.Fatalf("credentialGOOS starts as %q, want runtime.GOOS %q", productionCredentialGOOS, runtime.GOOS)
+// The program's own credentialOS is the platform it runs on: the tests pin
+// it to Darwin, so a hard-coded value would otherwise go unseen.
+func TestCredentialOSIsTheRunningPlatform(t *testing.T) {
+	want := platform.Unknown
+	switch runtime.GOOS {
+	case "darwin":
+		want = platform.Darwin
+	case "linux":
+		want = platform.Linux
+	}
+	if productionCredentialOS != want {
+		t.Fatalf("credentialOS starts as %q, want %q for %s", productionCredentialOS, want, runtime.GOOS)
 	}
 }
 
@@ -418,13 +437,13 @@ func TestCredentialGOOSIsTheRunningPlatform(t *testing.T) {
 // and whose environment is vars: what the shell setup runs in exports.
 func linuxFixture(t *testing.T, vars map[string]string) (env Env, home, project string) {
 	t.Helper()
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	home, project = t.TempDir(), t.TempDir()
 	env = setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env = withEnvironment(env, vars)
 	env.Credentials = func() (credentials.CredentialStore, error) {
 		return credentials.OpenDefault(credentials.OpenOptions{
-			GOOS:      "linux",
+			OS:        platform.Linux,
 			Dir:       func() (string, error) { return credentials.FileStoreDir(home), nil },
 			LookupEnv: func(key string) (string, bool) { v, ok := vars[key]; return v, ok },
 		})
@@ -436,7 +455,7 @@ func linuxFixture(t *testing.T, vars map[string]string) (env Env, home, project 
 // credentials file, and none of the interactive shell's variables.
 func collectorView(t *testing.T, home string) credentials.CredentialStore {
 	t.Helper()
-	store, err := credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
+	store, err := credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
 	must(t, err)
 	return store
 }
@@ -511,11 +530,11 @@ func TestSetupYesOnLinuxSavesTheExportedKeyToTheFileAndDoesNotKeepOnlyTheEnviron
 // setup's check that the credential store opens counts a key saved in the
 // file, not one in the environment.
 func TestPreflightCredentialProbeOnLinuxReadsOnlyWhatIsStored(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	vars := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}
 	home := t.TempDir()
 	reads := 0
-	store, err := credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: func(key string) (string, bool) {
+	store, err := credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: func(key string) (string, bool) {
 		reads++
 		v, ok := vars[key]
 		return v, ok
@@ -560,10 +579,10 @@ func TestSetupThatSkipsStorageRefusesAConfigWhoseKeyFileIsGoneOnLinux(t *testing
 // variables set, the store the program opens on Linux loads an R2 key, so a
 // container configured only by its environment can capture.
 func TestOpenedStoreOnLinuxServesTheRuntimeFromTheEnvironment(t *testing.T) {
-	useCredentialGOOS(t, "linux")
+	useCredentialOS(t, platform.Linux)
 	store, err := credentials.OpenDefault(credentials.OpenOptions{
-		GOOS: "linux",
-		Dir:  func() (string, error) { return credentials.FileStoreDir(t.TempDir()), nil },
+		OS:  platform.Linux,
+		Dir: func() (string, error) { return credentials.FileStoreDir(t.TempDir()), nil },
 		LookupEnv: func(key string) (string, bool) {
 			v, ok := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}[key]
 			return v, ok
@@ -585,7 +604,7 @@ func TestLookCredentialFolderResolvesARelativeLink(t *testing.T) {
 	if want := filepath.Join(filepath.Dir(base), "shared", "creds"); !got.isLink || got.linkTarget != want {
 		t.Fatalf("relative link = %+v, want target %s", got, want)
 	}
-	if msg := undeletedCredentialsProblem("linux", base, []string{"r"}, errors.New("cause"), got); !strings.Contains(msg, "is a link to "+got.linkTarget) || strings.Contains(msg, "..") {
+	if msg := undeletedCredentialsProblem(platform.Linux, base, []string{"r"}, errors.New("cause"), got); !strings.Contains(msg, "is a link to "+got.linkTarget) || strings.Contains(msg, "..") {
 		t.Errorf("message = %q", msg)
 	}
 	// An absolute link is reported as it is.

@@ -8,44 +8,50 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // The messages below name where an R2 key is kept, which depends on the
 // platform: the Keychain on macOS, a private file elsewhere (see
 // credentials.OpenDefault). Each takes the platform as a parameter, and its
-// callers pass credentialGOOS, so both wordings are tested on any OS. macOS
+// callers pass credentialOS, so both wordings are tested on any OS. macOS
 // keeps the exact words it had before the file store existed; only the
 // other platform's are new. A failure the store itself reports is worded by
 // the error (credentials.RecoveryAction, storage.Diagnose), not here.
+//
+// An Unknown platform never has a store to describe: credentials.OpenDefault
+// refuses it (ErrUnsupportedPlatform). So the words that name the store call
+// it "credential store", and the rest, which describe what a Keychain is not,
+// give the file store's wording without ever claiming the Keychain.
 
 // openCredentialStoreError is the failure to open the credential store.
-func openCredentialStoreError(goos string, err error) error {
-	return fmt.Errorf("open %s: %w", credentials.StoreName(goos), err)
+func openCredentialStoreError(system platform.OS, err error) error {
+	return fmt.Errorf("open %s: %w", credentials.StoreName(system), err)
 }
 
 // storageOpenError is collect's and sync's failure to open the credential
 // store for an R2 destination.
-func storageOpenError(goos string, err error) error {
-	if credentials.UsesKeychain(goos) {
+func storageOpenError(system platform.OS, err error) error {
+	if credentials.UsesKeychain(system) {
 		return fmt.Errorf("keychain unavailable: %w", err)
 	}
-	return fmt.Errorf("open the %s: %w", credentials.StoreName(goos), err)
+	return fmt.Errorf("open the %s: %w", credentials.StoreName(system), err)
 }
 
 // credentialCheckLabel is the name of setup's check that the credential
 // store opens.
-func credentialCheckLabel(goos string) string {
-	name := credentials.StoreName(goos)
+func credentialCheckLabel(system platform.OS) string {
+	name := credentials.StoreName(system)
 	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 // credentialCheckFix says how to fix a credential store that cannot be
 // opened: the release build hint is about the Keychain's cgo build alone, so
 // it is not given elsewhere. locked is a locked Keychain.
-func credentialCheckFix(goos string, locked bool) string {
+func credentialCheckFix(system platform.OS, locked bool) string {
 	const s3 = "store in Amazon S3 with agent-archive setup --yes --provider s3."
 	switch {
-	case !credentials.UsesKeychain(goos):
+	case !credentials.UsesKeychain(system):
 		return "Fix what the message says, then run agent-archive setup again, or " + s3
 	case locked:
 		return "Unlock the login Keychain (log in, or open Keychain Access), then run agent-archive setup again, or " + s3
@@ -55,8 +61,8 @@ func credentialCheckFix(goos string, locked bool) string {
 
 // stagedCredentialLeftNote is what setup says of the credential a saved
 // setup it moves aside may have staged.
-func stagedCredentialLeftNote(goos, dataDir string) string {
-	if credentials.UsesKeychain(goos) {
+func stagedCredentialLeftNote(system platform.OS, dataDir string) string {
+	if credentials.UsesKeychain(system) {
 		return "A Keychain item it staged, if any, stays in the Keychain (service " + credentials.KeychainService + ")."
 	}
 	return "A credentials file it staged, if any, stays in " + credentials.FileStoreDir(dataDir) + "."
@@ -66,8 +72,8 @@ func stagedCredentialLeftNote(goos, dataDir string) string {
 // cannot be read, so it cannot name a credential the setup staged. There is
 // nothing to say where the credentials are files in the data directory, which
 // uninstall deletes whole.
-func unreadableDraftUninstallNote(goos, draftPath, problem string) string {
-	if !credentials.UsesKeychain(goos) {
+func unreadableDraftUninstallNote(system platform.OS, draftPath, problem string) string {
+	if !credentials.UsesKeychain(system) {
 		return ""
 	}
 	return fmt.Sprintf("The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.", draftPath, problem, credentials.KeychainService)
@@ -116,8 +122,8 @@ func (f credentialFolder) afterPurge(dataDir string) credentialFolder {
 // could not be deleted one by one are gone with it, unless the folder was a
 // link (the purge removes the link, never what it points to) or is still
 // there.
-func undeletedCredentialsProblem(goos, dataDir string, undeleted []string, cause error, folder credentialFolder) string {
-	if !credentials.UsesKeychain(goos) {
+func undeletedCredentialsProblem(system platform.OS, dataDir string, undeleted []string, cause error, folder credentialFolder) string {
+	if !credentials.UsesKeychain(system) {
 		dir := credentials.FileStoreDir(dataDir)
 		switch {
 		case folder.isLink:

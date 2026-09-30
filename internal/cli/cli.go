@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -29,8 +28,8 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -183,11 +182,12 @@ type Env struct {
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
 	BackfillTempDirs []string
-	// BackfillGOOS is the operating system backfill and the collector look
-	// for apps of: the macOS-only backfill inputs and where Cursor keeps its
-	// data (Cursor's database included) depend on it. Empty means
-	// runtime.GOOS; tests set it so a Mac's layout is exercised on any OS.
-	BackfillGOOS string
+	// OS is the operating system backfill and the collector look for apps
+	// of: the macOS-only backfill inputs and where Cursor keeps its data
+	// (Cursor's database included) depend on it. Empty means
+	// platform.Current; tests set it so a Mac's layout is exercised on any
+	// OS.
+	OS platform.OS
 	// IsTerminal reports whether stdin or stdout is a terminal. backfill
 	// redraws its progress line only on one; whether a command may also ask
 	// questions there is Env.interactive, which the
@@ -368,14 +368,17 @@ func (e Env) userHomeDir() (string, error) {
 }
 
 // cursorDatabase is Cursor's state.vscdb under the user's home, which
-// cursor-sqlite sessions are read from; "" (the process's own home) only
-// when the home can't be resolved.
+// cursor-sqlite sessions are read from, for Env.OS. It is "" when the home
+// can't be resolved or the system is not one the program knows; the collector
+// reads "" as "the default for this process" (cursorstore.StateDatabase of
+// the process's own home and platform.Current), which on an unknown system is
+// "" again, so Cursor reads as not installed.
 func (e Env) cursorDatabase() string {
 	home, err := e.userHomeDir()
 	if err != nil {
 		return ""
 	}
-	return cursorstore.StateDatabaseFor(home, e.getenv, e.goos())
+	return platform.NewLocations(e.operatingSystem(), home, e.getenv, platform.LocationDeps{}).CursorStateDB
 }
 
 // getenv reads one variable of the Env's environment (LookupEnv; the process
@@ -386,10 +389,10 @@ func (e Env) getenv(key string) string {
 	return v
 }
 
-// goos is the operating system whose app locations backfill and the
-// collector look for: BackfillGOOS, else the real one.
-func (e Env) goos() string {
-	return cmp.Or(e.BackfillGOOS, runtime.GOOS)
+// operatingSystem is the operating system whose app locations backfill and
+// the collector look for: OS, else the real one.
+func (e Env) operatingSystem() platform.OS {
+	return cmp.Or(e.OS, platform.Current())
 }
 
 func (e Env) detectHarnesses(userHome string) []string {
@@ -427,10 +430,10 @@ func (e Env) credentialStore() (credentials.CredentialStore, error) {
 	return openCredentialStore()
 }
 
-// credentialGOOS is the platform whose credential store is opened and named:
-// runtime.GOOS. It is a variable so a test can see both platforms' wording
-// and choices (credentialWords, credentials.OpenDefault) on any OS.
-var credentialGOOS = runtime.GOOS
+// credentialOS is the platform whose credential store is opened and named:
+// platform.Current. It is a variable so a test can see both platforms'
+// wording and choices (credentialWords, credentials.OpenDefault) on any OS.
+var credentialOS = platform.Current()
 
 // openCredentialStore opens the platform's credential store (see
 // credentials.OpenDefault): Env.Credentials's default. The package's tests
@@ -439,7 +442,7 @@ var credentialGOOS = runtime.GOOS
 // file into a real data directory.
 var openCredentialStore = func() (credentials.CredentialStore, error) {
 	return credentials.OpenDefault(credentials.OpenOptions{
-		GOOS: credentialGOOS,
+		OS: credentialOS,
 		Dir: func() (string, error) {
 			home, err := local.ReadHome()
 			if err != nil {
