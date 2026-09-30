@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
+  `counts.tool_errors` (tool results the app flagged as errors; not known
+  for Codex), `model_tokens` (token counts split by model, so a session that
+  used several models can be costed per model), and `mcp_calls` (MCP calls
+  counted by server). Codex's `cache_write_input_tokens` now fills
+  `counts.cache_write_tokens`. Existing sessions gain the new fields on the
+  next metadata refresh; nothing is re-uploaded but the metadata.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.
@@ -28,8 +35,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). Parser version is now `0.13.0`, so existing sessions gain them on
-  the next metadata refresh.
+  paths). They arrive with parser `0.13.0`; this release ships `0.14.0`,
+  so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a

@@ -649,9 +649,9 @@ func TestTokenTotalsSaturate(t *testing.T) {
 	t.Parallel()
 	var totals tokenTotals
 	for range 1025 {
-		totals.observe(map[string]any{"input_tokens": float64(maxTokenCount)}, "")
+		totals.observe(map[string]any{"input_tokens": float64(maxTokenCount)}, "", "m")
 	}
-	if usage := totals.usage(); usage.Input == nil || *usage.Input != maxTokenCount {
+	if usage, _ := totals.usage(); usage.Input == nil || *usage.Input != maxTokenCount {
 		t.Fatalf("input = %v, want %d", usage.Input, maxTokenCount)
 	}
 }

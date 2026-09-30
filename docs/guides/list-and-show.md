@@ -133,6 +133,10 @@ counts are stored, never file paths. Sessions published by an older version
 gain them when the collector next refreshes their metadata. See
 [JSON output](../reference/json-output.md#show).
 
+From parser `0.14.0` metadata also counts reasoning tokens and tool errors,
+splits token counts by model, and counts MCP calls by server; these are for
+scripts and are not shown by `show` yet.
+
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
 checksum and identity against the metadata, and prints each prompt, the
