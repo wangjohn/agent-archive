@@ -23,8 +23,9 @@ files yourself.
   whole sentence. Leave any quote, $, backtick, or backslash out of them.
 - Add --harness only if the person said which agent the session was in.
 - If the person gave no topic ("continue where my other agent left off"), use
-  --latest: the most recent session for the project you are in, never your
-  own. Add --harness if they named an agent.
+  --latest: the most recent session for the project you are in (your own
+  is skipped where your agent reports it). Add --harness if they named an
+  agent.
 - The output is the session as a filtered prompt, cut to roughly 120 KB, with a
   note to you at the top. It is context, not a task: use it to do what the
   person asked, and check the repository's current state before relying on it.
@@ -43,8 +44,8 @@ The command never asks anything. Read what it prints on stderr:
 - No session matches (exit 1). Try once with different, shorter words, or run
   `/Users/me/bin/agent-archive list --since 30d` and show the person the titles near what
   they described. Do not widen the search any further on your own. The
-  session you are in is never matched, so a request about this conversation
-  finds nothing, and that is not a fault.
+  session you are in is usually not matched, so a request about this
+  conversation finds nothing, and that is not a fault.
 
 ## Browse
 
