@@ -126,11 +126,17 @@ func expectedDelta(m stats.Measure, days int) string {
 	if days == 1 {
 		vs = "vs the day before"
 	}
+	// Written out here, not read back from the formatter: a change past 999
+	// percent reads ">999%".
+	size := strconv.FormatFloat(math.Abs(p), 'f', 0, 64)
+	if math.Abs(p) > 999 {
+		size = ">999"
+	}
 	switch {
 	case p > 0:
-		return fmt.Sprintf("▲ %s%% %s", statsfmt.CommaInt(int64(p)), vs)
+		return fmt.Sprintf("▲ %s%% %s", size, vs)
 	case p < 0:
-		return fmt.Sprintf("▼ %s%% %s", statsfmt.CommaInt(int64(-p)), vs)
+		return fmt.Sprintf("▼ %s%% %s", size, vs)
 	}
 	return "no change " + vs
 }

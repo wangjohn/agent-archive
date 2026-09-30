@@ -47,13 +47,13 @@ func (p *statsPrinter) numbersTable() []string {
 		m     stats.Measure
 		text  func(float64) string
 	}
-	count := func(v float64) string { return statsfmt.CommaInt(roundInt(v)) }
+	count := func(v float64) string { return statsfmt.CommaInt(statsfmt.RoundInt(v)) }
 	rows := []row{
 		{"Est. spend", o.Cost.Measure, func(v float64) string { return p.estimate(v) }},
 		{"Sessions", o.Sessions, count},
 		{"Prompts", o.Prompts, count},
-		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(roundInt(v)) }},
-		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", roundInt(v), o.DaysInWindow) }},
+		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(statsfmt.RoundInt(v)) }},
+		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", statsfmt.RoundInt(v), o.DaysInWindow) }},
 	}
 	hasPrior := false
 	for _, r := range rows {

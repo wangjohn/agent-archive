@@ -75,7 +75,9 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
 - **The headline** is estimated spend, sessions and tokens. When the period
   before this one had any, spend shows its change (`▲ 18% vs prior 30d`):
   an arrow up is amber and down is green, never red, because more spend is
-  not an error. With nothing to compare against, nothing is shown, never a
+  not an error. A change of more than 999% reads `▲ >999%` (against next to
+  nothing the exact figure only measures how little there was; `--json` has it
+  exactly). With nothing to compare against, nothing is shown, never a
   "new". Under the tokens is how much of them were cache reads: most of a long
   session's tokens are the same context read again, so the count alone
   overstates the work.

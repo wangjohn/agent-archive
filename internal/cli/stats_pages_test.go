@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -709,18 +710,43 @@ func TestStatsRoundIntSaturates(t *testing.T) {
 		{0, 0}, {2.5, 3}, {-2.5, -3}, {1e18, 1e18}, {math.MaxInt64, math.MaxInt64}, {1e30, math.MaxInt64},
 		{math.Inf(1), math.MaxInt64}, {-1e30, math.MinInt64}, {math.Inf(-1), math.MinInt64}, {math.NaN(), 0},
 	} {
-		if got := roundInt(tc.in); got != tc.want {
-			t.Errorf("roundInt(%v) = %d, want %d", tc.in, got, tc.want)
+		if got := statsfmt.RoundInt(tc.in); got != tc.want {
+			t.Errorf("RoundInt(%v) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
-	// A change of more than the int64 range reads as a bound, never wraps.
+	// A change of more than the int64 range reads as the same bound as any
+	// other rise past 999%, never wraps.
 	p := newStatsPrinter(stats.Stats{}, statsView{glyphs: unicodeGlyphs})
 	huge := stats.Measure{Value: f64(1e30), Previous: f64(1), ChangePct: f64(1e32)}
-	if got := p.changeText(huge); !strings.HasPrefix(got, "▲ 9,223,372,036,854,775,807%") {
+	if got := p.changeText(huge); got != "▲ >999%" {
 		t.Errorf("a huge rise reads %q", got)
 	}
 	huge.ChangePct = f64(-1e32)
-	if got := p.changeText(huge); !strings.HasPrefix(got, "▼ 9,223,372,036,854,775,807%") {
+	if got := p.changeText(huge); got != "▼ >999%" {
 		t.Errorf("a huge fall reads %q", got)
+	}
+}
+
+// A rise from next to nothing reads ">999%" on the headline and in the
+// detail table, not as the millions of percent it is; 999% still reads as it
+// is. A rise that is only large is a number.
+func TestStatsChangeIsCappedWhereItIsArithmetic(t *testing.T) {
+	t.Parallel()
+	p := newStatsPrinter(stats.Stats{}, statsView{glyphs: unicodeGlyphs})
+	for _, tc := range []struct {
+		pct  float64
+		want string
+	}{
+		{25_219_191, "▲ >999%"}, {1000, "▲ >999%"}, {999, "▲ 999%"}, {5_900, "▲ >999%"}, {64, "▲ 64%"},
+		{-100, "▼ 100%"}, {-40, "▼ 40%"}, {0.2, "no change"},
+	} {
+		m := stats.Measure{Value: f64(10), Previous: f64(1), ChangePct: f64(tc.pct)}
+		if got := p.changeText(m); got != tc.want {
+			t.Errorf("a change of %v%% reads %q, want %q", tc.pct, got, tc.want)
+		}
+	}
+	m := stats.Measure{Value: f64(3), Previous: f64(1), ChangePct: f64(25_219_191)}
+	if got := p.deltaText(m); !strings.HasPrefix(got, "▲ >999% vs prior") {
+		t.Errorf("the headline change reads %q", got)
 	}
 }

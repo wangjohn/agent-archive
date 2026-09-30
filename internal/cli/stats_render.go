@@ -432,21 +432,6 @@ func (p *statsPrinter) spend(c stats.Cost, tokens *int64) string {
 	return p.money(*c.USD)
 }
 
-// roundInt is v rounded to a whole number, as the same int64 on every
-// platform: a float past the int64 range saturates (converting it directly is
-// left to the platform), and NaN is 0.
-func roundInt(v float64) int64 {
-	switch {
-	case math.IsNaN(v):
-		return 0
-	case v >= math.MaxInt64:
-		return math.MaxInt64
-	case v <= math.MinInt64:
-		return math.MinInt64
-	}
-	return int64(math.Round(v))
-}
-
 // count is a number with its noun, thousands separated: "1,234 sessions".
 func count(n int64, unit string) string {
 	if n == 1 {

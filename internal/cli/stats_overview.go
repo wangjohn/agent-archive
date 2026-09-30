@@ -70,10 +70,10 @@ func (p *statsPrinter) sessionsCell() headCell {
 	o := p.s.Overview
 	value, sub := p.bold("sessions unknown"), ""
 	if o.Sessions.Value != nil {
-		value = p.bold(count(roundInt(*o.Sessions.Value), "session"))
+		value = p.bold(count(statsfmt.RoundInt(*o.Sessions.Value), "session"))
 	}
 	if o.Prompts.Value != nil {
-		sub = p.dim(count(roundInt(*o.Prompts.Value), "prompt"))
+		sub = p.dim(count(statsfmt.RoundInt(*o.Prompts.Value), "prompt"))
 	}
 	return headCell{value, sub}
 }
@@ -87,7 +87,7 @@ func (p *statsPrinter) tokensCell() headCell {
 	if o.CacheShare != nil {
 		sub = p.dim(statsfmt.Percent(*o.CacheShare) + " served from cache")
 	}
-	return headCell{p.bold(statsfmt.TokenCount(roundInt(*o.Tokens.Value)) + " tokens"), sub}
+	return headCell{p.bold(statsfmt.TokenCount(statsfmt.RoundInt(*o.Tokens.Value)) + " tokens"), sub}
 }
 
 // deltaText is a measure's change against the previous period: an arrow, the
@@ -103,17 +103,18 @@ func (p *statsPrinter) deltaText(m stats.Measure) string {
 	return change + p.dim(" vs "+prior)
 }
 
-// changeText is the arrow and percentage alone, colored.
+// changeText is the arrow and percentage alone, colored. A change of more
+// than statsfmt.MaxShownChange percent reads ">999%": against next to nothing,
+// the exact figure only measures how little there was.
 func (p *statsPrinter) changeText(m stats.Measure) string {
 	if m.Value == nil || m.Previous == nil || m.ChangePct == nil || math.IsNaN(*m.ChangePct) || math.IsInf(*m.ChangePct, 0) {
 		return ""
 	}
-	pct := roundInt(*m.ChangePct)
-	switch {
-	case pct > 0:
-		return p.role(roleDeltaUp, p.g.up+" "+statsfmt.CommaInt(pct)+"%")
-	case pct < 0:
-		return p.role(roleDeltaDown, p.g.down+" "+statsfmt.CommaInt(-max(pct, -math.MaxInt64))+"%")
+	switch dir, size := statsfmt.Change(*m.ChangePct); dir {
+	case 1:
+		return p.role(roleDeltaUp, p.g.up+" "+size+"%")
+	case -1:
+		return p.role(roleDeltaDown, p.g.down+" "+size+"%")
 	}
 	return p.dim("no change")
 }
