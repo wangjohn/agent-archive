@@ -3,11 +3,13 @@ package cursorstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -126,8 +128,18 @@ func TestUserTempDir(t *testing.T) {
 		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
-		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, os.TempDir()},
+		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, fallbackTemp()},
 		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
+		{"Linux without TMPDIR", "", "linux", perUser, fallbackTemp()},
+		// A relative $TMPDIR is ignored as if unset: the snapshot root, a
+		// copy of every chat, must not depend on the working directory.
+		{"Linux relative TMPDIR", "tmp", "linux", perUser, fallbackTemp()},
+		{"Linux dot-relative TMPDIR", "./tmp", "linux", perUser, fallbackTemp()},
+		{"Linux tilde TMPDIR", "~/tmp", "linux", perUser, fallbackTemp()},
+		{"macOS relative TMPDIR, getconf failed", "tmp", "darwin", func() string { return "" }, fallbackTemp()},
+		{"macOS relative TMPDIR, getconf answers", "tmp", "darwin", perUser, "/var/folders/xy/abc/T"},
+		{"macOS absolute TMPDIR, getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
+		{"Linux absolute TMPDIR", "/var/tmp/mine", "linux", perUser, "/var/tmp/mine"},
 	} {
 		if got := userTempDir(env(tc.tmpdir), tc.goos, tc.darwin); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
@@ -191,4 +203,91 @@ func TestRemoveOwnSnapshotsRemovesThisProcessCopies(t *testing.T) {
 	if err := leaked.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestSnapshotsArePrivateUnderAnyUmask: a copy of every Cursor chat goes in
+// a directory others can neither list nor open, whatever the process's
+// umask. It matters most on Linux, where the per-user temporary directory
+// is the shared, world-listable /tmp and a container or service may run
+// with umask 0. The root and the snapshot directory are 0700, the copy and
+// its lock file 0600 (a umask only removes bits).
+func TestSnapshotsArePrivateUnderAnyUmask(t *testing.T) {
+	for _, umask := range []int{0o000, 0o022, 0o077} {
+		t.Run(fmt.Sprintf("umask %03o", umask), func(t *testing.T) {
+			root := useTempSnapshots(t)
+			path := StateDatabase(t.TempDir())
+			startWriter(t, path).put(chatRows())
+			old := syscall.Umask(umask)
+			t.Cleanup(func() { syscall.Umask(old) })
+			checked := false
+			hooks := readerHooks{afterSnapshot: func(copyPath string) {
+				checked = true
+				dir := filepath.Dir(copyPath)
+				for p, want := range map[string]fs.FileMode{
+					root:                                 0o700,
+					dir:                                  0o700,
+					copyPath:                             0o600,
+					filepath.Join(dir, snapshotLockName): 0o600,
+				} {
+					info, err := os.Stat(p)
+					if err != nil {
+						t.Errorf("%s: %v", p, err)
+						continue
+					}
+					if info.Mode().Perm() != want {
+						t.Errorf("%s mode %v, want %v", p, info.Mode().Perm(), want)
+					}
+				}
+			}}
+			if _, _, err := readComposerWith(context.Background(), path, "c", hooks); err != nil {
+				t.Fatal(err)
+			}
+			if !checked {
+				t.Fatal("no snapshot was taken, so no mode was checked")
+			}
+		})
+	}
+}
+
+// TestSnapshotRootIsRejectedWhenNotPrivate: a root others could list or
+// open, such as one made under a shared /tmp with a permissive umask by
+// something else, is refused rather than used.
+func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
+	for _, mode := range []fs.FileMode{0o755, 0o750, 0o701, 0o777} {
+		root := useTempSnapshots(t)
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(root, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := SnapshotRoot(); !errors.Is(err, errSnapshotRootNotPrivate) {
+			t.Errorf("mode %v: err %v, want errSnapshotRootNotPrivate", mode, err)
+		}
+	}
+}
+
+// With the process's own $TMPDIR relative, os.TempDir would return it; the
+// snapshot root still falls back to /tmp rather than a working-directory
+// path.
+func TestUserTempDirIgnoresARelativeProcessTMPDIR(t *testing.T) {
+	t.Setenv("TMPDIR", "relative/tmp")
+	if runtime.GOOS == "windows" {
+		t.Skip("no /tmp")
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		got := userTempDir(func(string) string { return "relative/tmp" }, goos, func() string { return "" })
+		if got != "/tmp" {
+			t.Errorf("%s: %q, want /tmp", goos, got)
+		}
+	}
+}
+
+// fallbackTemp is what userTempDir answers when neither the system nor an
+// absolute $TMPDIR says: os.TempDir when that is absolute, else /tmp.
+func fallbackTemp() string {
+	if dir := os.TempDir(); filepath.IsAbs(dir) {
+		return dir
+	}
+	return "/tmp"
 }

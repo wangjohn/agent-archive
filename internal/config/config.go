@@ -57,7 +57,8 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 }
 
 // Config is this machine's complete archive configuration. It contains no
-// secrets: R2 secrets live in Keychain (see credentials.Config.R2CredentialRef)
+// secrets: R2 secrets live in the credential store (the Keychain on macOS, a
+// private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
 	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`

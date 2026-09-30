@@ -38,6 +38,7 @@ Manage capture
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive show        Read a session's summary or transcript
+  agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -314,6 +315,80 @@ Example: agent-archive show SESSION_ID --transcript
 | `--no-pager` | no value | — |
 | `--normalized` | no value | — |
 | `--transcript` | no value | — |
+
+## agent-archive stats
+
+Guide: [See your usage](../guides/stats.md); `--json` in [JSON output](json-output.md).
+
+```text
+Usage: agent-archive stats [options]
+
+Show how you use your coding agents: tokens by day, sessions, estimated cost,
+agents, models, projects, what the tokens were spent on, and highlights, over
+the last 30 days by default, with the change from the 30 days before. Reads
+metadata only; prints numbers and names, never prompts or paths. Cost is an
+estimate at list price, not a bill, from a dated price table. Tokens and cost
+say "unknown" for sessions that record none (Cursor). A subagent's tokens
+count with its session. Sessions are placed by capture time, so imported
+sessions appear on the day they were imported.
+On a terminal of 80 columns or more, bars; narrower, a compact table. Text is
+paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
+  --days N                       Window of N calendar days ending today
+                                 (default 30; up to 3660)
+  --since DATE|TIME|AGE          Window from this local day through today (a
+                                 date, an RFC 3339 time, or an age: 7d, 12h;
+                                 a date is a local day here, not UTC as in
+                                 list). Not with --days
+  --by day|week|month|project    Also break the window down that way
+  --harness codex|claude|cursor  Only this application
+  --model NAME                   Only sessions that used this model (their
+                                 other models count too)
+  --imported                     Only sessions agent-archive backfill imported
+  --hook-captured                Only sessions hooks captured as they ran
+  --prices FILE                  Price tokens with the prices in this JSON file
+                                 (the built-in table's format), applied on top
+                                 of it; the output says so
+  --no-cache                     Download every metadata sidecar instead of
+                                 reusing the local metadata cache
+  --no-pager                     Print directly; do not page through $PAGER
+  --json                         Print a versioned document ({"schema_version":
+                                 1, ...}) of the numbers: unknown is null,
+                                 never 0. Usage errors print no JSON.
+  --html                         Write one self-contained web page (inline
+                                 styles and SVG; no script, no requests, works
+                                 in light and dark and prints) to stdout, or
+                                 to --output. Counts and names only. Not with
+                                 --json
+  --output FILE                  With --html, write the page to FILE (mode
+                                 0600, replaced in one step) instead of stdout
+  --force                        With --output, replace FILE if it is an
+                                 ordinary file that exists
+  --include-names                With --html, name the real projects, skills,
+                                 MCP servers and models the built-in price
+                                 table does not list; by default the page
+                                 says project A, skill A, MCP server A,
+                                 model A, ... so it can be shared
+Example: agent-archive stats --since 2026-09-01 --by project
+Example: agent-archive stats --html --output stats.html
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--by` | a value | — |
+| `--days` | a value | `30` |
+| `--force` | no value | — |
+| `--harness` | a value | — |
+| `--hook-captured` | no value | — |
+| `--html` | no value | — |
+| `--imported` | no value | — |
+| `--include-names` | no value | — |
+| `--json` | no value | — |
+| `--model` | a value | — |
+| `--no-cache` | no value | — |
+| `--no-pager` | no value | — |
+| `--output` | a value | — |
+| `--prices` | a value | — |
+| `--since` | a value | — |
 
 ## agent-archive feedback
 

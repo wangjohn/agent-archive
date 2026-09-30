@@ -55,17 +55,25 @@ var SnapshotTempDirForTesting string
 // AGENT_ARCHIVE_HOME (so launchd may leave TMPDIR unset) and a custom TMPDIR
 // in a shell would put a copy of every chat elsewhere and split the sweep's
 // root. Only if the system can't say is $TMPDIR used, then os.TempDir; the
-// same order, from $TMPDIR, elsewhere.
+// same order, from $TMPDIR, elsewhere. Only an absolute $TMPDIR counts.
 func userTempDir(getenv func(string) string, goos string, darwinTemp func() string) string {
 	if goos == "darwin" {
 		if dir := darwinTemp(); filepath.IsAbs(dir) {
 			return dir
 		}
 	}
-	if dir := getenv("TMPDIR"); dir != "" {
+	// A relative $TMPDIR would put the copy of every chat relative to the
+	// working directory, wherever that is, and split the sweep's root from
+	// one process to the next: it is ignored, as if unset.
+	if dir := getenv("TMPDIR"); filepath.IsAbs(dir) {
 		return dir
 	}
-	return os.TempDir()
+	// os.TempDir reads the process's own $TMPDIR, which may be the relative
+	// one just ignored (or, in a test, differ from getenv).
+	if dir := os.TempDir(); filepath.IsAbs(dir) {
+		return dir
+	}
+	return "/tmp"
 }
 
 var (
