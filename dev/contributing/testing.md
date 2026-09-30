@@ -278,7 +278,8 @@ and the switch's mentions in the docs and CHANGELOG) once every box is ticked. U
 Cloudflare account (never one with real archives), and the sandbox recipe
 below, so nothing touches your real Mac; create the bootstrap token with
 exactly the two permissions setup prints, then run `agent-archive setup` and
-choose "Create a new R2 bucket for me". Record the result of each item in the
+choose "Cloudflare R2: create a new bucket for me" (with
+`AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
 open-source acceptance record.
 
 - [ ] **Secret encoding (blocker).** The derived key
@@ -305,6 +306,11 @@ open-source acceptance record.
       bootstrap token revokes the key. Exercise the failure path (for
       example a scratch build with a wrong derivation): the key is revoked,
       and nothing is stored.
+- [ ] **Delete-token 404.** What `DELETE /accounts/{account}/tokens/{id}`
+      returns for a token that is already gone or was never created (setup
+      says "Cloudflare says that token doesn't exist" and tells the person to
+      check the dashboard, since the meaning is unconfirmed), and that a
+      second delete of the same ID behaves the same.
 - [ ] **Prefix scoping unavailable.** The runtime token reaches the whole
       bucket, and only it: it cannot read or list another bucket, create a
       bucket, or set a lifecycle rule. The docs describe bucket-level scope

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,6 +40,15 @@ type trackedAPI struct {
 	discarded bool
 	// createToken, when set, replaces CreateToken.
 	createToken func(context.Context, string, cloudflare.TokenSpec) (cloudflare.Token, error)
+	// deleteToken, when set, replaces DeleteToken; next does the real one.
+	deleteToken func(ctx context.Context, account, id string, next func() error) error
+}
+
+func (a *trackedAPI) DeleteToken(ctx context.Context, account, id string) error {
+	if a.deleteToken != nil {
+		return a.deleteToken(ctx, account, id, func() error { return a.API.DeleteToken(ctx, account, id) })
+	}
+	return a.API.DeleteToken(ctx, account, id)
 }
 
 func (a *trackedAPI) CreateToken(ctx context.Context, account string, spec cloudflare.TokenSpec) (cloudflare.Token, error) {
@@ -60,8 +70,9 @@ type guidedR2Fixture struct {
 	keychain *fakeKeychain
 	apis     []*trackedAPI
 	pauses   int
-	// createToken is set on every client the fixture makes.
+	// createToken and deleteToken are set on every client the fixture makes.
 	createToken func(context.Context, string, cloudflare.TokenSpec) (cloudflare.Token, error)
+	deleteToken func(ctx context.Context, account, id string, next func() error) error
 }
 
 func newGuidedR2Fixture(t *testing.T) *guidedR2Fixture {
@@ -74,7 +85,7 @@ func newGuidedR2Fixture(t *testing.T) *guidedR2Fixture {
 	f.env.Keychain = func() (credentials.CredentialStore, error) { return g.keychain, nil }
 	f.env.Pause = func(time.Duration) { g.pauses++ }
 	f.env.Cloudflare = func(token string) cloudflare.API {
-		api := &trackedAPI{createToken: g.createToken, API: cloudflare.New(token, cloudflare.Options{
+		api := &trackedAPI{createToken: g.createToken, deleteToken: g.deleteToken, API: cloudflare.New(token, cloudflare.Options{
 			BaseURL: g.cf.URL + "/client/v4",
 			Sleep:   func(context.Context, time.Duration) error { return nil },
 		})}
@@ -1162,7 +1173,8 @@ func TestGuidedR2UnreadableTokenAnswerNamesTheToken(t *testing.T) {
 }
 
 // A token answer with an ID and no value means the token exists: it is
-// revoked by its ID, and a token that is already gone counts as revoked.
+// revoked by its ID; a 404 there is reported as Cloudflare saying the token
+// does not exist, with what to check.
 func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
@@ -1174,7 +1186,7 @@ func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 			deleted = append(deleted, r.Path)
 		}
 	}
-	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/tokens/abc123") || !strings.Contains(out, "was already gone") {
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/tokens/abc123") || !strings.Contains(out, "Cloudflare says that token doesn't exist.") || !strings.Contains(out, `named "`) {
 		t.Fatalf("deleted %v\n%s", deleted, out)
 	}
 }
@@ -1202,5 +1214,244 @@ func TestGuidedR2SitsBeforeTheInstructions(t *testing.T) {
 	out := g.run(t, g.happy(), 0)
 	if !strings.Contains(out, "  3) Cloudflare R2: create a new bucket for me\n  4) Show setup instructions\n") {
 		t.Fatalf("menu:\n%s", out)
+	}
+}
+
+// signalStub stands in for Env.Interrupts and counts how many signal
+// handlers are installed and removed.
+type signalStub struct {
+	ch            chan os.Signal
+	starts, stops atomic.Int32
+}
+
+func newSignalStub() *signalStub { return &signalStub{ch: make(chan os.Signal, 4)} }
+
+func (s *signalStub) interrupts() (<-chan os.Signal, func()) {
+	s.starts.Add(1)
+	return s.ch, func() { s.stops.Add(1) }
+}
+
+func (s *signalStub) active() int32 { return s.starts.Load() - s.stops.Load() }
+
+// probeReader gives setup one answer per Read, and tells onRead each time
+// setup is waiting for input, as a terminal would block.
+type probeReader struct {
+	lines  []string
+	onRead func()
+}
+
+func (r *probeReader) Read(p []byte) (int, error) {
+	r.onRead()
+	if len(r.lines) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.lines[0]+"\n")
+	r.lines = r.lines[1:]
+	return n, nil
+}
+
+// No signal handler is installed while setup waits for the person: at every
+// prompt Ctrl-C keeps its ordinary effect, including "Another bucket name".
+// Every handler that was installed is removed again.
+func TestGuidedR2AsksForANewNameOutsideTheSignalHandler(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Buckets["taken-name"] = ""
+	sig := newSignalStub()
+	g.env.Interrupts = sig.interrupts
+	g.env.IsTerminal = func(any) bool { return true }
+	var reads, activeAtRead atomic.Int32
+	answers := append(append([]string{"", "r2-create"}, askToken...), "taken-name", "n", "", "other-name", "")
+	in := &probeReader{lines: answers, onRead: func() {
+		reads.Add(1)
+		activeAtRead.Add(sig.active())
+	}}
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, in, &out, &out, g.env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if !strings.Contains(out.String(), "Another bucket name") {
+		t.Fatalf("no second name asked for:\n%s", &out)
+	}
+	if reads.Load() < 5 || activeAtRead.Load() != 0 {
+		t.Fatalf("%d reads, %d of them with a signal handler installed", reads.Load(), activeAtRead.Load())
+	}
+	if sig.starts.Load() < 2 || sig.stops.Load() != sig.starts.Load() {
+		t.Fatalf("%d handlers installed, %d removed", sig.starts.Load(), sig.stops.Load())
+	}
+	if got := g.savedConfig(t).Storage.Bucket; got != "other-name" {
+		t.Fatalf("bucket %q", got)
+	}
+}
+
+// A signal while the revoke request is out is answered, not ignored: setup
+// finishes the revoke first.
+func TestGuidedR2SignalDuringRevokeIsAnswered(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	sig := newSignalStub()
+	g.env.Interrupts = sig.interrupts
+	g.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return &ctxStore{onList: func() { sig.ch <- syscall.SIGINT }}, nil
+	}
+	out := &syncBuffer{}
+	g.deleteToken = func(_ context.Context, _, _ string, next func() error) error {
+		sig.ch <- syscall.SIGINT
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(out.String(), "Still revoking"); {
+			if time.Now().After(deadline) {
+				t.Error("the second signal was not answered")
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return next()
+	}
+	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "", "n", "")...)), out, out, g.env)
+	if code != 128+int(syscall.SIGINT) {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	text := out.String()
+	if len(g.cf.Live()) != 0 || !strings.Contains(text, "Revoking the key that wasn't used") || !strings.Contains(text, "Still revoking the key's token; please wait.") || !strings.Contains(text, "Revoked the key that wasn't used.") {
+		t.Fatalf("live %d\n%s", len(g.cf.Live()), text)
+	}
+}
+
+// With guided creation switched on, r is still r2, and a key that begins
+// another key still needs its whole name.
+func TestMatchOptionPrefersTheKeyThatStartsTheOthers(t *testing.T) {
+	t.Parallel()
+	options := []option{{"r2", "R2"}, {"s3", "S3"}, {"r2-create", "Create"}, {"help", "Help"}}
+	for answer, want := range map[string]string{"r": "r2", "r2": "r2", "R2": "r2", "r2-": "r2-create", "r2-c": "r2-create", "r2-create": "r2-create", "s": "s3", "h": "help"} {
+		if got, ok := matchOption(answer, options); !ok || got != want {
+			t.Errorf("%q chose %q (%v), want %q", answer, got, ok, want)
+		}
+	}
+	for _, answer := range []string{"", "x", "r3", "r2-x"} {
+		if got, ok := matchOption(answer, options); ok {
+			t.Errorf("%q chose %q", answer, got)
+		}
+	}
+	// Without a key that starts the others, a shared start is still ambiguous.
+	if got, ok := matchOption("a", []option{{"ab", ""}, {"ac", ""}}); ok {
+		t.Errorf("ambiguous prefix chose %q", got)
+	}
+}
+
+// stageStorageSecret journals the reference before it writes the Keychain,
+// and lists it for cleanup.
+func TestStageStorageSecretJournalsBeforeTheKeychain(t *testing.T) {
+	t.Parallel()
+	var order []string
+	var journaled []string
+	keychain := &hookKeychain{fakeKeychain: newFakeKeychain()}
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+	draft := &setupDraft{Version: draftFormat}
+	save := func() error {
+		order = append(order, "save")
+		journaled = append([]string(nil), draft.StagedRefs...)
+		return nil
+	}
+	var atKeychain []string
+	keychain.onSave = func(ref string) {
+		order = append(order, "keychain")
+		atKeychain = append([]string(nil), journaled...)
+		if !slices.Contains(atKeychain, ref) {
+			t.Errorf("the draft on disk lists %v, not %s, when the Keychain is written", atKeychain, ref)
+		}
+	}
+	cfg := credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}
+	secret := credentials.R2Credentials{AccessKeyID: "id", SecretAccessKey: "secret"}
+	if err := stageStorageSecret(draft, save, env, &cfg, secret); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "save,keychain" {
+		t.Fatalf("order %v", order)
+	}
+	if !strings.HasPrefix(cfg.R2CredentialRef, "setup-") || draft.CredentialRef != cfg.R2CredentialRef || !slices.Equal(draft.StagedRefs, []string{cfg.R2CredentialRef}) || draft.Config.Storage.R2CredentialRef != cfg.R2CredentialRef {
+		t.Fatalf("cfg %+v, draft ref %q, staged %v", cfg, draft.CredentialRef, draft.StagedRefs)
+	}
+	if got, err := keychain.Load(context.Background(), cfg.R2CredentialRef); err != nil || got != secret {
+		t.Fatalf("stored %+v (%v)", got, err)
+	}
+}
+
+func TestStageStorageSecretFailures(t *testing.T) {
+	t.Parallel()
+	secret := credentials.R2Credentials{AccessKeyID: "id", SecretAccessKey: "secret"}
+	t.Run("journal fails", func(t *testing.T) {
+		t.Parallel()
+		keychain := &hookKeychain{fakeKeychain: newFakeKeychain(), onSave: func(string) { t.Error("the Keychain was written after the journal failed") }}
+		env := testEnv(t, t.TempDir(), time.Now())
+		env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+		cfg := credentials.Config{Provider: credentials.ProviderR2}
+		err := stageStorageSecret(&setupDraft{}, func() error { return errors.New("disk full") }, env, &cfg, secret)
+		if err == nil || !strings.Contains(err.Error(), "disk full") {
+			t.Fatalf("error %v", err)
+		}
+	})
+	t.Run("Keychain fails", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t, t.TempDir(), time.Now())
+		env.Keychain = func() (credentials.CredentialStore, error) { return saveFailsKeychain{newFakeKeychain()}, nil }
+		cfg := credentials.Config{Provider: credentials.ProviderR2}
+		draft := &setupDraft{}
+		err := stageStorageSecret(draft, func() error { return nil }, env, &cfg, secret)
+		if err == nil || !strings.Contains(err.Error(), "save staged credential") || len(draft.StagedRefs) != 1 {
+			t.Fatalf("error %v, staged %v", err, draft.StagedRefs)
+		}
+	})
+	t.Run("Keychain unavailable", func(t *testing.T) {
+		t.Parallel()
+		env := testEnv(t, t.TempDir(), time.Now())
+		env.Keychain = func() (credentials.CredentialStore, error) { return nil, errors.New("none") }
+		cfg := credentials.Config{Provider: credentials.ProviderR2}
+		if err := stageStorageSecret(&setupDraft{}, func() error { return nil }, env, &cfg, secret); err == nil || !strings.Contains(err.Error(), "open Keychain") {
+			t.Fatalf("error %v", err)
+		}
+	})
+}
+
+// hookKeychain tells onSave each key it is asked to store.
+type hookKeychain struct {
+	*fakeKeychain
+	onSave func(ref string)
+}
+
+func (k *hookKeychain) Save(ctx context.Context, ref string, value credentials.R2Credentials) error {
+	if k.onSave != nil {
+		k.onSave(ref)
+	}
+	return k.fakeKeychain.Save(ctx, ref, value)
+}
+
+// When the last save of the storage step fails, after the key is staged, the
+// new token is revoked: the key is not in use, so nothing may be left live.
+func TestGuidedR2RevokesTheTokenWhenTheDraftSaveFailsAfterStaging(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(strings.Join(append(append([]string{guidedR2Choice}, askToken...), "", "n", ""), "\n")+"\n"), &out)
+	draft := setupDraft{Version: draftFormat, Step: 1, Config: config.Config{Harnesses: []string{"claude"}}}
+	saves := 0
+	save := func() error {
+		saves++
+		if saves == 2 {
+			// The first save journals the staged key; the second records that
+			// storage is done.
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	var verified credentials.Config
+	_, err := advanceSetupDraft(p, &draft, save, draftPath(g.home), g.home, g.userHome, g.env, nil, &verified, false)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("error %v\n%s", err, &out)
+	}
+	if len(g.cf.Tokens()) != 1 || len(g.cf.Live()) != 0 || g.cf.Calls(cloudflaretest.RouteDeleteToken) != 1 {
+		t.Fatalf("tokens %d, live %d\n%s", len(g.cf.Tokens()), len(g.cf.Live()), &out)
+	}
+	if !strings.Contains(out.String(), "Setup couldn't store the new key") || strings.Contains(out.String(), "not saved anywhere") || !g.apis[0].discarded {
+		t.Fatalf("output:\n%s", &out)
 	}
 }

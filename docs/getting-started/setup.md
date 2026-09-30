@@ -95,7 +95,9 @@ already have a profile with credentials, and R2 otherwise.
   [privacy](../security/privacy.md#guided-r2-bucket-creation) what happens to
   the token. If something fails, setup says what to fix, and you can try
   again with the same bucket, choose another storage option, or stop. A
-  Ctrl-C while it creates the key stops it and revokes that key's token.
+  Ctrl-C while it creates and checks the key stops it and revokes that key's
+  token; a Ctrl-C after the key exists, while setup stores it, leaves that
+  key's token in your account (its name was printed when it was created).
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
@@ -124,8 +126,8 @@ already have a profile with credentials, and R2 otherwise.
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
 
-Setup checks the connection in two steps. (After **Create a new R2 bucket
-for me** setup has already made this check on the new key before storing it,
+Setup checks the connection in two steps. (After **Cloudflare R2: create a new
+bucket for me** setup has already made this check on the new key before storing it,
 so a key that doesn't work is revoked at once; the check then runs again on
 the stored key.) First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or

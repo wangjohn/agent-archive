@@ -438,8 +438,9 @@ uses. Setup treats it accordingly:
   seconds setup takes. It is never written to the setup draft, the setup
   journal, the configuration, the Keychain, a log, or diagnostics, never put in
   the environment of a program setup starts, and never sent to the collector or
-  the bucket. Setup drops it when the flow ends, however it ends. (Go cannot
-  guarantee that no copy lingers in process memory until the process exits.)
+  the bucket. Setup drops it as soon as the key is stored, or when the flow
+  fails or stops before that. (Go cannot guarantee that no copy lingers in
+  process memory until the process exits.)
   A `CLOUDFLARE_API_TOKEN` you set yourself stays in your shell's environment,
   as you set it.
 - The key it stores is a separate token that can read, write, and list objects
@@ -449,9 +450,13 @@ uses. Setup treats it accordingly:
 - Setup uses the token to change only what it just created: the new bucket
   and a token for it (which it revokes again if the key fails its check or
   can't be stored). It sets no lifecycle rule.
-- If Ctrl-C stops setup while it creates the key, setup revokes that token
-  before it exits. The token stays in memory after the key passes its check,
-  only until setup has stored the key.
+- If Ctrl-C stops setup while it creates and checks the key, setup revokes
+  that token before it exits (a second Ctrl-C during the revoke is answered
+  with "still revoking"). A Ctrl-C after the key exists, while setup reads the
+  bucket's public-access settings and stores the key, is not caught: it leaves
+  that key's token in your account, and its name was printed when it was
+  created, so you can revoke it in the dashboard. The bootstrap token stays in
+  memory until the key is stored.
 
 **What "checked at setup" means.** With the bootstrap token, setup reads two
 things about the new bucket once: whether its public `r2.dev` URL is on, and

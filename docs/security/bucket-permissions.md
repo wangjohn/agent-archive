@@ -94,7 +94,7 @@ the bucket has no public `r2.dev` URL or custom domain.
 
 ### If setup creates the bucket (experimental)
 
-With **Create a new R2 bucket for me**, setup makes this key itself. It
+With **Cloudflare R2: create a new bucket for me**, setup makes this key itself. It
 creates an account API token whose one policy grants **Workers R2 Storage
 Bucket Item Write** on that one bucket: it can read, write, and list objects
 there, and it can't manage the bucket or reach any other bucket. The token has no expiry, since an expired key would silently

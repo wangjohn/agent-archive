@@ -9,6 +9,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -77,6 +79,12 @@ func storageMenuFor(env Env) []option {
 // asked for another storage option, or gave nothing to create one with.
 var errChooseStorageAgain = errors.New("choose another storage option")
 
+// errNeedAnotherName is what an attempt returns when the bucket name it has
+// cannot be used and only the person can pick another: the prompt is asked by
+// createUntilVerified, outside the attempt's signal handling, so Ctrl-C at it
+// ends setup as it does at any other prompt.
+var errNeedAnotherName = errors.New("choose another bucket name")
+
 // guidedInterruptedError is what guided creation returns when a signal
 // stopped it, so setup exits with the shell's status for the signal.
 type guidedInterruptedError struct{ sig os.Signal }
@@ -112,6 +120,11 @@ type r2Creator struct {
 	// token and tokenName are the key's token, once one passed its check.
 	token     cloudflare.Token
 	tokenName string
+	// revoking is set while a revoke request is out, so a signal that
+	// arrives then is answered instead of ignored. printMu keeps that answer
+	// from interleaving with the revoke's own output.
+	revoking atomic.Bool
+	printMu  sync.Mutex
 }
 
 // r2Handoff is a finished creation waiting for setup to stage its key. The
@@ -154,6 +167,9 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	if err != nil {
 		return credentials.Config{}, none, false, err
 	}
+	// From here to staging, in setup.go, no signal handler is installed: a
+	// Ctrl-C then ends setup with the key's token still live, and its name was
+	// printed when it was created (docs/security/privacy.md says so).
 	c.reportPublicAccess()
 	kept = true
 	p.guided = &r2Handoff{c: c}
@@ -416,6 +432,14 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			c.reportBucketLeftBehind()
 			return credentials.R2Credentials{}, err
 		}
+		if errors.Is(err, errNeedAnotherName) {
+			name, e := c.askBucketName("Another bucket name", "")
+			if e != nil {
+				return credentials.R2Credentials{}, e
+			}
+			c.bucket.Name, c.defaultName = name, false
+			continue
+		}
 		retry := "Try again"
 		if c.bucketCreated {
 			retry = "Try again with the same bucket (" + c.bucket.Name + ")"
@@ -456,11 +480,19 @@ func (c *r2Creator) attempt() (credentials.R2Credentials, error) {
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		select {
-		case sig := <-interrupts:
-			caught <- sig
-			cancel()
-		case <-done:
+		first := true
+		for {
+			select {
+			case sig := <-interrupts:
+				c.stillRevoking()
+				if first {
+					first = false
+					caught <- sig
+					cancel()
+				}
+			case <-done:
+				return
+			}
 		}
 	}()
 	key, err := c.attemptWith(ctx)
@@ -498,6 +530,16 @@ func (c *r2Creator) attemptWith(ctx context.Context) (credentials.R2Credentials,
 	}
 	c.token, c.tokenName = token, name
 	return key, nil
+}
+
+// stillRevoking answers a signal that arrives while a revoke request is out:
+// stopping now would leave the token, so setup finishes the revoke first.
+func (c *r2Creator) stillRevoking() {
+	c.printMu.Lock()
+	defer c.printMu.Unlock()
+	if c.revoking.Load() {
+		terminal.Println(c.p.out, "Still revoking the key's token; please wait.")
+	}
 }
 
 // answerLost reports whether err leaves it unknown whether Cloudflare did
@@ -546,11 +588,7 @@ func (c *r2Creator) createBucket(ctx context.Context) error {
 		default:
 			terminal.Printf(p.out, "The name %s is taken in your Cloudflare account.\n", c.bucket.Name)
 		}
-		name, e := c.askBucketName("Another bucket name", "")
-		if e != nil {
-			return e
-		}
-		c.bucket.Name, c.defaultName = name, false
+		return errNeedAnotherName
 	}
 }
 
@@ -671,19 +709,26 @@ func (c *r2Creator) checkKey(ctx context.Context, key credentials.R2Credentials)
 
 // revoke deletes a token whose key will not be used, so no working
 // credential is left behind, in a request of its own (a canceled setup
-// still revokes). A token that is already gone counts as revoked. If
-// Cloudflare refuses, the person is told which token to remove.
+// still revokes). A 404 is reported as Cloudflare saying the token does not
+// exist, with what to check, because what Cloudflare means by it is
+// unconfirmed. If Cloudflare refuses, the person is told which token to
+// remove.
 func (c *r2Creator) revoke(ctx context.Context, token cloudflare.Token, name string) {
 	p := c.p
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
+	terminal.Println(p.out, "Revoking the key that wasn't used…")
+	c.revoking.Store(true)
 	err := c.api.DeleteToken(ctx, c.account, token.ID)
+	c.printMu.Lock()
+	c.revoking.Store(false)
+	c.printMu.Unlock()
 	var apiErr *cloudflare.Error
 	switch {
 	case err == nil:
 		terminal.Println(p.out, p.style.okMark()+" Revoked the key that wasn't used.")
 	case errors.As(err, &apiErr) && apiErr.NotFound():
-		terminal.Println(p.out, p.style.okMark()+" The key that wasn't used was already gone.")
+		p.note("Cloudflare says that token doesn't exist.", "If the token named \""+name+"\" still appears in the dashboard, revoke it there (Manage account > Account API tokens).")
 	default:
 		p.warn("Couldn't revoke the key that wasn't used. "+explainCloudflare(err, "The token needs the "+cloudflare.PermissionTokensWrite+" permission to revoke tokens."),
 			"Revoke the API token named \""+name+"\" in the dashboard (Manage account > Account API tokens).")
