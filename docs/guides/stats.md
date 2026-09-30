@@ -407,9 +407,9 @@ daily chart answers a hover with that day's numbers, and the chart has a "Show
 as a table" view (sessions, spend and tokens per day) for screen readers and
 keyboards; every other number is in a table or a sentence.
 
-The by-project list shows only the top few projects, dearest first among those
-shown, and says how many more there are (it does not say they cost less or
-more); `--by project` lists more of them.
+The by-project list shows the top few projects by estimated spend, dearest
+first (one that could not be priced last), and says how many more there are;
+`--by project` lists more of them. The same order and cut are in `--json`.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
   only; change that when you share it) and says so on stderr. The page is

@@ -226,12 +226,26 @@ at the top level. Read the rules below before using a number:
   cache counts; when it is present it equals `composition.cache_read.share`.
 - **Top lists.** `projects`, `skills` and `mcp.servers` keep the top few rows
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
-  there are. `models` lists every model family. `display_skills` is `skills`
+  there are. `projects` is ranked by estimated cost before it is cut, so the
+  top five are the five that cost the most, not the five with the most tokens
+  (see below). `models` lists every model family. `display_skills` is `skills`
   for showing to a person: a plugin prefix is stripped from each name
   (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
   that then share a name are one row, counted in the sessions that used any
   of them (a session that used both counts once); `total_display_skills` is
   its length before the cut. `skills` keeps the names as recorded.
+- **Project order.** `projects` (and `groups.rows` with `--by project`) are
+  ordered by `cost.usd`, the highest first, and only then cut to the top
+  five, so a project left out never cost more than one listed. A project
+  whose cost is partial (`cost.partial`) is ordered on the `usd` it has; a
+  project with no priced cost (`usd` is `null`) comes after every project
+  that has one. Projects of equal cost, and those with none, are ordered by
+  `tokens` (highest first, `null` last), then `sessions` (highest first),
+  then `name`, so the order does not depend on the order sessions were read
+  in. Until this change both lists were ordered by tokens, which cache reads
+  dominate, so a cheaper project with more cache reads could push a dearer one
+  out of the top five; the fields and `schema_version` (1) are unchanged, only
+  the order and which five are kept.
 - **`heads_up`** is what deserves a second look, at most three notes in
   priority order, `[]` when nothing does. Each note is data only, with a
   `kind` that says which fields it has; the words are the reader's:
@@ -252,8 +266,8 @@ at the top level. Read the rules below before using a number:
 - **`groups`** is present with `--by day|week|month|project`: `by` and
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
-  or by tokens for `project`. `projects` keeps only the top few of
-  `total_projects`.
+  or by estimated cost for `project` (in the order of `projects`, above).
+  `projects` keeps only the top few of `total_projects`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server

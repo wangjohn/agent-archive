@@ -145,9 +145,13 @@ type Stats struct {
 	Overview  Overview   `json:"overview"`
 	Agents    []Agent    `json:"agents"`
 	Models    []ModelRow `json:"models"`
-	Projects  []Project  `json:"projects"`
+	// Projects are ranked by estimated cost, dearest first (a partly priced
+	// project on the cost it has; a project with no priced cost after every
+	// one that has one; ties by tokens, sessions, then name), and cut to the
+	// top few after that, so a project left out never cost more than one kept.
+	Projects []Project `json:"projects"`
 	// TotalProjects is how many distinct projects the window has; Projects
-	// keeps the top few.
+	// keeps the top few of them.
 	TotalProjects int `json:"total_projects"`
 	// Composition is what the tokens were spent on. Nil when no session in
 	// the window reported token counts.
@@ -499,9 +503,9 @@ type MonthRank struct {
 // Groups is the window broken down by Options.By.
 type Groups struct {
 	By Grouping `json:"by"`
-	// Rows are chronological for day, week and month, and by tokens for
-	// project. Only groups with sessions appear. A week or month cut by the
-	// window's edge covers only part of it.
+	// Rows are chronological for day, week and month, and by estimated cost
+	// for project (ranked as Stats.Projects is). Only groups with sessions
+	// appear. A week or month cut by the window's edge covers only part of it.
 	Rows []Group `json:"rows"`
 }
 
