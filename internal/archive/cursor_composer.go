@@ -51,6 +51,37 @@ const (
 // as they do any other source they cannot safely filter.
 var errCursorFormatUnknown = fmt.Errorf("cursor composer format version is not known: %w", ErrUnsafeSourceFormat)
 
+// cursorChatNameKey is the key a Cursor chat's name is written under, on
+// the session record that starts a cursor-composer transcript (filter 13).
+const cursorChatNameKey = "name"
+
+// SameNativeRecord reports whether two filtered records at the same position
+// of a transcript in format are the same evidence: equal, or, for a
+// cursor-composer transcript, session records that differ only in the chat's
+// name. Cursor names a chat after its first messages, and the person can
+// rename it; the name is a label the latest one replaces, not evidence a
+// later snapshot must keep, so naming a chat is not a rewrite of it.
+func SameNativeRecord(format string, previous, candidate map[string]any) bool {
+	if reflect.DeepEqual(previous, candidate) {
+		return true
+	}
+	if format != cursorComposerFormat || previous["type"] != "session" || candidate["type"] != "session" {
+		return false
+	}
+	return reflect.DeepEqual(withoutKey(previous, cursorChatNameKey), withoutKey(candidate, cursorChatNameKey))
+}
+
+// withoutKey is a shallow copy of record without key.
+func withoutKey(record map[string]any, key string) map[string]any {
+	out := make(map[string]any, len(record))
+	for k, v := range record {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // cursorComposerConsumed are the composerData keys the filter reads for
 // structure, identity, and the chat's name. They are not retained as fields
 // of their own, but nothing they hold is lost either, so they are not
@@ -245,7 +276,7 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 			session["timestamp"] = createdAt.Format(time.RFC3339Nano)
 		}
 		if chatName != "" {
-			session["name"] = chatName
+			session[cursorChatNameKey] = chatName
 		}
 		for _, record := range append([]map[string]any{session}, messages...) {
 			if err := f.retain(record); err != nil {

@@ -432,8 +432,10 @@ func validBranch(branch string) string {
 	return branch
 }
 
-// parsePRNumber reads a pull request number written as decimal digits. False
-// when it is not all digits or is outside 1 to maxPRNumber.
+// parsePRNumber reads a pull request number written as decimal digits, as a
+// pull request URL has it, for filter 13's pr-link. False when it is not all
+// digits or is outside 1 to maxPRNumber. (pullRequestEvent keeps its own
+// reading, which also takes a leading "+" from an MCP call's argument.)
 func parsePRNumber(digits string) (int, bool) {
 	if digits == "" || strings.Trim(digits, "0123456789") != "" {
 		return 0, false
@@ -455,8 +457,8 @@ func splitRepository(repository string) (owner, name string, ok bool) {
 // pullRequestEvent builds a pull request event from a parsed URL's parts,
 // rebuilding the URL from them. False when a part is out of shape.
 func pullRequestEvent(kind GitEventKind, host, owner, name, number string) (GitEvent, bool) {
-	n, ok := parsePRNumber(number)
-	if !ok || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
+	n, err := strconv.Atoi(number)
+	if err != nil || n < 1 || n > maxPRNumber || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
 		return GitEvent{}, false
 	}
 	event := GitEvent{Kind: kind, Repository: owner + "/" + name, PRNumber: n}

@@ -42,11 +42,10 @@ below. Nothing else that was dropped is kept.
   passes the same value rules as a prompt. It is no longer listed as the
   omitted key `chat.name`. A chat Cursor has not named, or whose `name` is
   empty, has no `name`; a `name` that is not a string is still reported as
-  `chat.name` in the gap. The session record is the first record, so a chat
-  named (or renamed) after an earlier snapshot of it was taken no longer
-  extends that snapshot, and the collector replaces the snapshot and records
-  a `cursor_chat_rewritten` gap, as it does for any change to an earlier
-  record.
+  `chat.name` in the gap. The session record is the first record; a chat
+  named (or renamed) after an earlier snapshot of it was taken is
+  republished with its new name, and the collector does not count that as
+  Cursor changing the chat's messages (no `cursor_chat_rewritten` gap).
 
 Still dropped: Claude Code's `agent-name` (a copy of the custom title) and
 `last-prompt` (derivable from the turns), as unknown record types. The keys

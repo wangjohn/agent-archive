@@ -16,9 +16,14 @@ import (
 // Neither is admitted through allowedKeys, which would admit the same key
 // names on every record. Each is rebuilt from typed values, as a
 // compact_boundary record is, and only then sanitized.
+//
+// claudeLabelKind is the type of such a record.
+type claudeLabelKind string
+
+// The two record types filter 13 keeps through claudeLabelRecord.
 const (
-	claudeCustomTitleType = "custom-title"
-	claudePRLinkType      = "pr-link"
+	claudeCustomTitleType claudeLabelKind = "custom-title"
+	claudePRLinkType      claudeLabelKind = "pr-link"
 )
 
 // claudeLabelKeys are the keys a rebuilt custom-title or pr-link record
@@ -30,7 +35,7 @@ var claudeLabelKeys = map[string]bool{
 
 // claudeLabelPayloadKeys are the keys each record type keeps besides the
 // identity keys; claudeLabelRecord checks their values below.
-var claudeLabelPayloadKeys = map[string]map[string]bool{
+var claudeLabelPayloadKeys = map[claudeLabelKind]map[string]bool{
 	claudeCustomTitleType: {"customTitle": true},
 	claudePRLinkType:      {"prNumber": true, "prRepository": true, "prUrl": true},
 }
@@ -42,7 +47,11 @@ var claudeLabelIdentityKeys = map[string]bool{"sessionId": true, "timestamp": tr
 // isClaudeLabelType reports whether a Claude Code record type is one filter 13
 // keeps through claudeLabelRecord.
 func isClaudeLabelType(kind string) bool {
-	return kind == claudeCustomTitleType || kind == claudePRLinkType
+	switch claudeLabelKind(kind) {
+	case claudeCustomTitleType, claudePRLinkType:
+		return true
+	}
+	return false
 }
 
 // claudeLabelRecord rebuilds a custom-title or pr-link record from what the
@@ -61,8 +70,9 @@ func isClaudeLabelType(kind string) bool {
 //
 // Both keep type, and sessionId and timestamp when they are strings.
 func claudeLabelRecord(raw map[string]any, omit func(string)) (map[string]any, bool) {
-	kind, _ := raw["type"].(string)
-	out := map[string]any{"type": kind}
+	rawKind, _ := raw["type"].(string)
+	kind := claudeLabelKind(rawKind)
+	out := map[string]any{"type": rawKind}
 	for _, key := range sortedKeys(raw) {
 		value := raw[key]
 		switch {
@@ -130,17 +140,19 @@ func claudePRURL(owner, name string, number int) string {
 // claudeLabelRecord checked them. The value rules can change a string (a
 // credential-shaped one is replaced) or drop it; a pull request whose
 // repository was rewritten no longer says which one it is. prUrl is dropped
-// when it changed.
-func claudeLabelSurvived(label, safe map[string]any) bool {
-	if label["type"] == claudeCustomTitleType {
+// when it changed, and its name reported through omit, as it is when
+// claudeLabelRecord drops it.
+func claudeLabelSurvived(label, safe map[string]any, omit func(string)) bool {
+	if label["type"] == string(claudeCustomTitleType) {
 		title, ok := safe["customTitle"].(string)
 		return ok && strings.TrimSpace(title) != ""
 	}
 	if safe["prRepository"] != label["prRepository"] || safe["prNumber"] != label["prNumber"] {
 		return false
 	}
-	if link, present := safe["prUrl"]; present && link != label["prUrl"] {
+	if link, present := label["prUrl"]; present && safe["prUrl"] != link {
 		delete(safe, "prUrl")
+		omit("prUrl")
 	}
 	return true
 }
@@ -156,7 +168,7 @@ func filterClaudeLabel(raw map[string]any, lineNo int, addGap func(string, int, 
 	}
 	state := sanitizeState{record: lineNo, addGap: addGap, extraAllowed: claudeLabelKeys, omittedKey: omit}
 	safe, keep := sanitizeObject(label, &state)
-	if !keep || !claudeLabelSurvived(label, safe) {
+	if !keep || !claudeLabelSurvived(label, safe, omit) {
 		addGap("unsupported_value_omitted", lineNo, "record omitted")
 		return nil, nil
 	}

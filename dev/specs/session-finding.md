@@ -674,12 +674,15 @@ guide. Live check on the owner's Mac:
   `unknown_field_omitted` gap, like any other dropped key.
 - PR 2: Cursor's `name` is written as `name` on the `session` record, the
   first record of the chat. That record is part of what a later snapshot must
-  extend, so a chat named or renamed after an earlier snapshot is replaced
-  and gets one `cursor_chat_rewritten` gap (the collector's existing
-  handling of a changed earlier record). No collector change was made; if
-  the gap on a first naming is noise, the collector could ignore a change
-  that only adds `name` to the session record.
-- PR 2: `parsePRNumber` and `splitRepository` were extracted from
-  `pullRequestEvent` in `git_activity.go` so the filter and `git_activity`
-  share one definition of a repository and a number; behaviour of
-  `git_activity` is unchanged.
+  extend, and Cursor names a chat after its first messages, so the collector's
+  prefix check (`nativeEvidenceExtends`) compares a Cursor session record
+  without its name (`archive.SameNativeRecord`). Otherwise nearly every
+  Cursor chat would get a `cursor_chat_rewritten` gap ("Cursor changed
+  messages") for being named. A chat named or renamed later is republished
+  with its new name and no gap.
+- PR 2: `splitRepository` and `parsePRNumber` in `git_activity.go` are the
+  filter's reading of a repository (`repoPartPattern`, as `git_activity`
+  requires) and a number (digits only, 1 to `maxPRNumber`, as a pull
+  request URL has it). `pullRequestEvent` keeps its own number check, which
+  also takes a leading `+` from an MCP call's argument, so `git_activity`'s
+  output is unchanged.

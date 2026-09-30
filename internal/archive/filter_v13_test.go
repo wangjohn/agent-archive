@@ -368,7 +368,7 @@ func TestFilterV13NewRecordsDoNotChangeDerivedMetadata(t *testing.T) {
 	t.Parallel()
 	raw := string(fixture(t, "claude-session-name.jsonl"))
 	var without []string
-	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(raw), "\n") {
 		if !strings.Contains(line, `"pr-link"`) && !strings.Contains(line, `"custom-title"`) {
 			without = append(without, line)
 		}
@@ -425,5 +425,48 @@ func TestFilterChangelogDescribesTheCurrentVersion(t *testing.T) {
 		if !strings.Contains(thirteen, want) {
 			t.Errorf("the version 13 section does not mention %q", want)
 		}
+	}
+}
+
+// A prUrl the value rules changed or dropped is left out and reported by name,
+// as one claudeLabelRecord drops is; the record itself is kept.
+func TestFilterV13PRURLChangedBySanitizingIsReported(t *testing.T) {
+	t.Parallel()
+	label := map[string]any{"type": "pr-link", "prNumber": float64(5), "prRepository": "example-org/widget-tools", "prUrl": "https://github.com/example-org/widget-tools/pull/5"}
+	for name, safeURL := range map[string]any{"changed": "https://github.com/[REDACTED]/pull/5", "dropped": nil} {
+		safe := map[string]any{"type": "pr-link", "prNumber": float64(5), "prRepository": "example-org/widget-tools"}
+		if safeURL != nil {
+			safe["prUrl"] = safeURL
+		}
+		var omitted []string
+		if !claudeLabelSurvived(label, safe, func(key string) { omitted = append(omitted, key) }) {
+			t.Fatalf("%s: the record was dropped", name)
+		}
+		if _, kept := safe["prUrl"]; kept || strings.Join(omitted, " ") != "prUrl" {
+			t.Errorf("%s: record %#v, omitted %q", name, safe, omitted)
+		}
+	}
+}
+
+// Only a Cursor chat's session record may differ in its name and still be the
+// same evidence; a message, or another format's record, may not.
+func TestSameNativeRecordIgnoresOnlyACursorChatName(t *testing.T) {
+	t.Parallel()
+	session := map[string]any{"type": "session", "session_id": "c1", "timestamp": "2026-09-30T10:00:00Z"}
+	named := map[string]any{"type": "session", "session_id": "c1", "timestamp": "2026-09-30T10:00:00Z", "name": "Fix the widget test"}
+	renamed := map[string]any{"type": "session", "session_id": "c1", "timestamp": "2026-09-30T10:00:00Z", "name": "Fix the widget parser"}
+	if !SameNativeRecord(cursorComposerFormat, session, named) || !SameNativeRecord(cursorComposerFormat, named, renamed) || !SameNativeRecord(cursorComposerFormat, named, session) {
+		t.Error("naming a Cursor chat changed its session record's evidence")
+	}
+	other := map[string]any{"type": "session", "session_id": "c2", "name": "Fix the widget test"}
+	if SameNativeRecord(cursorComposerFormat, named, other) {
+		t.Error("a session record with another chat's ID is the same")
+	}
+	if SameNativeRecord("claude-jsonl", session, named) {
+		t.Error("a name on another format's record is ignored")
+	}
+	message := map[string]any{"role": "user", "id": "b1", "name": "a"}
+	if SameNativeRecord(cursorComposerFormat, message, map[string]any{"role": "user", "id": "b1", "name": "b"}) {
+		t.Error("a name on a Cursor message is ignored")
 	}
 }
