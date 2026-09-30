@@ -19,13 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // Timeout bounds one git invocation. A hook has about two seconds in all.
@@ -179,7 +179,7 @@ var (
 
 // realLocator looks on the real PATH and file system, and checks the macOS
 // stub once per process.
-var realLocator = locator{lookPath: exec.LookPath, exists: fileExists, readlink: os.Readlink, goos: runtime.GOOS, stubUsable: func() bool {
+var realLocator = locator{lookPath: exec.LookPath, exists: fileExists, readlink: os.Readlink, goos: string(platform.Current()), stubUsable: func() bool {
 	stubOnce.Do(func() {
 		stubResult = locator{exists: fileExists, readlink: os.Readlink}.usableStub()
 	})
