@@ -306,6 +306,9 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 		longer = " Try a longer window, for example agent-archive stats --days 365."
 	}
 	switch {
+	case filters.Model != "":
+		// The screen names models by family ("opus"); the filter is exact.
+		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + longer
 	case filters != statsFilters{}:
 		return "No archived sessions match these filters " + span + "." + longer
 	case sawSessions:

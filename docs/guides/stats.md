@@ -19,7 +19,8 @@ agent-archive stats --json                 # for scripts: see JSON output
 ```
 
 The first run reads every session's metadata from the bucket, so it can take
-a while on a large archive (a spinner shows on a terminal); it keeps a local
+a while on a large archive (a spinner with a count shows on a terminal, and
+Ctrl-C stops it); it keeps a local
 copy of what it read, as `list` does, and later runs only fetch what
 changed. `--no-cache` reads everything again.
 
@@ -89,3 +90,5 @@ instead of block characters in a locale that is not UTF-8.
 `--harness`, `--model`, `--imported` and `--hook-captured` narrow the
 sessions counted, the previous period included. `--model` keeps a session that
 used the model, and counts all of that session's tokens, models included.
+Give the full model id (`claude-opus-5`), as `list` does, not the family the
+screen groups it under (`opus`).

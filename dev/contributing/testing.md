@@ -183,7 +183,7 @@ LaunchAgent runs) are not part of the user interface and may change.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), the `stats` screens at 80 and 120 columns and
+  (`testdata/handoff/`), the `stats` screens at 60, 80 and 120 columns and
   without a terminal (`internal/cli/testdata/stats/`), backfill plans (`internal/cli/testdata/backfill/`,
   `internal/backfill/testdata/`) and the [CLI reference](../../docs/reference/cli.md)
   have goldens of their own.

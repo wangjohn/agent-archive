@@ -30,7 +30,8 @@ type statsTerminal struct {
 }
 
 func (s *statsTerminal) colorTerminal() bool { return s.color }
-func (s *statsTerminal) terminalWidth() int  { return s.width }
+
+func (s *statsTerminal) terminalWidth() int { return s.width }
 
 // runStats runs `stats` with args against env, on a terminal of the width
 // (0 for output that is not a terminal), and returns what it printed.
@@ -80,13 +81,14 @@ func TestStatsScreenGoldens(t *testing.T) {
 		{"by-project-80", 80, []string{"--by", "project", "--days", "14"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			out := mustRunStats(t, env, tc.width, append([]string{"--prices", goldenPrices}, tc.args...)...)
 			golden.Check(t, statsGolden(tc.name), []byte(out))
 			limit := tc.width
 			if tc.width == 0 {
 				limit = statsUnknownWidth
 			}
-			for _, line := range strings.Split(out, "\n") {
+			for line := range strings.SplitSeq(out, "\n") {
 				if w := visibleWidth(line); w > limit {
 					t.Errorf("line is %d columns, over %d: %q", w, limit, line)
 				}
@@ -117,7 +119,7 @@ func TestStatsNarrowTerminalNeverOverflows(t *testing.T) {
 	publishStatsFixture(t, mem)
 	for _, width := range []int{statsMinWidth, 60, 79, 80, 81, 90, 99, 100, 120, 200} {
 		out := mustRunStats(t, env, width, "--by", "day")
-		for _, line := range strings.Split(out, "\n") {
+		for line := range strings.SplitSeq(out, "\n") {
 			if w := visibleWidth(line); w > width {
 				t.Errorf("width %d: line is %d columns: %q", width, w, line)
 			}
@@ -169,6 +171,7 @@ func TestStatsFallsBackToASCIIOutsideUTF8Locales(t *testing.T) {
 		{"dumb terminal", map[string]string{"TERM": "dumb"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			e := env
 			e.LookupEnv = func(key string) (string, bool) { v, ok := tc.vars[key]; return v, ok }
 			out := mustRunStats(t, e, 120, "--prices", goldenPrices)
@@ -554,6 +557,31 @@ func TestStatsSaysWhyThereIsNothingToShow(t *testing.T) {
 	if !strings.Contains(out, "No archived sessions match these filters in the last 7 days") {
 		t.Fatalf("empty with filters:\n%s", out)
 	}
+	// The screen says "opus"; the filter needs the id, and the answer says so.
+	out = mustRunStats(t, env, 0, "--days", "60", "--model", "opus")
+	if !strings.Contains(out, "No archived sessions match these filters") || !strings.Contains(flatten(out), "--model takes a full model id") {
+		t.Fatalf("empty with a family name:\n%s", out)
+	}
+}
+
+// A one-day window says "the day before" and names its date once.
+func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
+	t.Parallel()
+	env, mem := statsEnv(t)
+	publishStatsFixture(t, mem)
+	syntheticSession{
+		id: "today", harness: "claude", project: "p", captured: statsDay(time.September, 29, 9), models: []string{"claude-opus-5"},
+		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
+	}.publish(t, mem)
+	out := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices)
+	for _, bad := range []string{"1 days", "Sep 29 Sep 29"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("one-day window says %q:\n%s", bad, out)
+		}
+	}
+	if !strings.Contains(out, "vs the day before") || !strings.Contains(out, "today") {
+		t.Errorf("one-day window:\n%s", out)
+	}
 }
 
 // A sidecar that does not validate is warned about on stderr and left out;
@@ -618,16 +646,16 @@ func TestStatsPricesFileOverridesAndIsNamed(t *testing.T) {
 	if err := os.WriteFile(file, []byte(custom), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cost := func(args ...string) (statsDocument, string) {
+	cost := func(args ...string) statsDocument {
 		var doc statsDocument
 		out := mustRunStats(t, env, 0, append([]string{"--json"}, args...)...)
 		if err := json.Unmarshal([]byte(out), &doc); err != nil {
 			t.Fatal(err)
 		}
-		return doc, out
+		return doc
 	}
-	builtin, _ := cost()
-	mine, _ := cost("--prices", file)
+	builtin := cost()
+	mine := cost("--prices", file)
 	if builtin.Overview.Cost.Value == nil || mine.Overview.Cost.Value == nil || *mine.Overview.Cost.Value != 3 || *builtin.Overview.Cost.Value == 3 {
 		t.Fatalf("built-in cost %v, own cost %v (want 3)", builtin.Overview.Cost.Value, mine.Overview.Cost.Value)
 	}
@@ -750,7 +778,7 @@ func TestStatsReadsThousandsOfSessions(t *testing.T) {
 	}
 	t.Parallel()
 	env, mem := statsEnv(t)
-	for i := 0; i < 3000; i++ {
+	for i := range 3000 {
 		syntheticSession{
 			id: fmt.Sprintf("bulk-%05d", i), harness: []string{"claude", "codex", "cursor"}[i%3], project: fmt.Sprintf("project-%d", i%40),
 			captured: statsNow.Add(-time.Duration(i) * 2 * time.Hour), models: []string{"claude-opus-5"}, turns: 5, messages: 40, toolResults: 20,

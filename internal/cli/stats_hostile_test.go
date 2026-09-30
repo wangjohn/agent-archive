@@ -61,7 +61,7 @@ func TestStatsHostileNamesNeverBreakTheScreen(t *testing.T) {
 // character a terminal would act on.
 func checkTerminalSafe(t *testing.T, where, out string, width int) {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if w := visibleWidth(line); w > width {
 			t.Errorf("%s: line is %d columns, over %d: %q", where, w, width, line)
 		}
@@ -83,8 +83,9 @@ func TestStatsPriceFileLabelsCannotBreakTheScreen(t *testing.T) {
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
 	for _, tc := range []struct {
-		currency, version string
-		ok                bool
+		currency string
+		version  string
+		ok       bool
 	}{
 		{"EUR", "v1", true}, {"zzz", "v1", true}, {"", "v1", true},
 		{"ABCDEFGHIJ", "v1", false}, {strings.Repeat("X", 60), "v1", false}, {"\u20ac\x1b[31m$$", "v1", false},

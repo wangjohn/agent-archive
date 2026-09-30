@@ -53,13 +53,15 @@ const (
 // use Unicode block characters; ASCII is the fallback for a locale that is
 // not UTF-8 and for a dumb terminal.
 type statsGlyphs struct {
-	filled, empty string
-	spark         [8]string
-	sparkUnknown  string
-	segments      [4]string
-	up, down      string
-	sep           string
-	ellipsis      string
+	filled       string
+	empty        string
+	spark        [8]string
+	sparkUnknown string
+	segments     [4]string
+	up           string
+	down         string
+	sep          string
+	ellipsis     string
 }
 
 var unicodeGlyphs = statsGlyphs{
@@ -181,7 +183,8 @@ func renderStats(w io.Writer, s stats.Stats, v statsView) error {
 }
 
 func (p *statsPrinter) bold(text string) string { return p.v.style.bold(text) }
-func (p *statsPrinter) dim(text string) string  { return p.v.style.dim(text) }
+
+func (p *statsPrinter) dim(text string) string { return p.v.style.dim(text) }
 
 // heading is a section's title, with an optional right-aligned note.
 func (p *statsPrinter) heading(title, note string) string {
@@ -211,7 +214,7 @@ func (p *statsPrinter) header() []string {
 	if s.Coverage.Agents != 1 {
 		agents = fmt.Sprintf("%d agents", s.Coverage.Agents)
 	}
-	sessions := fmt.Sprintf("%s sessions", commaInt(int64(s.Coverage.Sessions)))
+	sessions := commaInt(int64(s.Coverage.Sessions)) + " sessions"
 	if s.Coverage.Sessions == 1 {
 		sessions = "1 session"
 	}
@@ -272,7 +275,12 @@ func (p *statsPrinter) tokensByDay() []string {
 	p.cw = max(p.cw, span)
 	title := p.heading("TOKENS BY DAY", note)
 	p.cw = saved
-	return []string{title, line, p.dim(first + strings.Repeat(" ", gap) + last)}
+	labels := first + strings.Repeat(" ", gap) + last
+	if len(s.Daily) == 1 {
+		// One day has one date.
+		labels = first
+	}
+	return []string{title, line, p.dim(labels)}
 }
 
 // noTokenData is whether no session in the window reports token counts.
@@ -328,8 +336,16 @@ func (p *statsPrinter) overview() []string {
 	note := ""
 	if p.anyDelta() {
 		note = fmt.Sprintf("vs previous %d days", p.s.Window.Days)
+		if p.s.Window.Days == 1 {
+			note = "vs the day before"
+		}
 	}
-	type row struct{ label, value, delta, extra string }
+	type row struct {
+		label string
+		value string
+		delta string
+		extra string
+	}
 	rows := []row{
 		{"Sessions", commaMeasure(o.Sessions), p.delta(o.Sessions), ""},
 		{"Prompts", commaMeasure(o.Prompts), p.delta(o.Prompts), ""},
@@ -522,7 +538,7 @@ func (p *statsPrinter) table(title string, labels []string, bar *tableBar, cols 
 	for barW > minBarWidth && space(barW, leftW) > p.width {
 		barW--
 	}
-	if barW > 0 && space(barW, minLabelWidth) > p.width {
+	if barW > 0 && space(barW, min(leftW, minLabelWidth)) > p.width {
 		barW = 0
 	}
 	barSpace := 0
@@ -548,14 +564,15 @@ func (p *statsPrinter) table(title string, labels []string, bar *tableBar, cols 
 	}
 	lines := []string{head}
 	for r, label := range labels {
-		line := padRight(label, leftW)
+		var line strings.Builder
+		line.WriteString(padRight(label, leftW))
 		if barW > 0 {
-			line += "  " + p.bar(bar.shares[r], barW)
+			line.WriteString("  " + p.bar(bar.shares[r], barW))
 		}
 		for i, c := range cols {
-			line += "  " + padLeft(c.cells[r], widths[i])
+			line.WriteString("  " + padLeft(c.cells[r], widths[i]))
 		}
-		lines = append(lines, strings.TrimRight(line, " "))
+		lines = append(lines, strings.TrimRight(line.String(), " "))
 	}
 	lines[0] = strings.TrimRight(lines[0], " ")
 	return lines
@@ -793,7 +810,10 @@ func (p *statsPrinter) hang(prefix, text string) string {
 func (p *statsPrinter) highlights() []string {
 	h := p.s.Highlights
 	labelW := len("Busiest day")
-	type item struct{ label, text string }
+	type item struct {
+		label string
+		text  string
+	}
 	var items []item
 	if h.BusiestDay != nil {
 		items = append(items, item{"Busiest day", fmt.Sprintf("%s (%s)", p.dayLabel(h.BusiestDay.Date), plural(h.BusiestDay.Sessions, "session"))})
