@@ -107,6 +107,9 @@ func isolateProcessForTesting() func() {
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
+	openAWSBucketCreator = func(string, string) (BucketCreator, error) {
+		return nil, errors.New("no AWS in this test: set Env.AWSBucketCreator")
+	}
 	detectLessVersion = func(string) (int, bool) {
 		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
 	}
@@ -168,6 +171,9 @@ func TestIsolationFailsClosed(t *testing.T) {
 	})
 	if _, err := (Env{}).awsBuckets("default", "us-east-1"); err == nil {
 		t.Error("Env{}.awsBuckets reached AWS instead of failing")
+	}
+	if _, err := (Env{}).awsBucketCreator("default", "us-east-1"); err == nil {
+		t.Error("Env{}.awsBucketCreator reached AWS instead of failing")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

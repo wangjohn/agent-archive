@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 12). The user-facing summary is
+> **Status: implemented** (filter 13). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -15,6 +15,38 @@ Every retained string, at every depth, passes injected-instruction
 stripping, value-level redaction, and the 64 KB cap. Tool-argument subtrees
 (`input`, `arguments`, `tool_input`) keep every argument name, because the
 names belong to the tool, subject to the deny list below.
+
+### Session names and linked pull requests
+
+Two record types that only name a session are kept (filter 13), each rebuilt
+from typed values rather than passed through the key allowlist, so the keys
+below are admitted on those records only:
+
+- Claude Code `custom-title`: `type`, `customTitle`, and `sessionId` and
+  `timestamp` when they are strings. `customTitle` must be a string with
+  something in it and passes the value rules like a prompt. Any other key is
+  dropped (named in the `unknown_field_omitted` gap); a record without a
+  usable title is dropped with an `unsupported_value_omitted` gap. Claude
+  Code appends a record for each name a session is given, and every one is
+  kept, so a renamed session keeps its earlier names too.
+- Claude Code `pr-link`: `type`, `prNumber`, `prRepository`, `prUrl`, and
+  `sessionId` and `timestamp` when they are strings. `prRepository` is
+  `owner/name` with each part matching `git_activity`'s repository pattern;
+  `prNumber` is a whole number from 1 to 2^30, read from a string of digits
+  or a number and written as a JSON integer; `prUrl` is kept only when it is
+  `https://github.com/<prRepository>/pull/<prNumber>`, else dropped with
+  its name listed in `unknown_field_omitted`. A record whose repository or
+  number is missing or out of shape, or whose repository the value rules
+  rewrite, is dropped whole with an `unsupported_value_omitted` gap.
+- Cursor chats read from its database: the composer's chat-level `name`,
+  written as `name` on the first record, the `session` record:
+  `{"type":"session","session_id":…,"timestamp":…,"name":…}`. A name that is
+  a string passes the value rules like a prompt and is kept when something is
+  left of it; an absent, null, or empty one leaves `name` out; one that is
+  not a string is reported as the omitted key `chat.name`.
+
+Claude Code's `agent-name` and `last-prompt` records are still dropped as
+unknown record types.
 
 ### Tool-argument deny list
 
