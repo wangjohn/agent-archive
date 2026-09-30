@@ -188,8 +188,11 @@ type statusView struct {
 	// other in agentskills.Registry) setup installed that are there now;
 	// AgentSkillsOutOfDate is those an upgrade has outdated, which setup
 	// refreshes.
+	// AgentSkillsDisabled is set when the person opted out of the skills
+	// (setup --no-skills), which setup then neither installs nor refreshes.
 	AgentSkills          []string             `json:"agent_skills,omitempty"`
 	AgentSkillsOutOfDate []string             `json:"agent_skills_out_of_date,omitempty"`
+	AgentSkillsDisabled  bool                 `json:"agent_skills_disabled,omitempty"`
 	Collector            state.Status         `json:"collector"`
 	CaptureDiagnostics   []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
@@ -411,6 +414,7 @@ func readSetupProgress(view *statusView, home string) {
 func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
 	view.configured = true
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
+	view.AgentSkillsDisabled = cfg.NoSkills
 	view.Background = "unknown"
 	view.Storage = storageLabel(cfg.Storage)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
@@ -455,9 +459,18 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	if userHome, err := env.userHomeDir(); err == nil {
 		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
 		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
-		view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
-		for _, path := range view.AgentSkillsOutOfDate {
-			view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup to refresh it.", skillLabel(path), path))
+		if cfg.NoSkills {
+			// Setup removes a file of its own here rather than refreshing it,
+			// so it is left over (a restored backup, an interrupted removal),
+			// not out of date.
+			for _, path := range view.AgentSkills {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
+			}
+		} else {
+			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			for _, path := range view.AgentSkillsOutOfDate {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup to refresh it.", skillLabel(path), path))
+			}
 		}
 	}
 	for _, p := range cfg.Archive.Projects {
@@ -1437,6 +1450,9 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
+	if view.AgentSkillsDisabled {
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
+	}
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("Imported (all destinations): %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -2334,6 +2350,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	}
 	for _, app := range view.Apps {
 		printAppDetails(out, app)
+	}
+	if view.AgentSkillsDisabled {
+		terminal.Println(out, "  Agent skills:  turned off (agent-archive setup --skills turns them on)")
 	}
 	for _, path := range view.AgentSkills {
 		line := displayPath(path, view.userHome)
