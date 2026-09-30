@@ -119,6 +119,26 @@ In Go tests, everything goes through injection:
   prices are `internal/stats/prices.json`, dated and versioned; update the
   file (and its `as_of` and `version`) from the pages in its `sources` when
   list prices change.
+- `internal/statshtml` (the `stats --html` page) is a pure function of the
+  `stats.Stats` it is passed, so its tests compute stats from synthetic
+  metadata and need no isolation. Every page a test renders goes through
+  `checkPage`: strict XML parsing, an allowlist of elements, no script, event
+  handler, link or other request, unique ids, and a stylesheet that fetches
+  nothing. `TestHostileTextIsInertInEveryField` sets every text field of the
+  stats, in turn, to names built to break out of markup;
+  `TestSpoiledNumbersNeverBreakTheGeometry` does the same with numbers (NaN,
+  infinities, extremes); `TestOnlyTheseStatsTextsReachThePage` pins which
+  stats texts may reach the page at all (a new one is a privacy decision);
+  and `TestPaletteContrast` checks the colors' WCAG contrast in both themes
+  from the stylesheet itself. `TestStatsPageAgreesWithTheTerminalAndJSON`
+  (in `internal/cli`, which may import both) runs the screen, `--json` and
+  `--html` over the same archives and compares every table, card and
+  sentence, because the two lay their numbers out separately (they share
+  `internal/statsfmt`, whose one table pins every formatter, and whose
+  `TestFormattersImportBoundary` keeps it pure). The page goldens are in
+  `internal/statshtml/testdata/` (`go test ./internal/statshtml -update`);
+  look at a changed page in a browser, light and dark and at phone width,
+  before accepting a diff.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in

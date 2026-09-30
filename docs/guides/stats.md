@@ -16,6 +16,7 @@ agent-archive stats --by project           # ...or by day, month, or project
 agent-archive stats --harness claude       # one agent only
 agent-archive stats --prices my-prices.json   # your own prices, see below
 agent-archive stats --json                 # for scripts: see JSON output
+agent-archive stats --html --output stats.html   # a web page you can share
 ```
 
 The first run reads every session's metadata from the bucket, so it can take
@@ -47,6 +48,62 @@ draws bars; narrower, it is a compact table (laid out for at least 50
 columns: on a terminal narrower than that, lines wrap). It is paged through `$PAGER` on a
 terminal (`--no-pager` to print directly), plain text when piped, and ASCII
 instead of block characters in a locale that is not UTF-8.
+
+## Share it as a web page
+
+```sh
+agent-archive stats --html --output stats.html   # then open stats.html
+agent-archive stats --days 90 --html > q3.html   # or redirect standard output
+```
+
+`--html` writes the same numbers as one web page you can open in a browser,
+attach to a message, or print. It is a single file: the styles and charts are
+inline, there is no script, and it makes no request to anything (its own
+content policy forbids it), so it works offline and reads the same
+tomorrow. It follows your light or dark setting, prints cleanly (the donut
+switches to patterns, so it survives a black-and-white printer), and fits a
+phone. Each bar of the daily chart answers a hover with that day's numbers,
+and the chart has a "Show as a table" view for screen readers and keyboards;
+every other number is in a table.
+
+- **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
+  only; change that when you share it) and says so on stderr. The page is
+  written to a temporary file next to it and moved into place, so a failure
+  never leaves half a page, and it does not replace a file that exists unless
+  you add `--force`. A symbolic link, a folder or a device is never written or
+  replaced, `--force` or not. Without `--output` it goes to standard output,
+  so redirect it (a failed write is an error, exit 1); on a terminal `--html`
+  alone asks you for `--output` rather than filling the screen with markup.
+  The flags are checked before the archive is read. `--html` cannot be
+  combined with `--json`.
+- **What is in it.** Counts, model names, skill and MCP server names, dates,
+  and project names, only (by default only the model names the built-in
+  price table lists, see the next item). Never a prompt, transcript text, a
+  file path or a session ID (the costliest session is described, not named: `show` cannot
+  open it from the page, by design). It also names the time zone the days were
+  counted in.
+- **Names are hidden by default.** So the page can be shared, each project is
+  a stand-in, "project A", "project B" and so on, in the order the page lists
+  them; skills, MCP servers and models get "skill A", "MCP server A" and
+  "model A" the same way. A model keeps its name only when the built-in price
+  table lists it ("opus", "gpt-5"; so are the archive's own "unknown" and
+  "other"); a fine-tune id, a custom deployment name or any other model the
+  table does not list is a stand-in, in the heading's `--model` filter, the
+  cost-by-model table, the favorite model and the footer's note on unpriced
+  models alike. A model your own `--prices` file adds
+  is not listed either. The same name has the same letter throughout the
+  page, but the letters follow this run's ranking and are not stable between
+  runs. `--include-names` shows the real names of all four, for a page only
+  you read. The terminal view and `--json` are not affected: they print to you.
+- **Same rules as the terminal.** Unknown is not zero (Cursor's tokens read
+  unknown, and a window with no token data says so instead of drawing an empty
+  chart), cost is an estimate whose price table and date are in the footer,
+  and the filters (`--harness`, `--model`, `--imported`, `--hook-captured`),
+  `--days`, `--since`, `--prices` and `--by` apply. A window with no sessions
+  gets a page that says why and what to try.
+- **Size.** A page is tens of kilobytes. A long window draws at most 120 bars
+  (each the busiest day of its run of days) and the tables are cut to a
+  fixed number of rows, so even a very large archive gives a small file.
 
 ## Reading the numbers
 
