@@ -42,6 +42,12 @@ follow [Semantic Versioning](https://semver.org/).
   only its own, and `status --json` lists them in `agent_skills`. After an
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
+- `agent-archive setup --no-skills` (also with `--yes`) installs no agent
+  skills and removes the ones setup wrote; a file that is not setup's is left
+  alone and named. It is saved, so later setup runs keep the skills off, and
+  `agent-archive setup --skills` turns them back on. `status` says when they
+  are turned off (`agent_skills_disabled` in `--json`). Setup now says in one
+  line how to opt out.
 - Sessions in a git repository now carry a `repo_key` in their metadata: a
   hash of the repository's `origin` address (credentials, scheme, port, and
   `.git` removed, so SSH and HTTPS clones of one repository agree), which

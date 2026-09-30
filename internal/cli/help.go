@@ -36,8 +36,9 @@ Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 `,
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
+               [--no-skills | --skills]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--skill-evidence none|metadata|body]
+               [--skill-evidence none|metadata|body] [--no-skills | --skills]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
@@ -65,6 +66,10 @@ An interrupted setup is recovered on the next run.
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this Mac). It must
                         name every app set up now: --yes never removes one
+  --no-skills           Install no agent skills (such as /handoff), and
+                        remove those setup wrote. Later setup runs keep
+                        them off until --skills
+  --skills              Turn the agent skills back on and install them
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
