@@ -249,3 +249,55 @@ func TestEvalExportReadsACursorTextTranscript(t *testing.T) {
 		t.Errorf("final response = %+v, files = %v", record.FinalResponse, record.FilesEdited)
 	}
 }
+
+// A local record: the transcript as the collector filters it, summarized with
+// the running parser, validated against the schema and pinned by a golden.
+// It names the app's own session ID and the transcript's path, and leaves out
+// what only a hook or the archive records.
+func TestLocalEvalExportGolden(t *testing.T) {
+	schema := evalExportSchema(t)
+	bundle := handoffBundle(t, "claude")
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	for _, detail := range []EvalExportDetail{EvalExportDetailMetadata, EvalExportDetailFull} {
+		record, err := BuildLocalEvalExport(bundle, LocalTranscript{Path: "/Users/someone/.claude/projects/widget/native-456.jsonl", Now: now}, detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.SessionID != bundle.NativeSessionID || record.GitHead != nil || record.Replay != nil || record.MachineID != "" || record.CapturedAt != nil || record.Project.Root == "" {
+			t.Errorf("%s record = %+v", detail, record)
+		}
+		line, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		validateAgainst(t, schema, "local "+string(detail), line)
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+	golden.Check(t, filepath.Join("testdata", "eval-export", "local-claude.jsonl"), out.Bytes())
+}
+
+// A transcript whose records carry no time has no started_at, unless
+// discovery supplied one: the export time is never passed off as the start.
+func TestLocalEvalExportNeverInventsAStartTime(t *testing.T) {
+	t.Parallel()
+	filtered, err := CursorAdapter{}.FilterText(strings.NewReader("user:\nedit a.go\n\nassistant:\ndone\n"), time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := parserTestBundle(t, "cursor", CursorAdapter{}, filtered)
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	record, err := BuildLocalEvalExport(bundle, LocalTranscript{Path: "/t.txt", Now: now}, EvalExportDetailMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.StartedAt != nil {
+		t.Errorf("started_at = %v, want none", record.StartedAt)
+	}
+	created := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	record, err = BuildLocalEvalExport(bundle, LocalTranscript{Path: "/t.txt", StartedAt: created, Now: now}, EvalExportDetailMetadata)
+	if err != nil || record.StartedAt == nil || !record.StartedAt.Equal(created) {
+		t.Errorf("started_at = %v (%v), want discovery's %v", record.StartedAt, err, created)
+	}
+}

@@ -18,6 +18,14 @@ follow [Semantic Versioning](https://semver.org/).
   exported is an error record on its own line and the rest still print.
   `--max-bytes` bounds each record. Read-only and never interactive. See the
   [guide](docs/guides/eval-export.md).
+- `eval export` also works without setup, on this machine's transcripts:
+  `--file PATH --harness NAME` for one, and `--scan` for every transcript
+  backfill would find (with its `--harness`, `--project`, `--since`, and
+  `--until` filters). It never creates the data directory. `--ids-from -`
+  reads session IDs and transcript paths from standard input, and
+  `--workers N` exports several sessions at once, writing each record as it
+  finishes. Local records carry the transcript's path and project folder,
+  and no commit, replay marker, or feedback.
 - **The commit a session started on.** When a session starts in a git
   repository, the hook records the commit checked out in its working
   directory and whether the working tree had uncommitted changes, and each

@@ -1,11 +1,9 @@
 # Eval export: sessions as evaluation task candidates
 
-> **Status:** the format, the schema, and archived export
-> (`agent-archive eval export SESSION_ID...`) are implemented
-> (`internal/archive/eval_export.go`, `internal/cli/eval_export.go`). Local
-> mode (`--file`, `--scan`) and bulk selection (`--ids-from -`, `--workers`)
-> are specified here and implemented in the follow-up change; until then the
-> command rejects those flags as unknown. Written 2026-09-30.
+> **Status: implemented** (`internal/archive/eval_export.go`,
+> `internal/cli/eval_export.go`): the format and schema, archived export,
+> local mode (`--file`, `--scan`), and bulk selection (`--ids-from -`,
+> `--workers`). Written 2026-09-30.
 > The contract is [`schemas/eval-export.schema.json`](../../schemas/eval-export.schema.json)
 > and the goldens in `internal/archive/testdata/eval-export/`.
 
@@ -33,13 +31,15 @@ documented, versioned format, from two sources:
 
 ```text
 agent-archive eval export SESSION_ID... [--detail metadata|full]
-    [--harness codex|claude|cursor] [--max-bytes N]
-# follow-up change (the same command, new flags):
-eval export --ids-from - [--detail …] [--workers N]
-eval export --file PATH --harness NAME [--detail …]
-eval export --scan [--harness NAME] [--project DIR]
+    [--harness codex|claude|cursor] [--max-bytes N] [--workers N]
+agent-archive eval export --ids-from - [--detail …] [--workers N]
+agent-archive eval export --file PATH --harness NAME [--detail …]
+agent-archive eval export --scan [--harness NAME] [--project DIR]
     [--since DATE] [--until DATE] [--detail …] [--workers N]
 ```
+
+The four ways of naming sessions are mutually exclusive; `--project`,
+`--since`, and `--until` apply only to `--scan`.
 
 - The name follows the CLI's `purge plan`/`purge apply` grouping: `eval` is
   the group, `export` its one action, which leaves room for later actions
@@ -53,11 +53,10 @@ eval export --scan [--harness NAME] [--project DIR]
   ID, or a transcript path), never a title or a prefix, so the same command
   always exports the same sessions.
 - **JSON Lines, always.** One record per line, even for one session, so a
-  reader has one code path. Archived sessions named as arguments are written
-  in the order given. With `--workers` (follow-up), records are written as
-  each session finishes, so the order is not the input order; every record
-  carries its `session_id` (and, for local ones, `transcript_path`) to be
-  matched on.
+  reader has one code path. Records are written as each session finishes,
+  so with more than one worker the order is not the input order (with
+  `--workers 1` it is); every record carries its `session_id` (and, for local
+  ones, `transcript_path`, and for errors, `input`) to be matched on.
 - **Two detail levels.** `--detail metadata` is the cheap first pass:
   identity, commits, counts, tokens, tools, outcome, and no conversation text.
   For the archive it reads metadata sidecars only, as `list` does, and never
@@ -81,13 +80,19 @@ eval export --scan [--harness NAME] [--project DIR]
   not be opened at all, with nothing written), and 2 for a usage error, with
   nothing on standard output.
 
-### Local mode (follow-up change)
+### Local mode
 
 - `--file PATH --harness NAME` exports one transcript, the way
   `handoff --file` renders one: `collector.FilterTranscriptFile`, then a
-  source bundle, then metadata derived with the current parser. No
-  configuration is read, and the data directory is never created (the
-  command resolves it without creating it, as `_hook` does).
+  source bundle, then metadata derived with the current parser
+  (`archive.BuildLocalEvalExport`). No configuration is read, and the data
+  directory is never read or created: only an archive input opens the
+  archive.
+- A transcript path given on `--ids-from` names its app by the folder it is
+  in (Claude Code's and Codex's session folders, including those
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name, or a Cursor `agent-transcripts`
+  folder), or by `--harness`. A path in none of them without `--harness` is
+  an `unknown_harness` error record.
 - `--scan` finds transcripts with backfill's discovery (`backfill.BuildPlan`
   over the apps' stores, with an archive state that knows no sessions and an
   empty configuration), with backfill's `--harness`, `--project`, `--since`,
@@ -96,22 +101,29 @@ eval export --scan [--harness NAME] [--project DIR]
   other than "already archived" are skipped here too. Cursor chats found only
   in Cursor's database are not exported by `--scan` in this version (no file
   path to name them by); the record set says so on standard error.
-- A local record's `session_id` is the app's own session ID; `transcript_path`
-  is the file's absolute path and `project.root` the project folder backfill
-  resolved. `git_head`, `replay`, and `feedback` are absent (see the table
+- A local record's `session_id` is the app's own session ID (as discovery
+  found it, or as the transcript's records carry it, or for a Codex rollout
+  named directly the UUID its file name ends with); `transcript_path` is the
+  file's absolute path and `project.root` the project folder backfill
+  resolved, or for `--file` the first working directory the transcript
+  records. `started_at` is the earliest time a visible record carries, else
+  the start backfill's discovery found (a Cursor transcript's file time), and
+  otherwise absent: the export time is never used as a start. `git_head`, `replay`, and `feedback` are absent (see the table
   above). A local session is filtered with the running build's filter, so its
   `filter_version` is always the current one.
 - When a session exists in both sources, the tool prefers the archive record;
   agent-archive does not merge them.
 
-### Bulk (follow-up change)
+### Bulk
 
 - `--ids-from -` reads one input per line from standard input: an archive
-  session ID, or, in local mode, a transcript path. Blank lines are skipped.
+  session ID, or an absolute transcript path. Blank lines are skipped. It
+  refuses a terminal as standard input (exit 2): the list is piped in, and
+  the command never waits for a person.
   This lets the second (full) pass export exactly the sessions the first
   (metadata) pass kept, in one process.
 - `--workers N` (default: the number of CPUs, at most 8) exports that many
-  sessions at once. Parsing and filtering are the cost, not process start-up,
+  sessions at once. It applies to every way of naming sessions. Parsing and filtering are the cost, not process start-up,
   so the pool is inside agent-archive. Each record is written whole, under a
   lock, as its session finishes.
 - A failure in one session never stops the others.
@@ -204,6 +216,15 @@ a start commit for sessions without one (see
 belong to the external tool.
 
 ## Tests
+
+- `internal/archive/eval_export_test.go` also pins a local record
+  (`local-claude.jsonl`) and that a local record never takes the export
+  time as its start.
+- `internal/cli/eval_export_local_test.go`: `--file` with no setup and no
+  data directory created; `--scan` exporting what backfill would import and
+  skipping what it skips, with its filters and several workers; `--ids-from -`
+  with a known app's transcript and a stray one; an archive ID without
+  setup; usage errors; and several workers writing each record exactly once.
 
 - `internal/archive/eval_export_test.go`: goldens per app at both details,
   each line validated against the schema; every prompt in order and whole; no

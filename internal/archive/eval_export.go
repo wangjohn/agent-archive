@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 	"time"
@@ -168,6 +169,9 @@ const (
 	// EvalErrorParseFailed: the filtered source could not be parsed into
 	// prompts and a final response.
 	EvalErrorParseFailed EvalErrorCode = "parse_failed"
+	// EvalErrorUnknownHarness: a transcript path is not in a folder any app
+	// keeps its transcripts in, and no --harness said which app wrote it.
+	EvalErrorUnknownHarness EvalErrorCode = "unknown_harness"
 )
 
 // EvalErrorInfo is an error record's reason: a stable code and a message for
@@ -411,4 +415,90 @@ func jsonLen(s string) int {
 		return 0
 	}
 	return len(encoded)
+}
+
+// LocalTranscript describes a transcript file on this machine for
+// BuildLocalEvalExport.
+type LocalTranscript struct {
+	// Path is the transcript's absolute path.
+	Path string
+	// ProjectRoot is the project folder the session belongs to, as backfill
+	// resolved it; "" means the first working directory the transcript
+	// records.
+	ProjectRoot string
+	// StartedAt is when the session started, when something other than its
+	// records says (backfill's start for a Cursor transcript, whose records
+	// carry no time); zero when nothing does.
+	StartedAt time.Time
+	// Now is the time the export is made.
+	Now time.Time
+}
+
+// localMachineID stands in for the machine ID BuildMetadata requires; a local
+// record carries no machine ID.
+const localMachineID = "local"
+
+// BuildLocalEvalExport is the record of a transcript file, filtered as the
+// collector filters it (bundle), with no setup: its metadata is derived with
+// the running parser, exactly as a first publication would derive it. Where a
+// local record differs from an archived one, it says less rather than guess:
+// no git_head, replay, feedback, machine ID, or capture time, and no start
+// time unless a record or local.StartedAt gives one.
+func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail EvalExportDetail) (EvalExport, error) {
+	startedAt := earliestTurnTime(bundle)
+	if startedAt.IsZero() {
+		startedAt = local.StartedAt
+	}
+	// BuildMetadata needs a start and a reference to the bundle it
+	// summarizes. The reference is the bundle's own content address; it is
+	// never uploaded or exported.
+	derivationStart := startedAt
+	if derivationStart.IsZero() {
+		derivationStart = local.Now
+	}
+	compressed, err := BuildCompressedSource(bundle)
+	if err != nil {
+		return EvalExport{}, err
+	}
+	key, err := SourceObjectKey(bundle, compressed.SHA256)
+	if err != nil {
+		return EvalExport{}, err
+	}
+	reference := SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	metadata, err := BuildMetadata(bundle, localMachineID, derivationStart, local.Now, reference, ParserInfo{})
+	if err != nil {
+		return EvalExport{}, err
+	}
+	root := local.ProjectRoot
+	if root == "" {
+		root = workspaceRoot(bundle)
+	}
+	metadata.ApplyProjectName(root)
+	record, err := BuildEvalExport(bundle, metadata, EvalExportSourceLocal, detail)
+	if err != nil {
+		return EvalExport{}, err
+	}
+	record.SessionID = cmp.Or(bundle.NativeSessionID, metadata.SessionID)
+	record.TranscriptPath = local.Path
+	record.Project.Root = root
+	if startedAt.IsZero() {
+		record.StartedAt = nil
+	}
+	return record, nil
+}
+
+// earliestTurnTime is the earliest timestamp a visible record of the bundle
+// carries, or zero.
+func earliestTurnTime(bundle SourceBundle) time.Time {
+	view, err := ParseNormalized(bundle)
+	if err != nil {
+		return time.Time{}
+	}
+	var earliest time.Time
+	for _, turn := range view.Turns {
+		if t, err := time.Parse(time.RFC3339Nano, turn.Timestamp); err == nil && (earliest.IsZero() || t.Before(earliest)) {
+			earliest = t
+		}
+	}
+	return earliest
 }

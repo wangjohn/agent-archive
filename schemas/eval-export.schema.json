@@ -305,7 +305,8 @@
                     "not_found",
                     "ambiguous",
                     "read_failed",
-                    "parse_failed"
+                    "parse_failed",
+                    "unknown_harness"
                   ]
                 },
                 {

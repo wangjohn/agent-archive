@@ -16,8 +16,16 @@ func evalLines(t *testing.T, env Env, args ...string) ([]map[string]any, string,
 	t.Helper()
 	var out, errOut bytes.Buffer
 	code := Run(append([]string{"eval", "export"}, args...), nil, &out, &errOut, env)
+	records := decodeEvalLines(t, out.String())
+	return records, errOut.String(), code
+}
+
+// decodeEvalLines decodes each line of eval export's output; every one must
+// be a whole JSON object.
+func decodeEvalLines(t *testing.T, out string) []map[string]any {
+	t.Helper()
 	var records []map[string]any
-	for line := range strings.SplitSeq(strings.TrimSuffix(out.String(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -27,7 +35,7 @@ func evalLines(t *testing.T, env Env, args ...string) ([]map[string]any, string,
 		}
 		records = append(records, record)
 	}
-	return records, errOut.String(), code
+	return records
 }
 
 // A session captured by the hooks and published by sync exports at both
@@ -90,13 +98,13 @@ func TestEvalExportMetadataDetailReadsOnlyTheSidecar(t *testing.T) {
 	}
 }
 
-// Each input gets its own line, in the order given; one that is not found is
-// an error record and does not stop the rest.
+// Each input gets its own line, in the order given with one worker; one that
+// is not found is an error record and does not stop the rest.
 func TestEvalExportReportsEachMissingSessionAndGoesOn(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
 	missing := strings.Repeat("0", 32)
-	records, errOut, code := evalLines(t, env, missing, id, "fix the login bug")
+	records, errOut, code := evalLines(t, env, "--workers", "1", missing, id, "fix the login bug")
 	if code != 1 || errOut != "" || len(records) != 3 {
 		t.Fatalf("exit %d, stderr %q, records %v", code, errOut, records)
 	}
@@ -145,7 +153,7 @@ func TestEvalExportUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{nil, "name at least one SESSION_ID"},
+		{nil, "name session IDs, --ids-from -, --file PATH, or --scan"},
 		{[]string{"--detail", "summary", id}, "--detail must be metadata or full"},
 		{[]string{"--max-bytes", "-1", id}, "--max-bytes must be 0 or more"},
 		{[]string{"--harness", "vim", id}, "--harness"},
