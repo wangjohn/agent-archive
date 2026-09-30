@@ -38,6 +38,20 @@ type handoffChoice struct {
 	dest handoffDestination
 }
 
+// handoffLetters are the prompt's choices other than an agent, in the order
+// it lists them. Each is answered by its key or its word.
+var handoffLetters = []struct {
+	key    string
+	word   string
+	label  string
+	action handoffAction
+}{
+	{"p", "print", "print", handoffPrint},
+	{"c", "copy", "copy to the clipboard", handoffCopy},
+	{"w", "write", "write to a file", handoffWrite},
+	{"q", "quit", "quit", handoffQuit},
+}
+
 // handoffDestinations lists the agents in the order the prompt offers them
 // after the default.
 var handoffDestinations = []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
@@ -112,8 +126,7 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		}
 		terminal.Printf(p.out, "  %d) %s\n", i+1, label)
 	}
-	letters := []struct{ key, label string }{{"p", "print"}, {"c", "copy to the clipboard"}, {"w", "write to a file"}, {"q", "quit"}}
-	for _, l := range letters {
+	for _, l := range handoffLetters {
 		terminal.Printf(p.out, "  %s) %s\n", l.key, l.label)
 	}
 	label, defKey := "Enter p, c, w, or q", "p"
@@ -139,15 +152,11 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		if slices.Contains(agents, handoffDestination(answer)) {
 			return handoffChoice{action: handoffLaunch, dest: handoffDestination(answer)}, nil
 		}
-		switch answer {
-		case "p", "print":
-			return handoffChoice{action: handoffPrint}, nil
-		case "c", "copy":
-			return handoffChoice{action: handoffCopy}, nil
-		case "w", "write":
-			return handoffChoice{action: handoffWrite}, nil
-		case "q", "quit":
-			return handoffChoice{action: handoffQuit}, nil
+		// So does a letter's word.
+		for _, l := range handoffLetters {
+			if answer == l.key || answer == l.word {
+				return handoffChoice{action: l.action}, nil
+			}
 		}
 		terminal.Printf(p.out, "%s.\n", label)
 	}
@@ -185,6 +194,8 @@ func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target h
 			return err
 		}
 		return writeHandoffChoice(p, rendered, target, dir, stderr, env)
+	case handoffLaunch, handoffQuit:
+		// Launching is the caller's; quitting does nothing.
 	}
 	return nil
 }
@@ -224,7 +235,7 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 			continue
 		}
 		if statErr == nil {
-			replace, err := p.yesNo(fmt.Sprintf("%s already exists. Replace it?", path), false)
+			replace, err := p.yesNo(path+" already exists. Replace it?", false)
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
