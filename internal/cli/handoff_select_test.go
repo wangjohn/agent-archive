@@ -382,7 +382,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 }
 
 // addSubagent registers a subagent of parent under native, sharing parent's
-// transcript, as newer than everything else.
+// transcript, so it is as active as parent.
 func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string {
 	t.Helper()
 	reg, found, err := state.OpenReadOnly(f.home).LoadRegistration(parent)
@@ -390,8 +390,8 @@ func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string 
 		t.Fatalf("load %s: found=%v err=%v", parent, found, err)
 	}
 	id := "ffffffff" + parent[8:]
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, reg.NativeSessionID, "agent-1"
 	reg.ArchiveSessionID, reg.NativeSessionID = id, native
-	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, "native-new", "agent-1"
 	data, err := json.Marshal(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -417,6 +417,69 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if _, errOut, code := runHandoff(t, f.env, "--to", "claude"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
+}
+
+// publishArchivedSubagent puts session id in the archive as a subagent of
+// parent, last captured at captured.
+func (f handoffFixture) publishArchivedSubagent(t *testing.T, id, parent string, captured time.Time) {
+	t.Helper()
+	syntheticSession{id: id, harness: "codex", project: "sub-project", captured: captured, parent: parent}.publish(t, f.mem)
+}
+
+// An archived subagent, newer than every session here, is not offered, from
+// the merged list or the archive alone.
+func TestHandoffPickerSkipsArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := "eeeeeeee" + f.both[8:]
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+	for _, id := range []string{f.notUploaded, f.archiveOnly, f.both} {
+		pickerLine(t, out, id)
+	}
+	// Archive only: the subagent is not offered there either.
+	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("--source archive: code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+}
+
+// The footer's total counts top-level sessions only: the archived subagents
+// past the limit are not among the ones that can be offered.
+func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range defaultListLimit {
+		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
+	}
+	f.sync(t)
+	for i := range 3 {
+		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
+	}
+	out, errOut, code := runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A local subagent registration is skipped even when its parent is in the
+// archive, so a parent that is both registered and archived is offered once.
+// The subagent is archived too: its archived row is dropped before the merge,
+// and its registration, finding no archived row to join, must not come back
+// as a session not yet uploaded.
+func TestHandoffPickerSkipsSubagentRegistrationOfArchivedParent(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.both, "native-local-sub")
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
+	}
+	pickerLine(t, out, f.both)
 }
 
 // Picker titles come from the filtered record, never the raw transcript.
