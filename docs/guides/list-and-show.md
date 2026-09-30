@@ -171,8 +171,10 @@ far as needed, in this order: tool results and command output (with
 (`▸ 14 tool calls: Bash ×9, Read ×5`), agent messages are shortened to 300
 bytes, and long prompts are cut to 2,000. The last three exchanges (up to
 their last twenty steps) are kept whole through those steps. If that is
-still too much, the oldest exchanges are dropped, but the newest is always
-kept. The output ends with what was omitted and where to read all of it.
+still too much, long final responses a hook reported are cut to 2,000 bytes,
+the oldest exchanges are dropped (the newest is always kept), and when the
+newest exchange alone is too much, its oldest steps go. The output ends with
+what was omitted and where to read all of it.
 
 `--json` output stays valid JSON: two documents, the sidecar and then the
 normalized view, whose size together is limited. The sidecar is never
@@ -189,7 +191,7 @@ When anything is trimmed, the untrimmed output is saved in the data
 directory's `handoffs/` folder as `SESSION_ID.transcript.txt` (`.json` with
 `--json`), mode 0600, removed after 7 days and by
 `uninstall --delete-local-data`. A limit too small for even the newest
-exchange, or for the sidecar alone, prints a warning on stderr and as much
+step, the header, or the sidecar alone, prints a warning on stderr and as much
 as it can. Nothing here prompts, and without a terminal nothing is paged.
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.

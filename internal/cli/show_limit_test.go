@@ -540,3 +540,47 @@ func TestFitTranscriptToLimitCountsTheFooterItPrints(t *testing.T) {
 		t.Fatalf("nothing was trimmed, so nothing was tested (untrimmed %d bytes)", untrimmed)
 	}
 }
+
+// The saved file's name comes from a session ID that a bucket, not this
+// machine, chose: whatever it holds, the file lands directly in handoffs/.
+func TestShowFullPathStaysInsideTheHandoffsFolder(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := filepath.Join(home, handoffDir)
+	for _, id := range []string{"", "..", ".", ".hidden", "../../outside", "a/b", `a\b`, "/abs/path", "ok-id", "with space", "nul\x00byte"} {
+		for _, jsonOut := range []bool{false, true} {
+			path := showFullPath(home, archive.SourceBundle{ArchiveSessionID: id, NativeSessionID: "native"}, jsonOut)
+			if filepath.Dir(path) != dir || strings.ContainsAny(filepath.Base(path), `/\`) || strings.HasPrefix(filepath.Base(path), ".") {
+				t.Errorf("session ID %q, json=%v: saved at %s", id, jsonOut, path)
+			}
+		}
+	}
+}
+
+// A link where the record is saved is replaced, not followed: what it points
+// at is not overwritten.
+func TestShowTranscriptDoesNotWriteThroughASymlinkAtTheSavedPath(t *testing.T) {
+	t.Parallel()
+	f := newShowLimitFixture(t, 30)
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := savedTranscriptPath(f, ".txt")
+	if err := os.MkdirAll(filepath.Dir(saved), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, saved); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if _, errOut, code := runShow(t, f.env, f.id, "--transcript", "--max-bytes", "20000"); code != 0 || errOut != "" {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if body, _ := os.ReadFile(victim); string(body) != "precious" {
+		t.Fatalf("show wrote through the link: %q", body[:min(len(body), 100)])
+	}
+	info, err := os.Lstat(saved)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("saved record: %v %v", info, err)
+	}
+}

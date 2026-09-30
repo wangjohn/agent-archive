@@ -2,6 +2,7 @@ package archive
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -14,8 +15,9 @@ import (
 // to no more of them than needed; the protected tail of recent steps is
 // never touched by the first three. Prompts are truncated before any
 // exchange is dropped, and when even that is not enough the oldest
-// exchanges are dropped, always keeping the newest, so that the result is
-// bounded (unlike a handoff, which keeps every prompt).
+// exchanges are dropped, always keeping the newest, and when the newest alone
+// is still too much its oldest steps go, so that the result is bounded
+// (unlike a handoff, which keeps every prompt).
 // showOutput says whether the rendering prints tool results and command
 // output at all (`show --transcript --full`); when it does not, dropping
 // them would change nothing, so that step is skipped. fits is false when
@@ -73,11 +75,49 @@ func FitTranscript(t Transcript, maxBytes int, showOutput bool, measure func(Tra
 		return out, true
 	}
 	base = out
-	return SmallestFit(max(len(base.Exchanges)-1, 0), maxBytes, measure, func(k int) Transcript {
+	if hasLongHookFinal(base.HookFinals) {
+		out, fits = SmallestFit(len(base.HookFinals), maxBytes, measure, func(k int) Transcript {
+			trial := cloneTranscript(base)
+			n := 0
+			for i := range k {
+				if len(trial.HookFinals[i]) > handoffPromptCap {
+					trial.HookFinals[i] = TruncateUTF8(trial.HookFinals[i], handoffPromptCap) + hookFinalShortened
+					n++
+				}
+			}
+			return trial.withElision(TranscriptElision{Kind: TranscriptElisionHookFinals, Count: n})
+		})
+		if fits {
+			return out, true
+		}
+		base = out
+	}
+	out, fits = SmallestFit(max(len(base.Exchanges)-1, 0), maxBytes, measure, func(k int) Transcript {
 		trial := cloneTranscript(base)
 		trial.Exchanges = trial.Exchanges[k:]
 		return trial.withElision(TranscriptElision{Kind: TranscriptElisionOldestExchanges, First: 1, Last: k, Count: k})
 	})
+	if fits || len(out.Exchanges) == 0 {
+		return out, fits
+	}
+	// Only the newest exchange is left, and it alone is over budget: a long
+	// autonomous run is one prompt and thousands of steps. Drop its oldest
+	// steps, so that the bound holds however the session is shaped; the
+	// newest steps are the ones that say where it stands.
+	base = out
+	last := len(base.Exchanges) - 1
+	return SmallestFit(len(base.Exchanges[last].Steps), maxBytes, measure, func(k int) Transcript {
+		trial := cloneTranscript(base)
+		trial.Exchanges[last].Steps = trial.Exchanges[last].Steps[k:]
+		return trial.withElision(TranscriptElision{Kind: TranscriptElisionOldestSteps, Count: k})
+	})
+}
+
+// hookFinalShortened marks a hook-reported final response FitTranscript cut.
+const hookFinalShortened = " …(shortened)"
+
+func hasLongHookFinal(finals []string) bool {
+	return slices.ContainsFunc(finals, func(s string) bool { return len(s) > handoffPromptCap })
 }
 
 // TranscriptElision records one FitTranscript step: what it removed and from
@@ -105,9 +145,15 @@ const (
 	TranscriptElisionAssistantText TranscriptElisionKind = "assistant_text"
 	// TranscriptElisionPromptText truncates long prompts.
 	TranscriptElisionPromptText TranscriptElisionKind = "prompt_text"
+	// TranscriptElisionHookFinals shortens long final responses a hook
+	// reported that the transcript does not hold.
+	TranscriptElisionHookFinals TranscriptElisionKind = "hook_finals"
 	// TranscriptElisionOldestExchanges drops the oldest exchanges
 	// altogether.
 	TranscriptElisionOldestExchanges TranscriptElisionKind = "oldest_exchanges"
+	// TranscriptElisionOldestSteps drops the oldest steps of the newest
+	// exchange, when it alone is over budget.
+	TranscriptElisionOldestSteps TranscriptElisionKind = "oldest_steps"
 )
 
 // SmallestFit returns apply(k) for the smallest k in 1..n whose result
@@ -174,8 +220,12 @@ func DescribeTranscriptElisions(elisions []TranscriptElision) string {
 			parts = append(parts, fmt.Sprintf("%d agent messages in %s shortened", e.Count, span))
 		case TranscriptElisionPromptText:
 			parts = append(parts, fmt.Sprintf("%d long prompts in %s truncated", e.Count, span))
+		case TranscriptElisionHookFinals:
+			parts = append(parts, fmt.Sprintf("%d final responses shortened", e.Count))
 		case TranscriptElisionOldestExchanges:
 			parts = append(parts, fmt.Sprintf("the oldest %d exchanges dropped", e.Count))
+		case TranscriptElisionOldestSteps:
+			parts = append(parts, fmt.Sprintf("the oldest %d steps of the newest exchange dropped", e.Count))
 		}
 	}
 	return strings.Join(parts, "; ")
@@ -267,6 +317,7 @@ func shortenTranscriptText(steps []TranscriptStep, limit int) ([]TranscriptStep,
 func cloneTranscript(t Transcript) Transcript {
 	out := t
 	out.Elisions = append([]TranscriptElision(nil), t.Elisions...)
+	out.HookFinals = append([]string(nil), t.HookFinals...)
 	out.Exchanges = make([]TranscriptExchange, len(t.Exchanges))
 	for i, exchange := range t.Exchanges {
 		copied := exchange

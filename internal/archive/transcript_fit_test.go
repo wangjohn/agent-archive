@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // bigTranscript is n exchanges, each a prompt, a long reply, three tool
@@ -30,6 +31,9 @@ func bigTranscript(n int) Transcript {
 func transcriptSize(showOutput bool) func(Transcript) int {
 	return func(t Transcript) int {
 		size := len(DescribeTranscriptElisions(t.Elisions))
+		for _, final := range t.HookFinals {
+			size += len(final)
+		}
 		for _, e := range t.Exchanges {
 			size += len(e.Text)
 			for _, s := range e.Steps {
@@ -276,5 +280,69 @@ func TestDescribeTranscriptElisions(t *testing.T) {
 	want := "output of 12 tool calls or commands in exchanges 1–4; 3 tool calls in exchange 2 collapsed to counts; 8 agent messages in exchanges 1–9 shortened; 1 long prompts in exchange 1 truncated"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}
+
+// One prompt and thousands of steps is one exchange: dropping exchanges
+// cannot help, so the oldest steps go, and the newest are kept.
+func TestFitTranscriptDropsTheOldestStepsOfASingleHugeExchange(t *testing.T) {
+	t.Parallel()
+	exchange := TranscriptExchange{Kind: TranscriptExchangePrompt, Text: "do everything"}
+	for i := range 5000 {
+		exchange.Steps = append(exchange.Steps, TranscriptStep{Kind: TranscriptStepText, Text: fmt.Sprintf("step %d %s", i, strings.Repeat("w", 100))})
+	}
+	in := Transcript{Exchanges: []TranscriptExchange{exchange}}
+	measure := transcriptSize(false)
+	const limit = 20000
+	out, fits := FitTranscript(in, limit, false, measure)
+	if !fits || measure(out) > limit {
+		t.Fatalf("fits=%v size=%d, limit %d", fits, measure(out), limit)
+	}
+	steps := out.Exchanges[0].Steps
+	if len(steps) == 0 || len(steps) >= 5000 || !strings.HasPrefix(steps[len(steps)-1].Text, "step 4999 ") || out.Exchanges[0].Text != "do everything" {
+		t.Fatalf("%d steps remain, prompt %q", len(steps), out.Exchanges[0].Text)
+	}
+	last := out.Elisions[len(out.Elisions)-1]
+	if last.Kind != TranscriptElisionOldestSteps || last.Count != 5000-len(steps) {
+		t.Fatalf("elisions = %+v, %d steps remain", out.Elisions, len(steps))
+	}
+	if got := DescribeTranscriptElisions(out.Elisions); !strings.Contains(got, fmt.Sprintf("the oldest %d steps of the newest exchange dropped", last.Count)) {
+		t.Fatalf("description: %s", got)
+	}
+	// Only as many steps were dropped as needed: less than two steps' room is left.
+	if left := limit - measure(out); left >= 2*(len(steps[0].Text)+20) {
+		t.Fatalf("dropped more steps than needed: %d bytes to spare", left)
+	}
+	// A limit nothing can meet still terminates, keeping the prompt.
+	out, fits = FitTranscript(in, 1, false, measure)
+	if fits || len(out.Exchanges) != 1 || out.Exchanges[0].Text != "do everything" {
+		t.Fatalf("fits=%v, exchanges=%d", fits, len(out.Exchanges))
+	}
+}
+
+// A hook-reported final response the transcript does not hold is part of the
+// output, so it is bounded too, and cutting it does not change the input.
+func TestFitTranscriptShortensLongHookFinals(t *testing.T) {
+	t.Parallel()
+	in := bigTranscript(2)
+	in.HookFinals = []string{strings.Repeat("é", 50000), "short"}
+	measure := transcriptSize(false)
+	const limit = 12000
+	out, fits := FitTranscript(in, limit, false, measure)
+	if !fits || measure(out) > limit {
+		t.Fatalf("fits=%v size=%d", fits, measure(out))
+	}
+	if len(in.HookFinals[0]) != 100000 {
+		t.Fatalf("FitTranscript changed its input's hook finals")
+	}
+	if !utf8.ValidString(out.HookFinals[0]) || !strings.HasSuffix(out.HookFinals[0], hookFinalShortened) || out.HookFinals[1] != "short" {
+		t.Fatalf("hook finals = %q", out.HookFinals)
+	}
+	found := false
+	for _, e := range out.Elisions {
+		found = found || (e.Kind == TranscriptElisionHookFinals && e.Count == 1)
+	}
+	if !found || !strings.Contains(DescribeTranscriptElisions(out.Elisions), "1 final responses shortened") {
+		t.Fatalf("elisions = %+v", out.Elisions)
 	}
 }
