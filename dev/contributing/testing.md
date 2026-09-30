@@ -174,7 +174,7 @@ export AGENT_ARCHIVE_HOME="$scratch/data"   # a data directory of its own
 export HOME="$scratch/home"                 # app configs and LaunchAgents live here
 export PATH="$scratch/stub:$PATH"           # agent-archive runs `launchctl` from PATH
 # Variables that would point setup back at your real configuration:
-unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
+unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE XDG_CONFIG_HOME
 ```
 
 - `AGENT_ARCHIVE_HOME` gives the sandbox its own data directory and its own

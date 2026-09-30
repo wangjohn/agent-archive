@@ -76,7 +76,7 @@ func isolateProcessForTesting() func() {
 	// Nor does a test see the agent it may be run from: an agent's variables
 	// switch off every prompt. Tests that mean an agent inject them through
 	// Env.LookupEnv, and the suite is also run with them set to prove it.
-	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", envNonInteractive}, agentShellEnv()...) {
+	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", envNonInteractive}, agentShellEnv()...) {
 		must(os.Unsetenv(name))
 	}
 	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) {
