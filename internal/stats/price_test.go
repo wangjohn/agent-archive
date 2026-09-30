@@ -112,6 +112,10 @@ func TestRealModelIDsThePriceTableKnows(t *testing.T) {
 		{"gpt-5.5-pro", false, ""},   // no cached-input price is published
 		{"gpt-5.6-cyber", false, ""}, // access-restricted, not a coding-agent model
 		{"claude-opus-4-6-v2", false, ""},
+		// Models the vendors price but the table leaves out on purpose.
+		{"gpt-5.4-pro", false, ""}, {"gpt-5-pro", false, ""}, {"o3", false, ""}, {"o4-mini", false, ""},
+		{"gpt-4.1", false, ""}, {"gpt-4o", false, ""}, {"chat-latest", false, ""},
+		{"claude-3-7-sonnet-20250219", false, ""}, {"claude-3-haiku-20240307", false, ""}, {"claude-mythos-preview", false, ""},
 		{"", false, ""},
 	} {
 		entry, ok := table.Lookup(tc.id)
