@@ -113,6 +113,16 @@ and prints the chosen sidecar.
 On an interactive terminal, bare `agent-archive` (no command) opens the
 same session browser as `list` when capture is already set up.
 
+None of this happens when a coding agent runs the command, even if its shell
+is a pseudo-terminal. With `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` in the environment, or `AGENT_ARCHIVE_NONINTERACTIVE=1`,
+`list` prints its table without a pager or browser, bare `show` asks for a
+SESSION_ID, and a `show` title that matches several sessions prints the
+candidates on stderr and exits 1, exactly as when piped.
+`AGENT_ARCHIVE_NONINTERACTIVE=0` brings the browser back; see
+[configuration](../reference/configuration.md#environment-variables) and
+[troubleshooting](troubleshooting.md#no-picker-or-prompt-in-an-agents-terminal).
+
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip

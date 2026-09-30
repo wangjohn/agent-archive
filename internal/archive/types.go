@@ -533,8 +533,8 @@ type Counts struct {
 	ToolErrors *int `json:"tool_errors,omitempty"`
 	// The token counts keep each harness's own meaning. Claude Code's
 	// InputTokens excludes what was read from or written to the prompt cache;
-	// Codex's InputTokens includes its cached input, which CacheReadTokens
-	// repeats. ReasoningTokens (from parser 0.14.0: Claude Code's
+	// Codex's InputTokens includes its cached input and its cache-write input,
+	// which CacheReadTokens and CacheWriteTokens repeat. ReasoningTokens (from parser 0.14.0: Claude Code's
 	// output_tokens_details.thinking_tokens, Codex's reasoning_output_tokens)
 	// is the part of OutputTokens spent on reasoning, not an addition to it.
 	InputTokens      *int `json:"input_tokens,omitempty"`
