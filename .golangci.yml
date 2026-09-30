@@ -118,6 +118,31 @@ linters:
               desc: cli owns process signals
             - pkg: github.com/wangjohn/agent-archive/internal/credentials
               desc: the journal never opens credentials
+        # The one place that knows the operating system is pure: it runs no
+        # program and opens no file (what it needs from the system is passed
+        # in as LocationDeps), and it opens no credentials or hook files.
+        # TestPlatformImportBoundary checks the same on every platform, and
+        # TestOnlyPlatformReadsRuntimeGOOS that nothing else reads
+        # runtime.GOOS.
+        platform-is-pure:
+          files:
+            - "**/internal/platform/*.go"
+            - "!$test"
+          deny:
+            - pkg: os$
+              desc: platform reads no files or environment; the caller passes them in
+            - pkg: os/exec
+              desc: platform runs no program; a LocationDeps function does
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: net$
+              desc: platform never touches the network
+            - pkg: net/http
+              desc: platform never touches the network
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: credentials depends on platform, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/hooks
+              desc: platform knows nothing of hook files
         # The statistics engine takes metadata, options and a clock as
         # arguments and returns numbers: it reads no file, runs no program,
         # and uses no network, clock or randomness, and knows only the

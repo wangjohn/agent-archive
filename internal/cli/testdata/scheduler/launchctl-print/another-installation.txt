@@ -1,0 +1,34 @@
+gui/501/com.agent-archive.collector = {
+	active count = 1
+	path = /Users/someone/Library/LaunchAgents/com.agent-archive.collector.plist
+	type = LaunchAgent
+	state = running
+
+	program = /Users/alex/bin/agent-archive
+	arguments = {
+		/Users/alex/bin/agent-archive
+		_collect
+	}
+
+	stdout path = /Users/alex/.local/share/agent-archive/collector.log
+	stderr path = /Users/alex/.local/share/agent-archive/collector-error.log
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		AGENT_ARCHIVE_HOME => /Users/alex/.local/share/agent-archive
+		XPC_SERVICE_NAME => com.agent-archive.collector
+	}
+
+	domain = gui/501 [100005]
+	asid = 100005
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 42
+	pid = 4711
+	immediate reason = ipc (mach)
+	last exit code = 0
+
+	properties = interval | runatload | inferred program
+}

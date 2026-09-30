@@ -88,7 +88,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 	}
 	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
 		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
-		stagedCredentialLeftNote(credentialGOOS, home))
+		stagedCredentialLeftNote(credentialOS, home))
 	move, err := p.yesNo("Move it aside and continue?", true)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -107,9 +107,16 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
+	refresh := fs.Bool("refresh", false, "bring hooks, the collector's plist, and skills up to date, and nothing else")
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
+	}
+	if *refresh {
+		if other := refreshCompanions(fs); other != "" {
+			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
+		}
+		return runSetupRefresh(stdout, stderr, env, opts.verbose)
 	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
@@ -462,7 +469,7 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		if saveSecret {
 			keychain, e := env.credentialStore()
 			if e != nil {
-				return false, openCredentialStoreError(credentialGOOS, e)
+				return false, openCredentialStoreError(credentialOS, e)
 			}
 			id, e := local.ID()
 			if e != nil {
@@ -752,10 +759,10 @@ func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskill
 				installed = append(installed, displayPath(f.Path, userHome))
 				continue
 			}
-			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(f.Path, userHome), skill.Name)
+			terminal.Print(p.out, leftSkillLine(skill.Title(), f.Path, userHome))
 		}
 		if len(installed) > 0 {
-			what := "/" + skill.Name
+			what := skill.Title()
 			if skill.Summary != "" {
 				what += ", which " + skill.Summary
 			}
@@ -1137,7 +1144,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 					return cfg, secret, false, err
 				}
 			} else {
-				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialGOOS)+"; enter them again.")
+				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialOS)+"; enter them again.")
 			}
 		}
 		if !reuse {

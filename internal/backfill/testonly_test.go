@@ -10,7 +10,7 @@ import (
 // (golang.org/x/tools/cmd/deadcode) reports only code that is really dead.
 
 // CursorStateDatabase is where Cursor keeps its chats under home on this
-// machine (see cursorstore.AppSupportDir).
+// machine (see platform.Locations).
 func CursorStateDatabase(home string) string {
 	return cursorstore.StateDatabase(home)
 }

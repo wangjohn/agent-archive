@@ -450,7 +450,7 @@ func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credenti
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
 		var err error
 		if store, err = credentialStore(); err != nil {
-			return nil, storageOpenError(credentialGOOS, err)
+			return nil, storageOpenError(credentialOS, err)
 		}
 	}
 	return storage.NewConfiguredStore(ctx, cfg.Storage, store)

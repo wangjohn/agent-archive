@@ -11,7 +11,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -20,7 +19,7 @@ import (
 // would, replacing any with the same key.
 func (f *backfillFixture) putCursorRows(t *testing.T, rows map[string]string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", cursorstore.StateDatabaseFor(f.userHome, nil, "darwin"))
+	db, err := sql.Open("sqlite", macCursorDatabase(f.userHome))
 	if err != nil {
 		t.Fatal(err)
 	}

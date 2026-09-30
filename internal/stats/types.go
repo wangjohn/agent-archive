@@ -90,7 +90,8 @@ const (
 	// ones, when more apply.
 	MaxHeadsUp = 3
 	// CostliestNoteMinShare is the share of the window's priced spend the
-	// costliest session must reach to be worth a note.
+	// costliest session must reach to be worth a note, in a window of more
+	// than one session.
 	CostliestNoteMinShare = 0.10
 	// CostliestNoteMinCost is the least the costliest session must have cost,
 	// in the price table's currency, to be worth a note: when everything is

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,15 @@ func claudeSkillPath(userHome string) string {
 
 func agentsSkillPath(userHome string) string {
 	return filepath.Join(userHome, ".agents", "skills", "handoff", "SKILL.md")
+}
+
+// archiveSkillPaths are the agent-archive skill's files (Claude Code's, then
+// the shared one), which setup installs beside /handoff's.
+func archiveSkillPaths(userHome string) []string {
+	return []string{
+		filepath.Join(userHome, ".claude", "skills", "agent-archive", "SKILL.md"),
+		filepath.Join(userHome, ".agents", "skills", "agent-archive", "SKILL.md"),
+	}
 }
 
 func uninstallRun(t *testing.T, env Env) string {
@@ -40,7 +50,7 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	cfg, _, err := config.Load(home)
 	must(t, err)
 	files := agentskills.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
-	if len(files) != 2 {
+	if len(files) != 2*len(agentskills.Registry) {
 		t.Fatalf("files = %+v", files)
 	}
 	for _, f := range files {
@@ -52,9 +62,12 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	if !strings.Contains(output, "Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md\n") {
 		t.Fatalf("setup did not say where /handoff went:\n%s", output)
 	}
+	if !strings.Contains(output, "Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md\n") {
+		t.Fatalf("setup did not say where the agent-archive skill went:\n%s", output)
+	}
 
 	skills := statusJSON(t, env)["agent_skills"]
-	if !reflect.DeepEqual(skills, []any{claudeSkillPath(userHome), agentsSkillPath(userHome)}) {
+	if !reflect.DeepEqual(skills, []any{claudeSkillPath(userHome), agentsSkillPath(userHome), archiveSkillPaths(userHome)[0], archiveSkillPaths(userHome)[1]}) {
 		t.Fatalf("status agent_skills = %#v", skills)
 	}
 	var out, errOut bytes.Buffer
@@ -63,6 +76,9 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md\n") {
 		t.Fatalf("status --verbose lacks the skill:\n%s", &out)
+	}
+	if !strings.Contains(out.String(), "  agent-archive: ~/.claude/skills/agent-archive/SKILL.md\n") {
+		t.Fatalf("status --verbose lacks the agent-archive skill:\n%s", &out)
 	}
 
 	uninstallRun(t, env)
@@ -87,7 +103,7 @@ func TestSetupLeavesAHandoffSkillItDidNotWrite(t *testing.T) {
 	if strings.Contains(output, "Installed /handoff") {
 		t.Fatalf("setup claims an installation:\n%s", output)
 	}
-	if _, ok := statusJSON(t, env)["agent_skills"]; ok {
+	if listed := statusJSON(t, env)["agent_skills"]; slices.Contains(anyStrings(listed), path) {
 		t.Fatal("status lists a file setup did not write")
 	}
 	if output := uninstallRun(t, env); !strings.Contains(output, "Kept ~/.agents/skills/handoff/SKILL.md: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).\n") {
@@ -105,7 +121,7 @@ func TestSetupAndUninstallKeepAHandoffSkillMadeOwn(t *testing.T) {
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", false, true, false, t.TempDir()))
 	path := claudeSkillPath(userHome)
 	must(t, os.WriteFile(path, []byte("tuned by hand\n"), 0600))
-	if _, ok := statusJSON(t, env)["agent_skills"]; ok {
+	if listed := statusJSON(t, env)["agent_skills"]; slices.Contains(anyStrings(listed), path) {
 		t.Fatal("status lists a skill that is no longer setup's")
 	}
 	old, _, err := config.Load(home)
@@ -204,21 +220,23 @@ func TestStatusReportsAnOutdatedSkillUntilSetupRefreshesIt(t *testing.T) {
 	if got := view["agent_skills_out_of_date"]; !reflect.DeepEqual(got, []any{claude}) {
 		t.Fatalf("agent_skills_out_of_date = %#v", got)
 	}
-	if got := view["agent_skills"]; !reflect.DeepEqual(got, []any{claude}) {
+	// The agent-archive skill's files are current and setup's own; the
+	// shared /handoff one is the person's.
+	if got := view["agent_skills"]; !reflect.DeepEqual(got, []any{claude, archiveSkillPaths(userHome)[0], archiveSkillPaths(userHome)[1]}) {
 		t.Fatalf("agent_skills = %#v", got)
 	}
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
-	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup to refresh it.") {
+	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup --refresh to refresh it.") {
 		t.Fatalf("status does not warn:\n%s", &out)
 	}
 	out.Reset()
 	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
-	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md (out of date; run agent-archive setup)\n") {
+	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md (out of date; run agent-archive setup --refresh)\n") {
 		t.Fatalf("status --verbose does not mark the file:\n%s", &out)
 	}
 	old, _, err := config.Load(home)
@@ -302,7 +320,7 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 func TestSetupReportsEachSkillItsOwnFiles(t *testing.T) {
 	t.Parallel()
 	userHome := t.TempDir()
-	skills := []agentskills.Skill{{Name: "handoff", Summary: "continues a session in another agent"}, {Name: "second"}}
+	skills := []agentskills.Skill{{Name: "handoff", Slash: true, Summary: "continues a session in another agent"}, {Name: "second", Slash: true}, {Name: "third", Summary: "reads things"}}
 	file := func(skill, name, content string) agentskills.File {
 		path := filepath.Join(userHome, ".agents", "skills", skill, name)
 		must(t, os.MkdirAll(filepath.Dir(path), 0700))
@@ -313,15 +331,29 @@ func TestSetupReportsEachSkillItsOwnFiles(t *testing.T) {
 		file("handoff", "SKILL.md", "on disk\n"),
 		file("second", "SKILL.md", "on disk\n"),
 		file("second", "other.md", "not what is on disk\n"),
+		file("third", "SKILL.md", "on disk\n"),
+		file("third", "other.md", "not what is on disk\n"),
 	}
 	var out bytes.Buffer
 	printSkillFiles(newPrompter(strings.NewReader(""), &out), skills, files, userHome)
 	want := "Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md\n" +
 		"Left ~/.agents/skills/second/other.md as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /second is not installed there.\n" +
-		"Installed /second: ~/.agents/skills/second/SKILL.md\n"
+		"Installed /second: ~/.agents/skills/second/SKILL.md\n" +
+		"Left ~/.agents/skills/third/other.md as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so the third skill is not installed there.\n" +
+		"Installed the third skill, which reads things: ~/.agents/skills/third/SKILL.md\n"
 	if out.String() != want {
 		t.Fatalf("output:\n%s\nwant:\n%s", out.String(), want)
 	}
+}
+
+// anyStrings is a decoded JSON array of strings.
+func anyStrings(v any) []string {
+	var out []string
+	items, _ := v.([]any)
+	for _, item := range items {
+		out = append(out, item.(string))
+	}
+	return out
 }
 
 func readText(t *testing.T, path string) string {

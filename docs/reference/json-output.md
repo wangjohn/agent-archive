@@ -251,7 +251,7 @@ at the top level. Read the rules below before using a number:
   | `kind` | Applies when | Fields |
   | --- | --- | --- |
   | `subagent_share` | subagents used 25% or more of the window's tokens | `share` (0 to 1), `tokens`, `runs` (subagent runs rolled into their parents, which are not sessions of their own) |
-  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
+  | `costliest_session` | the window has more than one session, and the costliest cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
   | `unmetered_sessions` | any session reports no token counts | `sessions`, `by_agent` (`harness`, `label`, `sessions`; most sessions first) |
   | `low_cache_hit` | the window's cache-hit rate is under 60%, over at least 50,000 input-side tokens | `hit_rate`, `input_tokens` |
 

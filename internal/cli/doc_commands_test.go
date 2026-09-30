@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -120,13 +121,6 @@ func flagNameOf(word string) string {
 func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 	t.Parallel()
 	sets := commandFlagSets(t)
-	// What may follow agent-archive besides a public command: help, the
-	// version flags, and the hidden entry points apps and
-	// launchd run (_hook takes --harness).
-	others := map[string][]string{
-		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
-		"_collect": nil, "_hook": {"harness"},
-	}
 	checked := 0
 	for _, path := range docCommandSources(t) {
 		data, err := os.ReadFile(path)
@@ -139,60 +133,81 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 		// as `list --json` names the command too.
 		design := strings.HasPrefix(filepath.ToSlash(rel), "dev/specs/")
 		for _, code := range quotedCode(string(data)) {
-			code = shellContinuation.ReplaceAllString(code, " ")
-			for line := range strings.SplitSeq(code, "\n") {
-				line = shellComment.ReplaceAllString(line, "")
-				invocations := docInvocation.FindAllStringSubmatch(line, -1)
-				if fields := strings.Fields(line); !design && len(invocations) == 0 && len(fields) > 1 && commandHelp[fields[0]] != "" && slices.ContainsFunc(fields[1:], func(w string) bool { return flagNameOf(w) != "" }) {
-					invocations = [][]string{{line, " " + line}}
-				}
-				for _, m := range invocations {
-					words := commandWords(m[1])
-					if len(words) == 0 {
-						continue // agent-archive alone, or in a sentence
-					}
-					command, rest := words[0], words[1:]
-					if command == "COMMAND" {
-						continue // a placeholder: any command, any of its flags
-					}
-					accepted, other := others[command]
-					if _, public := commandHelp[command]; !public && !other {
-						t.Errorf("%s: `agent-archive %s`: no command %q", rel, strings.Join(words, " "), command)
-						continue
-					}
-					if len(rest) > 0 {
-						if _, ok := commandHelp[command+" "+rest[0]]; ok {
-							command, rest = command+" "+rest[0], rest[1:]
-						} else if near := nearSubcommand(command, rest[0]); near != "" {
-							t.Errorf("%s: `agent-archive %s`: %s has no subcommand %q (%q?)", rel, strings.Join(words, " "), command, rest[0], near)
-							continue
-						}
-					}
-					if set, ok := sets[command]; ok {
-						accepted = nil
-						set.VisitAll(func(f *flag.Flag) { accepted = append(accepted, f.Name) })
-					}
-					for _, word := range rest {
-						if word == "--" {
-							break // the rest is for another program (handoff --to)
-						}
-						name := flagNameOf(word)
-						if name == "" {
-							continue
-						}
-						checked++
-						if !slices.Contains(append([]string{"help", "h"}, accepted...), name) {
-							spelled, _, _ := strings.Cut(strings.Trim(word, "[]"), "=")
-							t.Errorf("%s: `agent-archive %s`: %s has no flag %s", rel, strings.Join(words, " "), command, spelled)
-						}
-					}
-				}
+			problems, n := quotedInvocationProblems(sets, code, !design)
+			checked += n
+			for _, problem := range problems {
+				t.Errorf("%s: %s", rel, problem)
 			}
 		}
 	}
 	if checked < 20 {
 		t.Fatalf("checked only %d quoted flags; the extraction is broken", checked)
 	}
+}
+
+// quotedInvocationProblems checks every `agent-archive COMMAND [SUBCOMMAND]
+// --flag` in a piece of quoted code (see quotedCode) against the commands and
+// flag sets the CLI has, returning what is wrong with each and how many flags
+// it checked. With bareCommands, a line that starts with a command and a
+// flag, as a code span such as `list --json` does, names the command too.
+func quotedInvocationProblems(sets map[string]*flag.FlagSet, code string, bareCommands bool) (problems []string, checked int) {
+	// What may follow agent-archive besides a public command: help, the
+	// version flags, and the hidden entry points apps and
+	// launchd run (_hook takes --harness).
+	others := map[string][]string{
+		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
+		"_collect": nil, "_hook": {"harness"},
+	}
+	code = shellContinuation.ReplaceAllString(code, " ")
+	for line := range strings.SplitSeq(code, "\n") {
+		line = shellComment.ReplaceAllString(line, "")
+		invocations := docInvocation.FindAllStringSubmatch(line, -1)
+		if fields := strings.Fields(line); bareCommands && len(invocations) == 0 && len(fields) > 1 && commandHelp[fields[0]] != "" && slices.ContainsFunc(fields[1:], func(w string) bool { return flagNameOf(w) != "" }) {
+			invocations = [][]string{{line, " " + line}}
+		}
+		for _, m := range invocations {
+			words := commandWords(m[1])
+			if len(words) == 0 {
+				continue // agent-archive alone, or in a sentence
+			}
+			command, rest := words[0], words[1:]
+			if command == "COMMAND" {
+				continue // a placeholder: any command, any of its flags
+			}
+			accepted, other := others[command]
+			if _, public := commandHelp[command]; !public && !other {
+				problems = append(problems, fmt.Sprintf("`agent-archive %s`: no command %q", strings.Join(words, " "), command))
+				continue
+			}
+			if len(rest) > 0 {
+				if _, ok := commandHelp[command+" "+rest[0]]; ok {
+					command, rest = command+" "+rest[0], rest[1:]
+				} else if near := nearSubcommand(command, rest[0]); near != "" {
+					problems = append(problems, fmt.Sprintf("`agent-archive %s`: %s has no subcommand %q (%q?)", strings.Join(words, " "), command, rest[0], near))
+					continue
+				}
+			}
+			if set, ok := sets[command]; ok {
+				accepted = nil
+				set.VisitAll(func(f *flag.Flag) { accepted = append(accepted, f.Name) })
+			}
+			for _, word := range rest {
+				if word == "--" {
+					break // the rest is for another program (handoff --to)
+				}
+				name := flagNameOf(word)
+				if name == "" {
+					continue
+				}
+				checked++
+				if !slices.Contains(append([]string{"help", "h"}, accepted...), name) {
+					spelled, _, _ := strings.Cut(strings.Trim(word, "[]"), "=")
+					problems = append(problems, fmt.Sprintf("`agent-archive %s`: %s has no flag %s", strings.Join(words, " "), command, spelled))
+				}
+			}
+		}
+	}
+	return problems, checked
 }
 
 // nearSubcommand returns the subcommand of command that word misspells

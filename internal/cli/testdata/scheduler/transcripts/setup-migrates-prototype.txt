@@ -1,0 +1,9 @@
+# setup with the prototype's upload job loaded
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent prototype=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent prototype=present
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=absent own=absent prototype=present
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=present own=present prototype=present
+bootout gui/UID/com.agent-skills.skill-runs-upload  |  journal=present own=present prototype=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=present prototype=absent
+# exit 0, end: journal=absent own=present prototype=absent
