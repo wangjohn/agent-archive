@@ -171,6 +171,7 @@ linters:
         scheduler-adapters-run-through-the-runner:
           files:
             - "**/internal/scheduler/launchd/*.go"
+            - "**/internal/scheduler/systemd/*.go"
             - "!$test"
           deny:
             - pkg: os/exec
@@ -195,6 +196,8 @@ linters:
             - "!**/internal/scheduler/host/*.go"
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/scheduler/launchd
+              desc: import the port (internal/scheduler); host chooses the adapter
+            - pkg: github.com/wangjohn/agent-archive/internal/scheduler/systemd
               desc: import the port (internal/scheduler); host chooses the adapter
         # Running a program is limited to the listed packages
         # (TestOnlyListedPackagesRunPrograms is the same list, on every
