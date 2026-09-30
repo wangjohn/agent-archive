@@ -88,6 +88,10 @@ type handoffOptionsDependencies interface {
 type handoffTargetDependencies interface {
 	handoffResolverDependencies
 	currentSessionDependencies
+	workingDirDependencies
+}
+
+type workingDirDependencies interface {
 	workingDir() (string, error)
 }
 
@@ -108,16 +112,19 @@ type handoffLaunchDependencies interface {
 	launchSpecDependencies
 	executable() (string, error)
 	tempDir() string
-	workingDir() (string, error)
+	workingDirDependencies
 	now() time.Time
 	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
 	openTerminal(termlaunch.Spec) (string, error)
 }
 
 // handoffDestinationDependencies is what the destination prompt uses: which
-// agents are installed, the pager for printing, and the clipboard.
+// agents are installed, the pager for printing, the clipboard, and the
+// directories a written file's path is resolved against.
 type handoffDestinationDependencies interface {
 	launchSpecDependencies
 	pagerDependencies
+	workingDirDependencies
+	userHomeDir() (string, error)
 	clipboard([]byte) error
 }

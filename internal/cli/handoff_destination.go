@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -163,7 +164,7 @@ func askHandoffDestination(p *prompter, h archive.Handoff, home string, env hand
 
 // deliverHandoff carries out a choice other than launching: print it (paged
 // when longer than the screen, as show is), copy it, or write it to a file.
-func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target handoffTarget, stdout, stderr io.Writer, env handoffDestinationDependencies) error {
+func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target handoffTarget, opts handoffOptions, stdout, stderr io.Writer, env handoffDestinationDependencies) error {
 	switch choice.action {
 	case handoffPrint:
 		_, _, err := pageText(context.Background(), stdout, stderr, env, false, false, rendered)
@@ -175,22 +176,40 @@ func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target h
 		terminal.Printf(stderr, "handoff: copied %d bytes\n", len(rendered))
 		return nil
 	case handoffWrite:
-		return writeHandoffChoice(p, rendered, target, stderr)
+		// The default file goes where an agent would have started.
+		dir, err := launchDir(opts, env)
+		if err != nil {
+			return err
+		}
+		return writeHandoffChoice(p, rendered, target, dir, stderr, env)
 	}
 	return nil
 }
 
 // writeHandoffChoice asks for a path and writes the handoff there with mode
-// 0600, replacing an existing file only when told to.
-func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, stderr io.Writer) error {
-	def := "./handoff-" + shortSessionID(handoffFileName(target.bundle)) + ".md"
+// 0600, replacing an existing file only when told to. The default is in dir.
+// A leading ~/ is the home directory, as in a shell. A write that fails is
+// reported and asked again, with no default: Enter or q then cancels.
+func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir string, stderr io.Writer, env handoffDestinationDependencies) error {
+	def := filepath.Join(dir, "handoff-"+shortSessionID(handoffFileName(target.bundle))+".md")
+	label := "Write to"
 	for {
-		path, err := p.withDefault("Write to", def)
+		path, err := p.withDefault(label, def)
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+		if def == "" && (path == "" || path == "q") {
+			return nil
+		}
+		if path == "~" || strings.HasPrefix(path, "~/") {
+			home, err := env.userHomeDir()
+			if err != nil {
+				return fmt.Errorf("home directory: %w", err)
+			}
+			path = filepath.Join(home, path[1:])
 		}
 		force := false
 		if _, err := os.Lstat(path); err == nil {
@@ -207,7 +226,9 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, stde
 			force = true
 		}
 		if err := writeHandoffOutput(path, rendered, force); err != nil {
-			return err
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			label, def = "Write to (Enter to cancel)", ""
+			continue
 		}
 		terminal.Printf(stderr, "handoff: wrote %s (%d bytes)\n", path, len(rendered))
 		return nil

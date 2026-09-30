@@ -219,8 +219,8 @@ func TestHandoffPromptCopies(t *testing.T) {
 	}
 }
 
-// w writes a private file, suggesting ./handoff-<short id>.md, and replaces
-// an existing file only when told to.
+// w writes a private file, suggesting handoff-<short id>.md in the launch
+// directory, and replaces an existing file only when told to.
 func TestHandoffPromptWritesAFile(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
@@ -228,7 +228,7 @@ func TestHandoffPromptWritesAFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "h.md")
 	out, errOut, code := runPicker(t, f.env, "w\n"+path+"\n", f.id)
-	if code != 0 || !strings.Contains(out, "Write to [./handoff-"+shortSessionID(f.id)+".md]: ") || !strings.Contains(errOut, "handoff: wrote "+path) {
+	if code != 0 || !strings.Contains(out, "Write to ["+filepath.Join(f.project, "handoff-"+shortSessionID(f.id)+".md")+"]: ") || !strings.Contains(errOut, "handoff: wrote "+path) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	info, err := os.Stat(path)
@@ -248,6 +248,60 @@ func TestHandoffPromptWritesAFile(t *testing.T) {
 	out, errOut, code = runPicker(t, f.env, "w\n"+path+"\ny\n", f.id)
 	if data, _ := os.ReadFile(path); code != 0 || string(data) != want {
 		t.Fatalf("confirmed replace: code=%d file=%q stderr=%s\n%s", code, data, errOut, out)
+	}
+}
+
+// The default is in --project when given; Enter writes it there.
+func TestHandoffPromptWritesTheDefaultInTheProject(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	elsewhere := t.TempDir()
+	f.env.WorkingDir = func() (string, error) { return elsewhere, nil }
+	if _, errOut, code := runPicker(t, f.env, "w\n\n", "--latest", "--project", f.project); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(f.project, "handoff-"+shortSessionID(f.id)+".md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ~/ is the home directory, as a shell would read it.
+func TestHandoffPromptWritesUnderHome(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	home := t.TempDir()
+	f.env.UserHomeDir = func() (string, error) { return home, nil }
+	if _, errOut, code := runPicker(t, f.env, "w\n~/notes/../h.md\n", f.id); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, "h.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A failed write is reported and asked again; another path then works, and
+// Enter or q gives up without failing.
+func TestHandoffPromptAsksAgainAfterAFailedWrite(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-dir", "h.md")
+	good := filepath.Join(dir, "h.md")
+	out, errOut, code := runPicker(t, f.env, "w\n"+missing+"\n"+good+"\n", f.id)
+	if code != 0 || !strings.Contains(errOut, "agent-archive: handoff: open "+missing) || !strings.Contains(out, "Write to (Enter to cancel): ") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if _, err := os.Stat(good); err != nil {
+		t.Fatal(err)
+	}
+	for _, cancel := range []string{"\n", "q\n"} {
+		out, errOut, code := runPicker(t, f.env, "w\n"+missing+"\n"+cancel, f.id)
+		if code != 0 || strings.Contains(errOut, "wrote") || strings.Contains(out, "## Where it left off") {
+			t.Fatalf("cancel %q: code=%d stderr=%s\n%s", cancel, code, errOut, out)
+		}
+	}
+	if entries, _ := os.ReadDir(f.project); len(entries) != 0 && slices.ContainsFunc(entries, func(e os.DirEntry) bool { return strings.HasPrefix(e.Name(), "handoff-") }) {
+		t.Fatalf("a cancelled write wrote the default: %v", entries)
 	}
 }
 

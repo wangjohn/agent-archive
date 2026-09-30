@@ -114,7 +114,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		p := newPrompter(answers, stdout)
 		choice, err := askHandoffDestination(p, h, home, env)
 		if err == nil && choice.action != handoffLaunch {
-			err = deliverHandoff(choice, p, rendered, target, stdout, stderr, env)
+			err = deliverHandoff(choice, p, rendered, target, opts, stdout, stderr, env)
 		}
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)

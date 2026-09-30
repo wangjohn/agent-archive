@@ -96,8 +96,10 @@ a Codex or Cursor one, else the first listed. A number (or an agent's name)
 launches it as `--to` would, in this terminal unless `--new-window` is given.
 `p` prints the handoff, through the pager when it is longer than the screen;
 `c` copies it with `pbcopy`; `w` asks for a file name (default
-`./handoff-<short id>.md`), writes it with mode 0600, and asks before
-replacing a file. With no agent installed, Enter prints.
+`handoff-<short id>.md` in the `--project` or current directory; `~/` is
+your home directory), writes it with mode 0600, and asks before replacing a
+file. A write that fails is reported and asked again; Enter or `q` then
+gives up. With no agent installed, Enter prints.
 
 Piped or redirected output never asks, so
 `codex "$(agent-archive handoff --latest)"` and `--output` work byte for byte
