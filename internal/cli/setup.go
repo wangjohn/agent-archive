@@ -128,6 +128,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
+	// Setup picks the scheduler (this system's own) and records it; every
+	// other command addresses the one recorded.
+	env = env.choosingBackend()
 	if opts.given() && !opts.yes {
 		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
