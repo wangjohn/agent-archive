@@ -41,6 +41,13 @@ only at full size in a plain build, which CI does in a step of its own:
 AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
 ```
 
+A test of a timeout or budget doesn't time the whole call: `-race` on a
+loaded runner stretches the file writes around the wait by seconds. It
+checks the deadline a stub sees against clock readings taken in the stub
+(`TestOriginURLGivesGitAtMostTheTimeout`), or runs the code in a
+`testing/synctest` bubble, whose clock moves only while every goroutine in
+it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
+
 ## Levenshtein checks
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from

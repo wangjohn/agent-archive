@@ -2,6 +2,7 @@ package capture
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -62,25 +63,29 @@ func TestHookDoesNotAskAgainForAContinuationOfARegisteredSession(t *testing.T) {
 	}
 }
 
-// A lookup that hangs (a stalled mount) costs the hook at most its own
-// budget, and the session still registers, without a key.
+// A lookup that hangs (a stalled mount) costs the hook its budget and no
+// more, and the session still registers, without a key. The hook runs in a
+// synctest bubble, whose clock moves only while every goroutine in it is
+// blocked: the file reads and writes around the lookup take no time on it, so
+// the hook's time on that clock is what it waited for the lookup, however
+// loaded the machine is.
 func TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs(t *testing.T) {
 	t.Parallel()
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	start := time.Now()
-	reg := registerWithRepoKey(t, func(string) string {
-		<-release
-		return archive.RepoKey("https://example.test/acme/widget.git")
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		start := time.Now()
+		reg := registerWithRepoKey(t, func(string) string {
+			<-release
+			return archive.RepoKey("https://example.test/acme/widget.git")
+		})
+		if reg.RepoKey != "" {
+			t.Errorf("RepoKey = %q, want none from a lookup that never answered", reg.RepoKey)
+		}
+		// A hook that waited for the lookup itself would never return: the
+		// bubble would panic as deadlocked instead.
+		if elapsed := time.Since(start); elapsed != repoKeyBudget {
+			t.Errorf("the hook took %v with a hung lookup, want exactly the lookup's budget, %v", elapsed, repoKeyBudget)
+		}
 	})
-	if reg.RepoKey != "" {
-		t.Errorf("RepoKey = %q, want none from a lookup that never answered", reg.RepoKey)
-	}
-	// The lookup never answers, so this only fails if the hook waits for it.
-	// The slack is generous: a loaded runner must not turn a working bound
-	// into a failure, and the session registering without a key is the
-	// outcome that matters.
-	if elapsed, limit := time.Since(start), repoKeyBudget+3*time.Second; elapsed > limit {
-		t.Errorf("the hook took %v with a hung lookup, want under %v", elapsed, limit)
-	}
 }
