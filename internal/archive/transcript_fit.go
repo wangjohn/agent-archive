@@ -13,11 +13,14 @@ import (
 // tool calls collapsed to counts by name, agent messages shortened, then
 // long prompts truncated. Each step goes to the oldest exchanges first and
 // to no more of them than needed; the protected tail of recent steps is
-// never touched by the first three. Prompts are truncated before any
-// exchange is dropped, and when even that is not enough the oldest
-// exchanges are dropped, always keeping the newest, and when the newest alone
-// is still too much its oldest steps go, so that the result is bounded
-// (unlike a handoff, which keeps every prompt).
+// never touched by the first three. Prompts (and the person's shell and
+// slash commands) are truncated before any exchange is dropped, and when
+// even that is not enough long hook-reported final responses are shortened,
+// the oldest of them dropped (keeping the newest), and the oldest exchanges
+// dropped, always keeping the newest. When the newest alone is still too
+// much its long agent messages are shortened and then its oldest steps go,
+// so that the result is bounded (unlike a handoff, which keeps every
+// prompt).
 // showOutput says whether the rendering prints tool results and command
 // output at all (`show --transcript --full`); when it does not, dropping
 // them would change nothing, so that step is skipped. fits is false when
@@ -68,6 +71,15 @@ func FitTranscript(t Transcript, maxBytes int, showOutput bool, measure func(Tra
 				exchange.Text, exchange.TextTruncated = TruncateUTF8(exchange.Text, handoffPromptCap), true
 				elision = elision.with(i, 1)
 			}
+			// What the person typed as a shell or slash command is as much
+			// theirs as a prompt.
+			for j := range exchange.Steps {
+				step := &exchange.Steps[j]
+				if (step.Kind == TranscriptStepShell || step.Kind == TranscriptStepCommand) && len(step.Text) > handoffPromptCap {
+					step.Text, step.TextTruncated = TruncateUTF8(step.Text, handoffPromptCap), true
+					elision = elision.with(i, 1)
+				}
+			}
 		}
 		return trial.withElision(elision)
 	})
@@ -92,6 +104,17 @@ func FitTranscript(t Transcript, maxBytes int, showOutput bool, measure func(Tra
 		}
 		base = out
 	}
+	// The newest hook-reported final response is kept; the older ones go
+	// before any exchange does, since a long session can report thousands.
+	out, fits = SmallestFit(max(len(base.HookFinals)-1, 0), maxBytes, measure, func(k int) Transcript {
+		trial := cloneTranscript(base)
+		trial.HookFinals = trial.HookFinals[k:]
+		return trial.withElision(TranscriptElision{Kind: TranscriptElisionOldestHookFinals, Count: k})
+	})
+	if fits {
+		return out, true
+	}
+	base = out
 	out, fits = SmallestFit(max(len(base.Exchanges)-1, 0), maxBytes, measure, func(k int) Transcript {
 		trial := cloneTranscript(base)
 		trial.Exchanges = trial.Exchanges[k:]
@@ -101,11 +124,30 @@ func FitTranscript(t Transcript, maxBytes int, showOutput bool, measure func(Tra
 		return out, fits
 	}
 	// Only the newest exchange is left, and it alone is over budget: a long
-	// autonomous run is one prompt and thousands of steps. Drop its oldest
-	// steps, so that the bound holds however the session is shaped; the
-	// newest steps are the ones that say where it stands.
+	// autonomous run is one prompt and thousands of steps. Shorten its long
+	// agent messages, oldest first, so that its newest reply is cut rather
+	// than dropped whole.
 	base = out
 	last := len(base.Exchanges) - 1
+	out, fits = SmallestFit(len(base.Exchanges[last].Steps), maxBytes, measure, func(k int) Transcript {
+		trial := cloneTranscript(base)
+		n := 0
+		for i := range k {
+			step := &trial.Exchanges[last].Steps[i]
+			if (step.Kind == TranscriptStepText || step.Kind == TranscriptStepSummary) && len(step.Text) > handoffPromptCap {
+				step.Text, step.TextTruncated = TruncateUTF8(step.Text, handoffPromptCap), true
+				n++
+			}
+		}
+		return trial.withElision(TranscriptElision{Kind: TranscriptElisionAssistantText, First: last + 1, Last: last + 1, Count: n})
+	})
+	if fits {
+		return out, true
+	}
+	// Then drop its oldest steps, so that the bound holds however the
+	// session is shaped; the newest steps are the ones that say where it
+	// stands.
+	base = out
 	return SmallestFit(len(base.Exchanges[last].Steps), maxBytes, measure, func(k int) Transcript {
 		trial := cloneTranscript(base)
 		trial.Exchanges[last].Steps = trial.Exchanges[last].Steps[k:]
@@ -148,6 +190,9 @@ const (
 	// TranscriptElisionHookFinals shortens long final responses a hook
 	// reported that the transcript does not hold.
 	TranscriptElisionHookFinals TranscriptElisionKind = "hook_finals"
+	// TranscriptElisionOldestHookFinals drops the oldest final responses a
+	// hook reported, keeping the newest.
+	TranscriptElisionOldestHookFinals TranscriptElisionKind = "oldest_hook_finals"
 	// TranscriptElisionOldestExchanges drops the oldest exchanges
 	// altogether.
 	TranscriptElisionOldestExchanges TranscriptElisionKind = "oldest_exchanges"
@@ -213,19 +258,21 @@ func DescribeTranscriptElisions(elisions []TranscriptElision) string {
 		}
 		switch e.Kind {
 		case TranscriptElisionToolOutput:
-			parts = append(parts, fmt.Sprintf("output of %d tool calls or commands in %s", e.Count, span))
+			parts = append(parts, fmt.Sprintf("output of %s in %s", countOf(e.Count, "tool call or command", "tool calls or commands"), span))
 		case TranscriptElisionToolCalls:
-			parts = append(parts, fmt.Sprintf("%d tool calls in %s collapsed to counts", e.Count, span))
+			parts = append(parts, fmt.Sprintf("%s in %s collapsed to counts", countOf(e.Count, "tool call", "tool calls"), span))
 		case TranscriptElisionAssistantText:
-			parts = append(parts, fmt.Sprintf("%d agent messages in %s shortened", e.Count, span))
+			parts = append(parts, fmt.Sprintf("%s in %s shortened", countOf(e.Count, "agent message", "agent messages"), span))
 		case TranscriptElisionPromptText:
-			parts = append(parts, fmt.Sprintf("%d long prompts in %s truncated", e.Count, span))
+			parts = append(parts, fmt.Sprintf("%s in %s truncated", countOf(e.Count, "long prompt or command", "long prompts or commands"), span))
 		case TranscriptElisionHookFinals:
-			parts = append(parts, fmt.Sprintf("%d final responses shortened", e.Count))
+			parts = append(parts, countOf(e.Count, "final response", "final responses")+" shortened")
+		case TranscriptElisionOldestHookFinals:
+			parts = append(parts, fmt.Sprintf("the oldest %s dropped", countOf(e.Count, "final response", "final responses")))
 		case TranscriptElisionOldestExchanges:
-			parts = append(parts, fmt.Sprintf("the oldest %d exchanges dropped", e.Count))
+			parts = append(parts, fmt.Sprintf("the oldest %s dropped", countOf(e.Count, "exchange", "exchanges")))
 		case TranscriptElisionOldestSteps:
-			parts = append(parts, fmt.Sprintf("the oldest %d steps of the newest exchange dropped", e.Count))
+			parts = append(parts, fmt.Sprintf("the oldest %s of the newest exchange dropped", countOf(e.Count, "step", "steps")))
 		}
 	}
 	return strings.Join(parts, "; ")
@@ -332,4 +379,12 @@ func cloneTranscript(t Transcript) Transcript {
 		out.Exchanges[i] = copied
 	}
 	return out
+}
+
+// countOf is n of a noun, such as "1 step" or "3 steps".
+func countOf(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }

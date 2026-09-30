@@ -116,7 +116,7 @@ func renderTranscriptFooter(w io.Writer, t archive.Transcript, opts transcriptOp
 	if opts.FullRecord != "" {
 		terminal.Println(w, s.dim(fmt.Sprintf("Full record: %s (kept for 7 days; read it for anything omitted here).", archive.DisplayLine(opts.FullRecord))))
 	} else {
-		terminal.Println(w, s.dim("Run again with --max-bytes 0 to print all of it."))
+		terminal.Println(w, s.dim("The full version could not be saved; --max-bytes 0 prints all of it, which may be very long."))
 	}
 }
 
@@ -187,14 +187,14 @@ func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, agent st
 			terminal.Println(w, shortenedText(step))
 		case archive.TranscriptStepShell:
 			// The person's own `!` command; its output only with --full.
-			terminal.Println(w, "  "+s.cmd("$ "+firstTextLine(step.Text)))
+			terminal.Println(w, "  "+s.cmd("$ "+commandLine(step)))
 			if opts.Full {
 				renderOutput(w, step.Output, s)
 			}
 		case archive.TranscriptStepCommand:
 			// A local slash command's output is the app's short reply
 			// ("Set model to …"), so it is always shown.
-			terminal.Println(w, "  "+s.cmd("» "+firstTextLine(step.Text)))
+			terminal.Println(w, "  "+s.cmd("» "+commandLine(step)))
 			renderOutput(w, step.Output, s)
 		case archive.TranscriptStepOutput:
 			if opts.Full {
@@ -209,6 +209,16 @@ func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, agent st
 			terminal.Println(w, "  "+s.dim("▸ "+step.Text))
 		}
 	}
+}
+
+// commandLine is the first line of a shell or slash command, marked when
+// --max-bytes cut it short.
+func commandLine(step archive.TranscriptStep) string {
+	line := firstTextLine(step.Text)
+	if step.TextTruncated {
+		line += " …(truncated)"
+	}
+	return line
 }
 
 // shortenedText is a step's text, marked when --max-bytes cut it short.

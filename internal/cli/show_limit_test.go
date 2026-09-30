@@ -159,9 +159,12 @@ func TestShowTranscriptFullRespectsTheLimit(t *testing.T) {
 	if code != 0 || errOut != "" || len(out) > 9000 {
 		t.Fatalf("code=%d stderr=%s, %d bytes over 9000", code, errOut, len(out))
 	}
-	body, err := os.ReadFile(savedTranscriptPath(f, ".txt"))
+	body, err := os.ReadFile(savedTranscriptPath(f, "-full.txt"))
 	if err != nil || string(body) != unlimited {
 		t.Fatalf("saved --full record is not the untrimmed --full transcript: %v", err)
+	}
+	if _, err := os.Stat(savedTranscriptPath(f, ".txt")); !os.IsNotExist(err) {
+		t.Fatalf("--full saved its record where the brief transcript's goes: %v", err)
 	}
 }
 
@@ -189,7 +192,7 @@ func TestShowTranscriptDropsTheOldestExchangesLastAndWarnsWhenItCannotFit(t *tes
 	if code != 0 || errOut != "" || len(out) > 40000 {
 		t.Fatalf("code=%d stderr=%s, %d bytes", code, errOut, len(out))
 	}
-	if !strings.Contains(out, "long prompts in exchanges 1–30 truncated") || !strings.Contains(out, "…(truncated)") || !strings.Contains(out, "exchanges dropped") {
+	if !strings.Contains(out, "long prompts or commands in exchanges 1–30 truncated") || !strings.Contains(out, "…(truncated)") || !strings.Contains(out, "exchanges dropped") {
 		t.Fatalf("expected truncated prompts then dropped exchanges:\n%s", out[max(0, len(out)-700):])
 	}
 	if strings.Contains(out, "┃ prompt-0 ") || !strings.Contains(out, "┃ prompt-29 ") || !strings.Contains(out, "reply-29") {
@@ -468,7 +471,7 @@ func TestShowTranscriptSaysSoWhenTheFullVersionCannotBeSaved(t *testing.T) {
 	if code != 0 || len(out) > 20000 {
 		t.Fatalf("code=%d, %d bytes", code, len(out))
 	}
-	if !strings.Contains(errOut, "could not save the untrimmed transcript") || strings.Contains(out, "Full record") || !strings.HasSuffix(out, "Run again with --max-bytes 0 to print all of it.\n") {
+	if !strings.Contains(errOut, "could not save the untrimmed transcript") || strings.Contains(out, "Full record") || !strings.HasSuffix(out, "The full version could not be saved; --max-bytes 0 prints all of it, which may be very long.\n") {
 		t.Fatalf("stderr=%q\n%s", errOut, out[max(0, len(out)-300):])
 	}
 	out, errOut, code = runShow(t, f.env, f.id, "--transcript", "--json", "--max-bytes", "20000")
@@ -549,7 +552,7 @@ func TestShowFullPathStaysInsideTheHandoffsFolder(t *testing.T) {
 	dir := filepath.Join(home, handoffDir)
 	for _, id := range []string{"", "..", ".", ".hidden", "../../outside", "a/b", `a\b`, "/abs/path", "ok-id", "with space", "nul\x00byte"} {
 		for _, jsonOut := range []bool{false, true} {
-			path := showFullPath(home, archive.SourceBundle{ArchiveSessionID: id, NativeSessionID: "native"}, jsonOut)
+			path := showFullPath(home, archive.SourceBundle{ArchiveSessionID: id, NativeSessionID: "native"}, jsonOut, !jsonOut)
 			if filepath.Dir(path) != dir || strings.ContainsAny(filepath.Base(path), `/\`) || strings.HasPrefix(filepath.Base(path), ".") {
 				t.Errorf("session ID %q, json=%v: saved at %s", id, jsonOut, path)
 			}

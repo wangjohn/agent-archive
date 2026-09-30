@@ -276,8 +276,11 @@ func TestDescribeTranscriptElisions(t *testing.T) {
 		{Kind: TranscriptElisionToolCalls, First: 2, Last: 2, Count: 3},
 		{Kind: TranscriptElisionAssistantText, First: 1, Last: 9, Count: 8},
 		{Kind: TranscriptElisionPromptText, First: 1, Last: 1, Count: 1},
+		{Kind: TranscriptElisionOldestHookFinals, Count: 1},
+		{Kind: TranscriptElisionOldestExchanges, First: 1, Last: 3, Count: 3},
+		{Kind: TranscriptElisionOldestSteps, Count: 1},
 	})
-	want := "output of 12 tool calls or commands in exchanges 1–4; 3 tool calls in exchange 2 collapsed to counts; 8 agent messages in exchanges 1–9 shortened; 1 long prompts in exchange 1 truncated"
+	want := "output of 12 tool calls or commands in exchanges 1–4; 3 tool calls in exchange 2 collapsed to counts; 8 agent messages in exchanges 1–9 shortened; 1 long prompt or command in exchange 1 truncated; the oldest 1 final response dropped; the oldest 3 exchanges dropped; the oldest 1 step of the newest exchange dropped"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}
@@ -342,7 +345,7 @@ func TestFitTranscriptShortensLongHookFinals(t *testing.T) {
 	for _, e := range out.Elisions {
 		found = found || (e.Kind == TranscriptElisionHookFinals && e.Count == 1)
 	}
-	if !found || !strings.Contains(DescribeTranscriptElisions(out.Elisions), "1 final responses shortened") {
+	if !found || !strings.Contains(DescribeTranscriptElisions(out.Elisions), "1 final response shortened") {
 		t.Fatalf("elisions = %+v", out.Elisions)
 	}
 }

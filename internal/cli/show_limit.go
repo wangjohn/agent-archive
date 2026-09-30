@@ -22,6 +22,7 @@ type trimKind string
 // the oldest records first and to no more of them than needed.
 const (
 	trimToolResults   trimKind = "tool_results"
+	trimHookFinals    trimKind = "hook_finals"
 	trimToolInput     trimKind = "tool_input"
 	trimAssistantText trimKind = "assistant_text"
 	trimPromptText    trimKind = "prompt_text"
@@ -53,10 +54,16 @@ type trimmedOmitted struct {
 // showFullPath names where the untrimmed output of `show --transcript` for a
 // bundle is saved: beside the untrimmed handoffs, which the same seven-day
 // pruning covers, under a name of its own so neither overwrites the other.
-func showFullPath(home string, bundle archive.SourceBundle, jsonOut bool) string {
+// The readable transcript with --full holds more than without it, so it has
+// a name of its own too: a path named at the end of one run never comes to
+// hold what another run saved.
+func showFullPath(home string, bundle archive.SourceBundle, jsonOut, full bool) string {
 	base := strings.TrimSuffix(handoffFullPath(home, bundle, "markdown"), ".md") + ".transcript"
-	if jsonOut {
+	switch {
+	case jsonOut:
 		return base + ".json"
+	case full:
+		return base + "-full.txt"
 	}
 	return base + ".txt"
 }
@@ -89,7 +96,7 @@ func renderTranscriptBytes(view sessionView, t archive.Transcript, opts transcri
 // home when it had to. It returns the transcript to print and the options to
 // print it with.
 func fitTranscriptToLimit(view sessionView, t archive.Transcript, bundle archive.SourceBundle, opts transcriptOptions, maxBytes int, home string, stderr io.Writer) (archive.Transcript, transcriptOptions) {
-	path := showFullPath(home, bundle, false)
+	path := showFullPath(home, bundle, false, opts.Full)
 	withPath := opts
 	withPath.FullRecord = path
 	fitted, fits := archive.FitTranscript(t, maxBytes, opts.Full, func(x archive.Transcript) int {
@@ -127,7 +134,7 @@ func normalizedDocuments(view sessionView, n normalizedOutput) ([]byte, error) {
 // in maxBytes, and saves the untrimmed pair under home when it had to. See
 // fitNormalized for what is trimmed.
 func fitNormalizedToLimit(view sessionView, n normalizedOutput, bundle archive.SourceBundle, maxBytes int, home string, stderr io.Writer) (normalizedOutput, error) {
-	path := showFullPath(home, bundle, true)
+	path := showFullPath(home, bundle, true, false)
 	measure := func(x normalizedOutput) int {
 		data, err := normalizedDocuments(view, x)
 		if err != nil {
@@ -159,11 +166,13 @@ func fitNormalizedToLimit(view sessionView, n normalizedOutput, bundle archive.S
 //
 //  1. drop entries of tool_results (they hold sizes only; each call's
 //     output_bytes says the same for a linked result);
-//  2. drop the input of tool calls;
-//  3. cut the text of turns other than the person's prompts to 300 bytes,
+//  2. drop entries of hook_finals (statuses only, no text; Claude Code
+//     reports one per turn);
+//  3. drop the input of tool calls;
+//  4. cut the text of turns other than the person's prompts to 300 bytes,
 //     setting text_truncated;
-//  4. cut prompts to 2000 bytes, setting text_truncated;
-//  5. drop the oldest turns, tool calls, and tool results altogether.
+//  5. cut prompts to 2000 bytes, setting text_truncated;
+//  6. drop the oldest turns, tool calls, and tool results altogether.
 //
 // Every prompt survives until the last step, and the output stays valid
 // JSON. fits is false when the result is still over budget after every step.
@@ -191,6 +200,10 @@ func fitNormalized(n normalizedOutput, maxBytes int, path string, measure func(n
 	}{
 		{trimToolResults, func(x normalizedOutput) int { return len(x.ToolResults) }, func(trial *normalizedOutput, k int) int {
 			trial.ToolResults = trial.ToolResults[k:]
+			return k
+		}},
+		{trimHookFinals, func(x normalizedOutput) int { return len(x.HookFinals) }, func(trial *normalizedOutput, k int) int {
+			trial.HookFinals = trial.HookFinals[k:]
 			return k
 		}},
 		{trimToolInput, func(x normalizedOutput) int { return len(x.ToolCalls) }, func(trial *normalizedOutput, k int) int {
@@ -283,9 +296,12 @@ func dropOldestRecords(n *normalizedOutput, k int) int {
 // cloneNormalized copies what fitNormalized changes.
 func cloneNormalized(n normalizedOutput) normalizedOutput {
 	out := n
-	out.Turns = append([]normalizedTurn(nil), n.Turns...)
-	out.ToolCalls = append([]archive.NormalizedToolCall(nil), n.ToolCalls...)
-	out.ToolResults = append([]archive.NormalizedToolResult(nil), n.ToolResults...)
+	// slices.Clone keeps an empty list empty rather than nil, which would
+	// print as null.
+	out.Turns = slices.Clone(n.Turns)
+	out.ToolCalls = slices.Clone(n.ToolCalls)
+	out.ToolResults = slices.Clone(n.ToolResults)
+	out.HookFinals = slices.Clone(n.HookFinals)
 	if n.Trimmed != nil {
 		trimmed := *n.Trimmed
 		trimmed.Omitted = append([]trimmedOmitted(nil), n.Trimmed.Omitted...)
