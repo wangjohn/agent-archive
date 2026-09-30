@@ -7,10 +7,11 @@
 #
 # Usage: VERSION=v1.2.3 scripts/verify-linux-release.sh [dir]
 #
-#   - Each binary must be statically linked (CGO_ENABLED=0), so it runs on
-#     any distribution and libc. Checked with readelf (a dynamically linked
-#     binary names an interpreter), else `file`; with neither, the check is
-#     skipped with a notice.
+#   - Each binary must be a statically linked ELF file (CGO_ENABLED=0), so it
+#     runs on any distribution and libc, built for the architecture its name
+#     says. Checked with readelf (a dynamically linked binary names an
+#     interpreter), else `file`. With neither installed the check is skipped
+#     with a notice, except when CI is set, where it fails.
 #   - On an x86-64 Linux runner the amd64 binary runs natively and must report
 #     VERSION. The arm64 binary is cross-compiled and cannot run there, so
 #     its embedded version string is checked instead of executing it. On any
@@ -28,33 +29,50 @@ fail() {
   exit 1
 }
 
-# 0 if the file is a statically linked ELF binary, 1 if not (including a file
-# that is not ELF at all), 2 if this machine has no tool to tell. Process
-# substitution rather than a pipe throughout: with pipefail, a grep that
-# stops reading early would fail the pipeline.
-statically_linked() {
+# check_binary FILE ARCH (amd64 or arm64). Returns 0 if FILE is a statically
+# linked ELF binary for ARCH, 1 if it is not static (or not ELF at all), 3 if
+# it is for another architecture (a swapped or mislabeled file), and 2 if this
+# machine has no tool to tell. Process substitution rather than a pipe
+# throughout: with pipefail, a grep that stops reading early would fail the
+# pipeline.
+check_binary() {
+  local readelf_machine file_machine
+  case "$2" in
+    amd64) readelf_machine='X86-64' file_machine='x86-64' ;;
+    arm64) readelf_machine='AArch64' file_machine='ARM aarch64' ;;
+  esac
   if command -v readelf >/dev/null 2>&1; then
     # Not an ELF file at all (a Mach-O binary, a script) prints nothing on
     # stdout, which the INTERP search below would read as "static".
     readelf -h "$1" >/dev/null 2>&1 || return 1
+    grep -q "Machine:.*${readelf_machine}" < <(readelf -h "$1") || return 3
     grep -q INTERP < <(readelf -lW "$1") && return 1
     return 0
   fi
   if command -v file >/dev/null 2>&1; then
+    grep -q "ELF.*${file_machine}" < <(file "$1") || return 3
     grep -q 'ELF.*statically linked' < <(file "$1") && return 0
     return 1
   fi
   return 2
 }
 
-for binary in "$amd64" "$arm64"; do
+for arch in amd64 arm64; do
+  binary="$dir/agent-archive-linux-${arch}"
   [ -f "$binary" ] || fail "$binary is missing"
   status=0
-  statically_linked "$binary" || status=$?
+  check_binary "$binary" "$arch" || status=$?
   case "$status" in
     0) ;;
-    1) fail "$binary is not statically linked (was it built with CGO_ENABLED=0?)" ;;
-    *) echo "notice: neither readelf nor file is installed; skipping the static-linking check for $binary" >&2 ;;
+    1) fail "$binary is not a statically linked ELF binary (was it built with CGO_ENABLED=0?)" ;;
+    3) fail "$binary is not a linux/${arch} binary" ;;
+    *)
+      # Release CI must not pass unchecked; a local run may.
+      if [ -n "${CI:-}" ]; then
+        fail "neither readelf nor file is installed, so $binary cannot be checked"
+      fi
+      echo "notice: neither readelf nor file is installed; skipping the static-linking and architecture checks for $binary" >&2
+      ;;
   esac
 done
 

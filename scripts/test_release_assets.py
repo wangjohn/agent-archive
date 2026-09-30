@@ -5,10 +5,13 @@ written the same way with sha256sum (Linux) or shasum (macOS), and that every
 place the workflow names the released files names the same ones.
 """
 import hashlib
+import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -103,67 +106,235 @@ class WriteChecksumsTest(unittest.TestCase):
 
 VERIFY = SCRIPTS / 'verify-linux-release.sh'
 VERSION = 'v0.0.0-test'
+AMD64 = 'agent-archive-linux-amd64'
+ARM64 = 'agent-archive-linux-arm64'
+# Where the script runs the amd64 binary instead of only reading it.
+NATIVE_AMD64 = platform.system() == 'Linux' and platform.machine() == 'x86_64'
+MACHINES = {'amd64': 0x3E, 'arm64': 0xB7}
+
+
+def elf_header(arch):
+    """A 64-byte ELF64 header with no program headers: a static file to readelf and file."""
+    ident = b'\x7fELF\x02\x01\x01' + bytes(9)
+    return ident + struct.pack('<HHIQQQIHHHHHH', 2, MACHINES[arch], 1, 0, 0, 0, 0, 64, 56, 0, 64, 0, 0)
+
+
+def embedding(version, arch=None):
+    """File contents that carry version on a line of its own (as strings sees it)."""
+    return (elf_header(arch) if arch else b'') + b'\n' + version.encode() + b'\n'
+
+
+def native_script(version):
+    """A stand-in amd64 binary for the native run: prints version, and embeds it too."""
+    return f'#!/bin/sh\necho {version}\nexit 0\n{version}\n'.encode()
 
 
 class VerifyLinuxReleaseTest(unittest.TestCase):
-    """The static-linking check must reject anything but a static ELF file."""
+    """verify-linux-release.sh must fail on anything but the right static binaries."""
 
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
         self.dist = self.root / 'dist'
+        self.dist.mkdir()
         self.shims = self.root / 'shims'
         self.shims.mkdir()
 
-    def fake_readelf(self, header_ok, program_headers):
-        """A readelf that answers -h with header_ok and -lW with program_headers."""
+    # -- fixtures -------------------------------------------------------
+
+    def fake_readelf(self, header_ok=True, dynamic=False):
+        """A readelf that says ELF, machine by the file name, and INTERP if dynamic."""
         path = self.shims / 'readelf'
         path.write_text(
             '#!/bin/sh\n'
-            'if [ "$1" = -h ]; then\n'
-            + ('  exit 0\n' if header_ok else '  echo "readelf: Error: Not an ELF file" >&2; exit 1\n')
-            + 'fi\n'
             + ('' if header_ok else 'echo "readelf: Error: Not an ELF file" >&2; exit 1\n')
-            + f'echo "{program_headers}"\n'
+            + 'if [ "$1" = -h ]; then\n'
+            '  case "$2" in\n'
+            '    *amd64) echo "  Machine:    Advanced Micro Devices X86-64" ;;\n'
+            '    *) echo "  Machine:    AArch64" ;;\n'
+            '  esac\n'
+            '  exit 0\n'
+            'fi\n'
+            + ('echo "  INTERP  0x0 0x0 0x0 0x1c 0x1c R 0x1"\n' if dynamic else 'echo "  LOAD"\n')
         )
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
-    def run_verify(self, contents):
-        """Runs the script on files that embed the version and hold contents."""
-        self.dist.mkdir(exist_ok=True)
-        for name in ('agent-archive-linux-amd64', 'agent-archive-linux-arm64'):
-            (self.dist / name).write_bytes(contents + b'\n' + VERSION.encode() + b'\n')
-        env = {'PATH': f'{self.shims}:/usr/bin:/bin', 'VERSION': VERSION}
-        return subprocess.run([BASH, str(VERIFY), str(self.dist)], env=env, capture_output=True, text=True)
+    def write_binaries(self, amd64, arm64):
+        """Writes both files; each is bytes, or None to leave it out."""
+        for name, contents in ((AMD64, amd64), (ARM64, arm64)):
+            if contents is not None:
+                (self.dist / name).write_bytes(contents)
+                (self.dist / name).chmod(0o755)
+
+    def good(self):
+        """(amd64, arm64) contents that pass on this machine, given a readelf shim."""
+        amd64 = native_script(VERSION) if NATIVE_AMD64 else embedding(VERSION)
+        return amd64, embedding(VERSION)
+
+    def run_verify(self, path=None, **env):
+        base = {'PATH': path or f'{self.shims}:/usr/bin:/bin', 'VERSION': VERSION}
+        base.update(env)
+        return subprocess.run([BASH, str(VERIFY), str(self.dist)], env=base, capture_output=True, text=True)
+
+    def tools_only(self, *names):
+        """A PATH holding only these tools, so readelf and file are both absent."""
+        bindir = self.root / 'tools'
+        bindir.mkdir(exist_ok=True)
+        for name in names:
+            found = shutil.which(name, path='/usr/bin:/bin')
+            if found and not (bindir / name).exists():
+                (bindir / name).symlink_to(found)
+        return str(bindir)
+
+    # -- the good case, so the failures below mean something -------------
+
+    def test_accepts_matching_static_binaries(self):
+        self.fake_readelf()
+        self.write_binaries(*self.good())
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'version {VERSION}', result.stdout)
+
+    # -- files and versions ----------------------------------------------
+
+    def test_fails_when_a_binary_is_missing(self):
+        self.fake_readelf()
+        for missing in (AMD64, ARM64):
+            with self.subTest(missing=missing):
+                amd64, arm64 = self.good()
+                self.write_binaries(amd64, arm64)
+                (self.dist / missing).unlink()
+                result = self.run_verify()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('is missing', result.stderr)
+
+    def test_fails_when_the_arm64_binary_embeds_another_version(self):
+        self.fake_readelf()
+        for kind, contents in {
+            'different version': embedding('v9.9.9'),
+            'version only inside a longer line': b'\nprefix-' + VERSION.encode() + b'-suffix\n',
+            'no version': b'\nnothing to see\n',
+        }.items():
+            with self.subTest(kind=kind):
+                amd64, _ = self.good()
+                self.write_binaries(amd64, contents)
+                result = self.run_verify()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('does not embed version', result.stderr)
+
+    def test_fails_when_the_amd64_binary_has_another_version(self):
+        self.fake_readelf()
+        _, arm64 = self.good()
+        for kind, contents in {
+            'different version': native_script('v9.9.9') if NATIVE_AMD64 else embedding('v9.9.9'),
+            'version only inside a longer line': (
+                native_script(VERSION + '-extra') if NATIVE_AMD64 else b'\nprefix-' + VERSION.encode() + b'\n'
+            ),
+        }.items():
+            with self.subTest(kind=kind):
+                self.write_binaries(contents, arm64)
+                result = self.run_verify()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertRegex(result.stderr, 'reported|does not embed')
+
+    @unittest.skipUnless(NATIVE_AMD64, 'the amd64 binary runs only on x86-64 Linux')
+    def test_fails_when_the_native_run_disagrees_with_the_embedded_version(self):
+        # The file embeds the right version but prints another one: only the
+        # native run can tell.
+        self.fake_readelf()
+        _, arm64 = self.good()
+        lying = f'#!/bin/sh\necho v9.9.9\nexit 0\n{VERSION}\n'.encode()
+        self.write_binaries(lying, arm64)
+        result = self.run_verify()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('reported', result.stderr)
+
+    # -- what kind of file --------------------------------------------------
 
     def test_rejects_a_file_that_is_not_elf_when_readelf_exists(self):
         # readelf prints nothing on stdout for these, which looks like "no
         # INTERP header" and so like a static binary unless checked first.
-        self.fake_readelf(header_ok=False, program_headers='')
+        self.fake_readelf(header_ok=False)
         for kind, contents in {
             'Mach-O': b'\xcf\xfa\xed\xfe' + bytes(64),
             'script': b'#!/bin/sh\necho hi\n',
         }.items():
             with self.subTest(kind=kind):
-                result = self.run_verify(contents)
+                self.write_binaries(contents + b'\n' + VERSION.encode() + b'\n', contents + b'\n' + VERSION.encode() + b'\n')
+                result = self.run_verify()
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn('not statically linked', result.stderr)
+                self.assertIn('not a statically linked ELF', result.stderr)
 
     def test_rejects_a_dynamically_linked_elf(self):
-        self.fake_readelf(header_ok=True, program_headers='  INTERP  0x0 0x0 0x0 0x1c 0x1c R 0x1')
-        result = self.run_verify(b'\x7fELF')
+        self.fake_readelf(dynamic=True)
+        self.write_binaries(*self.good())
+        result = self.run_verify()
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('not statically linked', result.stderr)
+        self.assertIn('not a statically linked ELF', result.stderr)
 
-    @unittest.skipUnless(shutil.which('readelf'), 'needs readelf')
-    def test_rejects_a_text_file_with_the_real_readelf(self):
-        env = {'PATH': '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', 'VERSION': VERSION}
-        self.dist.mkdir()
-        for name in ('agent-archive-linux-amd64', 'agent-archive-linux-arm64'):
-            (self.dist / name).write_text(f'not an ELF file\n{VERSION}\n')
-        result = subprocess.run([BASH, str(VERIFY), str(self.dist)], env=env, capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('not statically linked', result.stderr)
+    def test_rejects_binaries_built_for_the_other_architecture(self):
+        self.fake_readelf()
+        # The amd64 name on a file the shim reports as AArch64, and back.
+        for swapped in (AMD64, ARM64):
+            with self.subTest(swapped=swapped):
+                self.write_binaries(*self.good())
+                path = self.shims / 'readelf'
+                other = 'AArch64' if swapped == AMD64 else 'Advanced Micro Devices X86-64'
+                path.write_text(
+                    '#!/bin/sh\nif [ "$1" = -h ]; then\n'
+                    f'  case "$2" in *{swapped}) echo "  Machine:    {other}" ;;\n'
+                    '    *amd64) echo "  Machine:    Advanced Micro Devices X86-64" ;;\n'
+                    '    *) echo "  Machine:    AArch64" ;;\n  esac\n  exit 0\nfi\necho "  LOAD"\n'
+                )
+                result = self.run_verify()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertRegex(result.stderr, r'is not a linux/(amd64|arm64) binary')
+
+    def test_real_tools_reject_swapped_and_non_elf_files(self):
+        # No shims: whichever of readelf or file this machine has.
+        if not (shutil.which('readelf') or shutil.which('file')):
+            self.skipTest('needs readelf or file')
+        real_path = os.environ['PATH']
+        for kind, amd64, arm64 in (
+            ('swapped', embedding(VERSION, 'arm64'), embedding(VERSION, 'amd64')),
+            ('text', b'not an ELF file\n' + VERSION.encode() + b'\n', b'not an ELF file\n' + VERSION.encode() + b'\n'),
+        ):
+            with self.subTest(kind=kind):
+                self.write_binaries(amd64, arm64)
+                result = self.run_verify(path=real_path)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertRegex(result.stderr, 'not a linux/|not a statically linked ELF')
+
+    # -- no tool to inspect files ---------------------------------------------
+
+    def test_without_readelf_or_file_a_local_run_passes_with_a_notice_and_ci_fails(self):
+        tools = self.tools_only('uname', 'grep', 'strings')
+        self.write_binaries(*self.good())
+        local = subprocess.run(
+            [BASH, str(VERIFY), str(self.dist)], env={'PATH': tools, 'VERSION': VERSION}, capture_output=True, text=True
+        )
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertIn('notice: neither readelf nor file', local.stderr)
+
+        ci = subprocess.run(
+            [BASH, str(VERIFY), str(self.dist)],
+            env={'PATH': tools, 'VERSION': VERSION, 'CI': 'true'},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(ci.returncode, 0, ci.stdout)
+        self.assertIn('cannot be checked', ci.stderr)
+
+    def test_an_empty_ci_variable_counts_as_a_local_run(self):
+        tools = self.tools_only('uname', 'grep', 'strings')
+        self.write_binaries(*self.good())
+        result = subprocess.run(
+            [BASH, str(VERIFY), str(self.dist)],
+            env={'PATH': tools, 'VERSION': VERSION, 'CI': ''},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 def job_text(workflow, job):
@@ -266,26 +437,56 @@ def steps(job):
     return ['      - ' + part for part in parts[1:]]
 
 
-def run_texts(workflow):
-    """The text of every `run:` in the workflow."""
+BLOCK_SCALAR = re.compile(r'^[|>][-+0-9]*\s*(#.*)?$')
+
+
+def run_bodies(workflow):
+    """(line index, body line count, text) of each `run:`: the value and every deeper line.
+
+    Covers a block scalar (`run: |`, `|-`, `>+`, with a trailing comment) and
+    a plain or quoted scalar continued over several lines.
+    """
     lines = workflow.splitlines()
-    texts = []
+    found = []
     for index, line in enumerate(lines):
         match = re.match(r'^(\s*)(?:- )?run:(.*)$', line)
         if not match:
             continue
+        indent = len(match.group(1))
         rest = match.group(2).strip()
-        if rest in ('|', '>'):
-            indent = len(match.group(1))
-            body = []
-            for following in lines[index + 1:]:
-                if following.strip() and len(following) - len(following.lstrip()) <= indent:
-                    break
-                body.append(following)
-            texts.append('\n'.join(body))
-        else:
-            texts.append(rest)
-    return texts
+        body = []
+        for following in lines[index + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            body.append(following)
+        text = '\n'.join(body) if BLOCK_SCALAR.match(rest) else '\n'.join([rest] + body)
+        found.append((index, len(body), text))
+    return found
+
+
+def run_texts(workflow):
+    """The text of every `run:` in the workflow."""
+    return [text for _, _, text in run_bodies(workflow)]
+
+
+def script_free_lines(workflow):
+    """The workflow's lines outside `run:` bodies and comments, without comments."""
+    lines = workflow.splitlines()
+    skip = set()
+    for index, count, _ in run_bodies(workflow):
+        skip.update(range(index + 1, index + 1 + count))
+    return [
+        strip_comment(line)
+        for number, line in enumerate(lines)
+        if number not in skip and line.strip() and not line.strip().startswith('#')
+    ]
+
+
+def code_lines(text):
+    """text without comment-only lines and trailing comments."""
+    return '\n'.join(
+        strip_comment(line) for line in text.splitlines() if line.strip() and not line.strip().startswith('#')
+    )
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
@@ -400,10 +601,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertIn('cache: false', text)
                 self.assertNotIn('cache: true', text)
 
-    def test_build_jobs_see_no_secrets(self):
+    def test_build_jobs_see_no_secrets_or_variables(self):
         for job in ('build', 'build-linux'):
             with self.subTest(job=job):
-                self.assertNotIn('secrets.', job_text(self.workflow, job))
+                text = code_lines(job_text(self.workflow, job))
+                self.assertNotRegex(text, r'\bsecrets\b')
+                self.assertNotRegex(text, r'\bvars\b')
 
     def test_artifacts_hand_off_under_matching_names_into_dist(self):
         def uploads(job):
@@ -436,6 +639,85 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertGreaterEqual(len(texts), 8)
         for text in texts:
             self.assertNotIn('${{', text)
+
+    def test_no_flow_style_mappings_hide_a_step_from_these_checks(self):
+        # `- {run: ..., env: ...}` would put a script or an expression where
+        # the line-based checks above do not look. Outside run bodies the
+        # only braces allowed are expressions and the literal `{}`.
+        for line in script_free_lines(self.workflow):
+            with self.subTest(line=line):
+                bare = re.sub(r'\$\{\{.*?\}\}', '', line).replace('{}', '')
+                self.assertNotIn('{', bare)
+                self.assertNotIn('}', bare)
+
+    def test_run_scalars_are_read_in_every_yaml_form(self):
+        # The parser behind the script-text check, on the forms it must see.
+        cases = {
+            'block': 'a:\n  - run: |\n      echo ${{ x }}\n',
+            'block with chomping and comment': 'a:\n  - run: |- # why\n      echo ${{ x }}\n',
+            'folded': 'a:\n  - run: >\n      echo ${{ x }}\n',
+            'plain over lines': 'a:\n  - run: echo\n      ${{ x }}\n',
+            'quoted over lines': 'a:\n  - run: "echo\n      ${{ x }}"\n',
+            'single line': 'a:\n  - run: echo ${{ x }}\n',
+        }
+        for name, text in cases.items():
+            with self.subTest(form=name):
+                self.assertTrue(any('${{' in body for body in run_texts(text)), run_texts(text))
+
+    def test_the_workflow_has_exactly_the_three_jobs(self):
+        jobs = re.findall(r'(?m)^  ([\w-]+):$', self.workflow[self.workflow.index('\njobs:\n'):])
+        self.assertEqual(jobs, ['build', 'build-linux', 'publish'])
+
+    def test_release_critical_steps_are_not_skippable_or_allowed_to_fail(self):
+        self.assertNotIn('continue-on-error', self.workflow)
+        # The only conditional step is the keychain cleanup.
+        for job in ('build', 'build-linux', 'publish'):
+            for text in steps(job_text(self.workflow, job)):
+                if re.search(r'(?m)^        if:', text):
+                    with self.subTest(job=job):
+                        self.assertIn('name: Clean up signing keychain', text)
+        for job, names in {
+            'publish': ('Codesign', 'Notarize', 'Recompute checksums after signing'),
+            'build-linux': ('Verify build reports the release version', 'Build', 'Test'),
+            'build': ('Verify build reports the release version', 'Build', 'Test'),
+        }.items():
+            texts = steps(job_text(self.workflow, job))
+            for name in names:
+                with self.subTest(job=job, step=name):
+                    matching = [text for text in texts if f'- name: {name}\n' in text]
+                    self.assertEqual(len(matching), 1)
+                    self.assertNotRegex(matching[0], r'(?m)^\s+(if|continue-on-error):')
+
+    def test_version_comes_only_from_the_tag_at_job_level(self):
+        for job in ('build', 'build-linux', 'publish'):
+            with self.subTest(job=job):
+                head, _, body = job_text(self.workflow, job).partition('    steps:\n')
+                self.assertRegex(head, r'(?m)^      VERSION: \$\{\{ github\.ref_name \}\}$')
+                self.assertNotRegex(body, r'(?m)^\s*VERSION:')
+                self.assertNotIn('GITHUB_ENV', body)
+
+    def test_checkouts_use_the_tagged_commit(self):
+        for job in ('build', 'build-linux', 'publish'):
+            with self.subTest(job=job):
+                checkout = [t for t in steps(job_text(self.workflow, job)) if 'actions/checkout@' in t]
+                self.assertEqual(len(checkout), 1)
+                self.assertNotRegex(checkout[0], r'(?m)^\s+(ref|repository|token):')
+
+    def test_only_the_expected_actions_are_used(self):
+        used = set(re.findall(r'(?m)^\s*(?:- )?uses: ([^@\s]+)@', self.workflow))
+        self.assertEqual(
+            used,
+            {
+                'actions/checkout',
+                'actions/setup-go',
+                'actions/upload-artifact',
+                'actions/download-artifact',
+                'actions/attest-build-provenance',
+            },
+        )
+        for job in ('build', 'build-linux'):
+            with self.subTest(job=job):
+                self.assertNotIn('actions/cache', job_text(self.workflow, job))
 
 
 if __name__ == '__main__':
