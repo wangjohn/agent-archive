@@ -100,3 +100,28 @@ func TestCollectorLabelKeepsTheDefaultAndSeparatesOthers(t *testing.T) {
 		t.Fatalf("no environment: %q %v", home, err)
 	}
 }
+
+// status and setup --refresh read plists a person or another program may have
+// written, with keys in any order: the readers take the program only from
+// ProgramArguments, and the environment only from EnvironmentVariables' own
+// strings, not from an array or a dict nested elsewhere.
+func TestLaunchAgentReadersTakeOnlyTheirOwnKeys(t *testing.T) {
+	plist := []byte(`<plist><dict>
+<key>WatchPaths</key><array><string>/not/the/program</string></array>
+<key>EnvironmentVariables</key><dict>
+<key>NESTED</key><dict><key>INNER</key><string>/not/a/variable</string></dict>
+<key>AGENT_ARCHIVE_HOME</key><string>/d</string>
+</dict>
+<key>ProgramArguments</key><array><string>/bin/agent-archive</string><string>_collect</string></array>
+</dict></plist>`)
+	if program, err := LaunchAgentProgram(plist); err != nil || program != "/bin/agent-archive" {
+		t.Fatalf("program %q (err %v)", program, err)
+	}
+	environment, err := LaunchAgentEnvironment(plist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(environment) != 1 || environment["AGENT_ARCHIVE_HOME"] != "/d" {
+		t.Fatalf("environment %q", environment)
+	}
+}

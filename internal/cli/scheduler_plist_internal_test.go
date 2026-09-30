@@ -9,11 +9,11 @@ import (
 )
 
 // Characterization of the macOS scheduler (PR 5a-0), the part that calls the
-// plist code directly: launchd.CollectorLabel and launchd.LaunchAgent move into the
-// launchd adapter in a later PR, and this file moves with them (a mechanical
-// change of the calls). TestCollectorPlistBytes pins the same bytes through
-// setup; these pin them for fixed inputs, so the hash and the escaping are
-// literal.
+// plist code directly: launchd.CollectorLabel and launchd.LaunchAgent, which
+// moved from hooks into the launchd adapter in 5a-2 (a mechanical change of
+// the calls here; the goldens did not change). TestCollectorPlistBytes pins
+// the same bytes through setup; these pin them for fixed inputs, so the hash
+// and the escaping are literal.
 
 // The label of a data directory that is not the account's default one is the
 // default label, a dot, and the first 12 hex digits of the SHA-256 of the
