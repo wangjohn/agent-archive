@@ -139,8 +139,8 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 			terminal.Println(stderr, "agent-archive: backfill: "+refusal)
 			return 1
 		}
-		if !opts.yes && !env.isTerminal(stdin) {
-			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
+		if !opts.yes && !env.interactive(stdin) {
+			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan."+env.overrideHint(stdin))
 			return 1
 		}
 	}

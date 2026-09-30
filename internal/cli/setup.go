@@ -123,8 +123,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	// Every step asks something, so without a terminal setup would stop at
 	// its first question with nothing but an end-of-input error.
-	if !opts.yes && !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help).")
+	if !opts.yes && !env.interactive(stdin) {
+		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help)."+env.overrideHint(stdin))
 		return 1
 	}
 	// Every hook and the LaunchAgent run this path, so one that is about to

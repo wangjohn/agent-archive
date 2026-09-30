@@ -22,7 +22,7 @@ type metadataCacheDependencies interface {
 }
 
 type sessionBrowseDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 }
 
 type sessionSelectionDependencies interface {
@@ -60,7 +60,7 @@ type showQueryDependencies interface {
 }
 
 type pagerDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 	lookupEnv(string) (string, bool)
 	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
 }
