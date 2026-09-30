@@ -106,14 +106,15 @@ func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
 	}
 }
 
-// TestSnapshotRootIsTheSystemsPerUserTempDir: the snapshot root is
-// platform.Locations.SnapshotRoot wired to this package's getconf and this
-// process's environment (the choice itself, on both systems, is tested in
-// internal/platform). On macOS it is under the per-user temporary directory
-// the system reports, whatever $TMPDIR says, so a collector started by launchd
-// without TMPDIR and a shell with a custom one share one root.
-func TestSnapshotRootIsTheSystemsPerUserTempDir(t *testing.T) {
-	name := platform.SnapshotDirName(os.Getuid())
+// TestSnapshotRootIsTheSystemsOwn: the snapshot root is
+// platform.Locations.SnapshotRoot wired to this package's getconf, this
+// process's environment and the account's home (the choice itself, on both
+// systems, is tested in internal/platform). On macOS it is under the per-user
+// temporary directory the system reports, whatever $TMPDIR says, so a
+// collector started by launchd without TMPDIR and a shell with a custom one
+// share one root. On Linux it is under the XDG cache home: $XDG_CACHE_HOME,
+// else .cache in the account's home, whatever $HOME and $TMPDIR say.
+func TestSnapshotRootIsTheSystemsOwn(t *testing.T) {
 	mine := t.TempDir()
 	t.Setenv("TMPDIR", mine)
 	switch runtime.GOOS {
@@ -122,16 +123,31 @@ func TestSnapshotRootIsTheSystemsPerUserTempDir(t *testing.T) {
 		if !filepath.IsAbs(dir) {
 			t.Fatalf("DARWIN_USER_TEMP_DIR = %q", dir)
 		}
-		if got, want := snapshotRootPath(), filepath.Join(dir, name); got != want {
+		if got, want := snapshotRootPath(), filepath.Join(dir, platform.SnapshotDirName(os.Getuid())); got != want {
 			t.Errorf("on macOS the root is %q, want %q", got, want)
 		}
+		if got := snapshotCacheDir(); got != "" {
+			t.Errorf("on macOS the cache directory is %q, want none", got)
+		}
 	case "linux":
-		if got, want := snapshotRootPath(), filepath.Join(mine, name); got != want {
+		cache := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cache)
+		if got, want := snapshotRootPath(), filepath.Join(cache, "agent-archive", "cursor-snapshots"); got != want {
 			t.Errorf("on Linux the root is %q, want %q", got, want)
 		}
+		if got, want := snapshotCacheDir(), filepath.Join(cache, "agent-archive"); got != want {
+			t.Errorf("on Linux the cache directory is %q, want %q", got, want)
+		}
+		t.Setenv("XDG_CACHE_HOME", "")
+		t.Setenv("HOME", t.TempDir())
+		if home := accountHome(); filepath.IsAbs(home) {
+			if got, want := snapshotRootPath(), filepath.Join(home, ".cache", "agent-archive", "cursor-snapshots"); got != want {
+				t.Errorf("on Linux without XDG_CACHE_HOME the root is %q, want %q", got, want)
+			}
+		}
 	}
-	// The real system's own process environment is what is read.
-	if got, want := snapshotRootPath(), snapshotLocations(platform.Current(), os.Getenv).SnapshotRoot(); got != want {
+	// The real system's own process environment and account are what is read.
+	if got, want := snapshotRootPath(), currentSnapshotLocations().SnapshotRoot(); got != want {
 		t.Errorf("snapshotRootPath = %q, want %q", got, want)
 	}
 }
@@ -140,11 +156,21 @@ func TestSnapshotRootIsTheSystemsPerUserTempDir(t *testing.T) {
 // SnapshotRoot fails closed instead of using a shared temporary directory.
 func TestUnknownSystemHasNoSnapshotRoot(t *testing.T) {
 	t.Parallel()
-	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }).SnapshotRoot(); got != "" {
+	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }, "/home/ada").SnapshotRoot(); got != "" {
 		t.Errorf("the snapshot root on an unknown system is %q, want none", got)
 	}
-	if root, err := preparedSnapshotRoot(""); !errors.Is(err, errSnapshotUnsupportedSystem) || root != "" {
+	if root, err := preparedSnapshotRoot("", ""); !errors.Is(err, errSnapshotUnsupportedSystem) || root != "" {
 		t.Errorf("preparedSnapshotRoot(\"\") = %q, %v; want errSnapshotUnsupportedSystem", root, err)
+	}
+}
+
+// On Linux with neither XDG_CACHE_HOME nor an account home there is no root,
+// and SnapshotRoot fails closed rather than use a temporary directory.
+func TestLinuxWithoutACacheHomeHasNoSnapshotRoot(t *testing.T) {
+	t.Parallel()
+	got := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"TMPDIR": "/tmp/mine"}[name] }, "")
+	if got.SnapshotRoot() != "" || got.SnapshotCacheDir() != "" {
+		t.Errorf("root %q, cache directory %q, want none", got.SnapshotRoot(), got.SnapshotCacheDir())
 	}
 }
 
@@ -260,5 +286,134 @@ func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
 		if _, err := SnapshotRoot(); !errors.Is(err, errSnapshotRootNotPrivate) {
 			t.Errorf("mode %v: err %v, want errSnapshotRootNotPrivate", mode, err)
 		}
+	}
+}
+
+// The Linux snapshot root is made with its parents: the cache home (0700, as
+// the XDG specification says, when it was missing) and agent-archive's folder
+// in it, which gets the CACHEDIR.TAG the Cache Directory Tagging
+// Specification describes, so a backup tool that honors it skips the copies.
+func TestLinuxSnapshotRootIsMadeUnderTheCacheDirectoryWithATag(t *testing.T) {
+	t.Parallel()
+	cache := filepath.Join(t.TempDir(), "new-cache-home")
+	loc := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"XDG_CACHE_HOME": cache}[name] }, "/home/ignored")
+	root, err := preparedSnapshotRoot(loc.SnapshotRoot(), loc.SnapshotCacheDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(cache, "agent-archive", "cursor-snapshots"); root != want {
+		t.Fatalf("root %q, want %q", root, want)
+	}
+	for _, dir := range []string{cache, filepath.Join(cache, "agent-archive"), root} {
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Errorf("%s: %v, %v; want a directory with mode 0700", dir, info, err)
+		}
+	}
+	tag, err := os.ReadFile(filepath.Join(cache, "agent-archive", "CACHEDIR.TAG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(tag), "Signature: 8a477f597d28d172789f06886806bc55\n") {
+		t.Errorf("CACHEDIR.TAG does not start with the specification's signature: %q", tag)
+	}
+	// The tag is at agent-archive's folder, not inside the root it covers.
+	if _, err := os.Lstat(filepath.Join(root, "CACHEDIR.TAG")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a tag inside the snapshot root: %v", err)
+	}
+}
+
+// Making the root again changes nothing, and leaves a tag the user wrote (or
+// edited) alone.
+func TestCacheDirectoryTagIsWrittenOnceAndLeftAlone(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "agent-archive")
+	root := filepath.Join(dir, "cursor-snapshots")
+	tagPath := filepath.Join(dir, "CACHEDIR.TAG")
+	if _, err := preparedSnapshotRoot(root, dir); err != nil {
+		t.Fatal(err)
+	}
+	const mine = "Signature: 8a477f597d28d172789f06886806bc55\n# mine\n"
+	if err := os.WriteFile(tagPath, []byte(mine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(root, dir); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(tagPath); err != nil || string(got) != mine {
+		t.Errorf("tag %q, %v; want the user's own left alone", got, err)
+	}
+}
+
+// A tag that cannot be written does not stop a read: the copy is removed as
+// soon as it is used, so a leftover backed up is an inconvenience.
+func TestSnapshotRootWorksWhenTheTagCannotBeWritten(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "agent-archive")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the file would go: O_EXCL refuses, as it does a link.
+	if err := os.Mkdir(filepath.Join(dir, "CACHEDIR.TAG"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir); err != nil {
+		t.Fatalf("a tag that was already there stopped the snapshot root: %v", err)
+	}
+}
+
+// agent-archive's folder in the cache home must be a real directory of the
+// user's that no one else can write to: another account that could write to
+// it could replace the snapshot directory inside it after it was checked.
+func TestCacheDirectoryMustBePrivate(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []fs.FileMode{0o770, 0o707, 0o777, 0o720} {
+		dir := filepath.Join(t.TempDir(), "agent-archive")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+		_, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir)
+		if !errors.Is(err, errCacheDirNotPrivate) || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "remove it") {
+			t.Errorf("mode %v: err %v, want errCacheDirNotPrivate naming the directory", mode, err)
+		}
+		if _, statErr := os.Lstat(filepath.Join(dir, "cursor-snapshots")); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("mode %v: a snapshot root was made in a directory others can write to", mode)
+		}
+	}
+	// A mode that others can read but not write is fine: nothing private is
+	// in this directory, only the private root under it.
+	dir := filepath.Join(t.TempDir(), "agent-archive")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir); err != nil {
+		t.Errorf("mode 0755: %v", err)
+	}
+}
+
+// A link where the cache directory should be is refused, whatever it points
+// at.
+func TestCacheDirectoryIsNotFollowedThroughALink(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	elsewhere := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "agent-archive")
+	if err := os.Symlink(elsewhere, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir); !errors.Is(err, errCacheDirNotPrivate) {
+		t.Errorf("err %v, want errCacheDirNotPrivate", err)
+	}
+	if _, err := os.Lstat(filepath.Join(elsewhere, "cursor-snapshots")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a snapshot root was made through the link: %v", err)
 	}
 }

@@ -194,7 +194,12 @@ In Go tests, everything goes through injection:
   credential store) and each caller's choice is pinned by a test.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
-  their `TestMain`).
+  their `TestMain`). The real root is a choice of `platform.Locations` over
+  values (macOS: the per-user temporary directory; Linux: under
+  `$XDG_CACHE_HOME` or the account's `~/.cache`), and `cursorstore`'s tests
+  make it in a temporary directory through `preparedSnapshotRoot(root,
+  cacheDir)`, so no test touches a real cache directory. The isolation
+  helpers unset `XDG_CACHE_HOME` with `XDG_CONFIG_HOME`.
 - Storage tests use `storagetest.NewMemoryStore()` (`internal/storage/storagetest`, test code only: depguard keeps it out of production code, as it does `state/statetest`).
 
 ## Running the binary by hand in a sandbox

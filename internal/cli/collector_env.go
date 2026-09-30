@@ -12,6 +12,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // collectorAWSFiles are the AWS SDK variables that name files an S3 pass
@@ -51,6 +52,28 @@ var collectorHelperSettings = []string{"AWS_VAULT_BACKEND", "AWS_VAULT_KEYCHAIN_
 // backend and 1Password's configuration.
 var collectorHelperDirs = []string{"AWS_VAULT_FILE_DIR", "OP_CONFIG_DIR"}
 
+// collectorXDGDirs are the XDG base directory variables a Linux job needs from
+// the shell: where Cursor keeps its chat database (XDG_CONFIG_HOME) and where
+// agent-archive keeps the temporary copies of it that it reads
+// (XDG_CACHE_HOME). The scheduled collector starts without the shell's
+// environment, and a backfill run from the shell and the collector must agree
+// on both, so a value that is set and absolute is recorded in the unit, for
+// every storage provider, and compared with the shell's by status (xdgDrift).
+// macOS never records them: Cursor's data there does not follow XDG, and its
+// plists do not change.
+var collectorXDGDirs = []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
+
+// xdgDir is the value of an XDG base directory variable as the XDG Base
+// Directory specification reads it: a relative path is invalid and ignored,
+// as is an empty one, so it is "" for those and the cleaned absolute path
+// otherwise.
+func xdgDir(value string) string {
+	if value == "" || !filepath.IsAbs(value) {
+		return ""
+	}
+	return filepath.Clean(value)
+}
+
 type collectorEnvironmentLookup interface {
 	lookupEnv(string) (string, bool)
 }
@@ -63,32 +86,49 @@ type collectorEnvironmentSource interface {
 	// defaultPATH is the PATH the scheduler gives a job whose definition sets
 	// none.
 	defaultPATH() string
+	// operatingSystem is the system the job will run on.
+	operatingSystem() platform.OS
 }
 
-// collectorEnvironment is what the collector's LaunchAgent sets besides
-// AGENT_ARCHIVE_HOME, so a scheduled pass loads storage credentials the way
-// setup's storage check just did. launchd starts the job with none of the
-// shell's environment.
+// collectorEnvironment is what the collector's job (a LaunchAgent, a systemd
+// unit) sets besides AGENT_ARCHIVE_HOME, so a scheduled pass loads storage
+// credentials the way setup's storage check just did. The scheduler starts
+// the job with none of the shell's environment.
+//
+// On Linux, for every provider, it records XDG_CONFIG_HOME and
+// XDG_CACHE_HOME when they are set to an absolute path (collectorXDGDirs); on
+// macOS never.
 //
 // For S3 it records the AWS file variables that are set, as absolute paths,
 // the endpoint overrides, proxy settings and reviewed helper settings that
-// are set, and always a PATH: this shell's usable entries followed by launchd's own. PATH is
-// recorded for every S3 profile, not only one that uses
-// credential_process today, because the SDK can reach a credential_process
-// through a source_profile chain, the command it runs (aws-vault, 1Password's
-// op, granted) runs helpers of its own through PATH, and a profile can gain a
-// credential_process after setup without setup running again. A PATH names
-// directories, never secrets. R2's credentials come from the credential store in
-// process, so an R2 collector needs nothing more.
+// are set, and always a PATH: this shell's usable entries followed by the
+// scheduler's own default. PATH is recorded for every S3 profile, not only one
+// that uses credential_process today, because the SDK can reach a
+// credential_process through a source_profile chain, the command it runs
+// (aws-vault, 1Password's op, granted) runs helpers of its own through PATH,
+// and a profile can gain a credential_process after setup without setup
+// running again. A PATH names directories, never secrets. R2's credentials
+// come from the credential store in process, so an R2 collector needs nothing
+// more than the XDG directories (and on macOS, nothing: nil).
 func (e Env) collectorEnvironment(storage credentials.Config) map[string]string {
 	return buildCollectorEnvironment(e, storage)
 }
 
 func buildCollectorEnvironment(e collectorEnvironmentSource, storage credentials.Config) map[string]string {
-	if storage.Provider != credentials.ProviderS3 {
-		return nil
-	}
 	environment := map[string]string{}
+	if e.operatingSystem() == platform.Linux {
+		for _, name := range collectorXDGDirs {
+			if value, _ := e.lookupEnv(name); xdgDir(value) != "" {
+				environment[name] = xdgDir(value)
+			}
+		}
+	}
+	if storage.Provider != credentials.ProviderS3 {
+		if len(environment) == 0 {
+			return nil
+		}
+		return environment
+	}
 	for _, name := range collectorAWSFiles {
 		if value, ok := e.lookupEnv(name); ok && strings.TrimSpace(value) != "" {
 			environment[name] = e.absolutePath(strings.TrimSpace(value))
@@ -155,11 +195,11 @@ func carriesCredentials(value string) bool {
 }
 
 // collectorPath is shellPath's usable entries, without repeats, followed by
-// those of launchd's default PATH it lacks. An entry is left out when it is
-// relative (it would be resolved against the collector's working
+// those of the scheduler's default PATH it lacks. An entry is left out when it
+// is relative (it would be resolved against the collector's working
 // directory, not setup's), is not a directory, or is writable by every
-// account: the LaunchAgent runs every minute, so a program another account
-// planted there would run as this one.
+// account: the job runs every minute, so a program another account planted
+// there would run as this one.
 func collectorPath(shellPath, defaultPATH string) string {
 	var entries []string
 	for _, entry := range filepath.SplitList(shellPath) {
@@ -334,6 +374,44 @@ func (e Env) awsFilesDrift(storage credentials.Config, environment map[string]st
 		return ""
 	}
 	return fmt.Sprintf("This shell's AWS settings files differ from the background collector's (%s). The collector uses the ones setup verified; if this shell's are the right ones, run agent-archive setup again from here.", strings.Join(differ, "; "))
+}
+
+// xdgDrift says, for each XDG base directory variable (collectorXDGDirs), when
+// commands run from this shell would use another directory than the collector
+// does, so a backfill here and the scheduled pass would look for Cursor's
+// chat database, or keep the temporary copies of it, in different places. The
+// collector has what setup recorded in its unit (environment); an absent or
+// invalid value is the variable unset, which means the default under the home
+// directory. It is nothing on macOS, where the collector records no such
+// variable and none of this matters.
+func (e Env) xdgDrift(environment map[string]string) []string {
+	if e.operatingSystem() != platform.Linux {
+		return nil
+	}
+	purpose := map[string]string{
+		"XDG_CONFIG_HOME": "look for Cursor's chat database",
+		"XDG_CACHE_HOME":  "keep the temporary copies they read of it",
+	}
+	var drift []string
+	for _, name := range collectorXDGDirs {
+		shellValue, _ := e.lookupEnv(name)
+		shell, collector := xdgDir(shellValue), xdgDir(environment[name])
+		if shell == collector {
+			continue
+		}
+		drift = append(drift, fmt.Sprintf("This shell's %s is %s and the background collector's is %s, so they %s in different places. The collector uses what setup recorded; if this shell's is the right one, run agent-archive setup again from here.",
+			name, xdgOrUnset(shell), xdgOrUnset(collector), purpose[name]))
+	}
+	return drift
+}
+
+// xdgOrUnset spells an XDG base directory for a message: the path, or what an
+// unset one means.
+func xdgOrUnset(dir string) string {
+	if dir == "" {
+		return "not set (the default under the home directory)"
+	}
+	return dir
 }
 
 // warnCollectorEnvironment says, before setup commits, why the collector it

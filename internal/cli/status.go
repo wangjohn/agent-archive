@@ -960,6 +960,7 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 			if drift := env.awsFilesDrift(cfg.Storage, job.Env, userHome); drift != "" {
 				view.Warnings = append(view.Warnings, drift)
 			}
+			view.Warnings = append(view.Warnings, env.xdgDrift(job.Env)...)
 		}
 	}
 	if backgroundProblem != "" {
