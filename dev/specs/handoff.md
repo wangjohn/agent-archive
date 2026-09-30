@@ -99,6 +99,9 @@ argument.
 
 ## Selection
 
+How the picker and title search find a session (scope, native names,
+filtering) is planned in [session-finding.md](session-finding.md).
+
 An explicit `SESSION_ID` resolves as `show` does: the local registration
 first when `--source` allows it, otherwise `locateMetadataKey`.
 
