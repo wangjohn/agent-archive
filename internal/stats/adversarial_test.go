@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -66,6 +67,14 @@ func hostileArchive(rng *rand.Rand, n int) []archive.Metadata {
 				})
 			}
 		}
+		// Names that are not what they seem: plugin prefixes, empty halves,
+		// controls, markup, invalid UTF-8, and the same skill under two names.
+		for range rng.IntN(4) {
+			skill([]string{"docs", "anthropic-skills:docs", ":", "a:", ":b", "x:y:z", "", " ", "\x1b[31m", "<b>&", "bad\xff:\xfe", "\u202e:evil"}[rng.IntN(12)])(&m)
+		}
+		if rng.IntN(3) == 0 {
+			mcp([]string{"github", "linear", "", "a:b", "<i>"}[rng.IntN(5)], count())(&m)
+		}
 		out = append(out, m)
 	}
 	return out
@@ -79,9 +88,15 @@ func TestHostileArchivesStayConsistent(t *testing.T) {
 	for seed := uint64(1); seed <= 60; seed++ {
 		rng := rand.New(rand.NewPCG(seed, 99))
 		sessions := hostileArchive(rng, 30+rng.IntN(300))
-		for _, by := range []Grouping{GroupNone, GroupDay, GroupWeek, GroupMonth, GroupProject} {
-			o := Options{Now: time.Date(2026, time.September, 15, 12, 0, 0, 0, newYork), Location: newYork, Days: 90, TopN: 1000, By: by}
+		for i, by := range []Grouping{GroupNone, GroupDay, GroupWeek, GroupMonth, GroupProject} {
+			// Every other run asks for the full lists, whatever TopN says.
+			topN, allRows := 1000, false
+			if i%2 == 1 {
+				topN, allRows = 1, true
+			}
+			o := Options{Now: time.Date(2026, time.September, 15, 12, 0, 0, 0, newYork), Location: newYork, Days: 90, TopN: topN, AllRows: allRows, By: by}
 			got := Compute(sessions, o)
+			checkNewFields(t, seed, o, got)
 			data, err := json.Marshal(got)
 			if err != nil {
 				t.Fatalf("seed %d by %q: not serializable: %v", seed, by, err)
@@ -222,5 +237,70 @@ func TestParentLoopsCountEachSessionOnce(t *testing.T) {
 	}
 	if got.Coverage.Sessions != 5 || got.Coverage.SubagentSessions != 2 {
 		t.Fatalf("coverage = %+v, want 5 sessions with 2 subagents rolled in", got.Coverage)
+	}
+}
+
+// checkNewFields holds what the fields the spend view and the heads-up notes
+// read must satisfy on any archive, however hostile: each day's cost adds up
+// to the overall cost, the peak is the dearest day, the cache share is a
+// share, the notes are few and in priority order, and the lists agree with
+// their totals.
+func checkNewFields(tb testing.TB, seed uint64, o Options, got Stats) {
+	tb.Helper()
+	var sum, dearest float64
+	var unpriced int64
+	for _, d := range got.Daily {
+		unpriced = satAdd(unpriced, d.Cost.UnpricedTokens)
+		if d.Cost.USD == nil {
+			continue
+		}
+		if math.IsNaN(*d.Cost.USD) || math.IsInf(*d.Cost.USD, 0) || *d.Cost.USD < 0 {
+			tb.Errorf("seed %d: day %s cost %v", seed, d.Date, *d.Cost.USD)
+		}
+		sum += *d.Cost.USD
+		dearest = max(dearest, *d.Cost.USD)
+	}
+	overall := 0.0
+	if got.Overview.Cost.Value != nil {
+		overall = *got.Overview.Cost.Value
+	}
+	if !near2(sum, overall) {
+		tb.Errorf("seed %d: the days' costs add to %v, the overall cost is %v", seed, sum, overall)
+	}
+	if unpriced != got.Overview.Cost.UnpricedTokens {
+		tb.Errorf("seed %d: the days' unpriced tokens add to %d, overall %d", seed, unpriced, got.Overview.Cost.UnpricedTokens)
+	}
+	if (got.PeakSpend == nil) != (dearest <= 0) || (got.PeakSpend != nil && got.PeakSpend.USD != dearest) {
+		tb.Errorf("seed %d: peak spend %+v, dearest day %v", seed, got.PeakSpend, dearest)
+	}
+	if c := got.Overview.CacheShare; c != nil && (math.IsNaN(*c) || *c < 0 || *c > 1) {
+		tb.Errorf("seed %d: cache share %v", seed, *c)
+	}
+	if len(got.HeadsUp) > MaxHeadsUp || got.HeadsUp == nil {
+		tb.Errorf("seed %d: %d heads-up notes (nil %v)", seed, len(got.HeadsUp), got.HeadsUp == nil)
+	}
+	last := -1
+	order := []NoteKind{NoteSubagentShare, NoteCostliestSession, NoteUnmeteredSessions, NoteLowCacheHit}
+	for _, n := range got.HeadsUp {
+		at := slices.Index(order, n.Kind)
+		if at <= last {
+			tb.Errorf("seed %d: heads-up kinds %v are not each once, in priority order", seed, noteKinds(got.HeadsUp))
+		}
+		last = at
+	}
+	if o.AllRows {
+		if len(got.Projects) != got.TotalProjects || len(got.Skills) != got.TotalSkills || len(got.DisplaySkills) != got.TotalDisplaySkills ||
+			(got.MCP != nil && len(got.MCP.Servers) != got.MCP.TotalServers) {
+			tb.Errorf("seed %d: AllRows lists %d/%d projects, %d/%d skills, %d/%d display skills",
+				seed, len(got.Projects), got.TotalProjects, len(got.Skills), got.TotalSkills, len(got.DisplaySkills), got.TotalDisplaySkills)
+		}
+	}
+	if got.TotalDisplaySkills > got.TotalSkills || len(got.Skills) > got.TotalSkills {
+		tb.Errorf("seed %d: %d display skills of %d recorded", seed, got.TotalDisplaySkills, got.TotalSkills)
+	}
+	for _, s := range got.DisplaySkills {
+		if s.Sessions > got.Coverage.Sessions || s.Sessions < 1 {
+			tb.Errorf("seed %d: display skill %+v of %d sessions", seed, s, got.Coverage.Sessions)
+		}
 	}
 }
