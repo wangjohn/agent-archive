@@ -1,0 +1,15 @@
+#!/bin/sh
+# Written by agent-archive to open a handoff in a new terminal.
+rm -f -- '/private/scripts/launch-0123.sh'
+unset CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID
+cd -- '/work/it'\''s $(here) `x` ü
+next' || { printf 'Press Enter to close. '; read -r _; exit 1; }
+'/usr/local/bin/agent' 'it'\''s' ''\''\'\'''\''' '$(touch pwned)' '`touch pwned`' '${HOME}' 'a
+b
+' '  two  spaces  ' 'ünïcødé ✓' 'back\slash' '"double"' '' '-n' '#{session_name} #(touch pwned)' '*' '; rm -rf ~ &'
+status=$?
+if [ "$status" -ne 0 ]; then
+  printf '\n%s exited with status %s. Press Enter to close. ' '/usr/local/bin/agent' "$status"
+  read -r _
+fi
+exit "$status"
