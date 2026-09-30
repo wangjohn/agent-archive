@@ -72,7 +72,10 @@ func (f handoffFixture) unregister(t *testing.T, id string) {
 // both registered and archived. A newer session with no prompt is hidden.
 type pickerFixture struct {
 	handoffFixture
-	notUploaded, archiveOnly, both, noPrompt string
+	notUploaded string
+	archiveOnly string
+	both        string
+	noPrompt    string
 }
 
 func newPickerFixture(t *testing.T) pickerFixture {
@@ -103,7 +106,7 @@ func runPicker(t *testing.T, env Env, answer string, args ...string) (string, st
 func pickerLine(t *testing.T, out, id string) string {
 	t.Helper()
 	var found []string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(line, id[:minShortSessionID]) {
 			found = append(found, line)
 		}
@@ -125,7 +128,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 		t.Fatalf("a session with no prompt is listed:\n%s", out)
 	}
 	newest, archived, oldest := pickerLine(t, out, f.notUploaded), pickerLine(t, out, f.archiveOnly), pickerLine(t, out, f.both)
-	if !(strings.Index(out, newest) < strings.Index(out, archived) && strings.Index(out, archived) < strings.Index(out, oldest)) {
+	if strings.Index(out, newest) >= strings.Index(out, archived) || strings.Index(out, archived) >= strings.Index(out, oldest) {
 		t.Fatalf("not ordered by activity:\n%s", out)
 	}
 	if !strings.Contains(newest, "Not uploaded yet · not yet uploaded") || !strings.HasPrefix(newest, "1 ") {
@@ -238,7 +241,10 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 	f := newPickerFixture(t)
 	claude := f.addSession(t, "claude", "claude-native", "A Claude task", f.env.now().Add(-5*time.Hour))
 	for _, tc := range []struct {
-		variable, native, want, prompt string
+		variable string
+		native   string
+		want     string
+		prompt   string
 	}{
 		{"CLAUDE_CODE_SESSION_ID", "claude-native", claude, "A Claude task"},
 		{"CODEX_THREAD_ID", "native-1", f.both, "Fix the flaky widget test."},
