@@ -1,6 +1,7 @@
 package statshtml
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -254,19 +255,12 @@ func TestWhereItWent(t *testing.T) {
 	t.Parallel()
 	s := modelStats(t, realisticSessions(), realisticPrices, stats.GroupNone)
 	out := string(render(t, s, Options{IncludeNames: true}))
-	// Projects come dearest first.
+	// Projects come dearest first, as the engine ranks them.
 	var want []string
-	rows := slices.Clone(s.Projects)
-	slices.SortStableFunc(rows, func(a, b stats.Project) int {
-		switch {
-		case *a.Cost.USD > *b.Cost.USD:
-			return -1
-		case *a.Cost.USD < *b.Cost.USD:
-			return 1
+	for i, r := range s.Projects {
+		if i > 0 && *r.Cost.USD > *s.Projects[i-1].Cost.USD {
+			t.Fatalf("the engine's projects are not dearest first: %v", s.Projects)
 		}
-		return 0
-	})
-	for _, r := range rows {
 		want = append(want, r.Name)
 	}
 	table := out[strings.Index(out, `id="h-projects"`):strings.Index(out, `id="h-models"`)]
@@ -309,10 +303,9 @@ func TestWhereItWent(t *testing.T) {
 	}
 }
 
-// The by-project list is the engine's top few projects, and how the engine
-// ranks them is not the page's to say: the note says how many more there are
-// and nothing about whether they cost less or more or have fewer tokens, so it
-// stays true whether the engine ranks by tokens or by spend.
+// The by-project list is the engine's top few projects by spend. The note says
+// how many more there are and nothing about what they cost or how many tokens
+// they have: the page shows no figures for rows it leaves out.
 func TestByProjectNoteSaysOnlyHowManyMore(t *testing.T) {
 	t.Parallel()
 	s := modelStats(t, realisticSessions(), realisticPrices, stats.GroupNone)
@@ -329,6 +322,47 @@ func TestByProjectNoteSaysOnlyHowManyMore(t *testing.T) {
 		if strings.Contains(strings.ToLower(table), claim) {
 			t.Errorf("the projects table makes a claim about the rest (%q)", claim)
 		}
+	}
+}
+
+// The projects the page keeps are the top few by spend, not by tokens: when
+// cache reads give five projects more tokens than two output-heavy ones, the
+// two that cost more are still on the page, above the cheaper ones, and the
+// projects left out are three that cost less.
+func TestByProjectListKeepsTheDearestProjects(t *testing.T) {
+	t.Parallel()
+	var sessions []archive.Metadata
+	for i := range 5 {
+		sessions = append(sessions, sessionSpec{
+			id: fmt.Sprintf("cache-%d", i), harness: "claude", project: fmt.Sprintf("cache-heavy-%d", i), captured: day(time.September, 20, 9),
+			models: []string{"claude-opus-5"}, turns: 3,
+			tokens: []tokenSpec{{"claude-opus-5", 0, 0, 10_000_000 + i*1_000_000, 0}},
+		}.build())
+	}
+	for i := range 2 {
+		sessions = append(sessions, sessionSpec{
+			id: fmt.Sprintf("out-%d", i), harness: "claude", project: fmt.Sprintf("output-heavy-%d", i), captured: day(time.September, 21, 9),
+			models: []string{"claude-opus-5"}, turns: 3,
+			tokens: []tokenSpec{{"claude-opus-5", 0, 1_000_000 + i*100_000, 0, 0}},
+		}.build())
+	}
+	s := modelStats(t, sessions, realisticPrices, stats.GroupNone)
+	if s.TotalProjects != 7 || len(s.Projects) != 5 {
+		t.Fatalf("%d projects, %d kept; want 7 and 5", s.TotalProjects, len(s.Projects))
+	}
+	out := string(render(t, s, Options{IncludeNames: true}))
+	table := out[strings.Index(out, `id="h-projects"`):strings.Index(out, `id="h-models"`)]
+	var got []string
+	for _, row := range strings.Split(table, `<th scope="row">`)[1:] {
+		name, _, _ := strings.Cut(row, "</th>")
+		got = append(got, name)
+	}
+	want := []string{"output-heavy-1", "output-heavy-0", "cache-heavy-4", "cache-heavy-3", "cache-heavy-2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the projects table lists %v, want %v", got, want)
+	}
+	if !strings.Contains(table, "and 2 more projects, not shown") {
+		t.Error("the projects table does not say how many more there are")
 	}
 }
 

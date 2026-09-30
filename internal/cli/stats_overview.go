@@ -263,45 +263,6 @@ func (p *statsPrinter) moreLine(n int) string {
 	return p.dim(fmt.Sprintf("+ %d more", n))
 }
 
-// projectsBySpend is the projects ordered by estimated cost, largest first; a
-// project whose cost is unknown is after every one that has one. Projects of the
-// same cost (unpriced ones among them) are ordered by tokens (unknown last),
-// then sessions and name, whatever order they arrive in.
-func projectsBySpend(projects []stats.Project) []stats.Project {
-	sorted := slices.Clone(projects)
-	slices.SortStableFunc(sorted, func(a, b stats.Project) int {
-		if c := compareOptional(a.Cost.USD, b.Cost.USD); c != 0 {
-			return c
-		}
-		if c := compareOptional(a.Tokens, b.Tokens); c != 0 {
-			return c
-		}
-		if a.Sessions != b.Sessions {
-			return b.Sessions - a.Sessions
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
-	return sorted
-}
-
-// compareOptional orders numbers largest first, and a number that is unknown
-// after every one that is known.
-func compareOptional[T int64 | float64](a, b *T) int {
-	switch {
-	case a == nil && b == nil:
-		return 0
-	case a == nil:
-		return 1
-	case b == nil:
-		return -1
-	case *a > *b:
-		return -1
-	case *a < *b:
-		return 1
-	}
-	return 0
-}
-
 // projectRows are the projects as ranked rows, by spend; the bar is scaled to
 // the largest spend among them.
 func (p *statsPrinter) projectRows(projects []stats.Project) []rankRow {
@@ -369,7 +330,7 @@ func limitRows(n, limit int) int {
 // whereItWent is the projects and the models by spend: two columns from 80
 // terminal columns, stacked from 60, and plain rows below.
 func (p *statsPrinter) whereItWent() []string {
-	projects := projectsBySpend(p.s.Projects)
+	projects := p.s.Projects
 	totalProjects := max(p.s.TotalProjects, len(projects))
 	models := p.s.Models
 	if len(projects) == 0 && len(models) == 0 {

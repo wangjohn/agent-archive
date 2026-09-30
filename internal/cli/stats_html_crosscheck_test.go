@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -330,22 +329,19 @@ func checkPageWhereItWent(t *testing.T, page *node, doc statsDocument) {
 	if projects == nil {
 		t.Fatal("the page has no by-project table")
 	}
-	rows := slices.Clone(doc.Projects)
-	slices.SortStableFunc(rows, func(a, b stats.Project) int {
-		av, aok := spendDown(a.Cost)
-		bv, bok := spendDown(b.Cost)
-		switch {
-		case aok && bok:
-			return cmp.Compare(bv, av)
-		case aok:
-			return -1
-		case bok:
-			return 1
+	// The page lists the document's projects in the document's order (the
+	// engine's, by spend): no re-sorting here, so a page that reordered them
+	// would fail.
+	for i := 1; i < len(doc.Projects); i++ {
+		prev, cur := doc.Projects[i-1], doc.Projects[i]
+		pv, pok := spendDown(prev.Cost)
+		cv, cok := spendDown(cur.Cost)
+		if (!pok && cok) || (pok && cok && cv > pv) {
+			t.Errorf("the document's projects are not dearest first: %q ($%v) before %q ($%v)", prev.Name, pv, cur.Name, cv)
 		}
-		return 0
-	})
+	}
 	var want [][]string
-	for _, p := range rows {
+	for _, p := range doc.Projects {
 		name, cost := p.Name, "n/a"
 		if name == "" {
 			name = "(no project)"

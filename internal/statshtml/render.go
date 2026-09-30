@@ -20,11 +20,9 @@ package statshtml
 
 import (
 	"bytes"
-	"cmp"
 	"fmt"
 	"html/template"
 	"math"
-	"slices"
 	"strings"
 	"time"
 
@@ -328,29 +326,15 @@ func (b *builder) modelRow(r stats.ModelRow, bar float64) barRow {
 	return barRow{Label: label, Class: class, Pct: pct(bar), Cells: []string{cost, statsfmt.Percent(share)}}
 }
 
-// projects is where the spend went by project, dearest first among those the
-// engine kept (a project it could not price goes last). The engine keeps only
-// its top few projects and this page does not say what ranks them, so it says
-// only how many more there are: whichever way the engine ranks, that stays
-// true, and no reader is told the rest are cheaper or dearer.
+// projects is where the spend went by project, in the engine's order: dearest
+// first, a project it could not price last. The engine keeps its top few
+// projects by that order, so what the page leaves out is what it says: how many
+// more projects there are (it does not say what they cost).
 func (b *builder) projects() *barTable {
-	rows := slices.Clone(b.s.Projects)
+	rows := b.s.Projects
 	if len(rows) == 0 {
 		return nil
 	}
-	slices.SortStableFunc(rows, func(a, c stats.Project) int {
-		av, aok := spendOf(a.Cost)
-		cv, cok := spendOf(c.Cost)
-		switch {
-		case aok && cok:
-			return cmp.Compare(cv, av)
-		case aok:
-			return -1
-		case cok:
-			return 1
-		}
-		return 0
-	})
 	t := &barTable{ID: "projects", Title: "By project", Heading: "Project", HasBars: true,
 		Cols: []string{"Spend", "Sessions"}}
 	costs := make([]stats.Cost, len(rows))

@@ -147,9 +147,9 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return code
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
-	// A page lists every project and skill and lets the screen cut them, so a
-	// list of projects by spend is not the top few by tokens. The JSON and the
-	// web page keep the engine's default lists.
+	// A page lists every project and skill and lets the screen cut them. The
+	// JSON and the web page keep the engine's default lists: the top few
+	// projects by spend.
 	textPage := !*jsonOut && !htmlFlags.html
 	computed := stats.Compute(sessions, stats.Options{
 		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage,
