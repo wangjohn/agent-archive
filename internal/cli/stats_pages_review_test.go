@@ -23,12 +23,13 @@ func dailyRun(n int, cost func(i int) *float64) stats.Stats {
 	s.PeakSpend = nil
 	for i := range s.Daily {
 		c := cost(i)
-		day := stats.Day{Date: end.AddDate(0, 0, i-n+1).Format("2006-01-02"), Sessions: 1}
+		var spend stats.Cost
 		if c != nil {
-			day.Cost = usd(*c)
-			if s.PeakSpend == nil || *c > s.PeakSpend.USD {
-				s.PeakSpend = &stats.PeakSpend{Date: day.Date, USD: *c}
-			}
+			spend = usd(*c)
+		}
+		day := stats.Day{Date: end.AddDate(0, 0, i-n+1).Format("2006-01-02"), Sessions: 1, Cost: spend}
+		if c != nil && (s.PeakSpend == nil || *c > s.PeakSpend.USD) {
+			s.PeakSpend = &stats.PeakSpend{Date: day.Date, USD: *c}
 		}
 		s.Daily[i] = day
 	}
