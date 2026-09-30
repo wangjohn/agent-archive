@@ -203,3 +203,32 @@ func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object
 		}
 	}
 }
+
+// keys returns the object keys of the sidecars cached under listPrefix, in
+// no particular order. A listing plans its ranges from them (planRanges);
+// like everything else about the cache, a missing or unreadable directory is
+// just no keys.
+func (c *MetadataCache) keys(listPrefix string) []string {
+	if c == nil {
+		return nil
+	}
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return nil
+	}
+	var keys []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		raw, err := hex.DecodeString(strings.TrimSuffix(name, ".json"))
+		if err != nil {
+			continue
+		}
+		if key := string(raw); isMetadataKey(key) && strings.HasPrefix(key, listPrefix) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}

@@ -307,6 +307,54 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 	return page, nil
 }
 
+// ListRange lists the objects under relativePrefix in the key range (after,
+// through] (see RangeLister). The provider starts at after through
+// ListObjectsV2's StartAfter, and paging stops at the first page that passes
+// through. The range is also enforced here, key by key, so a provider that
+// ignored StartAfter would cost extra pages but never return a key twice
+// across ranges.
+func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through string) ([]Object, error) {
+	prefix, err := s.keyForList(relativePrefix)
+	if err != nil {
+		return nil, err
+	}
+	var start *string
+	if after != "" {
+		key, err := s.key(after)
+		if err != nil {
+			return nil, err
+		}
+		start = aws.String(key)
+	}
+	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start})
+	var objects []Object
+	for pager.HasMorePages() {
+		page, pageErr := pager.NextPage(ctx)
+		if pageErr != nil {
+			return nil, pageErr
+		}
+		for _, item := range page.Contents {
+			if item.Key == nil {
+				continue
+			}
+			key := trimStorePrefix(*item.Key, s.prefix)
+			if key <= after {
+				continue
+			}
+			if through != "" && key > through {
+				return objects, nil
+			}
+			objects = append(objects, Object{
+				Key:          key,
+				Size:         aws.ToInt64(item.Size),
+				ETag:         strings.Trim(aws.ToString(item.ETag), "\""),
+				LastModified: aws.ToTime(item.LastModified),
+			})
+		}
+	}
+	return objects, nil
+}
+
 func (s *S3Store) keyForList(relativePrefix string) (string, error) {
 	if strings.TrimSpace(relativePrefix) == "" {
 		if s.prefix == "" {

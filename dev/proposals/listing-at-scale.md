@@ -1,13 +1,13 @@
 # Archive listing at scale: implementation plan
 
-Prepared 2026-09-30 against `main` at `dc443c7`. Status: phase 1 in
-progress; phases 2 and 3 planned; phase 4 needs its own spec before any code.
+Prepared 2026-09-30 against `main` at `dc443c7`. Status: phase 1
+implemented; phases 2 and 3 planned; phase 4 needs its own spec before any code.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 1 | Parallel range listing | In progress |
+| 1 | Parallel range listing | Implemented |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Planned |
 | 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |

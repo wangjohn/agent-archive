@@ -130,9 +130,10 @@ type ListOptions struct {
 
 // ListMetadataWithOptions reads only metadata sidecars and applies filters
 // without downloading transcript bundles, with an optional local cache. A
-// harness filter narrows the listing to that harness's own prefix, keys which
-// are not sidecars are skipped before any download, and sidecars are read with
-// bounded concurrency. Results are ordered newest capture first.
+// harness filter narrows the listing to that harness's own prefix, a listing
+// large enough to split is listed as key ranges in parallel (listObjects),
+// keys which are not sidecars are skipped before any download, and sidecars
+// are read with bounded concurrency. Results are ordered newest capture first.
 //
 // Another Mac's retention or undo can delete a session at any time, so a
 // sidecar that is listed and then not found is left out: it no longer
@@ -143,7 +144,7 @@ type ListOptions struct {
 // sequential read would.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
 	listPrefix := listPrefixFor(prefix, filter.Harness)
-	objects, err := store.List(ctx, listPrefix)
+	objects, err := listObjects(ctx, store, listPrefix, options.Cache)
 	if err != nil {
 		return nil, err
 	}

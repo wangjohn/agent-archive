@@ -144,6 +144,23 @@ func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string,
 	return page, nil
 }
 
+// ListRange returns the objects under prefix, with the same prefix rule as
+// List, whose keys are greater than after and at most through (either bound
+// empty means unbounded), sorted by key.
+func (s *MemoryStore) ListRange(ctx context.Context, prefix, after, through string) ([]storage.Object, error) {
+	objects, err := s.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	out := objects[:0]
+	for _, object := range objects {
+		if object.Key > after && (through == "" || object.Key <= through) {
+			out = append(out, object)
+		}
+	}
+	return out, nil
+}
+
 // Delete removes the object at key; a missing object is not an error.
 func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
@@ -166,6 +183,7 @@ var (
 	_ storage.ObjectStore   = (*MemoryStore)(nil)
 	_ storage.ObjectStatter = (*MemoryStore)(nil)
 	_ storage.PageLister    = (*MemoryStore)(nil)
+	_ storage.RangeLister   = (*MemoryStore)(nil)
 )
 
 // md5Hex is the ETag an S3-compatible store reports for a single-part,
