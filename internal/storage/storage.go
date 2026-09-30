@@ -51,9 +51,10 @@ type PageLister interface {
 // after and at most through, in key order. An empty after starts at the
 // beginning of prefix, and an empty through runs to its end, so ranges split
 // at the same boundaries (after of one equal to through of the one before)
-// cover every key exactly once. Like PageLister it is an optional extension:
-// a reader lists disjoint ranges concurrently instead of paging through one
-// listing.
+// cover every key exactly once. A cancelled context must end in an error,
+// never in a shorter listing, since a reader treats a range's result as
+// complete. Like PageLister it is an optional extension: a reader lists
+// disjoint ranges concurrently instead of paging through one listing.
 type RangeLister interface {
 	ListRange(ctx context.Context, prefix, after, through string) ([]Object, error)
 }
