@@ -112,6 +112,35 @@ func SHA256Hex(data []byte) string {
 	return sha256Hex(data)
 }
 
+// probePrefix is the folder VerifyAccess writes its test object in. Probe
+// lists it, so the call stays inside the one prefix a least-privilege policy
+// grants s3:ListBucket for, and only leftover test objects can be in it.
+const probePrefix = ".setup-test/"
+
+// Probe makes one cheap call to the store, a listing of at most one object
+// in the setup test folder, and writes nothing. Setup runs it before
+// VerifyAccess so a wrong account, key, or endpoint fails at once, with the
+// error Diagnose explains, instead of after the round trip's upload and
+// clean-up have each failed. Passing it proves only that the store answers
+// this caller; VerifyAccess is still the check that writing, reading, and
+// deleting work.
+//
+// A store that pages (PageLister) is asked for one object. Any other store
+// lists the setup test folder, which holds nothing but leftovers of failed
+// checks, so neither path reads through a large archive.
+func Probe(ctx context.Context, store ObjectStore) error {
+	var err error
+	if pager, ok := store.(PageLister); ok {
+		_, err = pager.ListPage(ctx, probePrefix, "", 1)
+	} else {
+		_, err = store.List(ctx, probePrefix)
+	}
+	if err != nil {
+		return fmt.Errorf("setup test probe %s: %w", setupKeyLabel(store, probePrefix), err)
+	}
+	return nil
+}
+
 // VerifyAccess performs the setup round trip required by the product spec.
 // It creates a unique relative object key and the store applies its
 // configured prefix. It reads and verifies the object, confirms it appears in
