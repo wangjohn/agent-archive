@@ -536,7 +536,9 @@ func TestHandoffWorktreeStartsWhereTheChangesWereRecorded(t *testing.T) {
 		out, err := testGit(ctx, dir, args...)
 		if len(args) > 1 && args[0] == "stash" && args[1] == "create" {
 			// Another agent commits in the checkout meanwhile.
-			mustGit(t, repo, "commit", "-q", "--allow-empty", "-m", "meanwhile")
+			if _, commitErr := testGit(ctx, repo, "commit", "-q", "--allow-empty", "-m", "meanwhile"); commitErr != nil {
+				t.Error(commitErr)
+			}
 		}
 		return out, err
 	}
@@ -608,5 +610,75 @@ func TestHandoffWorktreeMissingAgentCreatesNothing(t *testing.T) {
 	}
 	if list := mustGit(t, f.project, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
 		t.Fatalf("worktree created for a missing agent:\n%s", list)
+	}
+}
+
+// check-ref-format --branch accepts "@" (HEAD's shorthand), which is no name
+// for a new branch; a leading "-" would read as an option.
+func TestHandoffWorktreeRefusesNonsenseBranchNames(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	for _, name := range []string{"@", "-b", "--force"} {
+		_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true, branch: name}, worktreeTarget("nonsense"), repo, nil, nil, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q is not a valid branch name", name)) {
+			t.Errorf("--branch %s: err=%v", name, err)
+		}
+	}
+	if _, statErr := os.Lstat(repo + "-handoff-nonsense"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("worktree created for a nonsense branch: %v", statErr)
+	}
+}
+
+// `git stash create` cannot record an intent-to-add entry, so --worktree
+// names the file and creates nothing.
+func TestHandoffWorktreeRefusesIntentToAddFiles(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	writeTestFile(t, filepath.Join(repo, "planned.txt"), "later\n", 0o644)
+	mustGit(t, repo, "add", "-N", "planned.txt")
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("intent12"), repo, nil, nil, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "git add -N` (planned.txt)") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Lstat(repo + "-handoff-intent12"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("worktree created with an intent-to-add file: %v", statErr)
+	}
+	if branches := mustGit(t, repo, "branch", "--list", "handoff/*"); branches != "" {
+		t.Fatalf("branch created: %q", branches)
+	}
+}
+
+// A rebase stopped in a linked worktree is found in that worktree's own git
+// directory, and a bisect is allowed with a note.
+func TestHandoffWorktreeOperationsInALinkedWorktree(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	linked := repo + "-linked"
+	mustGit(t, repo, "worktree", "add", "-q", "-b", "linked", linked)
+	writeTestFile(t, filepath.Join(linked, "tracked.txt"), "linked\n", 0o644)
+	mustGit(t, linked, "commit", "-q", "-am", "linked")
+	writeTestFile(t, filepath.Join(repo, "tracked.txt"), "main\n", 0o644)
+	mustGit(t, repo, "commit", "-q", "-am", "main")
+	if _, err := testGit(t.Context(), linked, "rebase", "main"); err == nil {
+		t.Fatal("rebase did not stop on its conflict")
+	}
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("rebase12"), linked, nil, nil, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "a rebase is in progress") {
+		t.Fatalf("rebase: err=%v", err)
+	}
+	mustGit(t, linked, "rebase", "--abort")
+
+	mustGit(t, linked, "bisect", "start", "HEAD", "HEAD~1")
+	writeTestFile(t, filepath.Join(linked, "staged.txt"), "bisecting\n", 0o644)
+	var stderr bytes.Buffer
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("bisect12"), linked, nil, nil, &stderr)
+	if err != nil || !strings.Contains(stderr.String(), "a bisect is in progress") {
+		t.Fatalf("bisect: err=%v stderr=%q", err, stderr.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "staged.txt")); err != nil || string(data) != "bisecting\n" {
+		t.Errorf("staged.txt = %q, %v", data, err)
 	}
 }

@@ -153,7 +153,11 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 		branch = "handoff/" + short
 	}
 	// check-ref-format --branch also expands forms such as @{-1}; only a
-	// name it returns unchanged is taken as given.
+	// name it returns unchanged is taken as given. It accepts "@", which is
+	// HEAD's shorthand, and older versions accept a leading "-".
+	if branch == "@" || strings.HasPrefix(branch, "-") {
+		return "", fmt.Errorf("%q is not a valid branch name", branch)
+	}
 	if checked, err := git(top, "check-ref-format", "--branch", branch); err != nil || checked != branch {
 		return "", fmt.Errorf("%q is not a valid branch name", branch)
 	}
@@ -170,12 +174,23 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	if slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch) {
 		return "", fmt.Errorf("branch %s already exists; name a new one with --branch NAME", branch)
 	}
-	if op, err := operationInProgress(ctx, env, top); err != nil {
+	op, err := operationInProgress(ctx, env, top)
+	if err != nil {
 		return "", err
-	} else if op != "" {
+	}
+	if op != "" && op != "bisect" {
 		// Only the diff against HEAD would be carried, not the operation's
 		// state, so the new agent would see a plain edit instead.
 		return "", fmt.Errorf("a %s is in progress in %s; finish or abort it before using --worktree", op, top)
+	}
+	// `git stash create` cannot record intent-to-add (`git add -N`)
+	// entries, and fails with a message that does not say which.
+	intent, err := env.runGit(ctx, top, "diff", "--name-only", "--diff-filter=A", "-z")
+	if err != nil {
+		return "", fmt.Errorf("list uncommitted changes: %w", err)
+	}
+	if names := splitNul(intent); len(names) > 0 {
+		return "", fmt.Errorf("--worktree cannot carry files added with `git add -N` (%s); stage them with `git add`, or undo with `git reset -- <file>`, and retry", strings.Join(names, ", "))
 	}
 	head, err := git(top, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
@@ -223,24 +238,35 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 		terminal.Printf(stderr, "handoff: warning: did not copy %s into the worktree (not a file or symlink, such as a nested repository)\n", name)
 	}
 	terminal.Printf(stderr, "handoff: created worktree %s on branch %s (carried %d changed and %d untracked files)\n", path, branch, changed, copied)
+	if op == "bisect" {
+		// Bisecting leaves the working tree as it is, so its changes carry;
+		// the bisect itself stays in this checkout.
+		terminal.Printf(stderr, "handoff: note: a bisect is in progress in %s; the worktree starts at the commit it has checked out, without the bisect\n", top)
+	}
 	if _, err := os.Lstat(filepath.Join(top, ".gitmodules")); err == nil {
 		terminal.Println(stderr, "handoff: note: submodules are not checked out in the worktree, and changes inside them were not carried (`git submodule update --init` there checks them out)")
 	}
 	launch := filepath.Join(path, filepath.FromSlash(prefix))
-	if info, err := os.Stat(launch); err != nil || !info.IsDir() {
-		// dir was inside an ignored or untracked-only directory.
-		terminal.Printf(stderr, "handoff: %s is not in the worktree; starting at its top level\n", prefix)
-		return path, nil
+	if info, statErr := os.Stat(launch); statErr == nil && info.IsDir() {
+		return launch, nil
 	}
-	return launch, nil
+	// dir was inside an ignored or untracked-only directory.
+	terminal.Printf(stderr, "handoff: %s is not in the worktree; starting at its top level\n", prefix)
+	return path, nil
 }
 
-// operationInProgress names a merge, rebase, cherry-pick, or revert under way
-// in the checkout at top, or returns "" when there is none.
+// operationInProgress names a merge, rebase, `git am`, cherry-pick, revert, or
+// bisect under way in the checkout at top, or returns "" when there is none.
+// --git-path finds each where it lives, including a linked worktree's own
+// git directory.
 func operationInProgress(ctx context.Context, env worktreeDependencies, top string) (string, error) {
-	ops := []struct{ path, name string }{
-		{"MERGE_HEAD", "merge"}, {"rebase-merge", "rebase"}, {"rebase-apply", "rebase"},
-		{"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"},
+	type operation struct {
+		path string
+		name string
+	}
+	ops := []operation{
+		{"MERGE_HEAD", "merge"}, {"rebase-merge", "rebase"}, {"rebase-apply", "rebase or `git am`"},
+		{"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"}, {"BISECT_LOG", "bisect"},
 	}
 	args := []string{"rev-parse"}
 	for _, op := range ops {
