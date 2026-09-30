@@ -1,18 +1,24 @@
 # See your usage: stats
 
-`stats` shows how you use your coding agents: tokens by day, sessions,
-estimated cost, which agents, models and projects took the most, what the
-tokens were spent on, and a few highlights. It is read-only, like `list`: it
-reads only the metadata of your archived sessions, so it prints numbers and
-names (agents, models, projects, skills, MCP servers), never prompts,
-transcript text or file paths.
+`stats` shows how you use your coding agents. The default screen is a short
+summary of the last 30 days: what it cost, how many sessions, how many tokens,
+which agents did the work, what each day cost, where it went by project and
+model, the skills and MCP servers used most, and anything worth a second
+look. More is one flag away: `--detail` for the full breakdown, and
+`--view projects`, `models` or `agents` to list every one. On a terminal it
+opens as an [interactive screen](#the-interactive-screen) with a key for each
+of these. It is read-only,
+like `list`: it reads only the metadata of your archived sessions, so it
+prints numbers and names (agents, models, projects, skills, MCP servers),
+never prompts, transcript text or file paths.
 
 ```sh
-agent-archive stats                        # the last 30 days, against the 30 before
+agent-archive stats                        # the summary of the last 30 days
+agent-archive stats --detail               # every number, and what they rest on
+agent-archive stats --view projects        # every project, by spend (also models, agents)
 agent-archive stats --days 7               # the last 7 days
 agent-archive stats --since 2026-09-01     # from that local day through today
-agent-archive stats --by week              # also break the window down by week
-agent-archive stats --by project           # ...or by day, month, or project
+agent-archive stats --by week              # the detail screen, plus a table by week
 agent-archive stats --harness claude       # one agent only
 agent-archive stats --prices my-prices.json   # your own prices, see below
 agent-archive stats --json                 # for scripts: see JSON output
@@ -27,27 +33,325 @@ changed. `--no-cache` reads everything again.
 
 ## What it shows
 
-- **Tokens by day**, a small bar chart with the peak day.
-- **Overview**: sessions, prompts, tokens and estimated cost, each with the
-  change from the previous period of the same length, and the days you were
-  active, with your current and best streak.
-- **Agents**, **cost by model** and **top projects**. A project is the
-  project's name only.
-- **What used your tokens**: cache reads, cache writes, fresh input and
-  output. Rows appear only when there is something to show: how much of your
-  tokens subagents used, the skills sessions used (counted in *sessions that
-  used each one*, not calls), and MCP servers (counted in calls).
-- **Highlights**: your busiest day, favorite model, the costliest session
-  and what likely made it costly (long context, subagents, a low cache hit
-  rate), the share of tool results the app flagged as errors, and how this
-  month ranks against your last six.
+`--view` picks a screen (`overview` is the default); `--detail` is
+`--view detail`. Every screen is plain text with color where the terminal has
+it, and prints the same numbers to a pipe.
 
-`--by day|week|month|project` adds a table of the window broken down that
-way (weeks start on Monday). On a terminal of 80 columns or more the screen
-draws bars; narrower, it is a compact table (laid out for at least 50
-columns: on a terminal narrower than that, lines wrap). It is paged through `$PAGER` on a
-terminal (`--no-pager` to print directly), plain text when piped, and ASCII
-instead of block characters in a locale that is not UTF-8.
+### The summary
+
+```text
+agent-archive stats · last 30 days · 3 agents
+
+  ~$3,989                   93 sessions               10B tokens
+  at list price             673 prompts               97% served from cache
+
+AGENTS  ███████████████████████████████████████████ ████ █
+        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%   of sessions
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHERE IT WENT
+By project                                By model
+agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
+levenshtein    ██████             $751    fable   ███                       $386
+styleprofile   █████              $586    sonnet  ██                        $320
+family_books   ███                $427    + 2 more
++ 6 more
+
+MOST USED
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38 subagents
+● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+Estimated at list price, not a bill.   --detail for more · --by project · --html
+```
+
+- **The headline** is estimated spend, sessions and tokens. When the period
+  before this one had any, spend shows its change (`▲ 18% vs prior 30d`):
+  an arrow up is amber and down is green, never red, because more spend is
+  not an error. A change of more than 999% reads `▲ >999%` (against next to
+  nothing the exact figure only measures how little there was; `--json` has it
+  exactly). With nothing to compare against, nothing is shown, never a
+  "new". Under the tokens is how much of them were cache reads: most of a long
+  session's tokens are the same context read again, so the count alone
+  overstates the work.
+- **Agents** is one bar split by each agent's share of your sessions.
+- **Daily spend** is the estimated cost of each day, three rows tall, with
+  the peak day named. A day with no sessions is only the baseline, and a day
+  whose sessions have no price (Cursor records no tokens) is a dot, never a
+  low bar (a line under the chart says so). When the window has more days than
+  the terminal has columns, as 90 days do on 80, each bar is the costliest day
+  of a run of days, and a line under the chart says how many. A window of one
+  day has no chart.
+- **Where it went** is the projects and the models by spend. From 80 columns
+  they are two columns; from 60 they are stacked; narrower, plain rows. Bars
+  are scaled to the largest row of their list and have no track behind them.
+- **Most used** lists skills (in *sessions that used each one*, not calls; a
+  plugin's prefix is dropped, so `anthropic-skills:docs` reads `docs`) and
+  MCP servers (in calls, for the agents that record them). A row appears only
+  when there is data for it.
+- **Heads up** is up to three things worth a look, in this order: subagents
+  using a quarter or more of your tokens (a subagent run is counted as a run,
+  never as a session), one session costing a tenth or more of your spend (with
+  more than one session in the window) and what likely made it costly, sessions with no token data, and a cache hit
+  rate under 60%.
+
+The colors are the terminal's own 16 (so they follow your theme): Claude Code
+yellow, Cursor blue, Codex green; models by family (opus magenta, fable red,
+sonnet cyan, haiku yellow, GPT and Codex models green); projects and the
+daily chart cyan. Color is never the only cue: every legend names what it
+colors. `NO_COLOR` turns color off, and so does anything that is not a
+terminal.
+
+### The detail screen (`--detail`)
+
+Everything the summary leaves out: each number against the previous period,
+the agents table (with cache hit rate), the daily chart, what used your
+tokens (cache reads and writes, fresh input and output, and how much subagents
+used), highlights (days active and streaks, the busiest day, your favorite
+model, how this month ranks against your last six, the share of tool results
+the app flagged as errors, the costliest session), every skill and MCP server,
+and notes on what the numbers rest on. `--by day|week|month` adds a table of
+the window broken down that way (weeks start on Monday) under it.
+
+```text
+agent-archive stats · detail · last 30 days · 3 agents
+
+OVERVIEW     last 30d  prior 30d     change
+Est. spend    ~$3,989    ~$3,380      ▲ 18%
+Sessions           93        121      ▼ 23%
+Prompts           673        673  no change
+Tokens            10B       8.5B      ▲ 18%
+Active days   3 of 30    5 of 30      ▼ 40%
+97% of tokens were served from cache.
+
+AGENTS         sessions  share   tokens  est. cost  cache hit
+● Claude Code        84    90%     9.9B     $3,940        97%
+● Cursor              8     9%  unknown        n/a        n/a
+● Codex               1     1%     100M        $49        90%
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHAT USED YOUR TOKENS
+████████████████████████████████████████████ █ █ █
+● Cache read    97%  9.7B
+● Cache write    2%  200M
+● Fresh input   <1%  30M
+● Output         1%  70M
+Subagents  77% of tokens (7.7B) in 497 runs
+
+HIGHLIGHTS
+Streak          none now (best 1 day)
+Busiest day     Sep 27 (70 sessions)
+Favorite model  opus
+This month      the heaviest of the last 6 months, by tokens so far
+Tool errors     5.0% of 4,200 tool results flagged as errors, 70 sessions
+                measured (13 do not record them)
+Costliest       ~$564 · styleprofile · long context, 38 subagents
+
+SKILLS AND MCP
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
+Skills count the sessions that used each one; MCP counts calls.
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38 subagents
+● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+NOTES
+Scope: this archive only.
+83 of 93 sessions report token counts.
+Sessions with no token data are left out of token and cost totals (Claude Code:
+2, Cursor: 8).
+Prices 2026-09-29, as of 2026-09-29.
+~ marks an estimate at list price.
+MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.
+
+Estimated at list price, not a bill.   --view overview
+```
+
+### Projects, models and agents
+
+`--view projects` lists every project with a bar, its sessions, tokens, spend
+and share of the spend (a project is the project's name only). `--view models`
+lists every model family, with any model the price table does not list flagged
+`unpriced` and its tokens shown. `--view agents` is the agents table, with each
+agent's share of sessions, tokens, spend and cache hit rate, and a note on
+what each agent does not record. `--by project` is `--view projects`.
+
+```text
+agent-archive stats · projects · last 30 days · 3 agents
+
+PROJECTS (10)                        sessions   tokens  est. cost  share
+agent-archive  ████████████████████        31     4.6B     $1,862    47%
+levenshtein    ████████                    18     1.9B       $751    19%
+styleprofile   ██████                       9     1.5B       $586    15%
+family_books   █████                       12     1.1B       $427    11%
+benchplan      ██                           6     500M       $200     5%
+notes          █                            5     170M        $70     2%
+blog           █                            4     110M        $45     1%
+scripts        █                            3      70M        $28     1%
+infra          █                            3      50M        $20     1%
+dotfiles                                    2  unknown        n/a
+
+Estimated at list price, not a bill.   --view overview
+```
+
+```text
+agent-archive stats · models · last 30 days · 3 agents
+
+MODELS (5)                     sessions  tokens  est. cost  share
+opus     ████████████████████        60      7B     $3,270    82%
+fable    ██                          20    1.5B       $386    10%
+sonnet   ██                          30    1.3B       $320     8%
+gpt-5.6  █                            1    100M      $7.00    <1%
+haiku    █                           10    100M      $6.00    <1%
+
+Estimated at list price, not a bill.   --view overview
+```
+
+```text
+agent-archive stats · agents · last 30 days · 3 agents
+
+AGENTS                            sessions  share   tokens  est. cost  cache hit
+● Claude Code  ███████████████          84    90%     9.9B     $3,940        97%
+● Cursor       █                         8     9%  unknown        n/a        n/a
+● Codex        █                         1     1%     100M        $49        90%
+
+Claude Code: 2 of 84 sessions have no token data; left out of tokens and spend.
+Cursor: 8 of 8 sessions have no token data; left out of tokens and spend.
+Codex: MCP calls and tool errors are not recorded.
+Cache hit is cache reads over all input-side tokens.
+
+Estimated at list price, not a bill.   --view overview
+```
+
+Lists are cut at 500 rows, and say how many more there are: `--json` has them
+all.
+
+### Narrow terminals
+
+Two columns of bars from 80 columns, one column from 60, and below that the
+same numbers as plain rows, down to 40 columns; nothing ever runs past the
+edge. A window whose spend has a previous period looks like this at 60
+columns:
+
+```text
+agent-archive stats · last 30 days · 3 agents
+
+  ~$3,989              93 sessions   10B tokens
+  ▲ 18% vs prior 30d   673 prompts   97% served from cache
+
+AGENTS  █████████████████████████ ██ █
+        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%
+        of sessions
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHERE IT WENT
+By project
+agent-archive  ██████████████████████████████  $1,862
+levenshtein    ████████████                      $751
+styleprofile   █████████                         $586
+family_books   ███████                           $427
++ 6 more
+
+By model
+opus           ██████████████████████████████  $3,270
+fable          ████                              $386
+sonnet         ███                               $320
++ 2 more
+
+MOST USED
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide
+        2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor
+        only)
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38
+  subagents
+● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+Estimated at list price, not a bill.
+--detail for more · --by project · --html
+```
+
+Printed without the [interactive screen](#the-interactive-screen), the text
+is paged through `$PAGER` on a terminal (`--no-pager` to print directly),
+plain text when piped, and ASCII instead of block characters in a locale that
+is not UTF-8.
+
+## The interactive screen
+
+On a terminal, plain `agent-archive stats` opens a screen you move around in,
+instead of printing once: the summary first, and a bar of keys on the last row
+with the view you are on highlighted. It uses the terminal's alternate
+screen, like the `list` browser, so quitting leaves your scrollback as it was.
+
+| Key | What it does |
+| --- | --- |
+| `o` `d` `p` `m` `a` | Switch to the overview, detail, projects, models or agents view. Each is exactly the screen `--view` prints. |
+| `w` | Cycle the window: 7 days, 30 days, 90 days, and back. The numbers are counted again from the sessions already read, so it is instant and nothing is downloaded. The view stays; the title says `last 90 days`, and the bar always names the window `w` goes to next (`w window 30d>90d`, shortened to `w >90d` on a narrow terminal). |
+| Up, Down, `j`, `k` | Scroll a line. The mouse wheel does the same where the terminal sends it as arrow keys on the alternate screen, as it does for the session browser; agent-archive does not turn on mouse reporting, so selecting text with the mouse still works. |
+| PgUp, PgDn, space | Scroll a screen. |
+| Home, End | Jump to the top or the bottom. |
+| `h` | Save the window on show as a web page (see [below](#share-it-as-a-web-page)). |
+| `?` | List the keys; any key that is not a scroll key closes the list. |
+| `q`, Ctrl-C, Ctrl-D | Quit. Esc does not quit: over a slow connection an arrow key can arrive in two pieces, and the first looks like a lone Esc. (At the file name prompt of `h`, Esc cancels.) |
+
+A view taller than the terminal is cut to fit and scrolls (the overview can
+need over 30 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
+below), a percentage or `End` where it can. On a narrow terminal the bar shortens its
+labels and then drops keys (`q` last) rather than wrap. Resizing the window
+redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP` and
+Ctrl-Z, the terminal gets its echo, cursor and screen back.
+
+`--days` and `--since` set the window the screen starts in: 7, 30 and 90
+days are the usual ones, and any other window (say `--days 14`) is added to
+the cycle in order, so `w` goes 7, 14, 30, 90. `--harness`, `--model`,
+`--imported` and `--hook-captured` apply. "Today" and the windows are counted
+from when the screen opened and are not refreshed: a screen left open past
+midnight, or while new sessions are captured, keeps showing what it read; quit
+and run it again to refresh. A window with nothing in it says so
+and `w` moves on. To read once for every window, the screen fetches the longest
+window, the same length again before it (for the change from the prior
+period) and the six months of the month rank; a plain `stats --days 7` still
+reads only what it needs.
+
+**`h` saves the page.** It asks for a file name at the bottom of the screen,
+with `agent-archive-stats-YYYY-MM-DD.html` in the current folder as the
+default (Enter takes it, Esc cancels; `~/` and absolute paths work). The page
+is the redacted one (`project A`, `model A`, ...): there is no key to turn the
+names on, so a page saved here is safe to share; run
+`agent-archive stats --html --include-names --output FILE` for the real
+names. It never replaces a file, and refuses a folder, a symbolic link or a
+missing folder, saying why on the bottom row; the path of a saved page shows
+there and is printed again when you quit.
+
+The screen opens only when standard input and output are both terminals,
+interaction is on (`AGENT_ARCHIVE_NONINTERACTIVE` is not set, as it is inside
+coding agents), `TERM` is not `dumb`, and none of `--view`, `--detail`, `--by`, `--no-pager`,
+`--json` or `--html` is given. Everything else prints as described above,
+unchanged. `--no-pager` is the way to get the printed screen on a terminal.
 
 ## In `--json`: spend by day and heads-up notes
 
@@ -57,7 +361,7 @@ script can chart or check them: each `daily` entry has that day's estimated
 dearest day, `overview.cache_share` is the part of your tokens that were
 cache reads, and `heads_up` lists up to three things worth a second look
 (subagents using a quarter or more of your tokens, one session costing a tenth
-or more of your spend, sessions with no token data, a low cache-hit rate) as
+or more of your spend when the window has more than one session, sessions with no token data, a low cache-hit rate) as
 data, in that order of priority. A skill that a plugin provides is listed once
 as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
 and `skills` keeps the recorded names. Every field, rule and threshold is in
@@ -155,16 +459,17 @@ more); `--by project` lists more of them.
 ## Reading the numbers
 
 - **Unknown is not zero.** Cursor records no token counts, so Cursor's tokens
-  and cost read `unknown` / `n/a` and are left out of the totals; the heading
-  and the footer say how many sessions that is. Codex does not record whether
+  and cost read `unknown` / `n/a` and are left out of the totals; a heads-up
+  line and the detail notes say how many sessions that is. Codex does not record whether
   a tool call failed, so tool errors cover the other sessions, and the
   highlight says how many. Sessions captured before parser `0.14.0` lack the
-  per-model split; they are priced at their main model (marked `~`) until
-  their metadata refreshes.
-- **Cost is an estimate**, at list price from a dated price table built into
-  the release (the footer names its version and date), not a bill. Prices for
+  per-model split; they are priced at their main model until their metadata
+  refreshes, and the detail notes count them.
+- **Cost is an estimate** (a `~` before an amount says so), at list price from
+  a dated price table built into the release (the detail notes name its
+  version and date), not a bill. Prices for
   a model the table does not list are left out rather than guessed; the
-  total is then marked `+` and the footer names the models. Reasoning tokens
+  total is then marked `+` and the detail notes name the models. Reasoning tokens
   cost what output costs. Cache writes use the five-minute rate.
 - **`--prices FILE`** puts your own entries on top of the built-in table, in
   the same JSON shape (`internal/stats/prices.json` in the source shows it):

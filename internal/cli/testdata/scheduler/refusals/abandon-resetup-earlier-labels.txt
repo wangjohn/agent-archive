@@ -1,0 +1,8 @@
+# exit 0
+Discarded the interrupted setup recorded in @DATA_HOME@/setup-transaction.json. These files were kept as they are now:
+  @USER_HOME@/.claude/settings.json
+  @USER_HOME@/.claude/skills/handoff/SKILL.md
+  @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist
+  @DATA_HOME@/config.json
+The background collector may be stopped: the interrupted setup can have stopped it before it was interrupted, and nothing restarts it now.
+Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again. agent-archive status shows what is running.

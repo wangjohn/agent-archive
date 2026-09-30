@@ -1,0 +1,6 @@
+# first setup, nothing loaded
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=present
+# exit 0, end: journal=absent own=present

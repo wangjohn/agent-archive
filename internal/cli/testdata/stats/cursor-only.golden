@@ -1,22 +1,16 @@
-agent-archive stats · last 30 days · 1 agent · 1 session (0 with token data)
+agent-archive stats · last 30 days · 1 agent
 
-OVERVIEW                                             vs previous 30 days
-Sessions           1  new
-Prompts            3
-Tokens       unknown
-Est. cost        n/a       at list price, prices as of 2026-09-29
-Active days     1/30       streak 1 day (best 1)
+  spend unknown                   1 session                       tokens unknown
+  needs token data                3 prompts                       none recorded
 
-AGENTS                          sessions   tokens  est. cost
-Cursor  ██████████████████████    1 100%  unknown        n/a
+AGENTS  ████████████████████████████████████████████████████████████
+        ● Cursor 100%   of sessions
 
-TOP PROJECTS       sessions   tokens  est. cost
-p  ██████████████         1  unknown        n/a
+WHERE IT WENT
+By project
+p                                  n/a
 
-HIGHLIGHTS
-Busiest day  Sep 28 (1 session)
+HEADS UP
+● 1 session has no token data (Cursor 1)
 
-Scope: this archive only. Sessions with no token data are left out of token and cost totals (Cursor:
-1).
-Cost is an estimate at list price, not a bill. Prices golden-1, with your --prices file applied.
---by day|week|month|project · --json
+Estimated at list price, not a bill.   --detail for more · --by project · --html

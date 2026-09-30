@@ -60,11 +60,12 @@ const goldenPrices = "testdata/stats/prices.json"
 
 func statsGolden(name string) string { return filepath.Join("testdata", "stats", name+".golden") }
 
-// The screen is pinned at the widths it has layouts for: a terminal of 60
-// columns (compact table), the 80 the screen is designed for and one of 120
-// (both with bars), and output that is not a terminal (bars, no color), all
-// from one multi-agent archive with several models, subagents, Cursor
-// sessions without tokens and an unpriced model.
+// The screens are pinned end to end at the widths they have layouts for: a
+// terminal of 60 columns (stacked lists), the 80 the overview is designed for
+// (two columns) and one of 120, and output that is not a terminal, all from
+// one multi-agent archive with several models, subagents, Cursor sessions
+// without tokens and an unpriced model. The page tests pin every view at
+// every width, with and without color, from hand-built numbers.
 func TestStatsScreenGoldens(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
@@ -74,10 +75,15 @@ func TestStatsScreenGoldens(t *testing.T) {
 		width int
 		args  []string
 	}{
-		{"width-60", 60, []string{"--by", "week"}},
-		{"width-80", 80, []string{"--by", "week"}},
-		{"width-120", 120, []string{"--by", "week"}},
+		{"width-60", 60, nil},
+		{"width-80", 80, nil},
+		{"width-120", 120, nil},
 		{"not-a-terminal", 0, nil},
+		{"detail-80", 80, []string{"--detail"}},
+		{"by-week-80", 80, []string{"--by", "week"}},
+		{"projects-80", 80, []string{"--view", "projects"}},
+		{"models-80", 80, []string{"--view", "models"}},
+		{"agents-80", 80, []string{"--view", "agents"}},
 		{"by-project-80", 80, []string{"--by", "project", "--days", "14"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,16 +103,32 @@ func TestStatsScreenGoldens(t *testing.T) {
 	}
 }
 
-// Below 80 columns the screen is a table without bars; from 80, the columns
-// it is designed for, with them.
+// The overview is two columns from 80 terminal columns, stacked from 60 with
+// bars, and plain rows below that.
 func TestStatsLayoutSwitchesAtEightyColumns(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	for width, bars := range map[int]bool{50: false, 60: false, 79: false, 80: true, 100: true, 120: true, 0: true} {
-		out := mustRunStats(t, env, width)
-		if got := strings.Contains(out, "██████"); got != bars {
-			t.Errorf("width %d: bars=%v, want %v\n%s", width, got, bars, out)
+	for _, tc := range []struct {
+		width      int
+		bars       bool
+		twoColumns bool
+	}{
+		{40, false, false}, {50, false, false}, {59, false, false}, {60, true, false}, {79, true, false},
+		{80, true, true}, {100, true, true}, {120, true, true}, {0, true, true},
+	} {
+		out := mustRunStats(t, env, tc.width)
+		sideBySide, bars := false, false
+		for line := range strings.SplitSeq(out, "\n") {
+			sideBySide = sideBySide || (strings.Contains(line, "By project") && strings.Contains(line, "By model"))
+			// The project rows are the ones led by the project's name.
+			bars = bars || (strings.HasPrefix(line, "proj-api") && strings.Contains(line, "█"))
+		}
+		if bars != tc.bars {
+			t.Errorf("width %d: bars=%v, want %v\n%s", tc.width, bars, tc.bars, out)
+		}
+		if sideBySide != tc.twoColumns {
+			t.Errorf("width %d: two columns=%v, want %v\n%s", tc.width, sideBySide, tc.twoColumns, out)
 		}
 	}
 }
@@ -545,7 +567,7 @@ func TestStatsSaysWhyThereIsNothingToShow(t *testing.T) {
 		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
 	}.publish(t, mem)
 	out = mustRunStats(t, env, 0, "--days", "7")
-	if !strings.Contains(out, "No archived sessions were captured in the last 7 days") || strings.Contains(out, "OVERVIEW") {
+	if !strings.Contains(out, "No archived sessions were captured in the last 7 days") || strings.Contains(out, "WHERE IT WENT") {
 		t.Fatalf("empty window:\n%s", out)
 	}
 	// A session in the previous period only.
@@ -573,14 +595,29 @@ func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
 		id: "today", harness: "claude", project: "p", captured: statsDay(time.September, 29, 9), models: []string{"claude-opus-5"},
 		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
 	}.publish(t, mem)
+	// The day before has a session, so the detail screen compares with it.
+	syntheticSession{
+		id: "yesterday", harness: "claude", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"claude-opus-5"},
+		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
+	}.publish(t, mem)
 	out := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices)
 	for _, bad := range []string{"1 days", "Sep 29 Sep 29"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("one-day window says %q:\n%s", bad, out)
 		}
 	}
-	if !strings.Contains(out, "vs the day before") || !strings.Contains(out, "today") {
+	if !strings.Contains(out, "today") {
 		t.Errorf("one-day window:\n%s", out)
+	}
+	// A chart of one bar says nothing the headline does not.
+	if strings.Contains(out, "DAILY SPEND") {
+		t.Errorf("a one-day window draws a one-bar chart:\n%s", out)
+	}
+	if two := mustRunStats(t, env, 100, "--days", "2", "--prices", goldenPrices); !strings.Contains(two, "DAILY SPEND") {
+		t.Errorf("a two-day window has no chart:\n%s", two)
+	}
+	if detail := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices, "--view", "detail"); !strings.Contains(detail, "day before") {
+		t.Errorf("one-day detail does not name the day before:\n%s", detail)
 	}
 }
 
@@ -619,7 +656,7 @@ func TestStatsPagesOnATerminal(t *testing.T) {
 		return err
 	}
 	out := mustRunStats(t, env, 120)
-	if out != "" || !strings.Contains(pagerInput, "OVERVIEW") {
+	if out != "" || !strings.Contains(pagerInput, "WHERE IT WENT") {
 		t.Fatalf("stdout=%q pager input=%q", out, pagerInput)
 	}
 	pagerInput = ""
@@ -632,7 +669,7 @@ func TestStatsPagesOnATerminal(t *testing.T) {
 	// Inside an agent (or with the switch on) nothing is paged, even on a
 	// terminal.
 	env.LookupEnv = func(key string) (string, bool) { return "1", key == envNonInteractive }
-	if out := mustRunStats(t, env, 120); pagerInput != "" || !strings.Contains(out, "OVERVIEW") {
+	if out := mustRunStats(t, env, 120); pagerInput != "" || !strings.Contains(out, "WHERE IT WENT") {
 		t.Fatalf("paged with %s=1: stdout=%q pager=%q", envNonInteractive, out, pagerInput)
 	}
 }
@@ -668,18 +705,14 @@ func TestStatsPricesFileOverridesAndIsNamed(t *testing.T) {
 	if mine.Prices.Version != "mine-1" || !mine.Prices.Overridden || builtin.Prices.Overridden {
 		t.Fatalf("prices = %+v / %+v", mine.Prices, builtin.Prices)
 	}
-	text := flatten(mustRunStats(t, env, 0, "--prices", file))
-	if !strings.Contains(text, "at list price, prices as of 2026-09-30") || !strings.Contains(text, "Prices mine-1, with your --prices file applied") {
+	text := flatten(mustRunStats(t, env, 0, "--prices", file, "--detail"))
+	if !strings.Contains(text, "Prices mine-1, as of 2026-09-30, with your --prices file applied") {
 		t.Fatalf("the screen does not say whose prices these are:\n%s", text)
-	}
-	// A terminal too narrow for the overview's note says the date in the footer.
-	if narrow := flatten(mustRunStats(t, env, 60, "--prices", file)); !strings.Contains(narrow, "Prices mine-1, as of 2026-09-30, with your --prices file applied") {
-		t.Fatalf("the compact screen does not date the prices:\n%s", narrow)
 	}
 	if strings.Contains(text, file) || strings.Contains(text, filepath.Base(file)) {
 		t.Fatalf("the prices file's path is printed:\n%s", text)
 	}
-	if got := flatten(mustRunStats(t, env, 0)); !strings.Contains(got, "prices as of "+stats.DefaultPriceTable().AsOf) || !strings.Contains(got, "Prices "+stats.DefaultPriceTable().Version+".") {
+	if got := flatten(mustRunStats(t, env, 0, "--detail")); !strings.Contains(got, "Prices "+stats.DefaultPriceTable().Version+", as of "+stats.DefaultPriceTable().AsOf) {
 		t.Fatalf("built-in prices are not named:\n%s", got)
 	}
 }
@@ -712,15 +745,21 @@ func TestStatsOmitsSectionsThatHaveNoData(t *testing.T) {
 	syntheticSession{id: "cursor-only", harness: "cursor", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"cursor-auto"}, turns: 3}.publish(t, mem)
 	out := mustRunStats(t, env, 0, "--prices", goldenPrices)
 	flat := flatten(out)
-	for _, absent := range []string{"TOKENS BY DAY", "WHAT USED YOUR TOKENS", "COST BY MODEL", "Subagents", "Skills", "MCP", "Tool errors"} {
-		if strings.Contains(out, absent) {
-			t.Errorf("Cursor-only output has %q:\n%s", absent, out)
+	detail := mustRunStats(t, env, 0, "--prices", goldenPrices, "--detail")
+	for _, screen := range []string{out, detail} {
+		for _, absent := range []string{"DAILY SPEND", "WHAT USED YOUR TOKENS", "By model", "Subagents", "Skills", "MCP", "Tool errors", "runs"} {
+			if strings.Contains(screen, absent) {
+				t.Errorf("Cursor-only output has %q:\n%s", absent, screen)
+			}
 		}
 	}
-	for _, present := range []string{"unknown", "n/a", "1 session", "Cursor: 1"} {
+	for _, present := range []string{"spend unknown", "tokens unknown", "1 session", "Cursor 1"} {
 		if !strings.Contains(flat, present) {
 			t.Errorf("Cursor-only output lacks %q:\n%s", present, out)
 		}
+	}
+	if !strings.Contains(detail, "n/a") || !strings.Contains(detail, "unknown") {
+		t.Errorf("Cursor-only detail does not say unknown:\n%s", detail)
 	}
 	golden.Check(t, statsGolden("cursor-only"), []byte(out))
 
@@ -729,7 +768,7 @@ func TestStatsOmitsSectionsThatHaveNoData(t *testing.T) {
 		id: "codex-only", harness: "codex", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"gpt-5"}, turns: 3,
 		toolResults: 10, perModel: []modelTokenSpec{{"gpt-5", 2000, 500, 1000, 0}},
 	}.publish(t, mem2)
-	out = mustRunStats(t, env2, 0)
+	out = mustRunStats(t, env2, 0, "--detail")
 	for _, absent := range []string{"MCP", "Subagents", "Skills", "Tool errors"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("Codex-only output has %q:\n%s", absent, out)
@@ -814,8 +853,8 @@ func TestStatsMarksSessionsPricedAtTheirMainModel(t *testing.T) {
 		id: "old-parser", harness: "claude", project: "p", captured: statsDay(time.September, 28, 9), parser: "0.13.0",
 		models: []string{"claude-opus-5"}, turns: 2, toolResults: 10, perModel: []modelTokenSpec{{"claude-opus-5", 100_000, 50_000, 0, 0}},
 	}.publish(t, mem)
-	out := mustRunStats(t, env, 0)
-	if !strings.Contains(out, "~$") || !strings.Contains(flatten(out), "~ priced at the session's main model for 1 session with no per-model split") {
+	out := mustRunStats(t, env, 0, "--detail")
+	if !strings.Contains(out, "~$") || !strings.Contains(flatten(out), "1 session priced at the session's main model, with no per-model split") {
 		t.Fatalf("no ~ mark or explanation:\n%s", out)
 	}
 	var doc statsDocument

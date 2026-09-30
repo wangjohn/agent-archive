@@ -1,0 +1,66 @@
+## a file setup changed was edited since (exit 1)
+Setup incomplete: cannot recover the interrupted setup: @USER_HOME@/.claude/settings.json changed outside setup, and recovery never overwrites your edits
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## an earlier collector's plist was edited since (exit 1)
+Setup incomplete: cannot recover the interrupted setup: the background collector installed under an earlier label's plist @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.223bda05f72f.plist changed outside setup, and recovery never overwrites your edits
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## the prototype's plist was edited since (exit 1)
+Setup incomplete: cannot recover the interrupted setup: the legacy upload job's plist @USER_HOME@/Library/LaunchAgents/com.agent-skills.skill-runs-upload.plist changed outside setup, and recovery never overwrites your edits
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## launchctl cannot stop the collector (exit 1)
+Setup incomplete: cannot recover the interrupted setup: launchctl could not stop the background collector (launchctl bootout: exit status 5: Boot-out failed: 5: Input/output error); once launchctl works again, rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## launchctl cannot restart the collector (exit 1)
+Setup incomplete: cannot recover the interrupted setup: launchctl could not restart the background collector (launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error); once launchctl works again, rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## launchctl cannot restart an earlier collector (exit 1)
+Setup incomplete: cannot recover the interrupted setup: launchctl could not restart the background collector installed under an earlier label (launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error); once launchctl works again, rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## the collector's state is unknown (exit 1)
+Setup incomplete: cannot recover the interrupted setup: the background collector's state is unknown, so recovery cannot safely continue; restore access to launchctl and rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## an earlier collector's state is unknown (exit 1)
+Setup incomplete: cannot recover the interrupted setup: the state of the background collector installed under an earlier label is unknown; restore access to launchctl and rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## an earlier collector's label runs from another plist (exit 1)
+Setup incomplete: cannot recover the interrupted setup: launchd runs the background collector installed under an earlier label's label from another plist now, so it cannot be restarted from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.223bda05f72f.plist
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## the prototype's state is unknown (exit 1)
+Setup incomplete: cannot recover the interrupted setup: the state of the legacy upload job is unknown; restore access to launchctl and rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+
+## the record cannot be read (exit 1)
+Setup incomplete: cannot recover the interrupted setup: its record @DATA_HOME@/setup-transaction.json could not be read (unexpected end of JSON input), so nothing in it can be put back
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.
+

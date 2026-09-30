@@ -67,9 +67,17 @@ func TestHeadsUpThresholds(t *testing.T) {
 			meta("k", "claude", at, parentOf("p")),
 		}, []NoteKind{}},
 		{"a session costing exactly 1 is not worth a note", []archive.Metadata{meta("a", "claude", at, million(1))}, []NoteKind{}},
-		{"a session costing a little over 1 and all the spend", []archive.Metadata{
+		{"a session costing a little over 1 and nearly all the spend", []archive.Metadata{
 			meta("a", "claude", at, modelTokens("m", 0, 0, 1_000_001, 0)),
+			meta("b", "claude", at, modelTokens("m", 0, 0, 1_000, 0)),
 		}, []NoteKind{NoteCostliestSession}},
+		{"the costliest of a single session is all of the spend", []archive.Metadata{
+			meta("a", "claude", at, modelTokens("m", 0, 0, 5_000_000, 0)),
+		}, []NoteKind{}},
+		{"a single session and one with no token counts", []archive.Metadata{
+			meta("a", "claude", at, modelTokens("m", 0, 0, 5_000_000, 0)),
+			meta("b", "cursor", at),
+		}, []NoteKind{NoteCostliestSession, NoteUnmeteredSessions}},
 		{"a session at exactly a tenth of the spend", append(spread("o", 54), meta("big", "claude", at, million(6))),
 			[]NoteKind{NoteCostliestSession}},
 		{"a session just under a tenth of the spend", append(spread("o", 55), meta("big", "claude", at, million(6))),
@@ -175,6 +183,7 @@ func TestHeadsUpCostliestNeedsPricedSpend(t *testing.T) {
 	// does not count the unpriced tokens as spend: the share is of priced spend.
 	mixed := Compute([]archive.Metadata{
 		meta("a", "claude", at, million(2), modelTokens("x", 0, 0, 500_000_000, 0)),
+		meta("b", "claude", at, modelTokens("m", 0, 0, 1_000, 0)),
 	}, flatOptions())
 	if got := noteKinds(mixed.HeadsUp); !slices.Equal(got, []NoteKind{NoteCostliestSession}) {
 		t.Errorf("mixed session: notes = %v", got)

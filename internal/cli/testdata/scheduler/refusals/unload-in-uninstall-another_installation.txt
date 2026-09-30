@@ -1,0 +1,4 @@
+# exit 1
+Remove the archive's hooks and background collector from this Mac. Remote archives are kept.
+Local evidence, settings, and credentials will be kept. Run setup to reinstall.
+Uninstall incomplete: stop collector: launchd's com.agent-archive.collector job was not loaded from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist; it belongs to another installation and was left running

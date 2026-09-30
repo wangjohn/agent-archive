@@ -156,6 +156,13 @@ func statsEnv(t *testing.T) (Env, *storagetest.MemoryStore) {
 // previous period; and sessions in earlier months for the month rank.
 func publishStatsFixture(tb testing.TB, mem *storagetest.MemoryStore) {
 	tb.Helper()
+	for _, s := range statsFixtureSessions() {
+		s.publish(tb, mem)
+	}
+}
+
+// statsFixtureSessions are the sessions publishStatsFixture publishes.
+func statsFixtureSessions() []syntheticSession {
 	opus, sonnet := "claude-opus-5", "claude-sonnet-5"
 	var sessions []syntheticSession
 	add := func(s syntheticSession) { sessions = append(sessions, s) }
@@ -225,7 +232,5 @@ func publishStatsFixture(tb testing.TB, mem *storagetest.MemoryStore) {
 			perModel: []modelTokenSpec{{opus, 20_000 + i*1_000_000, 60_000, 1_000_000, 100_000}},
 		})
 	}
-	for _, s := range sessions {
-		s.publish(tb, mem)
-	}
+	return sessions
 }

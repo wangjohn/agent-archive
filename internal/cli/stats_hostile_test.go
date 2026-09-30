@@ -29,6 +29,9 @@ var hostileNames = []string{
 	"bad\xff\xfeutf8",
 	"del\x7fchar\x00nul",
 	"\u2028sep\u2029",
+	// A narrow character and U+FE0F is a two-column emoji.
+	"hearts " + strings.Repeat("\u2764\ufe0f", 40),
+	"\U0001F5A5\ufe0fdesk\u2714\ufe0f",
 }
 
 // Whatever names the archive carries, no line of the screen is wider than

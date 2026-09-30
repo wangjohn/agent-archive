@@ -225,23 +225,44 @@ Example: agent-archive show SESSION_ID --transcript
 `,
 	"stats": `Usage: agent-archive stats [options]
 
-Show how you use your coding agents: tokens by day, sessions, estimated cost,
-agents, models, projects, what the tokens were spent on, and highlights, over
-the last 30 days by default, with the change from the 30 days before. Reads
-metadata only; prints numbers and names, never prompts or paths. Cost is an
-estimate at list price, not a bill, from a dated price table. Tokens and cost
-say "unknown" for sessions that record none (Cursor). A subagent's tokens
-count with its session. Sessions are placed by capture time, so imported
-sessions appear on the day they were imported.
-On a terminal of 80 columns or more, bars; narrower, a compact table. Text is
-paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
+Show how you use your coding agents. The default screen is a summary of the
+last 30 days: estimated spend, sessions and tokens (with the change from the
+30 days before), which agents did the work, daily spend, where it went by
+project and model, the skills and MCP servers used most, and anything worth a
+look. Reads metadata only; prints numbers and names, never prompts or paths.
+Cost is an estimate at list price, not a bill, from a dated price table.
+Tokens and cost say "unknown" for sessions that record none (Cursor). A
+subagent's tokens count with its session. Sessions are placed by capture
+time, so imported sessions appear on the day they were imported.
+Two columns of bars from 80 terminal columns, one column from 60, a compact
+table below that. Color on a color terminal (16 ANSI colors; NO_COLOR turns it
+off). Not a terminal: no color, full layout.
+On a terminal (stdin and stdout) it opens an interactive screen, unless
+--view, --detail, --by, --no-pager, --json or --html is given, or
+AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents, or TERM is
+dumb: o d p m a switch views, w cycles the window (7d, 30d, 90d, or --days and
+--since as a custom one; the bar shows the next) without reading again,
+arrows, j, k, PgUp, PgDn, space, Home and End scroll, h saves the redacted
+page as HTML (it asks for a file name and never replaces one), ? lists the
+keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
+  --view overview|detail|projects|models|agents
+                                 Which screen to print (default overview):
+                                 detail has the streaks, tool errors, token
+                                 breakdown, every skill and MCP server and the
+                                 notes on what the numbers rest on; projects,
+                                 models and agents list every one. Not with
+                                 --json or --html
+  --detail                       The same as --view detail. Not with --view
   --days N                       Window of N calendar days ending today
                                  (default 30; up to 3660)
   --since DATE|TIME|AGE          Window from this local day through today (a
                                  date, an RFC 3339 time, or an age: 7d, 12h;
                                  a date is a local day here, not UTC as in
                                  list). Not with --days
-  --by day|week|month|project    Also break the window down that way
+  --by day|week|month|project    Also break the window down that way:
+                                 project is --view projects, and day, week
+                                 and month add a table to --view detail
+                                 (--json has the rows for all four)
   --harness codex|claude|cursor  Only this application
   --model NAME                   Only sessions that used this model (their
                                  other models count too)

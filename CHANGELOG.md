@@ -8,16 +8,28 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
+  a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
+  overview, detail, projects, models and agents views, `w` cycles the window
+  (7, 30, 90 days) instantly from what was already read, the arrows, `j` `k`,
+  PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
+  `h` saves the redacted page as HTML (it asks for a file name and never
+  replaces a file) and `q` or Ctrl-C quit, leaving the terminal as it
+  was. The bar names the window `w` moves to next. It opens only when
+  standard input and output are terminals (not a dumb one) and
+  `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,
+  `--by`, `--no-pager`, `--json` or `--html`; those print as before. See the
+  [stats guide](docs/guides/stats.md#the-interactive-screen).
 - `agent-archive stats --json` carries more of what the screen is built from:
   each day's estimated cost (`daily[].cost`, adding up to the overview's) and
   the dearest day (`peak_spend`), the share of tokens that were cache reads
   (`overview.cache_share`), up to three prioritized `heads_up` notes as data
   (subagents using a quarter or more of the tokens, one session costing a
-  tenth or more of the spend, sessions without token data, a low cache-hit
-  rate), and `display_skills`, which lists a plugin's skill once under its
+  tenth or more of the spend when the window has more than one session,
+  sessions without token data, a low cache-hit rate), and `display_skills`, which lists a plugin's skill once under its
   bare name, with `total_skills`, `total_display_skills` and
-  `mcp.total_servers` counting every row. Existing fields and the screen and
-  page are unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
+  `mcp.total_servers` counting every row. Existing fields and the page are
+  unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
 - **Handoff without copying.** Continuing a session in another coding agent
   is one step: inside Claude Code, `/handoff codex` opens Codex in a new
   terminal tab or window with the session as its context (in Codex, ask for
@@ -249,6 +261,21 @@ follow [Semantic Versioning](https://semver.org/).
   unchanged.
 
 ### Changed
+
+- `agent-archive stats` has a new default screen: a short summary with the
+  headline numbers (estimated spend, sessions, tokens, with the change from the
+  previous period only when there was one, and how much of the tokens were
+  cache reads), one bar for which agents did the work, a three-row chart of
+  each day's spend, where it went by project and model (two columns from 80
+  terminal columns, stacked from 60), the skills and MCP servers used most,
+  and up to three heads-up notes, in the terminal's 16 colors (`NO_COLOR` and
+  pipes are plain; bars have no shaded track). The rest moved behind
+  `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
+  the tool error rate, the token breakdown, the agents table and the notes on
+  what the numbers rest on. `--view projects`, `models` and `agents` list every
+  project, model family and agent. `--by project` is now `--view projects`, and
+  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  terminals down to 40 columns. `--json` and `--html` are unchanged.
 
 - `handoff` takes a title as well as a session ID: `handoff "fix the auth
   bug" --harness codex`. It matches as `show` does (a title substring or a
