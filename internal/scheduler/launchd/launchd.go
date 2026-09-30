@@ -66,6 +66,19 @@ func (Scheduler) Ref(inst scheduler.Installation) scheduler.Ref {
 	return scheduler.Ref(CollectorLabel(inst.DataHome, ""))
 }
 
+// Locate is the site and the job of a plist path: <user home>/Library/LaunchAgents/<label>.plist,
+// as every plist a release has journaled is (each has built them with
+// filepath.Join, which gives back whatever $HOME's spelling). Any other path
+// names no job the scheduler can be asked about, and is refused rather than
+// taken for another plist.
+func (Scheduler) Locate(definition string) (scheduler.Site, scheduler.Ref, error) {
+	site, ref := scheduler.Site{UserHome: filepath.Dir(filepath.Dir(filepath.Dir(definition)))}, scheduler.Ref(Label(definition))
+	if PlistPath(site, ref) != definition {
+		return site, ref, fmt.Errorf("%s is not a LaunchAgent plist (<home>/Library/LaunchAgents/<label>.plist); launchd was left as it is", definition)
+	}
+	return site, ref, nil
+}
+
 // Plan is the LaunchAgent plist of spec for inst, as bytes for one artifact,
 // the file <user home>/Library/LaunchAgents/<label>.plist. It reads nothing
 // and asks launchd nothing. Only the collector's job is defined under launchd:
