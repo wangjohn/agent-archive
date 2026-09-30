@@ -103,21 +103,31 @@ func TestChangeThatOverflowsIsUnknown(t *testing.T) {
 func TestDeepSubagentChainIsWalkedOnce(t *testing.T) {
 	t.Parallel()
 	const n = 20_000
-	sessions := make([]archive.Metadata, 0, n)
-	for i := range n {
-		opts := []option{modelTokens("claude-opus-5-5", 1, 1, 1, 1)}
-		if i > 0 {
-			opts = append(opts, parentOf(fmt.Sprintf("s%d", i-1)))
-		}
-		sessions = append(sessions, meta(fmt.Sprintf("s%d", i), "claude", day(time.September, 28, 10), opts...))
-	}
-	start := time.Now()
-	got := Compute(sessions, opts())
-	if took := time.Since(start); took > 10*time.Second {
-		t.Fatalf("Compute over a %d-deep chain took %v", n, took)
-	}
-	if got.Coverage.Sessions != 1 || got.Coverage.SubagentSessions != n-1 || got.Overview.Tokens.Value == nil || *got.Overview.Tokens.Value != 4*n {
-		t.Fatalf("coverage %+v tokens %v", got.Coverage, f64(got.Overview.Tokens.Value))
+	// The order sessions are resolved in is by id: name the chain so the root
+	// comes first, and so the deepest subagent does.
+	for name, id := range map[string]func(depth int) string{
+		"root first":    func(depth int) string { return fmt.Sprintf("s%06d", depth) },
+		"deepest first": func(depth int) string { return fmt.Sprintf("s%06d", n-depth) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			sessions := make([]archive.Metadata, 0, n)
+			for depth := range n {
+				opts := []option{modelTokens("claude-opus-5-5", 1, 1, 1, 1)}
+				if depth > 0 {
+					opts = append(opts, parentOf(id(depth-1)))
+				}
+				sessions = append(sessions, meta(id(depth), "claude", day(time.September, 28, 10), opts...))
+			}
+			start := time.Now()
+			got := Compute(sessions, opts())
+			if took := time.Since(start); took > 10*time.Second {
+				t.Fatalf("Compute over a %d-deep chain took %v", n, took)
+			}
+			if got.Coverage.Sessions != 1 || got.Coverage.SubagentSessions != n-1 || got.Overview.Tokens.Value == nil || *got.Overview.Tokens.Value != 4*n {
+				t.Fatalf("coverage %+v tokens %v", got.Coverage, f64(got.Overview.Tokens.Value))
+			}
+		})
 	}
 }
 
@@ -180,11 +190,23 @@ func TestSameSessionDerivedTwiceAtTheSameInstantIsOrderIndependent(t *testing.T)
 	if forward != backward {
 		t.Fatalf("the result depends on input order:\n%s\n%s", forward, backward)
 	}
-	// Sessions with no id at one instant are another tie.
-	x := meta("", "claude", day(time.September, 28, 10), modelTokens("claude-opus-5-5", 1000, 1000, 0, 0))
-	y := meta("", "claude", day(time.September, 28, 10), modelTokens("claude-sonnet-5-5", 7, 7, 0, 0))
-	if f, b := mustJSON(t, Compute([]archive.Metadata{x, y}, opts())), mustJSON(t, Compute([]archive.Metadata{y, x}, opts())); f != b {
-		t.Fatalf("idless sessions: the result depends on input order:\n%s\n%s", f, b)
+	// Sessions with no id at one instant are another tie, and float sums
+	// depend on their order: a cost of 9e12 dwarfs the 0.001 of one token.
+	table := PriceTable{Version: "v", AsOf: "2026-09-01", Currency: "USD", Models: []ModelPrice{
+		{ID: "m", Family: "m", InputPerMTok: 1000, OutputPerMTok: 1000},
+	}}
+	var idless []archive.Metadata
+	for _, n := range []int{1 << 53, 1, 2, 3, 5} {
+		idless = append(idless, meta("", "claude", day(time.September, 28, 10), modelTokens("m", n, 0, 0, 0)))
+	}
+	want := mustJSON(t, Compute(idless, Options{Now: now, Location: newYork, PriceTable: table}))
+	rng := rand.New(rand.NewPCG(9, 9))
+	for range 100 {
+		shuffled := slices.Clone(idless)
+		rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+		if got := mustJSON(t, Compute(shuffled, Options{Now: now, Location: newYork, PriceTable: table})); got != want {
+			t.Fatalf("idless sessions: the result depends on input order:\n%s\n%s", got, want)
+		}
 	}
 }
 
@@ -208,6 +230,23 @@ func TestPartnerPlatformModelIDsArePriced(t *testing.T) {
 	legacy := Compute([]archive.Metadata{meta("h", "claude", day(time.September, 28, 10), modelTokens("claude-3-5-haiku-20241022", 1_000_000, 0, 0, 0))}, opts())
 	if r := modelRow(t, legacy, "haiku"); !r.Priced || r.Cost.USD == nil || !near(*r.Cost.USD, 0.8) {
 		t.Fatalf("haiku row = %+v", r)
+	}
+}
+
+// A session that used two models of one family is one session of the family,
+// and its subagents' models count for it too.
+func TestModelFamilyCountsASessionOnce(t *testing.T) {
+	t.Parallel()
+	parent := meta("p", "claude", day(time.September, 28, 10), modelTokens("claude-opus-5-5", 1000, 0, 0, 0), modelTokens("claude-opus-4-8", 1000, 0, 0, 0))
+	child := meta("k", "claude", day(time.September, 28, 10), parentOf("p"), modelTokens("claude-opus-5", 1000, 0, 0, 0), modelTokens("claude-sonnet-5-5", 1000, 0, 0, 0))
+	other := meta("o", "claude", day(time.September, 28, 11), modelTokens("claude-opus-5", 1000, 0, 0, 0))
+	got := Compute([]archive.Metadata{parent, child, other}, opts())
+	opus, sonnet := modelRow(t, got, "opus"), modelRow(t, got, "sonnet")
+	if opus.Sessions != 2 || sonnet.Sessions != 1 || opus.Tokens != 4000 || !slices.Equal(opus.Models, []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"}) {
+		t.Fatalf("opus %+v sonnet %+v", opus, sonnet)
+	}
+	if opus.CostShare == nil || sonnet.CostShare == nil || !near(*opus.CostShare+*sonnet.CostShare, 1) {
+		t.Fatalf("cost shares %v %v", opus.CostShare, sonnet.CostShare)
 	}
 }
 

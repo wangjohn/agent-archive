@@ -225,8 +225,8 @@ var (
 	// vendorPrefix is Amazon Bedrock's "anthropic." vendor prefix and its
 	// cross-region inference prefix ("us.anthropic.", "global.anthropic.").
 	vendorPrefix = regexp.MustCompile(`^(?:[a-z0-9-]+\.)?anthropic\.`)
-	// platformVersion is Bedrock's "-v1:0" model version suffix.
-	platformVersion = regexp.MustCompile(`-v\d+(?::\d+)?$`)
+	// platformVersion is Bedrock's "-v1:0" model version suffix (it always has the colon, unlike a name such as "deepseek-v3").
+	platformVersion = regexp.MustCompile(`-v\d+:\d+$`)
 )
 
 // NormalizeModel is the form of a model id the price table is keyed by:
