@@ -102,6 +102,7 @@ var promptSites = classifiedCalls{
 	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
 	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
 	"handoff_select.go":   {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
+	"handoff_title.go":    {"newPrompter": 1},                  // the picker on several title matches: choose lists them instead unless the interactive flag, from browseInteractive, is set
 	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
 	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
 }
