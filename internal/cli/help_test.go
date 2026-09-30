@@ -86,7 +86,6 @@ func TestCommandsRejectUnknownArguments(t *testing.T) {
 		want string
 	}{
 		{[]string{"status", "--jsn"}, "agent-archive: status: unknown flag --jsn; run agent-archive status --help"},
-		{[]string{"status", "extra"}, `agent-archive: status: unexpected argument "extra"; run agent-archive status --help`},
 		{[]string{"sync", "--json"}, "agent-archive: sync: unknown flag --json; run agent-archive sync --help"},
 		{[]string{"pause", "now"}, `agent-archive: pause: unexpected argument "now"; run agent-archive pause --help`},
 		{[]string{"resume", "-x"}, "agent-archive: resume: unknown flag --x; run agent-archive resume --help"},
@@ -106,6 +105,8 @@ func TestCommandsRejectUnknownArguments(t *testing.T) {
 		{[]string{"backfill", "--bogus"}, "agent-archive: backfill: unknown flag --bogus; run agent-archive backfill --help"},
 		{[]string{"backfill", "--since", "yesterday"}, `agent-archive: backfill: --since: "yesterday" is not a date (2026-01-31), an RFC 3339 time, or an age (7d, 12h); run agent-archive backfill --help`},
 		{[]string{"backfill", "undo", "--bogus"}, "agent-archive: backfill undo: unknown flag --bogus; run agent-archive backfill undo --help"},
+		{[]string{"status", "extra"}, `agent-archive: status: unknown app "extra"; choose one of codex, claude, cursor; run agent-archive status --help`},
+		{[]string{"status", "claude", "extra"}, `agent-archive: status: unexpected argument "extra"; run agent-archive status --help`},
 		{[]string{"backfill", "history", "extra"}, `agent-archive: backfill history: unexpected argument "extra"; run agent-archive backfill history --help`},
 	} {
 		var out, errOut bytes.Buffer

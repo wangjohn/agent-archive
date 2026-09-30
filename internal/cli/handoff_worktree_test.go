@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // testGit runs the real git with no global or system configuration, so a
@@ -708,7 +709,54 @@ func TestHandoffPromptWithWorktree(t *testing.T) {
 	if _, err := os.Stat(want); !os.IsNotExist(err) {
 		t.Fatalf("printing created %s: %v", want, err)
 	}
+	if _, errOut, code := runPicker(t, f.env, "q\n", f.id, "--worktree"); code != 0 || !strings.Contains(errOut, "no worktree was created") {
+		t.Fatalf("quit: code=%d stderr=%s", code, errOut)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) || got.Dir != "" {
+		t.Fatalf("quitting created %s (%v) or launched in %q", want, err, got.Dir)
+	}
 	if _, errOut, code := runPicker(t, f.env, "\n", f.id, "--worktree"); code != 0 || got.Dir != want {
 		t.Fatalf("launch: code=%d dir=%q stderr=%s, want %s", code, got.Dir, errOut, want)
+	}
+}
+
+// Run by an agent (no terminal), --to --worktree opens the new window in the
+// worktree, and an active source is warned about, never asked about.
+func TestHandoffNewWindowWithWorktree(t *testing.T) {
+	t.Parallel()
+	for _, worktree := range []bool{true, false} {
+		f := newHandoffFixture(t, false)
+		initTestRepo(t, f.project)
+		info, err := os.Stat(filepath.Join(f.project, "codex.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.env.Now = func() time.Time { return info.ModTime().Add(time.Minute) }
+		f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+		f.env.RunGit = testGit
+		f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+			t.Error("ran the agent without a terminal")
+			return nil
+		}
+		var spec termlaunch.Spec
+		var tmux []string
+		f.env.OpenTerminal = openInFakeTmux(&spec, &tmux)
+		args := []string{f.id, "--to", "claude"}
+		want := resolvedPath(t, f.project)
+		if worktree {
+			args = append(args, "--worktree")
+			want += "-handoff-" + handoffShortID(handoffTarget{bundle: archive.SourceBundle{ArchiveSessionID: f.id}})
+		}
+		_, errOut, code := runHandoff(t, f.env, args...)
+		if code != 0 || strings.Contains(errOut, "[y/N/w]") || !strings.Contains(errOut, "opened claude in a new tmux window") {
+			t.Fatalf("worktree=%v: code=%d stderr=%q", worktree, code, errOut)
+		}
+		if resolvedPath(t, spec.Dir) != want || len(tmux) < 4 || resolvedPath(t, tmux[3]) != want {
+			t.Fatalf("worktree=%v: spec.Dir=%q tmux=%q, want %s", worktree, spec.Dir, tmux, want)
+		}
+		// --worktree already gives the new agent its own checkout.
+		if warned := strings.Contains(errOut, "warning: the source session was active"); warned == worktree {
+			t.Fatalf("worktree=%v: stderr=%q", worktree, errOut)
+		}
 	}
 }

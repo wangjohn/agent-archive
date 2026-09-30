@@ -96,6 +96,11 @@ $ agent-archive status --json
       "name": "codex",
       "state": "published; source verified",
       "sessions": 1,
+      "subagent_sessions": 0,
+      "imported_sessions": 0,
+      "uploading_sessions": 0,
+      "uploading": [],
+      "waiting_for_transcript_sessions": 0,
       "last_published_at": "2026-09-25T12:00:00Z"
     }
   ],
