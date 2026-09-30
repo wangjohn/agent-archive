@@ -88,7 +88,7 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 			if view.Background != backgroundBroken {
 				t.Errorf("background = %q, want %q (launchd still calls the job loaded)", view.Background, backgroundBroken)
 			}
-			if view.State != "Needs attention" || !strings.Contains(view.Next, "agent-archive setup from the binary's new location") || !strings.Contains(view.Next, installed) {
+			if view.State != "Needs attention" || !strings.Contains(view.Next, "agent-archive setup --refresh from the binary's new location") || !strings.Contains(view.Next, installed) {
 				t.Errorf("state=%q next=%q", view.State, view.Next)
 			}
 			warnings := strings.Join(view.Warnings, "\n")

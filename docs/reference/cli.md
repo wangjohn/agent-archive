@@ -75,12 +75,26 @@ Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
+       agent-archive setup --refresh [--verbose]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --refresh             After upgrading agent-archive: bring the app hooks, the
+                        background collector's plist, and the skill files up to
+                        date for the saved settings and this executable, and
+                        change nothing else. Asks nothing and needs no
+                        terminal; the installer runs it. Prints "nothing to
+                        refresh" when all is current. It refuses, changing
+                        nothing, before setup has finished, while a setup
+                        needs recovery, after uninstall, when another
+                        installation's hooks are in the way, or when this
+                        executable is a temporary build. It points the hooks
+                        at the executable now running, which repairs hooks
+                        left pointing at one that moved or was deleted. Takes
+                        no other flag than --verbose (which lists the files)
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again
@@ -129,6 +143,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--provider` | a value | — |
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |
+| `--refresh` | no value | — |
 | `--region` | a value | — |
 | `--skill-evidence` | a value | — |
 | `--skills` | no value | — |
