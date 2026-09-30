@@ -33,7 +33,7 @@ func addStatsHTMLFlags(fs *commandFlags) *statsHTMLFlags {
 	fs.BoolVar(&f.html, "html", false, "write one self-contained HTML page (inline styles and SVG, no script, no external requests) to stdout, or to --output")
 	fs.StringVar(&f.output, "output", "", "with --html, write the page to this file (mode 0600, replaced in one step) instead of stdout")
 	fs.BoolVar(&f.force, "force", false, "with --output, replace FILE if it is an ordinary file that exists")
-	fs.BoolVar(&f.includeNames, "include-project-names", false, "with --html, name the real projects, skills and MCP servers; by default the page says project A, skill A, MCP server A, ... so it can be shared")
+	fs.BoolVar(&f.includeNames, "include-names", false, "with --html, name the real projects, skills and MCP servers; by default the page says project A, skill A, MCP server A, ... so it can be shared")
 	return f
 }
 
@@ -54,7 +54,7 @@ func (f *statsHTMLFlags) validate(fs *commandFlags, jsonOut, stdoutIsTerminal bo
 	case !f.html && f.output != "":
 		return fs.usageError("--output applies only to --html")
 	case !f.html && f.includeNames:
-		return fs.usageError("--include-project-names applies only to --html")
+		return fs.usageError("--include-names applies only to --html")
 	case f.force && f.output == "":
 		return fs.usageError("--force applies only to --output")
 	case f.html && f.output == "" && stdoutIsTerminal:
@@ -107,7 +107,7 @@ func (f *statsHTMLFlags) toStdout() bool { return f.html && f.output == "" }
 func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, filters statsFilters, now time.Time, emptyMessage string) int {
 	page, err := statshtml.Render(computed, statshtml.Options{
 		GeneratedAt:         now,
-		IncludeProjectNames: f.includeNames,
+		IncludeNames: f.includeNames,
 		Filters:             statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
 		EmptyMessage:        emptyMessage,
 	})

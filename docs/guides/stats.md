@@ -85,7 +85,7 @@ has a "Show as a table" view for screen readers.
   them; skills and MCP servers get "skill A" and "MCP server A" the same way.
   The same name has the same letter throughout the page, but the letters
   follow this run's ranking and are not stable between runs.
-  `--include-project-names` shows the real names of all three, for a page only
+  `--include-names` shows the real names of all three, for a page only
   you read. Model names are shown either way (they name a vendor's model, not
   your work), so a model you named after a client would be visible: check the
   cost-by-model table before sharing a page from a custom deployment.

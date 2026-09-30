@@ -36,11 +36,11 @@ func TestStatsHTMLToStdoutIsJustThePage(t *testing.T) {
 	}
 }
 
-func TestStatsHTMLIncludeProjectNames(t *testing.T) {
+func TestStatsHTMLIncludeNames(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	out := mustRunStats(t, env, 0, "--html", "--include-project-names", "--by", "project")
+	out := mustRunStats(t, env, 0, "--html", "--include-names", "--by", "project")
 	for _, name := range []string{"proj-api", "dotfiles"} {
 		if !strings.Contains(out, name) {
 			t.Errorf("the page lacks the project %q", name)
@@ -126,11 +126,11 @@ func TestStatsHTMLFlagCombinations(t *testing.T) {
 	}{
 		{[]string{"--html", "--json"}, "--html and --json cannot be combined"},
 		{[]string{"--output", file}, "--output applies only to --html"},
-		{[]string{"--include-project-names"}, "--include-project-names applies only to --html"},
+		{[]string{"--include-names"}, "--include-names applies only to --html"},
 		{[]string{"--html", "--force"}, "--force applies only to --output"},
 		{[]string{"--html", "--output", ""}, "--output needs a file name"},
 		{[]string{"--json", "--output", file}, "--output applies only to --html"},
-		{[]string{"--json", "--include-project-names"}, "--include-project-names applies only to --html"},
+		{[]string{"--json", "--include-names"}, "--include-names applies only to --html"},
 		{[]string{"--html", "--json", "--force"}, "--html and --json cannot be combined"},
 	} {
 		out, errOut, code := runStats(t, env, 0, tc.args...)

@@ -110,7 +110,7 @@ func TestStatsPageAgreesWithTheTerminalAndJSON(t *testing.T) {
 			sc.build(t, mem)
 			base := append([]string{"--prices", goldenPrices}, sc.args...)
 			jsonOut := mustRunStats(t, env, 0, append([]string{"--json"}, base...)...)
-			page := mustRunStats(t, env, 0, append([]string{"--html", "--include-project-names"}, base...)...)
+			page := mustRunStats(t, env, 0, append([]string{"--html", "--include-names"}, base...)...)
 			// The screen is a compact table below 80 columns and has bars from 80.
 			screen := mustRunStats(t, env, 60, base...)
 			wide := mustRunStats(t, env, 120, base...)
@@ -128,7 +128,7 @@ func TestStatsPageAgreesWithTheTerminalAndJSON(t *testing.T) {
 			// The JSON carries everything the page uses: a page drawn from the
 			// document's own stats is the page the command wrote.
 			again, err := statshtml.Render(doc.Stats, statshtml.Options{
-				GeneratedAt: doc.GeneratedAt, IncludeProjectNames: true,
+				GeneratedAt: doc.GeneratedAt, IncludeNames: true,
 				Filters: statshtml.Filters{Harness: doc.Filters.Harness, Model: doc.Filters.Model, Origin: doc.Filters.Origin},
 			})
 			if err != nil {

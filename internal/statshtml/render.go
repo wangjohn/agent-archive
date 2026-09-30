@@ -6,7 +6,7 @@
 // It is a pure function of the engine's stats.Stats and Options. It holds
 // aggregates and names only: never prompts, transcript text, file paths or
 // session IDs. Project names are replaced by stand-ins ("project A") unless
-// Options.IncludeProjectNames is set, and every name that came from a
+// Options.IncludeNames is set, and every name that came from a
 // transcript (project, model, skill, MCP server) is cleaned of control
 // characters and escaped for HTML by the template, which is the only way text
 // reaches the page.
@@ -73,12 +73,12 @@ type Options struct {
 	// GeneratedAt is stamped in the footer; the zero time leaves the stamp
 	// out. The renderer never reads the clock.
 	GeneratedAt time.Time
-	// IncludeProjectNames shows the real names of projects, skills and MCP
+	// IncludeNames shows the real names of projects, skills and MCP
 	// servers, which can identify a client or an internal tool. By default
 	// each is a stand-in ("project A", "skill A", "MCP server A"), so the page
 	// can be shared. Model names are shown either way: they name a vendor's
 	// model, not the user's work.
-	IncludeProjectNames bool
+	IncludeNames bool
 	// Filters are named in the heading.
 	Filters Filters
 	// EmptyMessage is shown when the window has no sessions; a default is
@@ -90,9 +90,9 @@ type Options struct {
 func Render(s stats.Stats, opts Options) ([]byte, error) {
 	b := builder{
 		s: s, opts: opts,
-		names:   newNamer(opts.IncludeProjectNames, "project"),
-		skills:  newNamer(opts.IncludeProjectNames, "skill"),
-		servers: newNamer(opts.IncludeProjectNames, "MCP server"),
+		names:   newNamer(opts.IncludeNames, "project"),
+		skills:  newNamer(opts.IncludeNames, "skill"),
+		servers: newNamer(opts.IncludeNames, "MCP server"),
 	}
 	p := b.page()
 	var out bytes.Buffer
@@ -314,7 +314,7 @@ func (b *builder) projects() *barTable {
 	if more := b.s.TotalProjects - len(rows); more > 0 {
 		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects", more))
 	}
-	if !b.opts.IncludeProjectNames {
+	if !b.opts.IncludeNames {
 		t.Notes = append(t.Notes, "Project names are replaced by letters in this file.")
 	}
 	return t
@@ -448,8 +448,8 @@ func (b *builder) footer(p *page) {
 	}
 	p.Footer.Lines = lines
 	p.Footer.Privacy = "This page holds counts and names only: no prompts, transcript text, file paths or session IDs."
-	if !b.opts.IncludeProjectNames {
-		p.Footer.Privacy += " Project, skill and MCP server names are replaced by letters; run with --include-project-names to show them."
+	if !b.opts.IncludeNames {
+		p.Footer.Privacy += " Project, skill and MCP server names are replaced by letters; run with --include-names to show them."
 	}
 	if !b.opts.GeneratedAt.IsZero() {
 		p.Footer.Generated = "Generated " + b.opts.GeneratedAt.Format("2006-01-02 15:04 MST") + " by agent-archive stats --html."

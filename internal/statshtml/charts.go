@@ -291,7 +291,7 @@ func (b *builder) tokens() *tokenSection {
 	if b.s.MCP != nil {
 		t.Notes = append(t.Notes, "MCP: "+plain(b.s.MCP.Scope))
 	}
-	if len(t.Skills)+len(t.MCP) > 0 && !b.opts.IncludeProjectNames {
+	if len(t.Skills)+len(t.MCP) > 0 && !b.opts.IncludeNames {
 		t.Notes = append(t.Notes, "Skill and MCP server names are replaced by letters in this file.")
 	}
 	return t

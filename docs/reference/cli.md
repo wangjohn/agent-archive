@@ -363,7 +363,7 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
                                  0600, replaced in one step) instead of stdout
   --force                        With --output, replace FILE if it is an
                                  ordinary file that exists
-  --include-project-names        With --html, name the real projects, skills
+  --include-names                With --html, name the real projects, skills
                                  and MCP servers; by default the page says
                                  project A, skill A, MCP server A, ... so it
                                  can be shared
@@ -380,7 +380,7 @@ Example: agent-archive stats --html --output stats.html
 | `--hook-captured` | no value | — |
 | `--html` | no value | — |
 | `--imported` | no value | — |
-| `--include-project-names` | no value | — |
+| `--include-names` | no value | — |
 | `--json` | no value | — |
 | `--model` | a value | — |
 | `--no-cache` | no value | — |

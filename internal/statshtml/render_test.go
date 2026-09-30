@@ -41,7 +41,7 @@ func TestPageGoldens(t *testing.T) {
 	sessions := fixtureSessions()
 	golden.Check(t, goldenPath("shareable"), render(t, computeFixture(t, sessions, 30, stats.GroupWeek), Options{}))
 	golden.Check(t, goldenPath("real-names"), render(t, computeFixture(t, sessions, 30, stats.GroupProject),
-		Options{IncludeProjectNames: true, Filters: Filters{Harness: "claude", Origin: "hook"}}))
+		Options{IncludeNames: true, Filters: Filters{Harness: "claude", Origin: "hook"}}))
 	golden.Check(t, goldenPath("empty"), render(t, computeFixture(t, nil, 30, stats.GroupNone), Options{}))
 }
 
@@ -78,7 +78,7 @@ func TestShareablePageHasNoProjectNamesOrIDs(t *testing.T) {
 	if !strings.Contains(out, "project A") || !strings.Contains(out, "project B") {
 		t.Error("the page has no stand-in labels")
 	}
-	if !strings.Contains(out, "--include-project-names") {
+	if !strings.Contains(out, "--include-names") {
 		t.Error("the page does not say how to show project names")
 	}
 }
@@ -122,9 +122,9 @@ func TestLettersCountLikeSpreadsheetColumns(t *testing.T) {
 	}
 }
 
-func TestIncludeProjectNamesShowsThem(t *testing.T) {
+func TestIncludeNamesShowsThem(t *testing.T) {
 	t.Parallel()
-	out := string(render(t, computeFixture(t, fixtureSessions(), 30, stats.GroupProject), Options{IncludeProjectNames: true}))
+	out := string(render(t, computeFixture(t, fixtureSessions(), 30, stats.GroupProject), Options{IncludeNames: true}))
 	for _, name := range []string{"agent-archive", "proj-api", "dotfiles"} {
 		if !strings.Contains(out, name) {
 			t.Errorf("the page with real names does not show %q", name)
@@ -147,7 +147,7 @@ func TestHostileNamesAreInertText(t *testing.T) {
 			s := computeFixture(t, hostileSessions(payload), 30, stats.GroupProject)
 			for _, reveal := range []bool{true, false} {
 				out := render(t, s, Options{
-					IncludeProjectNames: reveal,
+					IncludeNames: reveal,
 					Filters:             Filters{Harness: payload, Model: payload, Origin: payload},
 				})
 				assertInert(t, string(out), payload)
@@ -193,7 +193,7 @@ func assertInert(t *testing.T, page, payload string) {
 func TestLongNamesAreShortened(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 5000)
-	out := string(render(t, computeFixture(t, hostileSessions(long), 30, stats.GroupNone), Options{IncludeProjectNames: true}))
+	out := string(render(t, computeFixture(t, hostileSessions(long), 30, stats.GroupNone), Options{IncludeNames: true}))
 	if strings.Contains(out, strings.Repeat("x", nameLimit+1)) {
 		t.Error("a 5,000 character name is not shortened")
 	}
@@ -267,7 +267,7 @@ func TestLargeArchiveStaysWithinItsBudget(t *testing.T) {
 	}
 	for _, by := range []stats.Grouping{stats.GroupNone, stats.GroupDay, stats.GroupProject} {
 		s := computeFixture(t, sessions, stats.MaxDays, by)
-		out := render(t, s, Options{IncludeProjectNames: true})
+		out := render(t, s, Options{IncludeNames: true})
 		if len(out) > 300_000 {
 			t.Errorf("by %q: the page is %d bytes, over the 300,000 budget", by, len(out))
 		}

@@ -96,7 +96,7 @@ func TestOnlyTheseStatsTextsReachThePage(t *testing.T) {
 			marker := fmt.Sprintf("ZQ%dQZ", i)
 			s := deepCopy(base)
 			stringLeaves(&s)[i].value.SetString(marker)
-			out, err := Render(s, Options{IncludeProjectNames: reveal})
+			out, err := Render(s, Options{IncludeNames: reveal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +153,7 @@ func TestHostileTextIsInertInEveryField(t *testing.T) {
 				stringLeaves(&s)[i].value.SetString(payload)
 				for _, reveal := range []bool{true, false} {
 					out := render(t, s, Options{
-						IncludeProjectNames: reveal, Filters: Filters{Harness: payload, Model: payload, Origin: payload},
+						IncludeNames: reveal, Filters: Filters{Harness: payload, Model: payload, Origin: payload},
 						EmptyMessage: payload,
 					})
 					page := string(out)

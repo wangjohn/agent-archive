@@ -155,7 +155,7 @@ func TestSpoiledNumbersNeverBreakTheGeometry(t *testing.T) {
 				} else {
 					target.SetInt(v.(int64))
 				}
-				out, err := Render(s2, Options{IncludeProjectNames: true})
+				out, err := Render(s2, Options{IncludeNames: true})
 				if err != nil {
 					t.Fatalf("leaf %d = %v: %v", i, v, err)
 				}
