@@ -34,11 +34,11 @@ type journalJob struct {
 
 // journalChange is one file's change; Before and After are base64 on disk.
 type journalChange struct {
-	Path    string
-	Before  []byte
-	After   []byte
-	Existed bool
-	Delete  bool
+	Path    string `json:"Path"`
+	Before  []byte `json:"Before"`
+	After   []byte `json:"After"`
+	Existed bool   `json:"Existed"`
+	Delete  bool   `json:"Delete"`
 }
 
 // retired lists the jobs the journal retires: the prototype's, then the
