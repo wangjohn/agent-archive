@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/stats"
@@ -74,6 +75,9 @@ func (f *statsHTMLFlags) validate(fs *commandFlags, jsonOut, stdoutIsTerminal bo
 // ordinary file (a folder, a symbolic link, a device or a pipe are never
 // written), or its directory is missing.
 func checkStatsHTMLTarget(path string, force bool) error {
+	if strings.HasSuffix(path, string(filepath.Separator)) {
+		return fmt.Errorf("%s ends with a slash, so it names a folder; give a file name", path)
+	}
 	info, err := os.Lstat(path)
 	switch {
 	case err == nil && info.IsDir():
@@ -138,8 +142,8 @@ func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, f
 // leaves the file at path as it was (or absent), never half a page. Without
 // force, the move fails if anything is at path (a hard link, which never
 // replaces one); with it, the file is replaced. A run killed between creating
-// the temporary file and moving it (a window of microseconds) leaves a hidden
-// file named .agent-archive-stats-*.tmp behind.
+// the temporary file and moving it (the write and one sync, so a moment) leaves
+// a hidden file named .agent-archive-stats-*.tmp behind, at mode 0600.
 func writeStatsHTMLFile(path string, page []byte, force bool) error {
 	dir, _ := filepath.Split(path)
 	if dir == "" {

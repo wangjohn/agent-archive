@@ -107,6 +107,7 @@ func TestStatsHTMLOutputProblemsAreUsageErrors(t *testing.T) {
 	}{
 		{filepath.Join(dir, "missing", "stats.html"), "does not exist"},
 		{dir, "is a directory"},
+		{filepath.Join(dir, "new") + string(filepath.Separator), "names a folder"},
 	} {
 		out, errOut, code := runStats(t, env, 0, "--html", "--output", tc.path, "--force")
 		if code != 2 || out != "" || !strings.Contains(errOut, tc.want) {

@@ -62,8 +62,9 @@ inline, there is no script, and it makes no request to anything (its own
 content policy forbids it), so it works offline and reads the same
 tomorrow. It follows your light or dark setting, prints cleanly (the donut
 switches to patterns, so it survives a black-and-white printer), and fits a
-phone. Every bar answers a hover with its exact numbers, and the daily chart
-has a "Show as a table" view for screen readers.
+phone. Each bar of the daily chart answers a hover with that day's numbers,
+and the chart has a "Show as a table" view for screen readers and keyboards;
+every other number is in a table.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
   only; change that when you share it) and says so on stderr. The page is

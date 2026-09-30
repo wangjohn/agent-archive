@@ -157,6 +157,36 @@ func TestWriteStatsHTMLFileWithoutForceNeverReplaces(t *testing.T) {
 	}
 }
 
+// writeStatsHTMLFile itself refuses a symbolic link at the path,
+// even with force: something may have replaced the file since the flags were
+// checked, and a link is never replaced by a page.
+func TestWriteStatsHTMLFileRefusesWhatAppearedAtThePath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.html")
+	if err := os.WriteFile(target, []byte("the target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.html")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []bool{false, true} {
+		if err := writeStatsHTMLFile(link, []byte("page"), force); err == nil {
+			t.Errorf("force=%v: the page was written over the link", force)
+		}
+	}
+	if kept, _ := os.ReadFile(target); string(kept) != "the target" {
+		t.Errorf("the target of the link was written: %q", kept)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link was replaced: %v, %v", info, err)
+	}
+	if names := listNames(t, dir); len(names) != 2 {
+		t.Errorf("the folder holds %v, want the target and the link only", names)
+	}
+}
+
 // failingWriter is a standard output that cannot be written: a full disk or a
 // closed pipe.
 type failingWriter struct{}
