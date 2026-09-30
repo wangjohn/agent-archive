@@ -98,7 +98,9 @@ var quarantineDirs = func() []string {
 // decodes can be moved aside on the spot (see quarantineInPass). Any other
 // Store only reports such a file.
 func (s *Store) ForCollectorPass() *Store {
-	return &Store{home: s.home, collectorPass: true}
+	pass := *s
+	pass.collectorPass = true
+	return &pass
 }
 
 // readOwned reads a collector-owned JSON file at path into value. found is

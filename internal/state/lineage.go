@@ -135,8 +135,10 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // request for it after that snapshot. When deferForWork is set, the pending
 // work is checked again under the lock, and a session that now has a request
 // or a pending publication is kept (forgotten reports false) so the collector
-// publishes that evidence. A session the collector no longer publishes is
-// forgotten regardless: its work would never be done.
+// publishes that evidence, as is one with a subagent candidate whose lock a
+// hook or the collector holds right then. A session the collector no longer
+// publishes is forgotten regardless: its work would never be done (a held
+// candidate lock then fails the attempt with ErrBusy, for the next to retry).
 //
 // A non-nil removal is recorded (see RecordRemoval) before anything is
 // forgotten, so a record that cannot be written leaves the session
@@ -152,13 +154,6 @@ func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, defe
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
-	// Unlocked, this check only spares a session that already has work a
-	// record written and taken back; the one under the lock decides.
-	if deferForWork {
-		if work, err := s.hasWork(archiveSessionID); err != nil || work {
-			return false, err
-		}
-	}
 	takeBack := func() error { return nil }
 	if removal != nil {
 		if takeBack, err = s.recordRemovalRevocably(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
@@ -169,17 +164,24 @@ func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, defe
 		}
 	}
 	started, err := s.forgetIdleLocked(archiveSessionID, nativeSessionID, deferForWork)
-	if !started {
-		// Nothing of the session is gone. A ForgetSession that failed part
-		// way keeps its record: the session may be unregistered already.
+	if started {
+		// A forget that failed part way keeps its record: the session may
+		// be unregistered already.
+		return err == nil, err
+	}
+	// Nothing of the session is gone, so the record goes back.
+	if err != nil {
 		return false, errors.Join(err, takeBack())
 	}
-	return err == nil, err
+	// Keeping the session was right, and a record the take-back could not
+	// remove sits inert beside its registration; it is not a failure.
+	_ = takeBack()
+	return false, nil
 }
 
 // forgetIdleLocked is the part of ForgetIdleSession done under the request
-// lock: the recheck, then ForgetSession. started reports whether
-// ForgetSession was called.
+// lock: the recheck, then the forget. started reports whether the forget
+// began removing the session's own records.
 func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, deferForWork bool) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
@@ -191,7 +193,21 @@ func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, defer
 			return false, err
 		}
 	}
-	return true, s.ForgetSession(archiveSessionID, nativeSessionID)
+	// ForgetSession would wait up to a second for each subagent candidate's
+	// lock while this one is held, and hooks wait only a second for this
+	// one. So the candidates go first, without waiting: a candidate lock
+	// held now means a hook or the collector is at work on the session's
+	// subagents, work that keeps the session like a request does.
+	busy, err := s.removeSubagentCandidatesWithoutWaiting(archiveSessionID)
+	switch {
+	case err != nil:
+		return false, err
+	case busy && deferForWork:
+		return false, nil
+	case busy:
+		return false, fmt.Errorf("forget session %q: a subagent of it is being recorded: %w", archiveSessionID, local.ErrBusy)
+	}
+	return true, s.forgetSession(archiveSessionID, nativeSessionID, false)
 }
 
 // hasWork reports whether a session has a request or a pending publication:
@@ -310,11 +326,19 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID, nativeSessionID string) error {
+	return s.forgetSession(archiveSessionID, nativeSessionID, true)
+}
+
+// forgetSession is ForgetSession; withCandidates false is for a caller that
+// already removed the session's subagent candidates under their locks.
+func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCandidates bool) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
-		return fmt.Errorf("remove linked subagent candidates: %w", err)
+	if withCandidates {
+		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
+			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
 	}
 	paths := []string{
 		s.registrationPath(archiveSessionID),
