@@ -216,7 +216,7 @@ func unloadRefuses(t *testing.T, b Backend) {
 			plan := define(t, s, site, sp)
 			ctx := context.Background()
 			words := s.Words()
-			if words.Manager == "" || words.Job == "" || words.Definition == "" || words.Tool == "" {
+			if words.Manager == "" || words.Job == "" || words.Definition == "" || words.Tool == "" || words.Name == "" {
 				t.Errorf("the scheduler's words %+v leave a noun out", words)
 			}
 

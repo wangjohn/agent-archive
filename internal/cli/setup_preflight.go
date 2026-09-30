@@ -146,6 +146,9 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 	case scheduler.Unknown:
 		job.OK = false
 		job.Detail = fmt.Sprintf("%s did not say whether the %s job is loaded, and setup loads it only when it can tell", words.Tool, ref)
+		if problem.Reason != "" {
+			job.Detail = fmt.Sprintf("%s, so setup cannot tell whether the %s job is loaded, and loads it only when it can tell", problem.Reason, ref)
+		}
 		job.Fix = problem.Fix + ", then run agent-archive setup again."
 	case scheduler.AnotherInstallation:
 		job.OK = false

@@ -317,7 +317,8 @@ Treat an absent field and `null` the same way.
 | `storage_access_confirmed_at`, `storage_access_confirmed_by` | The latest confirmation that the destination is reachable with the configured credentials, and by whom: `setup`, or `collector` (its access probe, or a pass that uploaded). Use this to tell whether capture can still reach the bucket. |
 | `authentication` | The last storage health check: state (`verified`, `stale_configuration`, …), time, and whether it came from a manual `sync` or the background collector. |
 | `privacy`, `privacy_evidence` | Bucket privacy: `verified_private`, `public_or_risky`, or `not_verified`, with the reason, scope, and check time. |
-| `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background` | The background job (the launchd job on macOS, the user's systemd timer on Linux): `loaded`, `running`, `missing`, `another_installation` (the scheduler runs this installation's job from a different definition, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background_warnings` | What the background job does, but not robustly, one sentence each: on Linux, that lingering is off (the collector stops when you log out) or that a systemd drop-in overrides its unit. The state is not changed by them. Absent when there is nothing to say, which is always the case on macOS. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |
