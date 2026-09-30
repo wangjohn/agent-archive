@@ -42,13 +42,9 @@ func FuzzLaunchAgentRoundTrip(f *testing.F) {
 			}
 			return
 		}
-		program, err := LaunchAgentProgram(plist)
-		if want := xmlText(executable); want == "" {
-			if err == nil {
-				t.Fatalf("read program %q from a plist that runs %q", program, executable)
-			}
-		} else if err != nil || program != want {
-			t.Fatalf("program %q (err %v), want %q", program, err, want)
+		// executable starts with "/", so it never reads back as empty.
+		if program, err := LaunchAgentProgram(plist); err != nil || program != xmlText(executable) {
+			t.Fatalf("program %q (err %v), want %q", program, err, xmlText(executable))
 		}
 		environment, err := LaunchAgentEnvironment(plist)
 		if err != nil {
