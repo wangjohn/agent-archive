@@ -39,9 +39,57 @@ jobs:
           AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
+      - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+
+  cross-build:
+    # What the two platform legs above cannot see: the ubuntu leg builds only
+    # linux/amd64, and the macOS leg builds only darwin with cgo (the release
+    # configuration). This job, on Linux, builds and vets the other targets,
+    # so a change that breaks one fails here, not on release day. The macOS
+    # legs and the lint job already vet darwin with cgo natively, which no
+    # Linux runner can do (cgo needs Apple's SDK).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Build and vet linux/arm64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          go build ./...
+          go vet ./...
+      # A macOS build without cgo uses the Keychain stand-in in
+      # internal/credentials/keychain_nocgo_darwin.go, which the macOS legs
+      # (cgo on) never compile.
+      - name: Vet darwin without cgo
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go vet ./...
+      # The release workflow's Linux build and checks, on a placeholder
+      # version, so everything except tagging and publishing is exercised
+      # before a release.
+      - name: Build and check the release's Linux binaries
+        env:
+          VERSION: v0.0.0-ci
+        run: |
+          ./scripts/build-release.sh linux
+          ./scripts/verify-linux-release.sh
 
   fuzz:
     # Every parser, redaction, and hook fuzz target, briefly, so a change that
@@ -96,26 +144,49 @@ jobs:
           install-mode: goinstall
           args: --disable=revive
       # Production code only tests reach belongs in a _test.go file (or a
-      # test-only package); deadcode finds it. Listed exceptions: the test
-      # helper packages, a cgo probe (test files cannot use cgo), a load
-      # counter other packages' cost tests read, and the terminal UI layer in
-      # internal/cli/ui.go, whose parts the onboarding screens adopt one PR at
-      # a time (they are listed by name: remove each as it gains a caller,
-      # and the exception once none is left).
+      # test-only package); deadcode finds it. It analyses one build at a
+      # time, so it runs twice: for macOS, and for Linux (GOOS=linux with cgo
+      # off, the release configuration). The files with a !darwin build
+      # constraint (internal/credentials/keychain_stub.go,
+      # internal/backfill/birthtime_other.go,
+      # internal/cursorstore/owner_other.go) are what ships on Linux, and the
+      # macOS run never sees them; nor will it see future Linux-only files.
+      # The Linux run reports one function the macOS run does not, because
+      # only the macOS Keychain code calls it: credentials.errorForOSStatus
+      # (EncodeSecret and DecodeSecret gained a Linux caller with the file
+      # store). It has its own exception below; remove it when a Linux caller
+      # appears. deadcode is built once
+      # and run as a binary, since `go run` would try to execute a tool
+      # cross-built for GOOS=linux.
+      # Listed exceptions: the test helper packages, a cgo probe (test files
+      # cannot use cgo), a load counter other packages' cost tests read, and
+      # the terminal UI layer in internal/cli/ui.go, whose parts the
+      # onboarding screens adopt one PR at a time (they are listed by name:
+      # remove each as it gains a caller, and the exception once none is left).
       - name: No unreachable production code
         run: |
-          go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
-          # grep exits 1 when every line is an exception; 2 is a real failure.
-          status=0
-          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
-          if [ "$status" -gt 1 ]; then
-            exit "$status"
-          fi
-          if [ -s "$RUNNER_TEMP/unexpected.txt" ]; then
-            cat "$RUNNER_TEMP/unexpected.txt"
-            echo "Move test-only code to a _test.go file, or delete it." >&2
-            exit 1
-          fi
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
+          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
+          linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
+          # check LABEL EXCEPTIONS: deadcode's output for the current
+          # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
+          check() {
+            "$RUNNER_TEMP/bin/deadcode" ./... > "$RUNNER_TEMP/deadcode-$1.txt"
+            # grep exits 1 when every line is an exception; 2 is a real failure.
+            status=0
+            grep -v -E "$2" "$RUNNER_TEMP/deadcode-$1.txt" > "$RUNNER_TEMP/unexpected-$1.txt" || status=$?
+            if [ "$status" -gt 1 ]; then
+              exit "$status"
+            fi
+            if [ -s "$RUNNER_TEMP/unexpected-$1.txt" ]; then
+              echo "Unreachable production code in the $1 build:" >&2
+              cat "$RUNNER_TEMP/unexpected-$1.txt"
+              echo "Move test-only code to a _test.go file, or delete it." >&2
+              exit 1
+            fi
+          }
+          check macos "$shared"
+          GOOS=linux CGO_ENABLED=0 check linux "$shared$linux_only"
       # Doc comments are required on exported identifiers that a change adds
       # or touches; existing gaps do not fail the build.
       - name: Doc comments on new exported identifiers
