@@ -1,0 +1,32 @@
+\e[1magent-archive stats\e[0m\e[2m · last 30 days · 3 agents\e[0m
+
+  \e[1m~$3,989\e[0m                                \e[1m93 sessions\e[0m                            \e[1m10B tokens\e[0m
+  \e[2mat list price\e[0m                          \e[2m673 prompts\e[0m                            \e[2m97% served from cache\e[0m
+
+\e[1mAGENTS\e[0m  \e[33m████████████████████████████████████████████████████\e[0m \e[34m█████\e[0m \e[32m█\e[0m
+        \e[33m●\e[0m Claude Code 90%   \e[34m●\e[0m Cursor 9%   \e[32m●\e[0m Codex 1%   \e[2mof sessions\e[0m
+
+\e[1mDAILY SPEND\e[0m                                                                                       \e[2mpeak \e[0m\e[1m~$2,910\e[0m\e[2m · Sep 27\e[0m
+                                                                                                            \e[36m███\e[0m
+                                                                                                            \e[36m███\e[0m
+\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[36m▂▂▂\e[0m\e[2m▁\e[0m\e[36m███\e[0m\e[2m▁\e[0m\e[2m▁▁▁\e[0m\e[2m▁\e[0m\e[36m▇▇▇\e[0m
+\e[2mAug 31                                                                                                           Sep 29\e[0m
+
+\e[1mWHERE IT WENT\e[0m
+\e[2mBy project\e[0m                                                    \e[2mBy model\e[0m
+agent-archive  \e[36m██████████████████████████████\e[0m  $1,862         opus    \e[35m██████████████████████████████\e[0m  $3,270
+levenshtein    \e[36m████████████\e[0m                      $751         fable   \e[91m████\e[0m                              $386
+styleprofile   \e[36m█████████\e[0m                         $586         sonnet  \e[36m███\e[0m                               $320
+family_books   \e[36m███████\e[0m                           $427         \e[2m+ 2 more\e[0m
+\e[2m+ 6 more\e[0m
+
+\e[1mMOST USED\e[0m
+\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+\e[2mMCP   \e[0m  github 41 · linear 12 calls (Claude Code and Cursor only)
+
+\e[1mHEADS UP\e[0m
+\e[33m●\e[0m 77% of tokens came from subagents (497 runs)
+\e[33m●\e[0m Costliest session ~$564 · styleprofile · long context, 38 subagents
+\e[33m●\e[0m 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+\e[2mEstimated at list price, not a bill.   --detail for more · --by project · --html\e[0m

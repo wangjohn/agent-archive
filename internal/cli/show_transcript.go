@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -150,8 +151,9 @@ func splitColumns(line string, width int) []string {
 	var rows []string
 	var row strings.Builder
 	column := 0
-	for _, r := range line {
-		w := runeWidth(r)
+	for line != "" {
+		r, size := utf8.DecodeRuneInString(line)
+		w := runeWidthBefore(r, line[size:])
 		if column > 0 && column+w > width {
 			rows = append(rows, row.String())
 			row.Reset()
@@ -159,6 +161,7 @@ func splitColumns(line string, width int) []string {
 		}
 		row.WriteRune(r)
 		column += w
+		line = line[size:]
 	}
 	return append(rows, row.String())
 }
