@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -89,41 +88,6 @@ func TestStatsChartAxisNamesBothEnds(t *testing.T) {
 	axis := lines[len(lines)-1]
 	if !strings.Contains(axis, "Sep 28") || !strings.Contains(axis, "Sep 29") {
 		t.Errorf("the axis of a two-day chart is %q", axis)
-	}
-}
-
-// The projects are ranked by spend, then tokens, sessions and name, whatever
-// order they are given in, with the ones that have no price last.
-func TestStatsProjectsAreRankedBySpendWhateverTheirOrder(t *testing.T) {
-	t.Parallel()
-	in := []stats.Project{
-		{Name: "unpriced-small", Sessions: 9, Tokens: i64(10)},
-		{Name: "tie-b", Sessions: 1, Tokens: i64(500), Cost: usd(50)},
-		{Name: "cheap-huge", Sessions: 1, Tokens: i64(9_000_000), Cost: usd(5)},
-		{Name: "unpriced-big", Sessions: 1, Tokens: i64(1000)},
-		{Name: "top", Sessions: 1, Tokens: i64(1), Cost: usd(90)},
-		{Name: "tie-a", Sessions: 1, Tokens: i64(500), Cost: usd(50)},
-		{Name: "tie-more-tokens", Sessions: 1, Tokens: i64(600), Cost: usd(50)},
-		{Name: "no-tokens", Sessions: 3},
-	}
-	want := []string{"top", "tie-more-tokens", "tie-a", "tie-b", "cheap-huge", "unpriced-big", "unpriced-small", "no-tokens"}
-	names := func(projects []stats.Project) []string {
-		var out []string
-		for _, p := range projects {
-			out = append(out, p.Name)
-		}
-		return out
-	}
-	for shift := range in {
-		rotated := append(slices.Clone(in[shift:]), in[:shift]...)
-		if got := names(projectsBySpend(rotated)); !slices.Equal(got, want) {
-			t.Fatalf("from %v: %v, want %v", names(rotated), got, want)
-		}
-	}
-	rev := slices.Clone(in)
-	slices.Reverse(rev)
-	if got := names(projectsBySpend(rev)); !slices.Equal(got, want) {
-		t.Errorf("reversed: %v, want %v", got, want)
 	}
 }
 

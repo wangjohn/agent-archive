@@ -88,6 +88,28 @@ func crossScenarios() []crossScenario {
 			claude("e2", statsDay(time.September, 21, 10), modelTokenSpec{"claude-opus-5", 500, 500, 999_499, 1}))},
 		{name: "one-cache-type-only", build: only(
 			claude("r", statsDay(time.September, 20, 10), modelTokenSpec{"claude-opus-5", 0, 0, 1_000_000, 0}))},
+		// Projects ranked by spend, not by tokens: five with the most tokens
+		// (cache reads, which are cheap), two that cost more, one that cannot
+		// be priced and one with no tokens. Every screen, the page and the
+		// document must list them in the same order.
+		{name: "projects-ranked-by-spend-not-tokens", build: func(tb testing.TB, mem *storagetest.MemoryStore) {
+			tb.Helper()
+			in := func(name string, hour int, spec modelTokenSpec) syntheticSession {
+				s := claude("s-"+name, statsDay(time.September, 20, hour), spec)
+				s.project = name
+				return s
+			}
+			for i := range 5 {
+				in(fmt.Sprintf("cache-heavy-%d", i), 9+i, modelTokenSpec{"claude-opus-5", 0, 0, 10_000_000 + i*1_000_000, 0}).publish(tb, mem)
+			}
+			for i := range 2 {
+				in(fmt.Sprintf("output-heavy-%d", i), 9+i, modelTokenSpec{"claude-opus-5", 0, 1_000_000 + i*100_000, 0, 0}).publish(tb, mem)
+			}
+			mystery := in("unpriced-project", 10, modelTokenSpec{"mystery-1", 90_000_000, 0, 0, 0})
+			mystery.harness, mystery.models = "codex", []string{"mystery-1"}
+			mystery.publish(tb, mem)
+			syntheticSession{id: "c1", harness: "cursor", project: "cursor-only", captured: statsDay(time.September, 20, 12), models: []string{"cursor-auto"}, turns: 3, noTokens: true}.publish(tb, mem)
+		}, args: []string{"--by", "project"}},
 		{name: "subagents-skills-and-mcp-present", build: func(tb testing.TB, mem *storagetest.MemoryStore) {
 			tb.Helper()
 			parent := claude("parent", statsDay(time.September, 20, 10), opus)

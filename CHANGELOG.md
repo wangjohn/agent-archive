@@ -277,6 +277,21 @@ follow [Semantic Versioning](https://semver.org/).
   `--by day`, `week` and `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
+- **`stats --json` and `--html` rank projects by spend, not tokens.** The
+  `projects` list (and the `groups.rows` of `--by project`) used to be ordered
+  by tokens and cut to the top five, which cache reads dominate, so a project
+  that cost more could be missing from the top five while a cheaper one with
+  more cache reads was in. It is now ordered by estimated cost, highest first
+  (a project with no priced cost after every one that has it, ties by tokens,
+  sessions, then name) and cut after that; the terminal screens already
+  ranked this way. The order of the JSON list changes and so does which five
+  it keeps; the fields and `schema_version` (1) do not. A partly priced
+  project is ranked on the spend it has, so its real cost may be higher than
+  its place says, and a project with no priced cost is after every priced one;
+  `overview.cost` (`partial`, `unpriced_tokens`) and `models` still say when
+  tokens were left out. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+
 - `handoff` takes a title as well as a session ID: `handoff "fix the auth
   bug" --harness codex`. It matches as `show` does (a title substring or a
   short session ID; a full ID wins), in this Mac's sessions first, with no
