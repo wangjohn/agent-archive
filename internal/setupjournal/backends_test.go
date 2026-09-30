@@ -326,3 +326,82 @@ func (r recordingLocator) Locate(definition string) (scheduler.Site, scheduler.R
 	r.names[r.name] = ref
 	return site, ref, err
 }
+
+// A retired job that was not loaded is never driven, by Commit or by
+// recovery: only its definition is removed and put back. So its backend is
+// never resolved, and one this build does not have blocks nothing, as a
+// release before the field never asked the scheduler about such a job.
+func TestARetiredJobThatWasNotLoadedIsNeverResolved(t *testing.T) {
+	t.Parallel()
+	for _, recovering := range []bool{false, true} {
+		f := newMixedFixture(t)
+		f.journal.Relabeled.Backend, f.journal.Relabeled.WasLoaded = "systemd", false
+		var asked []string
+		resolve := Backends(func(name string) (scheduler.Scheduler, error) {
+			asked = append(asked, name)
+			return f.backends(name)
+		})
+		var err error
+		if recovering {
+			f.crash(t)
+			err = Recover(f.home, resolve, noLock)
+		} else {
+			err = Commit(f.home, f.journal, resolve)
+		}
+		if err != nil {
+			t.Fatalf("recovering=%v: %v", recovering, err)
+		}
+		if slices.Contains(asked, "systemd") || slices.ContainsFunc(f.model.Calls(), func(call string) bool { return strings.HasSuffix(call, " model-earlier") }) {
+			t.Errorf("recovering=%v: the job that was not loaded was resolved or driven: backends %q, model %q", recovering, asked, f.model.Calls())
+		}
+		_, statErr := os.Stat(f.earlier)
+		if gone := os.IsNotExist(statErr); gone == recovering {
+			t.Errorf("recovering=%v: its definition is gone=%v", recovering, gone)
+		}
+	}
+}
+
+// What recovery does with a retired job, for each state its scheduler can
+// report: one that was loaded is loaded again only when it is missing now,
+// left alone when it is loaded (by this installation or, #192, another), and
+// recovery is blocked when its state is unknown; one that was not loaded is
+// never asked about. Its definition is put back in every case.
+func TestRecoveryRestartsARetiredJobOnlyWhenItIsMissing(t *testing.T) {
+	t.Parallel()
+	states := []scheduler.JobState{scheduler.Loaded, scheduler.Running, scheduler.Missing, scheduler.Unknown, scheduler.AnotherInstallation}
+	for _, state := range states {
+		for _, wasLoaded := range []bool{true, false} {
+			home := t.TempDir()
+			plist := filepath.Join(t.TempDir(), "Library", "LaunchAgents", legacyLaunchLabel+".plist")
+			var asked, loads []string
+			launchd := fakeLaunchd{
+				state: func(p string) string { asked = append(asked, p); return string(state) },
+				load:  func(p string) error { loads = append(loads, p); return nil },
+			}
+			job := &LegacyJob{Change: hooks.Change{Path: plist, Before: []byte(legacyPlist), Existed: true, Mode: 0o600}, WasLoaded: wasLoaded}
+			err := restoreLegacyJob(home, job, legacyJobName, backends(launchd))
+			var blocked *RecoveryBlockedError
+			switch {
+			case !wasLoaded:
+				if err != nil || len(asked) != 0 || len(loads) != 0 {
+					t.Errorf("%s, not loaded: err %v, asked %q, loaded %q; want it never asked about", state, err, asked, loads)
+				}
+			case state == scheduler.Unknown:
+				if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "the state of the legacy upload job is unknown; restore access to launchctl") || len(loads) != 0 {
+					t.Errorf("%s: err %v, loaded %q; want recovery blocked", state, err, loads)
+				}
+			case state == scheduler.Missing:
+				if err != nil || !slices.Equal(loads, []string{plist}) {
+					t.Errorf("%s: err %v, loaded %q; want it loaded once", state, err, loads)
+				}
+			default:
+				if err != nil || len(loads) != 0 {
+					t.Errorf("%s: err %v, loaded %q; want it left as it is", state, err, loads)
+				}
+			}
+			if data, _ := os.ReadFile(plist); string(data) != legacyPlist {
+				t.Errorf("%s, was loaded %v: the plist reads %q", state, wasLoaded, data)
+			}
+		}
+	}
+}
