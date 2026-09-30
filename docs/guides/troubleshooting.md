@@ -270,7 +270,9 @@ The `agent-archive` skill ([agent skills](agent-skills.md)) is what lets Claude
 Code, Codex, or Cursor pull in a past session when you ask.
 
 1. **Start a new session.** Claude Code and Codex pick up a new skill in a
-   running session (restart the app if it does not appear), but Cursor's
+   running session (restart the app if it does not appear; Claude Code needs
+   `/reload-skills`, or a new session, when it had no `~/.claude/skills`
+   folder when the session started), but Cursor's
    documentation does not say it does, so start a new chat there. Codex reads
    `~/.agents/skills`, and Claude Code `~/.claude/skills`
    (`$CLAUDE_CONFIG_DIR/skills` when set).

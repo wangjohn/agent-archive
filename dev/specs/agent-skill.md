@@ -626,14 +626,19 @@ agents.
    denied and the model is told so (observed below).
 4. **Sandboxes and approvals (R2).** *Claude Code:* the Bash sandbox
    (Seatbelt on macOS, nothing to install) is off until `/sandbox` or
-   `sandbox.enabled`, and pre-allows no network domains. *Codex:* the default
+   `sandbox.enabled`, and pre-allows no network domains (the first command that
+   needs a new domain prompts; where nothing can ask, it is refused). *Codex:* the default
    is `workspace-write` with `on-request` approvals and network off, so a
    command that needs the network asks first; macOS enforcement is Seatbelt;
    command rules live in `~/.codex/rules` (`prefix_rule`, decisions `allow`,
    `prompt`, `forbidden`); `codex exec` defaults to a read-only sandbox, and
    the documentation does not say what an approval request does with nobody
-   there. *Cursor:* terminal commands need approval by default; the run
-   modes are Auto-review, Allowlist, and Run Everything; on macOS the sandbox
+   there. *Cursor:* the run mode decides (its documentation does not confirm
+   which is the default for a new installation, and calls Auto-review the
+   recommended default): Auto-review runs allowlisted calls at once and other
+   shell commands in the sandbox where it can, asking only when one needs full
+   access and the classifier finds it risky; Allowlist asks for anything not
+   on the list; Run Everything asks nothing; on macOS the sandbox
    is Seatbelt with the network "blocked by default" until a network mode
    (`sandbox.json` only, `sandbox.json` plus defaults, or allow all) opens
    it; the CLI keeps allow and deny lists in `~/.cursor/cli-config.json` or
@@ -713,7 +718,9 @@ user skills stayed out), `--permission-mode default`, and explicit
   files by hand (blocked by the working-directory limit): the `Skill` tool
   is a permission-required tool. **The skill's
   `allowed-tools: Bash(<exe> status)` was not applied** when the model
-  invoked the skill, although the documentation says a skill's
+  invoked the skill (as a project skill, with `--setting-sources
+  project,local`; a personal skill under `~/.claude/skills` was not run),
+  although the documentation says a skill's
   `allowed-tools` applies in a `-p` run: a control skill with other rules
   behaved the same, and the same rules were applied when the person typed
   `/skill-name`. The interactive dialog was not observed (starting an
@@ -760,7 +767,9 @@ Not done in this series:
    where most of the friction remains.
 2. **`handoff`'s size bound is best effort.** A 400-exchange session produced
    about 168 KB against the 120 KB bound: `FitHandoff` never drops exchanges,
-   only shortens them. It needs an oldest-exchange drop and matching
+   only shortens them (after every step it prints `warning: still N bytes
+   after trimming, over the N-byte limit` on stderr, so the overrun is
+   visible). It needs an oldest-exchange drop and matching
    documentation and golden changes; the handoff owner's call.
 3. **Skip the activity spinner when non-interactive.** With
    `AGENT_ARCHIVE_NONINTERACTIVE` on (a pseudo-terminal inside an agent) the

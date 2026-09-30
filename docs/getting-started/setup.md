@@ -399,7 +399,8 @@ Then setup says, with one line per app, what to do next:
 Setup's closing lines also name the agent skills it installed (`/handoff` and
 `agent-archive`) and the opt-out, `--no-skills`. Unlike Codex's hooks, a skill
 needs no approval; Claude Code and Codex notice it in a session that is
-already open, and Cursor may need a new chat. Then ask an agent in words, such
+already open (Claude Code needs `/reload-skills` when it had no
+`~/.claude/skills` folder at start), and Cursor may need a new chat. Then ask an agent in words, such
 as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.md)).
 Claude Code asks before it first uses the skill and before the commands it
 runs.

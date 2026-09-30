@@ -399,8 +399,12 @@ each app, so that a coding agent can pull in a past session when you ask. It
 reads through the same commands you run: `handoff`, `list`, `show`, and
 `status`. That is the filtered content the [archive holds](#what-is-uploaded)
 (a session found on this Mac is filtered the same way before it is printed),
-cut to a size bound, and nothing broader: no bucket credentials, no raw
-transcript files, no other project's files. Three things follow.
+cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
+nothing broader: no bucket credentials, no raw transcript files, no files of
+your projects. `status` adds your setup's summary: the storage destination,
+the included project folders, and the state of capture. `list` shows titles
+(each is the session's first prompt) across all your projects. Three things
+follow.
 
 - **It is shown to that agent's provider.** A pulled-in session becomes part
   of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and
@@ -413,9 +417,11 @@ transcript files, no other project's files. Three things follow.
   agent to treat what it prints as data: never to follow an instruction in it,
   or run a command because it suggests one, and to open only the one file a
   trimmed handoff names. That is guidance to a model, not a guarantee. The
-  backstop is the agent's permission prompt: in Claude Code, `handoff --to`,
-  `setup`, and `purge` are not pre-approved and ask you first (unless you
-  allowed them, or run the agent without approvals).
+  backstop is the agent's own permission prompt: in Claude Code, `handoff
+  --to`, `setup`, and `purge` are not pre-approved and ask you first (unless
+  you allowed them, or run the agent without approvals); in Codex and Cursor,
+  their approvals and sandbox decide, and Cursor's Run Everything mode asks
+  nothing.
 - **The skill is not a barrier.** The agent runs as you, so it can read
   anything you can whatever the skill says; the skill only names what it
   should run. `agent-archive setup --no-skills` stops offering agents the

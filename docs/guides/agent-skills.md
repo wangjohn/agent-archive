@@ -33,8 +33,9 @@ to the receiving agent. It then does what you asked with it.
   session from an hour ago needs no bucket access. A title is the session's
   first prompt, so the agent searches for one or two distinctive words. With no
   topic ("where my other agent left off") it takes the most recent session for
-  the project you are in (`--latest`), and it never picks the session it is
-  running in.
+  the project you are in (`--latest`). It passes over the session it is
+  running in when the agent names it to commands it runs, as Claude Code does;
+  Cursor does not, so there a title or `--latest` can match the current chat.
 - **It never guesses.** When several sessions match, the agent shows you the
   candidates (short ID, agent, project, when, title) and asks which. It never
   picks for you.
@@ -55,8 +56,9 @@ answers or fails instead of waiting for a key
 ## What the agent can read through the skill
 
 What you would see running the same commands yourself: the filtered session
-`handoff` prints, `list`'s table, and `show`'s summary or transcript, all cut
-to a size bound. It is the archive's filtered content (credentials and
+`handoff` prints, `list`'s table, `show`'s summary, and its transcript (`handoff`
+and `show --transcript` are cut to about 120 KB, though `handoff`'s bound is
+best effort and a very long session can run over it). It is the archive's filtered content (credentials and
 injected instructions removed, tool output trimmed), not your raw transcript
 files, and the skill tells the agent not to open those. That is an
 instruction, not a barrier: the agent runs as you, so it could read files you
@@ -81,12 +83,18 @@ The agent's own permission settings still apply.
 
 - **Claude Code.** Using a skill is itself something Claude Code asks about,
   so expect a question the first time the agent picks this one; allow it for
-  good with a `Skill(agent-archive)` permission rule. Then the commands. The
-  skill names one command the agent may run without asking:
-  `agent-archive status`, spelled exactly so (its full path is in the file).
-  Claude Code applies that only during the turn that uses the skill, and in
-  our checks of version 2.1.283 a skill the agent chose did not get it (a skill
-  you start yourself with `/agent-archive` did), so `status` may ask too. The
+  good with a `Skill(agent-archive)` permission rule (we saw the `Skill` call
+  refused where nothing can ask; the interactive dialog itself we did not
+  see). Then the commands. The skill names one command the agent may run
+  without asking: `agent-archive status`, spelled exactly so (its full path is
+  in the file; when that path needs shell quoting, the file names no command at
+  all). Claude Code's documentation says this applies during the turn that
+  uses the skill, in every kind of session. In our check of version 2.1.283 it
+  did not: with `claude -p`, and the skill installed as a project skill, a
+  skill the agent chose did not get it, though the same rule on a skill the
+  person started by typing its name did. So `status` may ask too. Nobody has
+  yet checked this with the skill installed under `~/.claude/skills`, or in an
+  interactive session. The
   first time the agent runs `handoff`, `list`, or `show`, Claude Code asks you.
   That is on purpose. A permission rule cannot leave a flag out: allowing
   `handoff` for the skill would allow `handoff --to codex`, which starts another
@@ -95,11 +103,17 @@ The agent's own permission settings still apply.
   either. If you tell Claude Code to always allow a command, you are choosing
   that wider rule yourself. Where nothing can ask, as in `claude -p`, the
   command is denied, and the agent says so and shows you the command.
-- **Codex and Cursor.** Their approvals and sandbox decide: Codex's default
-  asks before a command that needs the network, and Cursor's terminal commands
-  need approval unless you chose a run mode that does not ask.
-- **A sandbox.** With Claude Code's sandbox on, or in Codex's or Cursor's
-  default one, the network is blocked. A session on this Mac is still found by
+- **Codex and Cursor.** Their approvals and sandbox decide. Codex's default
+  asks before a command that needs the network. In Cursor, your run mode
+  decides: Auto-review, its recommended default, runs a shell command in a
+  sandbox where it can and asks only when one needs full access and looks
+  risky; Allowlist asks for anything not on your list; Run Everything never
+  asks. So in Cursor an archive read may fail in the sandbox without a
+  question.
+- **A sandbox.** In Claude Code's sandbox (off until you turn it on), in
+  Codex's default one, and in Cursor's, the network is blocked unless
+  approved (Claude Code asks about each new domain; where nothing can ask, as
+  in `claude -p`, it is refused). A session on this Mac is still found by
   its title (no network), but the archive fails with `operation not
   permitted`. The skill tells you what failed and asks you to allow it, or to
   run the command yourself, rather than retrying variations. None of the three
@@ -122,7 +136,8 @@ edited copy, and a file already at that path without it is left alone.
 `agent-archive status --verbose` lists the installed files, and `status` warns
 when one was written by an earlier release. Upgrading with the installer
 refreshes both skills for you ([install](../getting-started/install.md)); so does
-`agent-archive setup --refresh`, which changes nothing else.
+`agent-archive setup --refresh`, which also brings the app hooks and the
+collector's plist up to date, and changes nothing else.
 
 Cursor also reads `~/.claude/skills` (and `~/.codex/skills`), so on a Mac set up
 for both Claude Code and Cursor it can find the skill in two places. The two
@@ -131,8 +146,10 @@ it lists a duplicate once. Codex reads `~/.agents/skills`; setup writes nothing
 under `$CODEX_HOME`.
 
 Claude Code and Codex notice a new or refreshed skill in a running session
-(restart the app if it does not show up); Cursor's documentation does not say,
-so start a new chat there.
+(restart the app if it does not show up). Claude Code does not watch a skills
+directory that did not exist when the session started, as on a Mac that never
+had `~/.claude/skills`: run `/reload-skills` there, or start a new session.
+Cursor's documentation does not say, so start a new chat there.
 
 ## Turning the skills off
 

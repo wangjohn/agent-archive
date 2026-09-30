@@ -49,7 +49,7 @@ flowchart LR
   T["transcripts already<br/>on this Mac"] --> BF["backfill"] --> S
 ```
 
-Setup edits each included app's hook settings, adds one LaunchAgent, and writes two skill files per app (`~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex and Cursor; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)). Old sessions are deleted from the bucket after 90 days by default.
+Setup edits each included app's hook settings, adds one LaunchAgent, and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)). Old sessions are deleted from the bucket after 90 days by default.
 
 ## Commands and docs
 
