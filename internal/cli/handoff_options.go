@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -108,6 +109,10 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		}
 	}
 	switch {
+	// An argument of only spaces names nothing, and must not stand for the
+	// no selector that lets --to take the calling agent's own session.
+	case opts.sessionID != "" && strings.TrimSpace(opts.sessionID) == "":
+		return "the session ID or title is empty"
 	// With --to the command decides after parsing: the calling agent's own
 	// session, else the picker on a terminal (runHandoffCommand).
 	case selectors == 0 && !interactive && opts.to == "":
@@ -133,7 +138,7 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 	}
 }
 
-// validateHandoffSourceOptions checks --source, --format, and the session ID.
+// validateHandoffSourceOptions checks --source and --format.
 func validateHandoffSourceOptions(opts handoffOptions) string {
 	if !slices.Contains([]string{"auto", "local", "archive"}, opts.source) {
 		return fmt.Sprintf("--source must be auto, local, or archive, not %q", opts.source)
@@ -144,23 +149,16 @@ func validateHandoffSourceOptions(opts handoffOptions) string {
 	if opts.file != "" && opts.source == "archive" {
 		return "--file reads a local transcript; --source archive does not apply"
 	}
-	// The ID names local files and bucket keys; only the characters archive
-	// session IDs are made of are accepted, so it cannot reach outside them.
-	if opts.sessionID != "" {
-		if _, err := archive.MetadataObjectKey("claude", opts.sessionID); err != nil {
-			return fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", opts.sessionID)
-		}
-	}
 	return ""
 }
 
 // noSelectorMessage is the usage error for a handoff with nothing selected
 // and no terminal to pick on.
-const noSelectorMessage = "name a session ID, --latest, or --file PATH; run on a terminal to pick a session"
+const noSelectorMessage = "name a session ID or title, --latest, or --file PATH; run on a terminal to pick a session"
 
 // noCurrentSessionMessage is noSelectorMessage for --to, which can also take
 // the agent session it runs in.
-const noCurrentSessionMessage = "name a session ID, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
+const noCurrentSessionMessage = "name a session ID or title, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
 
 func validateHandoffLaunchOptions(to, output, format string, noPreamble bool) string {
 	switch {
