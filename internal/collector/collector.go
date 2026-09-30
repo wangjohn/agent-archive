@@ -75,7 +75,14 @@ type Options struct {
 	// CursorDatabase is Cursor's state.vscdb, which cursor-sqlite sessions
 	// are read from. Empty means the one under the user's home directory.
 	CursorDatabase string
+	// RepoKey returns archive.RepoKey of the git repository at a project
+	// root, or "" when it has none. It is asked for a registration that
+	// carries no key (one from before the field), once per project root per
+	// pass. Nil runs git (internal/gitremote); tests set it.
+	RepoKey func(root string) string
 
+	// repoKeys is the pass's memory of RepoKey's answers, set by Run.
+	repoKeys *repoKeyCache
 	// cursorPass is the pass's Reader of Cursor's database, set by Run.
 	cursorPass *cursorstore.Reader
 	// afterCursorPass, set by a test, runs as a pass ends with how many
@@ -194,6 +201,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// behind goes on every pass, whether or not this one reads Cursor.
 	cursorstore.RemoveStaleSnapshots()
 	subagents := materializeSubagentCandidates(local, opts, now)
+	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
 		ctx:              ctx,
 		local:            local,

@@ -168,6 +168,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		Progress:             pass.progress,
 		Stop:                 stop,
 		CursorDatabase:       env.cursorDatabase(),
+		RepoKey:              env.repoKey,
 	})
 	if err != nil {
 		return result, err
