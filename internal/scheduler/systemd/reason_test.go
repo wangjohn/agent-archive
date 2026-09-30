@@ -15,7 +15,7 @@ import (
 func TestUnknownJobsSayWhatIsWrong(t *testing.T) {
 	t.Parallel()
 	site, ref := scheduler.Site{UserHome: t.TempDir()}, scheduler.Ref("agent-archive-collector")
-	const manual = "systemctl --user disable --now agent-archive-collector.timer && systemctl --user stop agent-archive-collector.service"
+	const manual = "systemctl --user stop agent-archive-collector.timer agent-archive-collector.service"
 	version := func(text string, then scheduler.Runner) scheduler.Runner {
 		return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if len(args) == 1 && args[0] == "--version" {

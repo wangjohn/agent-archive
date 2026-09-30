@@ -148,7 +148,11 @@ In Go tests, everything goes through injection:
   with states put in and read back by `systemctl` itself) in
   `internal/scheduler/systemd` and `TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt`
   (the real `setup`, the manager's timer starting the job's program, the real
-  `uninstall`) in `internal/cli`. Both skip unless
+  `uninstall`) in `internal/cli`, with
+  `TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob`
+  (`uninstall --skip-scheduler` with the manager out of reach, then the command
+  it prints, which must stop the timer the manager still runs after the unit
+  files are gone). They skip unless
   `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that

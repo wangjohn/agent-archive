@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // uninstall runs uninstall --yes with args and returns the exit code and
@@ -29,7 +30,7 @@ func (l *linuxInstall) hooksInstalled() bool {
 
 // manualStop is the command that stops the job by hand.
 func (l *linuxInstall) manualStop() string {
-	return "systemctl --user disable --now " + l.ref() + ".timer && systemctl --user stop " + l.ref() + ".service"
+	return "systemctl --user stop " + l.ref() + ".timer " + l.ref() + ".service"
 }
 
 // Without --skip-scheduler, an unreachable scheduler stops uninstall before it
@@ -84,7 +85,7 @@ func TestLinuxUninstallSkippingTheSchedulerRemovesWhatItCanAndSaysSo(t *testing.
 	}
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, want := range []string{
-		"Not verified stopped: the systemd job " + l.ref() + " may still be running, because the systemd user manager cannot be reached (this session has no user bus).",
+		"Not verified stopped: systemd's " + l.ref() + " job may still be running, because the systemd user manager cannot be reached (this session has no user bus).",
 		"To stop it, run this from a session that can reach systemd: " + l.manualStop(),
 	} {
 		if !strings.Contains(output, want) {
@@ -133,7 +134,7 @@ func TestLinuxUninstallSkippingTheSchedulerAndDeletingLocalData(t *testing.T) {
 	if _, err := os.Stat(l.home + "/config.json"); !os.IsNotExist(err) {
 		t.Errorf("the configuration is left after --delete-local-data (%v)", err)
 	}
-	for _, want := range []string{"Not verified stopped: the systemd job " + l.ref(), "To stop it, run this from a session that can reach systemd: " + l.manualStop()} {
+	for _, want := range []string{"Not verified stopped: systemd's " + l.ref() + " job", "To stop it, run this from a session that can reach systemd: " + l.manualStop()} {
 		if !strings.Contains(output, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, output)
 		}
@@ -223,7 +224,7 @@ func TestMacOSUninstallSkippingTheSchedulerSaysSo(t *testing.T) {
 		t.Fatalf("uninstall --skip-scheduler: exit %d\n%s", code, output)
 	}
 	for _, want := range []string{
-		"Not verified stopped: the launchd job " + r.ownLabel() + " may still be running, because launchctl did not say whether the job is loaded.",
+		"Not verified stopped: launchd's " + r.ownLabel() + " job may still be running, because launchctl did not say whether the job is loaded.",
 		"To stop it, use launchctl from a session that can reach launchd.",
 		"Uninstall complete, except that the background collector was not verified stopped (see above).",
 	} {
@@ -280,6 +281,36 @@ func TestUninstallSkippingTheSchedulerCountsAStopThatWorked(t *testing.T) {
 	out.Reset()
 	if code := Run([]string{"uninstall", "--yes", "--skip-scheduler"}, strings.NewReader(""), &out, &errOut, env); code != 0 || !strings.Contains(out.String(), "because launchctl bootout: exit status 5") {
 		t.Fatalf("uninstall --skip-scheduler: exit %d\n%s", code, &out)
+	}
+}
+
+// A job the scheduler could not describe, or stop, that the attempt to stop it
+// finds is another installation's (the manager answered the second time) is
+// left running with its definition, as without the flag: it is not reported
+// unverified, and its files stay.
+func TestUninstallSkippingTheSchedulerLeavesAJobThatTurnsOutToBeAnotherInstallations(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"unknown", "loaded"} {
+		home, userHome := t.TempDir(), t.TempDir()
+		env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+		setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()), 0)
+		fake := fakeSched(env)
+		ref := env.installation(home, userHome).ref()
+		plist := launchd.PlistPath(userSite(userHome), ref)
+		fake.set(ref, state)
+		fake.beforeUnload = func(scheduler.Ref) error {
+			return &scheduler.NotOwnedError{Words: fake.Words(), Problem: scheduler.Problem{Kind: scheduler.ProblemNotOwned, Ref: ref, Expected: plist, LoadedFrom: "/elsewhere/" + string(ref) + ".plist"}}
+		}
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"uninstall", "--yes", "--skip-scheduler"}, strings.NewReader(""), &out, &errOut, env); code != 0 {
+			t.Fatalf("%s: uninstall --skip-scheduler: exit %d\n%s%s", state, code, &out, &errOut)
+		}
+		if !strings.Contains(out.String(), "Left launchd's "+string(ref)+" job running") || strings.Contains(out.String(), "Not verified stopped") || !strings.Contains(out.String(), "Uninstall complete. Remote archives") {
+			t.Errorf("%s: uninstall says:\n%s", state, &out)
+		}
+		if _, err := os.Stat(plist); err != nil {
+			t.Errorf("%s: uninstall removed the definition of a job it left running: %v", state, err)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package systemd_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -94,6 +95,16 @@ func (m *realManager) foreignUnits() []string {
 		found = append(found, matches...)
 	}
 	return found
+}
+
+// refuseForeignUnits is an error when the manager's unit directories hold units
+// of the collector's names already (an installation of agent-archive), which a
+// run would replace and its sweep remove.
+func (m *realManager) refuseForeignUnits() error {
+	if found := m.foreignUnits(); len(found) > 0 {
+		return fmt.Errorf("%v: this machine has agent-archive units, and the real-manager run would remove them; run it on a disposable machine", found)
+	}
+	return nil
 }
 
 // sweep stops and removes every unit of the collector's names, and every link
@@ -321,14 +332,52 @@ func newRealManager(t *testing.T, home string) *realManager {
 	t.Helper()
 	m := &realManager{t: t, home: home}
 	m.sched = systemd.Scheduler{Run: m.run}
-	if found := m.foreignUnits(); len(found) > 0 {
-		t.Fatalf("%v: this machine has agent-archive units, and the real-manager run would remove them; run it on a disposable machine", found)
+	if err := m.refuseForeignUnits(); err != nil {
+		t.Fatal(err)
 	}
 	if out, err := m.sys("show-environment"); err != nil {
 		t.Fatalf("there is no systemd user manager to talk to (systemctl --user show-environment: %v: %s). Run loginctl enable-linger, and set XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS", err, out)
 	}
 	t.Cleanup(m.sweep)
 	return m
+}
+
+// The run over the real manager refuses a machine with units of the collector's
+// names in either directory the manager reads, which its sweep would remove,
+// and skips without its variable set to 1. Neither asks the manager anything.
+func TestTheRealManagerRunIsGuarded(t *testing.T) {
+	home := t.TempDir()
+	m := &realManager{t: t, home: home}
+	if err := m.refuseForeignUnits(); err != nil {
+		t.Fatalf("a home with no units: %v", err)
+	}
+	for _, dir := range []string{m.unitDir(), m.controlDir()} {
+		must := func(err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		must(os.MkdirAll(dir, 0o755))
+		unit := filepath.Join(dir, "agent-archive-collector-0123456789ab.timer")
+		must(os.WriteFile(unit, nil, 0o644))
+		if err := m.refuseForeignUnits(); err == nil || !strings.Contains(err.Error(), unit) {
+			t.Errorf("a home with %s: %v, want a refusal that names it", unit, err)
+		}
+		must(os.Remove(unit))
+	}
+
+	for _, value := range []string{"", "0", "true"} {
+		t.Setenv(realEnv, value)
+		var skipped bool
+		t.Run("gate", func(t *testing.T) {
+			defer func() { skipped = t.Skipped() }()
+			realHome(t)
+		})
+		if !skipped {
+			t.Errorf("%s=%q runs the tests over the real manager", realEnv, value)
+		}
+	}
 }
 
 // The conformance suite, over the real user manager: what the fake systemctl

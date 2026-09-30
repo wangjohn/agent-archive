@@ -267,15 +267,21 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 				return nil, nil, errors.New(uninstallUnknownMessage(words, problem))
 			}
 			// The scheduler said it cannot tell; asking it to stop the job
-			// is the attempt, and whether it worked is the answer.
-			if err := env.unloadJob(userHome, ref); err != nil {
+			// is the attempt, and whether it worked is the answer. One it
+			// answers the second time is another installation's is left.
+			err := env.unloadJob(userHome, ref)
+			if notOwned(err) {
+				leftAnotherInstallation(out, words, ref, status)
+				continue
+			}
+			if err != nil {
 				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: cmp.Or(problem.Reason, words.Tool+" did not say whether the job is loaded"), manual: problem.Manual})
 			}
 			remove = append(remove, status.Paths...)
 			continue
 		}
 		if status.State == scheduler.AnotherInstallation {
-			terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+			leftAnotherInstallation(out, words, ref, status)
 			continue
 		}
 		if jobActive(status.State) {
@@ -283,12 +289,29 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 				if !skipScheduler {
 					return nil, nil, fmt.Errorf("stop collector: %w", err)
 				}
+				if notOwned(err) {
+					leftAnotherInstallation(out, words, ref, status)
+					continue
+				}
 				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: err.Error()})
 			}
 		}
 		remove = append(remove, status.Paths...)
 	}
 	return remove, unverified, nil
+}
+
+// leftAnotherInstallation says that the job ref names was left running, with
+// its definition, because the scheduler runs it from another installation's.
+func leftAnotherInstallation(out io.Writer, words scheduler.Words, ref scheduler.Ref, status scheduler.Status) {
+	terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+}
+
+// notOwned reports whether err is the scheduler's refusal to stop a job it
+// runs from another installation's definition.
+func notOwned(err error) bool {
+	var notOwned *scheduler.NotOwnedError
+	return errors.As(err, &notOwned)
 }
 
 // uninstallUnknownMessage says that uninstall stops because the scheduler
@@ -312,7 +335,7 @@ func uninstallUnknownMessage(words scheduler.Words, problem scheduler.Problem) s
 func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 	for _, job := range jobs {
 		words := job.words
-		terminal.Printf(out, "Not verified stopped: the %s job %s may still be running, because %s.\n", words.Manager, job.ref, job.why)
+		terminal.Printf(out, "Not verified stopped: %s's %s job may still be running, because %s.\n", words.Manager, job.ref, job.why)
 		if job.manual != "" {
 			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
 		} else {
