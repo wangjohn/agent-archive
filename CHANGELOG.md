@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup installs a `/handoff` skill for Claude Code
+  (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/handoff/SKILL.md`) that runs
+  `agent-archive handoff --to <agent>` from inside the agent. Setup leaves a
+  file it did not write, uninstall removes only its own, and
+  `status --json` lists them in `agent_commands`.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open

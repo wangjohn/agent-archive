@@ -160,6 +160,21 @@ Piped or redirected output never asks, so
 `codex "$(agent-archive handoff --latest)"` and `--output` work byte for byte
 as before.
 
+## From inside an agent: /handoff
+
+Setup installs a `handoff` skill for the apps it sets up:
+`~/.claude/skills/handoff/SKILL.md` (in `$CLAUDE_CONFIG_DIR` when set) for
+Claude Code, and `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor.
+In Claude Code, `/handoff codex` runs `agent-archive handoff --to codex` for
+the current session; in Codex, ask for `$handoff` (or pick it from `/skills`)
+and name the agent. With no agent named, the skill picks another agent than
+the one you are in. Each file carries a marker line: setup replaces and
+uninstall removes only a file with it, so delete that line to keep an edited
+copy. A file already at that path without it is left alone, and setup says
+so. An installation with `AGENT_ARCHIVE_HOME` set runs the command with it,
+and leaves the skill of another installation sharing the same home folder
+alone. `agent-archive status --verbose` lists the installed files.
+
 ## Where the session comes from
 
 With no session selector, `handoff` opens a numbered session picker when

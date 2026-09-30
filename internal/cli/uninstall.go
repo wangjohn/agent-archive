@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -112,12 +113,13 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 	}
 	in := env.installation(home, userHome)
-	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), in.owner(), installedApps(cfg, found))
+	hookFiles := env.installedHookFiles(userHome, cfg)
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found))
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(env.installedHookFiles(userHome, cfg), allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
@@ -140,6 +142,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 		return err
 	}
+	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
 	for _, plist := range plists {
 		if kept[plist] {
 			continue
@@ -384,6 +387,24 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 		}
 	}
 	return changes, skipped, nil
+}
+
+// planUninstallFiles is planUninstallHooks for the hook files setup
+// installed into (files) and their legacy paths, followed by removing the
+// /handoff command files setup wrote. A file at one of their paths that is
+// not setup's stays, with a line in skipped.
+func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
+	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
+		return nil, nil, err
+	}
+	removals, kept, err := agentcommands.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, path := range kept {
+		skipped = append(skipped, fmt.Sprintf("Kept %s: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).", displayPath(path, userHome)))
+	}
+	return append(changes, removals...), skipped, nil
 }
 
 // deleteCredentialRefs deletes every referenced Keychain item it can. It
