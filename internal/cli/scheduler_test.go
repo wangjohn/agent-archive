@@ -156,13 +156,13 @@ func TestEveryJournaledPlistIsOneJobAtOneSite(t *testing.T) {
 		for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
 			sched.sites = nil
 			sched.forget()
-			if got := env.jobState(userHome, plist); got != "loaded" {
+			if got := env.jobStatus(userHome, jobRef(plist)).State; got != scheduler.Loaded {
 				t.Errorf("$HOME %q: jobState(%s) = %q", userHome, plist, got)
 			}
 			if got := env.launchd().JobState(plist); got != "loaded" {
 				t.Errorf("$HOME %q: the journal's JobState(%s) = %q", userHome, plist, got)
 			}
-			must(t, env.unloadJob(userHome, plist))
+			must(t, env.unloadJob(userHome, jobRef(plist)))
 			must(t, env.launchd().Unload(plist))
 			ref := string(jobRef(plist))
 			if want := []string{"state " + ref, "state " + ref, "unload " + ref, "unload " + ref}; !slices.Equal(sched.all(), want) {
@@ -182,9 +182,9 @@ type siteRecorder struct {
 	sites []string
 }
 
-func (s *siteRecorder) JobState(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.JobState {
+func (s *siteRecorder) Inspect(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.Status {
 	s.sites = append(s.sites, site.UserHome)
-	return s.fakeScheduler.JobState(ctx, site, ref)
+	return s.fakeScheduler.Inspect(ctx, site, ref)
 }
 
 func (s *siteRecorder) Load(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {

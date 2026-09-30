@@ -126,7 +126,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	}
 	// A bare Env{} reaches launchd through newScheduler.
 	site, ref := scheduler.Site{UserHome: "/nonexistent"}, scheduler.Ref("com.agent-archive.collector")
-	panics("launchctl print", func() { Env{}.scheduler().JobState(context.Background(), site, ref) })
+	panics("launchctl print", func() { Env{}.scheduler().Inspect(context.Background(), site, ref) })
 	panics("launchctl bootstrap", func() { _ = Env{}.scheduler().Load(context.Background(), site, ref) })
 	panics("launchctl bootout", func() { _ = Env{}.scheduler().Unload(context.Background(), site, ref) })
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
@@ -157,7 +157,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if _, err := env.executable(); err == nil {
 		t.Error("testEnv's Executable must fail unless a test sets one")
 	}
-	if got := env.jobState("/nonexistent", "/nonexistent/x.plist"); got != "missing" {
+	if got := env.jobStatus("/nonexistent", "x").State; got != scheduler.Missing {
 		t.Errorf("testEnv job state = %q", got)
 	}
 }

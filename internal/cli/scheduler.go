@@ -2,9 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
@@ -23,6 +27,54 @@ var newScheduler = host.Default
 // jobRef is the job the plist at path defines.
 func jobRef(plist string) scheduler.Ref { return scheduler.Ref(launchd.Label(plist)) }
 
+// collectorJob is the background collector as a scheduler defines it: the
+// executable running `_collect` every minute, and once at load, for the data
+// directory home, with the environment its storage needs (which never holds
+// a credential: see collectorEnvironment).
+func collectorJob(executable, home string, environment map[string]string) scheduler.JobSpec {
+	return scheduler.JobSpec{Executable: executable, Args: []string{"_collect"}, DataHome: home, Env: environment, Interval: time.Minute, RunAtLoad: true}
+}
+
+// planJob is the plan that defines spec as this installation's job at the
+// site of userHome. It reads nothing.
+func (in installation) planJob(userHome string, spec scheduler.JobSpec) (scheduler.Plan, error) {
+	return in.definer().Plan(userSite(userHome), in.schedulerInstallation(), spec)
+}
+
+// artifactChanges are the changes a plan makes to disk, as the setup journal
+// records them: each artifact's file as it is now, and what it becomes. The
+// port's artifacts are files alone.
+func artifactChanges(artifacts []scheduler.Artifact) ([]hooks.Change, error) {
+	if len(artifacts) == 0 {
+		return nil, errors.New("the scheduler defined the job with nothing to write")
+	}
+	changes := make([]hooks.Change, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		path, ok := artifact.Path()
+		if !ok {
+			return nil, fmt.Errorf("cannot write %s: only files are defined", artifact.ID)
+		}
+		before, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		changes = append(changes, hooks.Change{Path: path, Before: before, After: artifact.After, Existed: err == nil, Mode: artifact.Mode})
+	}
+	return changes, nil
+}
+
+// problemOf is the facts a status gives for a state that blocks a command,
+// empty when the scheduler gave none.
+func problemOf(status scheduler.Status) scheduler.Problem {
+	if status.Problem == nil {
+		return scheduler.Problem{}
+	}
+	return *status.Problem
+}
+
+// jobActive is whether a job is loaded, whether or not it is running now.
+func jobActive(state scheduler.JobState) bool { return setupjournal.JobActive(string(state)) }
+
 // scheduler is e's job scheduler: Env.Scheduler, or this system's own.
 func (e Env) scheduler() scheduler.Scheduler {
 	if e.Scheduler != nil {
@@ -39,15 +91,25 @@ func userSite(userHome string) scheduler.Site {
 	return scheduler.Site{UserHome: filepath.Clean(userHome)}
 }
 
-// jobState is the state of the job plist defines, for callers that hold the
-// plist's path.
-func (e Env) jobState(userHome, plist string) string {
-	return string(e.scheduler().JobState(context.Background(), userSite(userHome), jobRef(plist)))
+// defaultPATH is the PATH the scheduler gives a job whose definition sets
+// none.
+func (e Env) defaultPATH() string { return e.scheduler().DefaultPATH() }
+
+// jobStatus is what the scheduler and the disk say about the job ref names
+// (see scheduler.Inspector.Inspect).
+func (e Env) jobStatus(userHome string, ref scheduler.Ref) scheduler.Status {
+	return e.scheduler().Inspect(context.Background(), userSite(userHome), ref)
 }
 
-// unloadJob stops the job plist defines (see scheduler.Scheduler.Unload).
-func (e Env) unloadJob(userHome, plist string) error {
-	return e.scheduler().Unload(context.Background(), userSite(userHome), jobRef(plist))
+// unloadJob stops the job ref names (see scheduler.Controller.Unload).
+func (e Env) unloadJob(userHome string, ref scheduler.Ref) error {
+	return e.scheduler().Unload(context.Background(), userSite(userHome), ref)
+}
+
+// jobDefinition is what the definition of the job ref names says, without
+// asking the scheduler about the job (see scheduler.Inspector.Definition).
+func (e Env) jobDefinition(userHome string, ref scheduler.Ref) scheduler.Status {
+	return e.scheduler().Definition(userSite(userHome), ref)
 }
 
 // launchd is e's scheduler as internal/setupjournal drives it: the same one
@@ -85,7 +147,7 @@ func (l envLaunchd) JobState(plist string) string {
 	if err != nil {
 		return string(scheduler.Unknown)
 	}
-	return string(l.scheduler.JobState(context.Background(), site, ref))
+	return string(l.scheduler.Inspect(context.Background(), site, ref).State)
 }
 
 func (l envLaunchd) Load(plist string) error {
