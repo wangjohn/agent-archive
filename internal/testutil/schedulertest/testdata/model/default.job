@@ -1,0 +1,7 @@
+job=model-default
+program=/Users/test/bin/agent-archive
+args=_collect
+data=/Users/test/.local/share/agent-archive
+interval=1m0s
+run_at_load=true
+env.PATH=/usr/local/bin:/usr/bin:/bin

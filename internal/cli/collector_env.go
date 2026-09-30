@@ -51,9 +51,6 @@ var collectorHelperSettings = []string{"AWS_VAULT_BACKEND", "AWS_VAULT_KEYCHAIN_
 // backend and 1Password's configuration.
 var collectorHelperDirs = []string{"AWS_VAULT_FILE_DIR", "OP_CONFIG_DIR"}
 
-// launchdPath is the PATH launchd gives a job whose plist sets none.
-const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
-
 type collectorEnvironmentLookup interface {
 	lookupEnv(string) (string, bool)
 }
@@ -63,6 +60,9 @@ type collectorEnvironmentLookup interface {
 type collectorEnvironmentSource interface {
 	collectorEnvironmentLookup
 	absolutePath(string) string
+	// defaultPATH is the PATH the scheduler gives a job whose definition sets
+	// none.
+	defaultPATH() string
 }
 
 // collectorEnvironment is what the collector's LaunchAgent sets besides
@@ -118,7 +118,7 @@ func buildCollectorEnvironment(e collectorEnvironmentSource, storage credentials
 		}
 	}
 	shellPath, _ := e.lookupEnv("PATH")
-	environment["PATH"] = collectorPath(shellPath)
+	environment["PATH"] = collectorPath(shellPath, e.defaultPATH())
 	return environment
 }
 
@@ -160,7 +160,7 @@ func carriesCredentials(value string) bool {
 // directory, not setup's), is not a directory, or is writable by every
 // account: the LaunchAgent runs every minute, so a program another account
 // planted there would run as this one.
-func collectorPath(shellPath string) string {
+func collectorPath(shellPath, defaultPATH string) string {
 	var entries []string
 	for _, entry := range filepath.SplitList(shellPath) {
 		entry = filepath.Clean(entry)
@@ -172,7 +172,7 @@ func collectorPath(shellPath string) string {
 		}
 		entries = append(entries, entry)
 	}
-	for _, entry := range filepath.SplitList(launchdPath) {
+	for _, entry := range filepath.SplitList(defaultPATH) {
 		if !slices.Contains(entries, entry) {
 			entries = append(entries, entry)
 		}
@@ -214,7 +214,7 @@ func awsFiles(userHome string, environment func(string) (string, bool)) (configF
 // variable naming a file that is gone, or a credential_process whose
 // program is not on the collector's PATH. It reads profile settings only;
 // it never runs credential_process or retrieves credentials.
-func collectorEnvironmentProblems(storage credentials.Config, environment map[string]string, userHome string) []string {
+func collectorEnvironmentProblems(storage credentials.Config, environment map[string]string, userHome, defaultPATH string) []string {
 	if storage.Provider != credentials.ProviderS3 || storage.AWSProfile == "" {
 		return nil
 	}
@@ -233,7 +233,7 @@ func collectorEnvironmentProblems(storage credentials.Config, environment map[st
 	if program == "" {
 		return problems
 	}
-	path := cmp.Or(environment["PATH"], launchdPath)
+	path := cmp.Or(environment["PATH"], defaultPATH)
 	if !programFound(program, path, userHome) {
 		problems = append(problems, fmt.Sprintf("AWS profile %q gets its credentials by running %s, which the background collector cannot find on its PATH (%s).", storage.AWSProfile, program, path))
 	}
@@ -340,7 +340,7 @@ func (e Env) awsFilesDrift(storage credentials.Config, environment map[string]st
 // is about to install could not load storage's profile (see
 // collectorEnvironmentProblems).
 func warnCollectorEnvironment(p *prompter, storage credentials.Config, userHome string, env Env) {
-	for _, problem := range collectorEnvironmentProblems(storage, env.collectorEnvironment(storage), userHome) {
+	for _, problem := range collectorEnvironmentProblems(storage, env.collectorEnvironment(storage), userHome, env.defaultPATH()) {
 		p.warn(problem, "Scheduled uploads will fail until it can; agent-archive sync from this shell still works. Run setup from a shell where the profile works without aliases or shell functions.")
 	}
 	if left := env.collectorEnvironmentLeftOut(storage); len(left) > 0 {
