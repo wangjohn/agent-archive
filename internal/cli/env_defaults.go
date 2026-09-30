@@ -31,9 +31,25 @@ func detectHarnesses(files hooks.Files) []string {
 
 // runLaunchctl runs launchctl with args. Tests replace it; nothing else
 // shells out to launchctl.
-var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+var runLaunchctl = execLaunchctl
+
+// execLaunchctl is the launchctl on PATH, in a process group of its own (a
+// terminal's Ctrl-C reaches setup, which decides what to do, not launchctl
+// halfway through changing a job).
+func execLaunchctl(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "launchctl", args...)
+	ownProcessGroup(cmd)
+	// A child that outlives the kill must not keep this waiting on its pipe.
+	cmd.WaitDelay = 2 * time.Second
+	return cmd.CombinedOutput()
 }
+
+// launchctlChangeTimeout bounds launchctl bootstrap and bootout. Setup --refresh
+// absorbs Ctrl-C and SIGTERM while it stops and starts the job, so a launchctl
+// that hangs must end on its own: the transaction then fails and rolls back
+// (or, when launchctl stays hung, leaves its journal for the next setup),
+// instead of a process nothing but SIGKILL can stop.
+var launchctlChangeTimeout = 30 * time.Second
 
 // loadLaunchAgent loads a just-installed LaunchAgent so scheduled
 // collection starts immediately rather than waiting for the next login.
@@ -41,7 +57,9 @@ var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
 // installs); a failure here is reported as an incomplete setup, with
 // rollback and a retry path.
 func loadLaunchAgent(plistPath string) error {
-	output, err := runLaunchctl(context.Background(), "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
+	ctx, cancel := context.WithTimeout(context.Background(), launchctlChangeTimeout)
+	defer cancel()
+	output, err := runLaunchctl(ctx, "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
 	if err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w: %s", err, output)
 	}
@@ -65,7 +83,9 @@ func unloadLaunchAgent(plistPath string) error {
 	default:
 		return fmt.Errorf("cannot confirm which plist launchd's %s job was loaded from; it was left as it is", launchLabel(plistPath))
 	}
-	output, err := runLaunchctl(context.Background(), "bootout", serviceTarget(plistPath))
+	ctx, cancel := context.WithTimeout(context.Background(), launchctlChangeTimeout)
+	defer cancel()
+	output, err := runLaunchctl(ctx, "bootout", serviceTarget(plistPath))
 	if err != nil {
 		return fmt.Errorf("launchctl bootout: %w: %s", err, output)
 	}
