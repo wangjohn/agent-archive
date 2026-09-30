@@ -16,8 +16,10 @@
 # With no arguments both platforms are built, which is what a release and a
 # local full build want. Naming one builds only that platform, for a runner
 # that cannot build the other (the release workflow builds Linux on Linux).
-# SHA256SUMS lists all four binaries, so it is written only when both
-# platforms were built; the publish job recomputes it after signing anyway.
+# Every run starts by clearing dist/, so a partial build (`linux` or
+# `darwin`) removes the other platform's binaries and any SHA256SUMS from an
+# earlier run. SHA256SUMS lists all four binaries, so only a full build
+# writes it; the publish job recomputes it after signing anyway.
 # VERSION defaults to "dev" (a build that reports `agent-archive --version`
 # as "dev-<commit>", never suitable for release).
 set -euo pipefail

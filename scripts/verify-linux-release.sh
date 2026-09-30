@@ -28,16 +28,20 @@ fail() {
   exit 1
 }
 
-# 0 if the ELF binary is statically linked, 1 if not, 2 if this machine has no
-# tool to tell. Process substitution rather than a pipe throughout: with
-# pipefail, a grep that stops reading early would fail the pipeline.
+# 0 if the file is a statically linked ELF binary, 1 if not (including a file
+# that is not ELF at all), 2 if this machine has no tool to tell. Process
+# substitution rather than a pipe throughout: with pipefail, a grep that
+# stops reading early would fail the pipeline.
 statically_linked() {
   if command -v readelf >/dev/null 2>&1; then
+    # Not an ELF file at all (a Mach-O binary, a script) prints nothing on
+    # stdout, which the INTERP search below would read as "static".
+    readelf -h "$1" >/dev/null 2>&1 || return 1
     grep -q INTERP < <(readelf -lW "$1") && return 1
     return 0
   fi
   if command -v file >/dev/null 2>&1; then
-    grep -q 'statically linked' < <(file "$1") && return 0
+    grep -q 'ELF.*statically linked' < <(file "$1") && return 0
     return 1
   fi
   return 2

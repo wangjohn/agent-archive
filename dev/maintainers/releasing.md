@@ -136,7 +136,8 @@ apply to them.
   `sha256sum -c --ignore-missing SHA256SUMS` (Linux) or
   `shasum -a 256 -c --ignore-missing SHA256SUMS` (macOS, whose `shasum`
   accepts the same flag), then run the `gh attestation verify` command above.
-  Do this before running a downloaded Linux binary.
+  Do this before running a downloaded Linux binary. A downloaded release
+  asset is not executable, so `chmod +x` it after the checks pass.
 
 ## Versions
 

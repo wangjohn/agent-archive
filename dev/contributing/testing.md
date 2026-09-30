@@ -10,6 +10,7 @@ golangci-lint run --disable=revive                       # v2.14.0; the blocking
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
 go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...     # only the exceptions listed in test.yml
 python3 scripts/test_release_signing.py
+python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
