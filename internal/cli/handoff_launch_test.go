@@ -42,7 +42,7 @@ func TestHandoffLaunchesLocalAgentWithRetrievalInstructions(t *testing.T) {
 		got = spec
 		return nil
 	}
-	out, errOut, code := runHandoff(t, f.env, f.id, "--to", "claude")
+	out, errOut, code := runPicker(t, f.env, "", f.id, "--to", "claude")
 	if code != 0 || got.Binary == "" || out != "" || !strings.Contains(errOut, "launching local claude") {
 		t.Fatalf("code=%d spec=%+v stdout=%q stderr=%q", code, got, out, errOut)
 	}
@@ -111,7 +111,7 @@ func TestHandoffLaunchLatestIncludesCallingSession(t *testing.T) {
 		called = true
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, "--latest", "--harness", "codex", "--to", "claude")
+	_, errOut, code := runPicker(t, f.env, "", "--latest", "--harness", "codex", "--to", "claude")
 	if code != 0 || !called || !strings.Contains(errOut, f.id) {
 		t.Fatalf("code=%d called=%v stderr=%q", code, called, errOut)
 	}
@@ -128,7 +128,7 @@ func TestHandoffLaunchFailureKeepsHandoffFile(t *testing.T) {
 		path = handoffPathFromPrompt(t, spec)
 		return errors.New("agent failed")
 	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
+	_, _, code := runPicker(t, f.env, "", f.id, "--to", "codex")
 	if code != 1 || path == "" {
 		t.Fatalf("code=%d path=%q", code, path)
 	}
@@ -153,7 +153,7 @@ func TestHandoffLaunchDoesNotFallBackToArchive(t *testing.T) {
 		t.Error("launched with no local source")
 		return nil
 	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
+	_, _, code := runPicker(t, f.env, "", f.id, "--to", "codex")
 	if code == 0 {
 		t.Fatal("launched from archive after local source disappeared")
 	}
@@ -181,7 +181,7 @@ func TestHandoffLaunchPassesConfiguredAndCommandLineArguments(t *testing.T) {
 		got = spec
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "codex", "--", "--search", "-c", "x=1")
+	_, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex", "--", "--search", "-c", "x=1")
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
@@ -203,7 +203,7 @@ func TestHandoffLaunchMissingAgentLeavesNoFile(t *testing.T) {
 		t.Error("launched without an executable")
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "cursor")
+	_, errOut, code := runPicker(t, f.env, "", f.id, "--to", "cursor")
 	if code != 1 || !strings.Contains(errOut, "could not find agent or cursor-agent: install Cursor's CLI or put it on PATH") {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
@@ -245,7 +245,7 @@ func TestHandoffLaunchWithoutSetupUsesPrivateTemporaryFile(t *testing.T) {
 		}
 		return nil
 	}
-	_, errOut, code := runHandoff(t, env, "--file", transcript, "--harness", "claude", "--to", "claude")
+	_, errOut, code := runPicker(t, env, "", "--file", transcript, "--harness", "claude", "--to", "claude")
 	if code != 0 || path == "" {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
@@ -344,5 +344,45 @@ func TestLaunchHandoffDirectoriesArePrunedAndUninstalled(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); !os.IsNotExist(err) {
 		t.Fatalf("launch handoff survived uninstall: %v", err)
+	}
+}
+
+// The prune removes an old launch directory whole, but never follows a
+// symlink: not one named like a launch directory, and not one inside a
+// launch directory. A saved handoff younger than 7 days is kept.
+func TestPruneHandoffsDoesNotFollowSymlinks(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := filepath.Join(home, handoffDir)
+	elsewhere := t.TempDir()
+	precious := filepath.Join(elsewhere, "precious.md")
+	if err := os.MkdirAll(filepath.Join(dir, "launch-real"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{precious, filepath.Join(dir, "launch-real", "handoff.md"), filepath.Join(dir, "old.md"), filepath.Join(dir, "young.md")} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, link := range []string{filepath.Join(dir, "launch-link"), filepath.Join(dir, "launch-real", "inner")} {
+		if err := os.Symlink(elsewhere, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Everything just made is 8 days old at prune time except young.md.
+	now := time.Now().Add(8 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "young.md"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	pruneHandoffs(home, now)
+	for _, gone := range []string{"launch-link", "launch-real", "old.md"} {
+		if _, err := os.Lstat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s not pruned: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{precious, filepath.Join(dir, "young.md")} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s removed: %v", kept, err)
+		}
 	}
 }

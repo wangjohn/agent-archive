@@ -139,11 +139,13 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 func TestHandoffWithoutIDUsesShowPicker(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, true)
-	stdin := strings.NewReader("1\n")
+	stdin := strings.NewReader("1\np\n")
 	var out, errOut bytes.Buffer
 	f.env.IsTerminal = func(stream any) bool {
 		return stream == any(stdin) || stream == any(&out)
 	}
+	var pager string
+	f.env.RunPager = copyPager(&pager)
 	if code := Run([]string{"handoff", "--harness", "codex"}, stdin, &out, &errOut, f.env); code != 0 {
 		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // noEnv is an empty process environment.
@@ -60,6 +61,14 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
 		Interrupts:           noInterrupts,
+		OpenTerminal: func(spec termlaunch.Spec) (string, error) {
+			t.Errorf("unexpected new terminal for %q: set Env.OpenTerminal", spec.Argv)
+			return "", errors.New("no terminal in this test")
+		},
+		Clipboard: func([]byte) error {
+			t.Error("unexpected clipboard write: set Env.Clipboard")
+			return errors.New("no clipboard in this test")
+		},
 	}
 }
 

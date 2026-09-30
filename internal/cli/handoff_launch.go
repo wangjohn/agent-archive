@@ -14,29 +14,45 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
-// launchPreparedHandoff starts opts.to in this terminal with the filtered
-// record, and returns when the agent exits.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
+// launchPreparedHandoff starts dest with the filtered record: in this
+// terminal when here is set, returning when the agent exits, else in a new
+// terminal window or tab, returning once it opens.
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, here bool, opts handoffOptions, home string, stdin, answers io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
 	dir, err := launchDir(opts, env)
 	if err != nil {
 		return err
 	}
-	spec, err := prepareLaunch(record, h, target, handoffDestination(opts.to), dir, opts, home, stdin, stderr, env)
+	spec, err := prepareLaunch(record, h, target, dest, dir, opts, home, stdin, answers, stderr, env)
 	if err != nil {
 		return err
 	}
-	terminal.Printf(stderr, "handoff: launching local %s in %s\n", opts.to, spec.Dir)
-	if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
-		return fmt.Errorf("launch %s: %w", opts.to, err)
+	if here {
+		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, spec.Dir)
+		if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
+			return fmt.Errorf("launch %s: %w", dest, err)
+		}
+		return nil
 	}
+	// The launcher script goes beside the launch copy, in a directory only
+	// this user can write to (termlaunch refuses any other). The new window
+	// starts from the terminal's environment, not spec.Env, so the calling
+	// agent's session variables are unset there.
+	where, err := env.openTerminal(termlaunch.Spec{Dir: spec.Dir, Argv: append([]string{spec.Binary}, spec.Args...),
+		Unset: handoffSessionEnv, ScriptDir: filepath.Dir(spec.HandoffFile)})
+	if err != nil {
+		// termlaunch.ErrNoTerminal's message ends with the command to run.
+		return fmt.Errorf("open %s: %w", dest, err)
+	}
+	terminal.Printf(stderr, "handoff: opened %s in %s\n", dest, where)
 	return nil
 }
 
 // launchDir is the absolute directory the agent starts in: --project, else
 // the working directory.
-func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, error) {
+func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) {
 	dir := opts.project
 	var err error
 	if dir == "" {
@@ -56,7 +72,7 @@ func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, erro
 // that starts dest in dir, or in a new worktree of it (prepareLaunchDir). The
 // record stays out of process arguments: the agent's prompt only names the
 // file. The arguments after `--` follow the configured arguments for dest.
-func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, opts handoffOptions, home string, stdin io.Reader, stderr io.Writer, env handoffLaunchDependencies) (launchSpec, error) {
+func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, opts handoffOptions, home string, stdin, answers io.Reader, stderr io.Writer, env handoffLaunchDependencies) (launchSpec, error) {
 	executable, err := env.executable()
 	if err != nil {
 		return launchSpec{}, fmt.Errorf("executable: %w", err)
@@ -78,7 +94,7 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 	spec, err := buildLaunchSpec(dest, prompt, path, dir, args, env)
 	if err == nil {
 		var launch string
-		if launch, err = prepareLaunchDir(env, opts, target, dir, stdin, stdin, stderr); err == nil && launch != dir {
+		if launch, err = prepareLaunchDir(env, opts, target, dir, stdin, answers, stderr); err == nil && launch != dir {
 			spec, err = buildLaunchSpec(dest, prompt, path, launch, args, env)
 		}
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -198,6 +199,12 @@ type Env struct {
 	// Environ is the process environment a launched agent starts from,
 	// less the calling agent's session variables. Defaults to os.Environ.
 	Environ func() []string
+	// OpenTerminal starts a launched agent in a new terminal window or tab
+	// and returns where it opened. Defaults to termlaunch.Open. Tests
+	// replace it so no window opens.
+	OpenTerminal func(termlaunch.Spec) (string, error)
+	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
+	Clipboard func([]byte) error
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.

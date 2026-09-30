@@ -462,6 +462,8 @@ func TestHandoffToWithWorktreeLaunchesInTheWorktree(t *testing.T) {
 	initTestRepo(t, f.project)
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
 	f.env.RunGit = testGit
+	// On a terminal, so the agent runs here rather than in a new window.
+	f.env.IsTerminal = func(any) bool { return true }
 	var got launchSpec
 	f.env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
 		got = spec
@@ -481,7 +483,8 @@ func TestHandoffWorktreeFlagsNeedALaunch(t *testing.T) {
 		{f.id, "--worktree"},
 		{f.id, "--to", "claude", "--branch", "x"},
 	} {
-		if _, errOut, code := runHandoff(t, f.env, args...); code != 2 || !strings.Contains(errOut, "applies only") {
+		// Off a terminal nothing offers a destination, so --worktree needs --to.
+		if _, errOut, code := runHandoff(t, f.env, args...); code != 2 || !strings.Contains(errOut, "appl") {
 			t.Errorf("%q: code=%d stderr=%q", args, code, errOut)
 		}
 	}
@@ -680,5 +683,32 @@ func TestHandoffWorktreeOperationsInALinkedWorktree(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "staged.txt")); err != nil || string(data) != "bisecting\n" {
 		t.Errorf("staged.txt = %q, %v", data, err)
+	}
+}
+
+// On a terminal --worktree needs no --to: the agent chosen at the prompt
+// starts in the worktree, and choosing to print creates none.
+func TestHandoffPromptWithWorktree(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	initTestRepo(t, f.project)
+	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+	f.env.RunGit = testGit
+	var got launchSpec
+	f.env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		got = spec
+		return nil
+	}
+	want := resolvedPath(t, f.project) + "-handoff-" + handoffShortID(handoffTarget{bundle: archive.SourceBundle{ArchiveSessionID: f.id}})
+	var pager string
+	f.env.RunPager = copyPager(&pager)
+	if _, errOut, code := runPicker(t, f.env, "p\n", f.id, "--worktree"); code != 0 || !strings.Contains(errOut, "no worktree was created") {
+		t.Fatalf("print: code=%d stderr=%s", code, errOut)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) {
+		t.Fatalf("printing created %s: %v", want, err)
+	}
+	if _, errOut, code := runPicker(t, f.env, "\n", f.id, "--worktree"); code != 0 || got.Dir != want {
+		t.Fatalf("launch: code=%d dir=%q stderr=%s, want %s", code, got.Dir, errOut, want)
 	}
 }
