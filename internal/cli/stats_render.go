@@ -554,15 +554,16 @@ func (p *statsPrinter) table(title string, labels []string, bar *tableBar, cols 
 			labels[i] = truncateVisible(l, leftW)
 		}
 	}
-	head := p.bold(title) + strings.Repeat(" ", max(leftW+barSpace-visibleWidth(title), 0))
+	var head strings.Builder
+	head.WriteString(p.bold(title) + strings.Repeat(" ", max(leftW+barSpace-visibleWidth(title), 0)))
 	for i, c := range cols {
 		if c.head == "" && (i == len(cols)-1 || cols[i+1].head == "") {
 			// Nothing to say over this column: no trailing blanks.
 			continue
 		}
-		head += "  " + p.dim(padLeft(c.head, widths[i]))
+		head.WriteString("  " + p.dim(padLeft(c.head, widths[i])))
 	}
-	lines := []string{head}
+	lines := []string{head.String()}
 	for r, label := range labels {
 		var line strings.Builder
 		line.WriteString(padRight(label, leftW))
