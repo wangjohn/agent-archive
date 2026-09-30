@@ -376,11 +376,12 @@ func TestRestoreRefusesBeforeTouchingAnything(t *testing.T) {
 }
 
 // A label another installation now runs is never stopped or replaced by
-// recovery. The collector's own label: the files go back, the job is left to
-// the other installation, and the journal is removed, since nothing more can
-// be done for it (a bootstrap over it fails, and used to leave the journal
-// stuck behind a message that blamed launchctl). A retired job's label: it is
-// not restarted, and recovery stops, naming it.
+// recovery, whether it is the collector's own or a retired job's: the files
+// and plists go back, every other job is put back as it was, the job is left
+// to the other installation, and the journal is removed, since nothing more
+// can be done for it (a bootstrap over it fails, and used to leave the
+// journal stuck behind a message that blamed launchctl, or, for a retired
+// job, one that stopped recovery until --abandon-recovery).
 func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 	t.Parallel()
 	t.Run("the collector's label", func(t *testing.T) {
@@ -400,31 +401,40 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 			}
 		}
 	})
-	t.Run("a retired job's label", func(t *testing.T) {
-		t.Parallel()
-		f := newTxFixture(t)
-		f.crash(t, true)
-		// Setup had retired relabeled[0] before it stopped; since then,
-		// another installation loaded that label from its own plist.
-		if err := os.Remove(f.relabeled[0]); err != nil {
-			t.Fatal(err)
-		}
-		elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.relabeled[0])
-		f.sim.loaded[simLabel(f.relabeled[0])] = elsewhere
-		err := Recover(f.home, f.sim, noLock)
-		var blocked *RecoveryBlockedError
-		if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "from another plist") {
-			t.Fatalf("err = %v", err)
-		}
-		if f.sim.loaded[simLabel(f.relabeled[0])] != elsewhere {
-			t.Fatalf("another installation's job was replaced: %v", f.sim.loaded)
-		}
-		for _, call := range f.sim.calls {
-			if strings.HasSuffix(call, f.relabeled[0]) {
-				t.Errorf("asked launchd to %s", call)
+	for name, retired := range map[string]func(f *txFixture) string{
+		"the prototype's label": func(f *txFixture) string { return f.legacy },
+		"an earlier label":      func(f *txFixture) string { return f.relabeled[0] },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newTxFixture(t)
+			f.crash(t, true)
+			plist := retired(f)
+			// Setup had retired the job before it stopped (it stops the
+			// collector first; the rest of its plan is done by hand here);
+			// since then, another installation loaded that label from its
+			// own plist.
+			if err := f.sim.Unload(plist); err != nil {
+				t.Fatal(err)
 			}
-		}
-	})
+			if err := os.Remove(plist); err != nil {
+				t.Fatal(err)
+			}
+			elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(plist)
+			f.sim.loaded[simLabel(plist)] = elsewhere
+			f.sim.calls = nil
+			if err := Recover(f.home, f.sim, noLock); err != nil {
+				t.Fatal(err)
+			}
+			f.loaded[simLabel(plist)] = elsewhere
+			f.requireAsFound(t)
+			for _, call := range f.sim.calls {
+				if strings.HasSuffix(call, plist) {
+					t.Errorf("asked launchd to %s, though another installation runs that label", call)
+				}
+			}
+		})
+	}
 }
 
 // Recover reads the journal before it takes the collector lock: with no

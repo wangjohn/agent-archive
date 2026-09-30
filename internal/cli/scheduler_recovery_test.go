@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -170,9 +171,6 @@ func TestRecoveryBlockedTexts(t *testing.T) {
 			r.answers[plistLabel(j.Plist)] = []launchdAnswer{answerUnknown}
 		}},
 		{"an earlier collector's state is unknown", resetup, beforeStart, func(r *schedRun, _ journalFile) { r.answers[earlier] = []launchdAnswer{answerUnknown} }},
-		{"an earlier collector's label runs from another plist", resetup, beforeStart, func(r *schedRun, _ journalFile) {
-			r.answers[earlier] = []launchdAnswer{answerAnotherInstallation}
-		}},
 		{"the prototype's state is unknown", prototype, beforeStart, func(r *schedRun, _ journalFile) {
 			r.answers[prototypeLabel] = []launchdAnswer{answerUnknown}
 		}},
@@ -195,42 +193,82 @@ func TestRecoveryBlockedTexts(t *testing.T) {
 	golden.Check(t, filepath.Join("testdata", "scheduler", "recovery", "blocked-texts.txt"), []byte(got.String()))
 }
 
-// A setup interrupted after it stopped this installation's collector, while
-// another installation has since loaded the same label from its own plist:
-// recovery puts every file and retired job back, leaves the other
-// installation's job alone (launchd would refuse a bootstrap over it, which
-// once left the record stuck behind a message that blamed launchctl), removes
-// the record, and setup, having recovered, refuses to install over the other
-// installation, saying how to go on.
-func TestRecoveryLeavesAnotherInstallationsCollectorAlone(t *testing.T) {
-	r := newSchedRun(t, true)
-	journal := r.interrupted("resetup-earlier-labels", beforeStart)
-	if !journal.WasLoaded {
-		t.Fatal("the fixture's collector was not loaded, so there is nothing to restart")
-	}
-	r.answers[plistLabel(journal.Plist)] = []launchdAnswer{answerAnotherInstallation}
-	code, out := r.setup()
-	if r.journalPending() {
-		t.Fatalf("the record is stuck: exit %d\n%s", code, out)
-	}
-	if code != 1 || !strings.Contains(out, "belongs to another installation") || !strings.Contains(out, "AGENT_ARCHIVE_HOME") || strings.Contains(out, "launchctl could not") {
-		t.Fatalf("exit %d\n%s", code, out)
-	}
-	for _, c := range journal.Changes {
-		data, err := os.ReadFile(c.Path)
-		if found := err == nil; found != c.Existed || (found && !bytes.Equal(data, c.Before)) {
-			t.Errorf("%s is not as setup found it (%v)", c.Path, err)
-		}
-	}
-	for _, job := range journal.retired() {
-		if data, err := os.ReadFile(job.Change.Path); err != nil || !bytes.Equal(data, job.Change.Before) || r.running(job.Change.Path) != job.WasLoaded {
-			t.Errorf("%s was not put back (%v)", job.Change.Path, err)
-		}
-	}
-	for _, call := range r.lines {
-		if strings.HasPrefix(call, "bootout ") && strings.Contains(call, plistLabel(journal.Plist)) || strings.HasPrefix(call, "bootstrap ") && strings.Contains(call, journal.Plist) {
-			t.Errorf("asked launchctl to change the other installation's collector: %s", call)
-		}
+// A setup interrupted after it stopped this installation's jobs, while
+// another installation has since loaded one of their labels from its own
+// plist. Recovery puts every file and every other job back, leaves the other
+// installation's job alone (launchd would refuse a bootstrap over it; that
+// once left the record stuck, behind a message that blamed launchctl for the
+// collector's label, or one that stopped recovery for a retired job's), and
+// removes the record. setup --yes then goes on from what launchd runs: it
+// refuses to install over another installation's collector or prototype job,
+// saying why, and installs past an earlier label it no longer owns.
+func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fixture string
+		label   func(journal journalFile) string
+		code    int      // setup --yes's exit, after recovery
+		says    []string // and what it says
+	}{
+		{"the collector's label", "resetup-earlier-labels", func(j journalFile) string { return plistLabel(j.Plist) },
+			1, []string{"belongs to another installation", "Uninstall that installation first, or set AGENT_ARCHIVE_HOME"}},
+		{"an earlier collector's label", "resetup-earlier-labels", func(journalFile) string { return earlierLabel("/old/spelling/a") },
+			0, []string{"Configuration saved."}},
+		{"the prototype's label", "first-setup-prototype", func(journalFile) string { return prototypeLabel },
+			1, []string{"legacy upload job was loaded from a plist other than", "preserve it and resolve it before setup"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newSchedRun(t, true)
+			journal := r.interrupted(tc.fixture, beforeStart)
+			label := tc.label(journal)
+			wasLoaded := label == plistLabel(journal.Plist) && journal.WasLoaded
+			for _, job := range journal.retired() {
+				wasLoaded = wasLoaded || plistLabel(job.Change.Path) == label && job.WasLoaded
+			}
+			if !wasLoaded {
+				t.Fatalf("the fixture's %s job was not loaded, so there is nothing to restart", label)
+			}
+			r.answers[label] = []launchdAnswer{answerAnotherInstallation}
+			// setup recovers first; its wizard then finds no answer to its
+			// first question (or, for the collector's label, refuses in its
+			// checks), so recovery alone is what this run changes.
+			code, out := r.run("setup")
+			if r.journalPending() || strings.Contains(out, "cannot recover") {
+				t.Fatalf("the record is stuck: exit %d\n%s", code, out)
+			}
+			for _, c := range journal.Changes {
+				data, err := os.ReadFile(c.Path)
+				if found := err == nil; found != c.Existed || (found && !bytes.Equal(data, c.Before)) {
+					t.Errorf("%s is not as setup found it (%v)", c.Path, err)
+				}
+			}
+			for _, job := range journal.retired() {
+				if data, err := os.ReadFile(job.Change.Path); err != nil || !bytes.Equal(data, job.Change.Before) {
+					t.Errorf("%s was not put back (%v)", job.Change.Path, err)
+				}
+				if plistLabel(job.Change.Path) != label && r.running(job.Change.Path) != job.WasLoaded {
+					t.Errorf("%s running = %v, was %v", job.Change.Path, r.running(job.Change.Path), job.WasLoaded)
+				}
+			}
+			if plistLabel(journal.Plist) != label && r.running(journal.Plist) != journal.WasLoaded {
+				t.Errorf("the collector running = %v, was %v", r.running(journal.Plist), journal.WasLoaded)
+			}
+			code, out = r.setup()
+			for _, want := range tc.says {
+				if !strings.Contains(out, want) {
+					t.Errorf("setup --yes does not say %q", want)
+				}
+			}
+			if code != tc.code || strings.Contains(out, "launchctl could not") || t.Failed() {
+				t.Fatalf("setup --yes: exit %d\n%s", code, out)
+			}
+			for _, line := range r.lines {
+				call := strings.Fields(line)
+				if call[0] == "bootout" && path.Base(call[1]) == label || call[0] == "bootstrap" && plistLabel(call[2]) == label {
+					t.Errorf("asked launchctl to change the other installation's job: %s", line)
+				}
+			}
+		})
 	}
 }
 
