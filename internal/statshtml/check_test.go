@@ -19,7 +19,7 @@ import (
 // source, form, input, a) is in the list.
 var allowedElements = []string{
 	"html", "head", "meta", "title", "style", "body", "main", "header", "footer", "section", "div", "span",
-	"h1", "h2", "p", "ul", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tr", "th", "td", "details", "summary",
+	"h1", "h2", "h3", "p", "ul", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tr", "th", "td", "details", "summary",
 	"svg", "g", "defs", "pattern", "rect", "line", "circle", "text",
 }
 

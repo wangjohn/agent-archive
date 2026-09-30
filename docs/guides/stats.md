@@ -74,11 +74,38 @@ agent-archive stats --days 90 --html > q3.html   # or redirect standard output
 attach to a message, or print. It is a single file: the styles and charts are
 inline, there is no script, and it makes no request to anything (its own
 content policy forbids it), so it works offline and reads the same
-tomorrow. It follows your light or dark setting, prints cleanly (the donut
-switches to patterns, so it survives a black-and-white printer), and fits a
-phone. Each bar of the daily chart answers a hover with that day's numbers,
-and the chart has a "Show as a table" view for screen readers and keyboards;
-every other number is in a table.
+tomorrow. It follows your light or dark setting, prints cleanly (the agents
+bar and the donut switch to patterns, so they survive a black-and-white
+printer), and fits a phone down to 320 pixels wide.
+
+The page has the shape of the terminal's default view. At the top are the
+three headline numbers: estimated spend (with its change from the previous
+period, when there was one; nothing is said when there was not), sessions
+(with the prompts under it) and tokens (with the share that was served from
+cache, since most tokens are cache reads). Then the agents as one bar with
+each agent's share of sessions, daily **spend** as a bar chart with its
+dearest day named (a day whose sessions could not be priced gets a short grey
+mark, not a zero), where the spend went by project and by model, the skills
+and MCP servers used most, and up to three things worth a second look ("Heads
+up": subagents using a large share of your tokens, one session costing much of
+the spend, sessions with no token data, a low cache-hit rate). Under a
+"Details" divider come the agents' table (sessions, tokens, spend, cache-hit
+rate), what used your tokens (the donut), a few facts (days active and
+streaks, busiest day, favorite model, costliest session, tool errors, month
+rank), the `--by` breakdown, and the scope and price notes.
+
+The colors mean the same as in the terminal: Claude Code orange, Cursor blue,
+Codex green; model families purple (opus), pink (fable), teal (sonnet),
+yellow (haiku) and green (gpt and codex models); projects and the daily bars
+cyan; a rise in spend amber and a fall green, never red. A color is never the
+only cue: every segment and bar is named and numbered in text. Each bar of the
+daily chart answers a hover with that day's numbers, and the chart has a "Show
+as a table" view (sessions, spend and tokens per day) for screen readers and
+keyboards; every other number is in a table or a sentence.
+
+The by-project list shows only the top few projects, dearest first among those
+shown, and says how many more there are (it does not say they cost less or
+more); `--by project` lists more of them.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
   only; change that when you share it) and says so on stderr. The page is
@@ -95,7 +122,7 @@ every other number is in a table.
   price table lists, see the next item). Never a prompt, transcript text, a
   file path or a session ID (the costliest session is described, not named: `show` cannot
   open it from the page, by design). It also names the time zone the days were
-  counted in.
+  counted in. Subagents are counted as runs ("497 runs"), never as sessions.
 - **Names are hidden by default.** So the page can be shared, each project is
   a stand-in, "project A", "project B" and so on, in the order the page lists
   them; skills, MCP servers and models get "skill A", "MCP server A" and
@@ -103,11 +130,17 @@ every other number is in a table.
   table lists it ("opus", "gpt-5"; so are the archive's own "unknown" and
   "other"); a fine-tune id, a custom deployment name or any other model the
   table does not list is a stand-in, in the heading's `--model` filter, the
-  cost-by-model table, the favorite model and the footer's note on unpriced
-  models alike. A model your own `--prices` file adds
-  is not listed either. The same name has the same letter throughout the
-  page, but the letters follow this run's ranking and are not stable between
-  runs. `--include-names` shows the real names of all four, for a page only
+  by-model table, the favorite model and the footer's note on unpriced
+  models alike (and it is drawn in a neutral color, so the color of a bar
+  says nothing about a hidden model). A model your own `--prices` file adds
+  is not listed either, and neither is the version of your own `--prices`
+  file (the footer says only that the file was used). A `--model` filter
+  written with a path, a vendor prefix or a bracketed suffix
+  (`acme/claude-opus-5`, `claude-opus-5[acme]`) is shown as the model's family, not
+  as typed. The project of the costliest session in "Heads up" is
+  a stand-in like any other. The same name has the same letter throughout the
+  page, but the letters follow the order the page first names them (the
+  dearest project listed is "project A") and are not stable between runs. `--include-names` shows the real names of all four, for a page only
   you read. The terminal view and `--json` are not affected: they print to you.
 - **Same rules as the terminal.** Unknown is not zero (Cursor's tokens read
   unknown, and a window with no token data says so instead of drawing an empty
