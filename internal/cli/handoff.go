@@ -344,7 +344,7 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 		switch {
 		case err != nil:
 			localErr = err
-		case found && (r.harness == "" || reg.Harness.Name == r.harness):
+		case found && (r.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(r.harness)):
 			target, err := r.localTarget(reg)
 			if err == nil {
 				return target, nil

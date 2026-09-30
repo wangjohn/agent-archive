@@ -49,10 +49,14 @@ default budget; `--max-bytes 0` includes all filtered content.
 
 ## Naming a session by its title
 
-The argument is a session ID or a title. It matches the way `show` does: a
-substring of the title (the session's first prompt), case-insensitively, a
-short session ID, or an ID prefix; a session ID that matches exactly wins
-over a title that also contains it. `--harness` narrows the search.
+The argument is a session ID or a title; quote a title of several words. It
+matches the way `show` does: a substring of the title (the session's first
+prompt), case-insensitively, a short session ID, or an ID prefix. A full
+session ID, of a session on this Mac or in the archive, names that session,
+even when another title mentions it. `--harness` and `--source` narrow the
+search. When the command runs inside a Claude Code or Codex session, that
+session is not offered for a title (as `--latest` passes over it), unless
+`--to` is set.
 
 The search looks at this Mac's sessions first, which needs no network and no
 upload (a session's title, its first prompt, is read from its transcript file
@@ -61,8 +65,8 @@ conversation), and goes on to the archive's sessions
 only when none of this Mac's match, so an archive that cannot be reached
 does not fail a title this Mac can answer. `--source local` or `--source
 archive` limits it to one. Only the 50 most recently active sessions on this
-Mac are searched by title; an older one that was uploaded is found in the
-archive.
+Mac that have a prompt are searched by title; an older one that was uploaded
+is found in the archive.
 
 One match is handed off. Several are never guessed between: on a terminal the
 picker opens with just those sessions; without a terminal (a script, or an

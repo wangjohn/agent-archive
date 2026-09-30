@@ -49,13 +49,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 - `handoff` takes a title as well as a session ID: `handoff "fix the auth
   bug" --harness codex`. It matches as `show` does (a title substring or a
-  short session ID; an exact ID wins), in this Mac's sessions first, with no
+  short session ID; a full ID wins), in this Mac's sessions first, with no
   network, then in the archive. Only the title (the first prompt) is
   matched, never the rest of the conversation; a session on this Mac has its
   title read from its transcript file, which stays on the Mac. Several
   matches (the newest 20 are shown) open the picker on them on a terminal;
   without one they are listed on stderr with exit code 1 instead of
-  guessing.
+  guessing. Run from inside a Claude Code or Codex session, a title never
+  matches that session itself (as `--latest` skips it).
   `handoff` no longer rejects an argument that is not shaped like a session
   ID up front; one that matches nothing says so and points to `list`.
 - The `handoff` picker also lists this Mac's sessions, including ones not

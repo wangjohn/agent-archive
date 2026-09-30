@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -50,6 +51,11 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	usageError := func(message string) (handoffOptions, bool) {
 		fs.usageError("%s", message)
 		return handoffOptions{}, false
+	}
+	// An argument of only spaces names nothing, and must not stand for the
+	// no selector that lets --to take the calling agent's own session.
+	if sessionID != "" && strings.TrimSpace(sessionID) == "" {
+		return usageError("the session ID or title is empty")
 	}
 	selectors := 0
 	for _, set := range []bool{sessionID != "", *latest, *file != ""} {

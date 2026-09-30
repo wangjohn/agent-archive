@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -22,9 +23,41 @@ import (
 // is; a session past it that was uploaded is found in the archive instead.
 const handoffTitleScanLimit = defaultListLimit
 
-// fullArchiveSessionIDLength is the length of an archive session ID, the one
-// shape worth a direct archive read before searching titles (as show does).
-const fullArchiveSessionIDLength = 32
+// archiveSessionIDLength is the length of an archive session ID, 32 lower-case
+// hexadecimal digits: the one shape worth a direct archive read before
+// searching titles (as show does), so a title as long is never sent there.
+const archiveSessionIDLength = 32
+
+// handoffQueryWidth is how many columns of the query a message repeats, so a
+// pasted paragraph is not echoed back in full.
+const handoffQueryWidth = 80
+
+func isArchiveSessionID(query string) bool {
+	if len(query) != archiveSessionIDLength {
+		return false
+	}
+	for _, c := range query {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// queryLabel is the query as a message names it: one printable line, cut to
+// handoffQueryWidth.
+func queryLabel(query string) string {
+	return ellipsize(archive.DisplayLine(query), handoffQueryWidth)
+}
+
+// skippedSessions is the calling agent's own session, which a title never
+// offers: the person names another. A direct handoff (--to) starts from it.
+func skippedSessions(opts *handoffOptions, env currentSessionDependencies) map[string]bool {
+	if opts.to != "" {
+		return nil
+	}
+	return currentSessions(env)
+}
 
 // handoffCandidateLimit is how many matching sessions a title lists, on stderr
 // or in the picker, before saying how many more there are. The caller may be
@@ -47,13 +80,15 @@ const handoffCandidateLimit = 20
 // terminal, and open the handoff picker limited to them with one. done is set
 // when the command should exit with code instead of handing off.
 func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) (code int, done bool) {
-	query := strings.TrimSpace(opts.sessionID)
+	// Titles are stored as one line of single spaces, so a query with a
+	// newline or a doubled space is matched as that line.
+	query := strings.Join(strings.Fields(opts.sessionID), " ")
 	cfg, found, err := config.Load(home)
 	if err != nil || !found {
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
+	r := handoffQueryResolver{opts: opts, query: query, skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -82,6 +117,9 @@ type handoffQueryResolver struct {
 	stderr      io.Writer
 	env         handoffCommandDependencies
 
+	// skip holds the native IDs of the agent session running the command,
+	// which a title does not offer (as --latest passes over it).
+	skip  map[string]bool
 	store storage.ObjectStore
 	// archiveErr is why the archive could not be read, for the no-match
 	// message.
@@ -104,7 +142,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			}
 		}
 	}
-	if opts.source != "local" && len(r.query) == fullArchiveSessionIDLength {
+	if opts.source != "local" && isArchiveSessionID(r.query) {
 		if harness, ok := r.exactArchiveSession(ctx); ok {
 			opts.sessionID, opts.harness = r.query, harness
 			return 0, false
@@ -117,7 +155,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		rows, _, truncated := picker.rows(regs, nil, handoffTitleScanLimit)
 		stop()
 		scanned = truncated
-		if matches := matchHandoffRows(rows, r.query); len(matches) > 0 {
+		if matches := matchHandoffRows(rows, r.query, r.skip); len(matches) > 0 {
 			return r.choose(matches)
 		}
 	}
@@ -199,11 +237,13 @@ func (r *handoffQueryResolver) archiveMatches() ([]handoffPickerRow, error) {
 	for _, m := range topLevelSessions(sessions) {
 		rows = append(rows, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
-	return matchHandoffRows(rows, r.query), nil
+	return matchHandoffRows(rows, r.query, r.skip), nil
 }
 
-// matchHandoffRows keeps the rows matchSessionsByQuery matches, in order.
-func matchHandoffRows(rows []handoffPickerRow, query string) []handoffPickerRow {
+// matchHandoffRows keeps the rows matchSessionsByQuery matches, in order,
+// leaving out the sessions whose native ID is in skip.
+func matchHandoffRows(rows []handoffPickerRow, query string, skip map[string]bool) []handoffPickerRow {
+	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return skip[row.metadata.NativeSessionID] })
 	sessions := make([]archive.Metadata, len(rows))
 	for i, row := range rows {
 		sessions[i] = row.metadata
@@ -245,11 +285,15 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 		if !selected {
 			return 0, true
 		}
-		for _, m := range shown {
-			if m.metadata.SessionID == picked.SessionID && m.metadata.Harness.Name == picked.HarnessKey {
-				row = m
-			}
+		i := slices.IndexFunc(shown, func(m handoffPickerRow) bool {
+			return m.metadata.SessionID == picked.SessionID && m.metadata.Harness.Name == picked.HarnessKey
+		})
+		if i < 0 {
+			// Never a guess: the picked row is one of those listed.
+			terminal.Println(r.stderr, "agent-archive: handoff: the picked session is not one of those listed")
+			return 1, true
 		}
+		row = shown[i]
 	}
 	r.opts.sessionID, r.opts.harness = row.metadata.SessionID, row.metadata.Harness.Name
 	return 0, false
@@ -259,7 +303,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 // pick on: a person reading a log, or an agent that must ask which.
 func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, format listFormatOptions) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "agent-archive: handoff: %q matches %d sessions; pass one SESSION_ID, or run on a terminal to pick:\n", archive.DisplayLine(r.query), len(matches))
+	fmt.Fprintf(&b, "agent-archive: handoff: %q matches %d sessions; pass one SESSION_ID, or run on a terminal to pick:\n", queryLabel(r.query), len(matches))
 	shown := matches[:min(len(matches), handoffCandidateLimit)]
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, row := range formatHandoffRows(shown, format) {
@@ -279,7 +323,7 @@ func (r *handoffQueryResolver) noMatchMessage(scanLimited bool) string {
 	if !ok {
 		where = "on this Mac or in the archive"
 	}
-	message := fmt.Sprintf("agent-archive: handoff: no session matches %q %s (see `agent-archive list`)", archive.DisplayLine(r.query), where)
+	message := fmt.Sprintf("agent-archive: handoff: no session matches %q %s (see `agent-archive list`)", queryLabel(r.query), where)
 	if r.opts.harness != "" {
 		message += " for " + r.opts.harness
 	}
