@@ -265,7 +265,7 @@ type Environment struct {
 	FileCreated func(string) (time.Time, error)
 	// CursorDatabase lists the chats in Cursor's database (composerData
 	// entries with messages, not drafts, and not subagents) and reads them.
-	// Nil means not checked; the CLI uses CursorDatabaseReader. Undo reads
+	// Nil means not checked; the CLI uses CursorDatabaseReaderFor. Undo reads
 	// the database under Home instead (see resumedSinceImport).
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.

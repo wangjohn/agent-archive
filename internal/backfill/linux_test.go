@@ -38,8 +38,10 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 	t.Parallel()
 	home := filepath.FromSlash("/home/me")
 	for _, tc := range []struct {
-		name, goos, xdg string
-		wantDir         string
+		name    string
+		goos    string
+		xdg     string
+		wantDir string
 	}{
 		{"darwin", "darwin", "", "/home/me/Library/Application Support/Cursor"},
 		{"darwin ignores XDG_CONFIG_HOME", "darwin", "/xdg", "/home/me/Library/Application Support/Cursor"},
