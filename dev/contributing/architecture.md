@@ -56,6 +56,7 @@ flowchart LR
 | `config` | `config.json`: the one record of how this Mac is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
 | `hooks` | Checking, planning, installing, and removing hook entries and the LaunchAgent. |
+| `agentskills` | The skills setup installs into Claude Code, Codex, and Cursor (`/handoff`): the `Registry`, each skill's text as an embedded template rendered per destination, and planning their install, removal, and refresh as setup-journal changes. A file is setup's by a marker line and this installation's data directory; `Stale` names the files an upgrade has outdated. |
 | `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (`credentials` and `storage` come in only through `config`, for their types); depguard and `TestCaptureImportBoundary` enforce this. |
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and retiring the prototype's job and collectors installed under earlier labels. launchd is reached only through the `Launchd` its caller passes (cli's `Env`). Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
@@ -77,10 +78,11 @@ everything imports, are left out. Only `cmd/agent-archive` imports `cli`; `captu
 
 ```mermaid
 flowchart TD
-  cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence
+  cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence & agentskills
   cli --> config & state & storage & credentials & cursorstore & terminal
   capture --> setupjournal & config & state
   setupjournal --> hooks & state
+  agentskills --> hooks
   backfill --> collector & retention & config & state & storage & cursorstore & terminal
   retention --> reader & state & storage
   collector --> state & storage & cursorstore

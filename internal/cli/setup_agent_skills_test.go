@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -39,7 +39,7 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	files := agentcommands.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
+	files := agentskills.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
 	if len(files) != 2 {
 		t.Fatalf("files = %+v", files)
 	}
@@ -53,9 +53,9 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 		t.Fatalf("setup did not say where /handoff went:\n%s", output)
 	}
 
-	commands := statusJSON(t, env)["agent_commands"]
-	if !reflect.DeepEqual(commands, []any{claudeSkillPath(userHome), agentsSkillPath(userHome)}) {
-		t.Fatalf("status agent_commands = %#v", commands)
+	skills := statusJSON(t, env)["agent_skills"]
+	if !reflect.DeepEqual(skills, []any{claudeSkillPath(userHome), agentsSkillPath(userHome)}) {
+		t.Fatalf("status agent_skills = %#v", skills)
 	}
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
@@ -87,7 +87,7 @@ func TestSetupLeavesAHandoffSkillItDidNotWrite(t *testing.T) {
 	if strings.Contains(output, "Installed /handoff") {
 		t.Fatalf("setup claims an installation:\n%s", output)
 	}
-	if _, ok := statusJSON(t, env)["agent_commands"]; ok {
+	if _, ok := statusJSON(t, env)["agent_skills"]; ok {
 		t.Fatal("status lists a file setup did not write")
 	}
 	if output := uninstallRun(t, env); !strings.Contains(output, "Kept ~/.agents/skills/handoff/SKILL.md: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).\n") {
@@ -105,7 +105,7 @@ func TestSetupAndUninstallKeepAHandoffSkillMadeOwn(t *testing.T) {
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", false, true, false, t.TempDir()))
 	path := claudeSkillPath(userHome)
 	must(t, os.WriteFile(path, []byte("tuned by hand\n"), 0600))
-	if _, ok := statusJSON(t, env)["agent_commands"]; ok {
+	if _, ok := statusJSON(t, env)["agent_skills"]; ok {
 		t.Fatal("status lists a skill that is no longer setup's")
 	}
 	old, _, err := config.Load(home)
@@ -165,13 +165,72 @@ func TestFailedSetupTakesBackTheHandoffSkill(t *testing.T) {
 	}
 }
 
-// TestAgentCommandsSpelling pins the status --json key.
-func TestAgentCommandsSpelling(t *testing.T) {
+// TestAgentSkillsSpelling pins the status --json keys.
+func TestAgentSkillsSpelling(t *testing.T) {
 	t.Parallel()
-	data, err := json.Marshal(statusView{AgentCommands: []string{"/p"}})
+	data, err := json.Marshal(statusView{AgentSkills: []string{"/p"}, AgentSkillsOutOfDate: []string{"/q"}})
 	must(t, err)
-	if !strings.Contains(string(data), `"agent_commands":["/p"]`) {
-		t.Errorf("status = %s", data)
+	for _, want := range []string{`"agent_skills":["/p"]`, `"agent_skills_out_of_date":["/q"]`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("status lacks %s: %s", want, data)
+		}
+	}
+	if strings.Contains(string(data), "agent_commands") {
+		t.Errorf("status has the unreleased agent_commands key: %s", data)
+	}
+}
+
+// Status says which skill files an upgrade has outdated, in its JSON, its
+// warnings, and beside the file in --verbose; setup refreshes them, and
+// then status does not.
+func TestStatusReportsAnOutdatedSkillUntilSetupRefreshesIt(t *testing.T) {
+	t.Parallel()
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+	if _, ok := statusJSON(t, env)["agent_skills_out_of_date"]; ok {
+		t.Fatal("status calls a fresh installation's skills out of date")
+	}
+	claude, agents := claudeSkillPath(userHome), agentsSkillPath(userHome)
+	// The Claude Code file is as an earlier release worded it; the shared
+	// one is the person's own (no marker line), which is not setup's to call
+	// old.
+	current := readText(t, claude)
+	older := strings.Replace(current, "Run exactly this command", "Run this command", 1)
+	if older == current {
+		t.Fatal("the skill has no wording to age")
+	}
+	must(t, os.WriteFile(claude, []byte(older), 0600))
+	must(t, os.WriteFile(agents, []byte("my own version\n"), 0600))
+	view := statusJSON(t, env)
+	if got := view["agent_skills_out_of_date"]; !reflect.DeepEqual(got, []any{claude}) {
+		t.Fatalf("agent_skills_out_of_date = %#v", got)
+	}
+	if got := view["agent_skills"]; !reflect.DeepEqual(got, []any{claude}) {
+		t.Fatalf("agent_skills = %#v", got)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup to refresh it.") {
+		t.Fatalf("status does not warn:\n%s", &out)
+	}
+	out.Reset()
+	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md (out of date; run agent-archive setup)\n") {
+		t.Fatalf("status --verbose does not mark the file:\n%s", &out)
+	}
+	old, _, err := config.Load(home)
+	must(t, err)
+	next := old
+	must(t, applySetup(home, userHome, old.InstalledExecutable, old, &next, nil, env))
+	view = statusJSON(t, env)
+	if _, ok := view["agent_skills_out_of_date"]; ok {
+		t.Fatalf("setup left the skill out of date: %#v", view["agent_skills_out_of_date"])
+	}
+	if readText(t, agents) != "my own version\n" {
+		t.Fatal("setup replaced the person's own skill")
 	}
 }
 
@@ -235,6 +294,33 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0644 {
 		t.Fatalf("failed setup did not restore the skill's permissions: %v %v", info.Mode(), err)
+	}
+}
+
+// With several skills registered, the review reports each skill's files
+// under its own name: what was installed, and what was left alone.
+func TestSetupReportsEachSkillItsOwnFiles(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	skills := []agentskills.Skill{{Name: "handoff", Summary: "continues a session in another agent"}, {Name: "second"}}
+	file := func(skill, name, content string) agentskills.File {
+		path := filepath.Join(userHome, ".agents", "skills", skill, name)
+		must(t, os.MkdirAll(filepath.Dir(path), 0700))
+		must(t, os.WriteFile(path, []byte("on disk\n"), 0600))
+		return agentskills.File{Skill: skill, Path: path, Content: []byte(content)}
+	}
+	files := []agentskills.File{
+		file("handoff", "SKILL.md", "on disk\n"),
+		file("second", "SKILL.md", "on disk\n"),
+		file("second", "other.md", "not what is on disk\n"),
+	}
+	var out bytes.Buffer
+	printSkillFiles(newPrompter(strings.NewReader(""), &out), skills, files, userHome)
+	want := "Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md\n" +
+		"Left ~/.agents/skills/second/other.md as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /second is not installed there.\n" +
+		"Installed /second: ~/.agents/skills/second/SKILL.md\n"
+	if out.String() != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
 

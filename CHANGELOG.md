@@ -29,7 +29,9 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/handoff/SKILL.md`). It runs
   `agent-archive handoff --to <agent>`, defaulting to another agent than the
   one you are in. Setup leaves a file it did not write, uninstall removes
-  only its own, and `status --json` lists them in `agent_commands`.
+  only its own, and `status --json` lists them in `agent_skills`. After an
+  upgrade, `status` warns about a skill file an earlier release wrote and lists
+  it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
