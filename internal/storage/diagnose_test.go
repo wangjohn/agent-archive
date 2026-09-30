@@ -333,6 +333,35 @@ func TestDiagnoseConfiguredStoreFailures(t *testing.T) {
 	}
 }
 
+// The credentials file kept where there is no Keychain is diagnosed in its own
+// words, told apart by the error alone, and never mentions the Keychain.
+func TestDiagnoseCredentialsFileFailures(t *testing.T) {
+	cfg := credentials.Config{Provider: "r2", Bucket: "b", R2CredentialRef: "setup-abc", R2AccountID: "acct123"}
+	insecure := fmt.Errorf("%w: /d/credentials/setup-abc.json is accessible by other users (mode 0644); run: chmod 600 '/d/credentials/setup-abc.json'", credentials.ErrInsecurePermissions)
+	unreadable := fmt.Errorf("%w: /d/credentials/setup-abc.json does not hold an access key ID and secret", credentials.ErrCredentialFileUnreadable)
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"missing":    {credentials.ErrCredentialFileNotFound, "isn't in the credentials file"},
+		"insecure":   {insecure, "won't read the credentials file"},
+		"unreadable": {unreadable, "couldn't be read from the credentials file"},
+	} {
+		_, err := NewConfiguredStore(context.Background(), cfg, fakeCredentialStore{err: tc.err})
+		got := Diagnose(err)
+		if got.Cause != CauseNoCredentials || !strings.Contains(got.Explanation, tc.want) {
+			t.Errorf("%s: Diagnose(%v) = %+v, want no_credentials saying %q", name, err, got, tc.want)
+		}
+		if strings.Contains(got.Explanation, "Keychain") || strings.Contains(got.Fix, "Keychain") {
+			t.Errorf("%s: the diagnosis names the Keychain: %+v", name, got)
+		}
+		assertPlainDiagnosis(t, got)
+	}
+	if got := Diagnose(insecure); !strings.Contains(got.Fix, "chmod 600") || !strings.Contains(got.Fix, "chmod 700") {
+		t.Errorf("insecure fix does not say how to fix it: %+v", got)
+	}
+}
+
 // A store that could not be built from its settings never reached the
 // provider, so the diagnosis does not blame the provider.
 func TestDiagnoseLocalSettingsDoNotBlameTheProvider(t *testing.T) {

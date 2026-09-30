@@ -29,7 +29,14 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     developer's real jobs, and bootstrap or bootout would change them. A
 //     test that means to drive launchctl stubs it with stubLaunchctl.
 //
-//   - The Keychain: openKeychain panics. Set Env.Keychain (newFakeKeychain).
+//   - The credential store: openCredentialStore panics, so neither the real
+//     Keychain nor a credentials file in a real data directory can be
+//     reached. Set Env.Credentials (newFakeKeychain).
+//
+//   - The platform the credential store is named for: credentialGOOS is
+//     "darwin", so the many tests whose fake stands for the Keychain see the
+//     Keychain's wording on every runner, Linux CI included. A test of the
+//     other platform's wording sets it to "linux" (useCredentialGOOS).
 //
 //   - $HOME and the variables that move app and data directories: HOME is a
 //     fresh temporary directory, and AGENT_ARCHIVE_HOME, CLAUDE_CONFIG_DIR,
@@ -75,9 +82,11 @@ func isolateProcessForTesting() func() {
 	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) {
 		panic(fmt.Sprintf("a test reached the real launchctl %q: set Env.JobState, Env.LoadLaunchAgent and Env.UnloadLaunchAgent (testEnv does), or call stubLaunchctl", args))
 	}
-	openKeychain = func() (credentials.CredentialStore, error) {
-		panic("a test reached the real Keychain: set Env.Keychain (newFakeKeychain)")
+	realOpenCredentialStore = openCredentialStore
+	openCredentialStore = func() (credentials.CredentialStore, error) {
+		panic("a test reached the real credential store: set Env.Credentials (newFakeKeychain)")
 	}
+	credentialGOOS = "darwin"
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
@@ -99,7 +108,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	}
 	panics("launchctl print", func() { launchdJobState("/nonexistent/com.agent-archive.collector.plist") })
 	panics("launchctl bootstrap", func() { _ = loadLaunchAgent("/nonexistent/x.plist") })
-	panics("Env{}.keychain", func() { _, _ = Env{}.keychain() })
+	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
 	panics("R2 store", func() {
 		_, _ = Env{}.openStore(config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}})
 	})
@@ -120,8 +129,8 @@ func TestIsolationFailsClosed(t *testing.T) {
 	}
 	// testEnv's side-effecting fields fail rather than reach the Mac.
 	env := testEnv(t, t.TempDir(), time.Now())
-	if _, err := env.keychain(); err == nil {
-		t.Error("testEnv's Keychain must fail unless a test sets one")
+	if _, err := env.credentialStore(); err == nil {
+		t.Error("testEnv's credential store must fail unless a test sets one")
 	}
 	if _, err := env.executable(); err == nil {
 		t.Error("testEnv's Executable must fail unless a test sets one")
@@ -129,6 +138,20 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if got := env.jobState("/nonexistent.plist"); got != "missing" {
 		t.Errorf("testEnv job state = %q", got)
 	}
+}
+
+// realOpenCredentialStore is the default openCredentialStore, which
+// isolateProcessForTesting replaced, kept so a test can check how it is wired
+// (TestOpenCredentialStoreIsWiredToTheDataDirectory).
+var realOpenCredentialStore func() (credentials.CredentialStore, error)
+
+// useCredentialGOOS names the credential store for another platform for one
+// test. The test must not be parallel: the variable is shared.
+func useCredentialGOOS(t *testing.T, goos string) {
+	t.Helper()
+	previous := credentialGOOS
+	credentialGOOS = goos
+	t.Cleanup(func() { credentialGOOS = previous })
 }
 
 // stubLaunchctl replaces launchctl for one test.

@@ -1,0 +1,126 @@
+package credentials
+
+import (
+	"context"
+	"errors"
+	"os"
+)
+
+// goosDarwin is the one platform with a Keychain.
+const goosDarwin = "darwin"
+
+// UsesKeychain reports whether goos keeps R2 credentials in the Keychain
+// (macOS) rather than in a private file.
+func UsesKeychain(goos string) bool { return goos == goosDarwin }
+
+// StoreName is how a message names where R2 credentials are kept on goos:
+// "Keychain" on macOS, "credentials file" elsewhere. It is a noun without an
+// article, so a caller writes "the "+StoreName(goos) or capitalizes it, and
+// macOS keeps the wording it always had.
+func StoreName(goos string) string {
+	if UsesKeychain(goos) {
+		return "Keychain"
+	}
+	return "credentials file"
+}
+
+// OpenOptions are OpenDefault's inputs. Everything that reaches the real
+// system is injectable, so both platforms' choices are tested on any OS.
+type OpenOptions struct {
+	// GOOS is the platform to open the store for: runtime.GOOS.
+	GOOS string
+	// Dir returns the folder of credential files (FileStoreDir of the data
+	// directory). It is called only off macOS, so a Mac never needs the data
+	// directory to open its Keychain.
+	Dir func() (string, error)
+	// LookupEnv reads the environment for the read-only fallback. Nil means
+	// os.LookupEnv.
+	LookupEnv func(string) (string, bool)
+	// NewKeychain opens the Keychain store for a service. Nil means
+	// NewKeychainStore.
+	NewKeychain func(service string) (CredentialStore, error)
+}
+
+// OpenDefault opens the credential store for a platform.
+//
+// On macOS it is the Keychain store under KeychainService, exactly as before.
+//
+// Everywhere else it is the file store in Dir(), with the environment
+// (EnvStore) as a read-only fallback behind it. The fallback is part of the
+// one store rather than a separate choice because a caller cannot know which
+// one holds a key: a configuration made by setup names a reference, and a
+// container has that configuration but the key only in its environment.
+//   - Load reads the file first. A reference that has a file always reads
+//     it, never the environment. Only a missing file (ErrCredentialFileNotFound)
+//     falls back to the environment; a file that exists but is insecure or
+//     unreadable is an error, since silently using another key would hide it.
+//   - Save and Delete go to the file store alone. The environment store is
+//     held as a read-only Loader, so they cannot reach it.
+func OpenDefault(opts OpenOptions) (CredentialStore, error) {
+	if UsesKeychain(opts.GOOS) {
+		open := opts.NewKeychain
+		if open == nil {
+			open = openKeychainStore
+		}
+		return open(KeychainService)
+	}
+	if opts.Dir == nil {
+		return nil, errors.New("credentials folder is not known")
+	}
+	dir, err := opts.Dir()
+	if err != nil {
+		return nil, err
+	}
+	files, err := NewFileStore(dir)
+	if err != nil {
+		return nil, err
+	}
+	lookup := opts.LookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	return &fileThenEnvStore{files: files, env: NewEnvStore(lookup)}, nil
+}
+
+// openKeychainStore is NewKeychainStore as an interface, never a non-nil
+// interface holding a nil store.
+func openKeychainStore(service string) (CredentialStore, error) {
+	store, err := NewKeychainStore(service)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// envLoader is all the fallback can do; it has no Save or Delete to call.
+type envLoader interface {
+	Load(ctx context.Context, reference string) (R2Credentials, error)
+}
+
+// fileThenEnvStore is OpenDefault's store off macOS.
+type fileThenEnvStore struct {
+	files *FileStore
+	env   envLoader
+}
+
+func (s *fileThenEnvStore) Save(ctx context.Context, reference string, value R2Credentials) error {
+	return s.files.Save(ctx, reference, value)
+}
+
+func (s *fileThenEnvStore) Delete(ctx context.Context, reference string) error {
+	return s.files.Delete(ctx, reference)
+}
+
+func (s *fileThenEnvStore) Load(ctx context.Context, reference string) (R2Credentials, error) {
+	value, err := s.files.Load(ctx, reference)
+	if !errors.Is(err, ErrCredentialFileNotFound) {
+		return value, err
+	}
+	if fromEnv, envErr := s.env.Load(ctx, reference); envErr == nil {
+		return fromEnv, nil
+	}
+	// Neither holds it: the error names the file, where setup saves a key.
+	return R2Credentials{}, err
+}
+
+var _ CredentialStore = (*fileThenEnvStore)(nil)

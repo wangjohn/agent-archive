@@ -1,0 +1,321 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
+)
+
+// None of these tests is parallel: each may set credentialGOOS, which the
+// package's parallel tests read (they run after every serial test, so a
+// serial test that restores it can never race them).
+
+// Every credential message on macOS is the message it was before the file
+// store existed; the other platform's words are new and never name the
+// Keychain.
+func TestCredentialWordsOnBothPlatforms(t *testing.T) {
+	cause := errors.New("cause")
+	const dataDir = "/data/agent-archive"
+	darwin := map[string]string{
+		"open":              "open Keychain: cause",
+		"storage open":      "keychain unavailable: cause",
+		"check label":       "Keychain",
+		"fix unavailable":   "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+		"fix locked":        "Unlock the login Keychain (log in, or open Keychain Access), then run agent-archive setup again, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+		"staged note":       "A Keychain item it staged, if any, stays in the Keychain (service agent-archive).",
+		"unreadable draft":  `The saved setup in /d/setup-draft.json cannot be read (bad), so a Keychain item it staged, if any, is not deleted. Look for items of service "agent-archive" in Keychain Access.`,
+		"undeleted":         `2 stored credential(s) could not be deleted from Keychain service "agent-archive": cause. To remove them yourself, run: security delete-generic-password -s agent-archive -a r1 && security delete-generic-password -s agent-archive -a r2; or delete those items in Keychain Access`,
+		"undeleted locked":  `2 stored credential(s) could not be deleted from Keychain service "agent-archive": ` + credentials.ErrKeychainLocked.Error() + `. Unlock the login Keychain (log in, or open Keychain Access). To remove them yourself, run: security delete-generic-password -s agent-archive -a r1 && security delete-generic-password -s agent-archive -a r2; or delete those items in Keychain Access`,
+		"store name in use": "the Keychain",
+	}
+	linux := map[string]string{
+		"open":              "open credentials file: cause",
+		"storage open":      "open the credentials file: cause",
+		"check label":       "Credentials file",
+		"fix unavailable":   "Fix what the message says, then run agent-archive setup again, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+		"fix locked":        "Fix what the message says, then run agent-archive setup again, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+		"staged note":       "A credentials file it staged, if any, stays in /data/agent-archive/credentials.",
+		"unreadable draft":  "",
+		"undeleted":         "2 stored credential(s) could not be deleted from the credentials folder /data/agent-archive/credentials: cause. To remove them yourself, delete the files in that folder",
+		"undeleted locked":  "2 stored credential(s) could not be deleted from the credentials folder /data/agent-archive/credentials: " + credentials.ErrKeychainLocked.Error() + ". To remove them yourself, delete the files in that folder",
+		"store name in use": "the credentials file",
+	}
+	for goos, want := range map[string]map[string]string{"darwin": darwin, "linux": linux, "freebsd": linux} {
+		got := map[string]string{
+			"open":              openCredentialStoreError(goos, cause).Error(),
+			"storage open":      storageOpenError(goos, cause).Error(),
+			"check label":       credentialCheckLabel(goos),
+			"fix unavailable":   credentialCheckFix(goos, false),
+			"fix locked":        credentialCheckFix(goos, true),
+			"staged note":       stagedCredentialLeftNote(goos, dataDir),
+			"unreadable draft":  unreadableDraftUninstallNote(goos, "/d/setup-draft.json", "bad"),
+			"undeleted":         undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, cause),
+			"undeleted locked":  undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, credentials.ErrKeychainLocked),
+			"store name in use": "the " + credentials.StoreName(goos),
+		}
+		for name, wantText := range want {
+			if got[name] != wantText {
+				t.Errorf("%s: %s = %q, want %q", goos, name, got[name], wantText)
+			}
+		}
+		if goos != "darwin" {
+			for name, text := range got {
+				if strings.Contains(text, "Keychain") && name != "undeleted locked" {
+					t.Errorf("%s: %s names the Keychain: %q", goos, name, text)
+				}
+			}
+		}
+	}
+}
+
+// The credential check's hint about a release build is about the Keychain's
+// cgo build, so it must not appear on Linux; there the failure's own message
+// says what to fix.
+func TestPreflightCredentialCheckOnLinux(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	dir := filepath.Join(t.TempDir(), credentials.CredentialsDirName)
+	store, err := credentials.NewFileStore(dir)
+	must(t, err)
+	const ref = "setup-0123456789abcdef0123456789abcdef"
+	must(t, store.Save(context.Background(), ref, credentials.R2Credentials{AccessKeyID: "KEY", SecretAccessKey: "secret-value"}))
+	env := credentialsOnly{func() (credentials.CredentialStore, error) { return store, nil }}
+
+	// A private file: the check passes, and says so without the Keychain.
+	if check := keychainCheck(env, ref); !check.OK || check.Label != "Credentials file" || strings.Contains(check.Detail, "Keychain") {
+		t.Fatalf("check of a private file: %+v", check)
+	}
+	// No key saved yet: a folder that does not exist is not a failure.
+	if check := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) {
+		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return filepath.Join(t.TempDir(), "none"), nil }, LookupEnv: noEnv})
+	}}, ""); !check.OK {
+		t.Fatalf("check with nothing saved: %+v", check)
+	}
+
+	// A file open to other users blocks setup, naming the file and the fix.
+	path := filepath.Join(dir, ref+".json")
+	must(t, os.Chmod(path, 0o644))
+	check := keychainCheck(env, ref)
+	if check.OK || check.Label != "Credentials file" {
+		t.Fatalf("check of an open file: %+v", check)
+	}
+	if !strings.Contains(check.Detail, "chmod 600 '"+path+"'") {
+		t.Errorf("detail does not give the fix: %q", check.Detail)
+	}
+	for _, text := range []string{check.Label, check.Detail, check.Fix} {
+		for _, banned := range []string{"Keychain", "release build"} {
+			if strings.Contains(text, banned) {
+				t.Errorf("Linux check mentions %q: %q", banned, text)
+			}
+		}
+	}
+	if strings.Contains(check.Detail, "secret-value") || strings.Contains(check.Detail, "KEY") {
+		t.Errorf("detail contains a secret: %q", check.Detail)
+	}
+	// The store failing to open at all reads the same.
+	failed := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }}, ref)
+	if failed.OK || strings.Contains(failed.Fix, "release build") || strings.Contains(failed.Fix, "Keychain") || !strings.Contains(failed.Fix, "--provider s3") {
+		t.Errorf("Linux check of a store that does not open: %+v", failed)
+	}
+}
+
+// credentialsOnly is all keychainCheck needs of the command environment.
+type credentialsOnly struct {
+	open func() (credentials.CredentialStore, error)
+}
+
+func (c credentialsOnly) credentialStore() (credentials.CredentialStore, error) { return c.open() }
+
+// macOS's check reads exactly as it did.
+func TestPreflightCredentialCheckOnMacOSKeepsItsWording(t *testing.T) {
+	useCredentialGOOS(t, "darwin")
+	ok := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) { return newFakeKeychain(), nil }}, "")
+	if !ok.OK || ok.Label != "Keychain" || ok.Detail != "opens (for the R2 key)" {
+		t.Fatalf("check that opens: %+v", ok)
+	}
+	unavailable := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }}, "")
+	if unavailable.OK || unavailable.Label != "Keychain" ||
+		unavailable.Detail != "cannot be opened, so an R2 key cannot be kept (credential store unavailable)" ||
+		unavailable.Fix != "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3." {
+		t.Fatalf("unavailable check: %+v", unavailable)
+	}
+	locked := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) {
+		return lockedKeychain{newFakeKeychain()}, nil
+	}}, "")
+	if locked.OK || !strings.HasPrefix(locked.Fix, "Unlock the login Keychain") {
+		t.Fatalf("locked check: %+v", locked)
+	}
+}
+
+// A store that opens on Linux is a real file store: setup --yes saves the key
+// as a private file under the data directory, and uninstall deletes it with
+// the rest, without naming the Keychain.
+func TestSetupAndUninstallKeepTheR2KeyInAFileOnLinux(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	dir := credentials.FileStoreDir(home)
+	env.Credentials = func() (credentials.CredentialStore, error) {
+		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: noEnv})
+	}
+	output := setupYes(t, env, "linux-secret-value\n", 0, "--yes", "--provider", "r2", "--r2-account", "https://"+testR2Account+".r2.cloudflarestorage.com/my-bucket",
+		"--r2-access-key-id", "KEY", "--project", project, "--apps", "claude")
+	if strings.Contains(output, "Keychain") || strings.Contains(output, "linux-secret-value") {
+		t.Fatalf("setup output names the Keychain or a secret:\n%s", output)
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil || !found {
+		t.Fatalf("config: %v %v", found, err)
+	}
+	path := filepath.Join(dir, cfg.Storage.R2CredentialRef+".json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("setup did not write the credentials file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("credentials file mode = %04o", info.Mode().Perm())
+	}
+	if dirInfo, err := os.Stat(dir); err != nil || dirInfo.Mode().Perm() != 0o700 {
+		t.Errorf("credentials folder: %v %v", dirInfo, err)
+	}
+
+	// setup --yes again, with no key given, keeps the stored one: it reads it back.
+	setupYes(t, env, "", 0, "--yes")
+
+	// With the file made readable by others, setup --yes stops before doing
+	// anything, and names the fix.
+	must(t, os.Chmod(path, 0o644))
+	output = setupYes(t, env, "", 1, "--yes")
+	if !strings.Contains(output, "✗ Credentials file: cannot be opened") || !strings.Contains(output, "chmod 600") || strings.Contains(output, "Keychain") || strings.Contains(output, "release build") {
+		t.Fatalf("setup --yes over an insecure file:\n%s", output)
+	}
+	must(t, os.Chmod(path, 0o600))
+
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("uninstall: code=%d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "Keychain") {
+		t.Errorf("uninstall names the Keychain on Linux:\n%s\n%s", stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(home)
+		t.Fatalf("data directory survived the purge (%v): %v", err, entries)
+	}
+}
+
+// A credentials folder uninstall cannot delete from is reported with the
+// file recovery, and the rest of the purge still happens.
+func TestUninstallPurgeReportsAnUndeletableCredentialFileOnLinux(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	fake := newFakeKeychain()
+	home, _, env := installedFixture(t, fake, r2SetupInput(t.TempDir(), "linux-secret-value"))
+	env.Credentials = func() (credentials.CredentialStore, error) {
+		return &failingDeleteKeychain{fakeKeychain: fake, deleteErr: fmt.Errorf("%w: /d/x.json is owned by another user", credentials.ErrInsecurePermissions)}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 1 {
+		t.Fatalf("code=%d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	message := stderr.String()
+	for _, want := range []string{"1 stored credential(s) could not be deleted from the credentials folder " + credentials.FileStoreDir(home), "delete the files in that folder"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("stderr must mention %q:\n%s", want, message)
+		}
+	}
+	for _, banned := range []string{"security delete-generic-password", "Keychain Access"} {
+		if strings.Contains(message, banned) {
+			t.Errorf("stderr names the Keychain's recovery on Linux (%q):\n%s", banned, message)
+		}
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("local files were not removed: %v", err)
+	}
+}
+
+// The credentials folder is one of the entries uninstall removes, so a
+// purge leaves nothing behind and does not report it as an unrelated file.
+func TestPurgeRemovesTheCredentialsFolder(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "agent-archive")
+	store, err := credentials.NewFileStore(credentials.FileStoreDir(home))
+	must(t, err)
+	must(t, store.Save(context.Background(), "setup-abc", credentials.R2Credentials{AccessKeyID: "k", SecretAccessKey: "s"}))
+	leftover, err := removeLocalState(home)
+	if err != nil || len(leftover) != 0 {
+		t.Fatalf("leftover = %v, err = %v", leftover, err)
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Fatalf("the data directory still holds %v", entries)
+	}
+}
+
+// setup --yes and the environment store read the same two variables.
+func TestEnvironmentVariableNamesAgreeWithTheCredentialsPackage(t *testing.T) {
+	if envR2AccessKeyID != credentials.EnvR2AccessKeyID || envR2SecretAccessKey != credentials.EnvR2SecretAccessKey {
+		t.Fatalf("setup reads %s and %s, the environment store %s and %s", envR2AccessKeyID, envR2SecretAccessKey, credentials.EnvR2AccessKeyID, credentials.EnvR2SecretAccessKey)
+	}
+}
+
+// The default opener is wired to the platform and, off macOS, to the data
+// directory ($AGENT_ARCHIVE_HOME, as everything else resolves it).
+func TestOpenCredentialStoreIsWiredToTheDataDirectory(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "agent-archive")
+	t.Setenv("AGENT_ARCHIVE_HOME", home)
+
+	useCredentialGOOS(t, "linux")
+	store, err := realOpenCredentialStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, store.Save(context.Background(), "setup-abc", credentials.R2Credentials{AccessKeyID: "k", SecretAccessKey: "s"}))
+	if _, err = os.Stat(filepath.Join(home, "credentials", "setup-abc.json")); err != nil {
+		t.Fatalf("the default store does not write under the data directory: %v", err)
+	}
+	// Opening the store did not need the environment's key, and reading it
+	// through the fallback is what the environment names.
+	t.Setenv(credentials.EnvR2AccessKeyID, "env-key")
+	t.Setenv(credentials.EnvR2SecretAccessKey, "env-secret")
+	if got, err := store.Load(context.Background(), "no-such-file"); err != nil || got.AccessKeyID != "env-key" {
+		t.Fatalf("the environment fallback: %+v %v", got, err)
+	}
+
+	// On macOS it is the Keychain's store, or the unavailable error of a
+	// build without one; it does not need a data directory.
+	useCredentialGOOS(t, "darwin")
+	t.Setenv("AGENT_ARCHIVE_HOME", filepath.Join(t.TempDir(), "not", "created"))
+	store, err = realOpenCredentialStore()
+	if err != nil {
+		if !errors.Is(err, credentials.ErrUnavailable) {
+			t.Fatalf("darwin: %v", err)
+		}
+		return
+	}
+	if got := fmt.Sprintf("%T", store); got != "*credentials.KeychainStore" {
+		t.Fatalf("darwin store is %s, want the Keychain store", got)
+	}
+}
+
+// What a failure to open the store says, recorded in status.json and shown by
+// sync, follows the platform.
+func TestOpeningTheStoreForR2Failure(t *testing.T) {
+	cfg := config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}}
+	fail := func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
+	for goos, want := range map[string]string{
+		"darwin": "keychain unavailable: credential store unavailable",
+		"linux":  "open the credentials file: credential store unavailable",
+	} {
+		useCredentialGOOS(t, goos)
+		_, err := openConfiguredStore(cfg, fail)
+		if err == nil || err.Error() != want || !errors.Is(err, credentials.ErrUnavailable) {
+			t.Errorf("%s: %v, want %q", goos, err, want)
+		}
+	}
+}
