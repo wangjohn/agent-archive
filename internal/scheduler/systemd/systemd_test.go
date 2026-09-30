@@ -534,6 +534,27 @@ func TestUnloadSucceedsWhenResetFailedIsRefused(t *testing.T) {
 	}
 }
 
+// Degraded speaks of a job that runs: a drop-in on the units of a job that is
+// not active is no note, as lingering is not.
+func TestDropInOfAnInactiveJobIsNoNote(t *testing.T) {
+	t.Parallel()
+	site, ref := scheduler.Site{UserHome: "/home/u"}, scheduler.Ref("agent-archive-collector")
+	timer, service := Scheduler{}.timerPath(site, ref), Scheduler{}.servicePath(site, ref)
+	show := "Id=" + string(ref) + ".timer\nLoadState=loaded\nActiveState=inactive\nFragmentPath=" + timer + "\n\nId=" + string(ref) + ".service\nLoadState=loaded\nActiveState=inactive\nFragmentPath=" + service + "\nDropInPaths=" + service + ".d/override.conf\n"
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "loginctl":
+			return []byte("Linger=no\n"), nil
+		case args[0] == "--version":
+			return []byte("systemd 252 (252.22)\n"), nil
+		}
+		return []byte(show), nil
+	}
+	if got := (Scheduler{Run: run}).Inspect(context.Background(), site, ref); got.State != scheduler.Missing || len(got.Degraded) != 0 {
+		t.Errorf("an inactive job with a drop-in: %q, degraded %q", got.State, got.Degraded)
+	}
+}
+
 // A unit file is what a user's disk holds for as long as the job is installed,
 // so its bytes are recorded: the default installation's (a plain job, a
 // variable) and one whose paths and values each need quoting (a space, a
