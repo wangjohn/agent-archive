@@ -310,14 +310,19 @@ const (
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
-	ArchiveSessionID      string    `json:"archive_session_id"`
-	NativeSessionID       string    `json:"native_session_id"`
-	ProjectID             string    `json:"project_id"`
-	ProjectRoot           string    `json:"project_root"`
-	Harness               Harness   `json:"harness"`
-	TranscriptPath        string    `json:"transcript_path"`
-	SessionStartedAt      time.Time `json:"session_started_at"`
-	RegisteredAt          time.Time `json:"registered_at"`
+	ArchiveSessionID string    `json:"archive_session_id"`
+	NativeSessionID  string    `json:"native_session_id"`
+	ProjectID        string    `json:"project_id"`
+	ProjectRoot      string    `json:"project_root"`
+	Harness          Harness   `json:"harness"`
+	TranscriptPath   string    `json:"transcript_path"`
+	SessionStartedAt time.Time `json:"session_started_at"`
+	RegisteredAt     time.Time `json:"registered_at"`
+	// RepoKey is RepoKey of the project's origin remote when the session
+	// registered: a hash, never the URL. Empty when there was no portable
+	// origin, or on older registrations; the collector then derives it from
+	// ProjectRoot when it publishes.
+	RepoKey               string    `json:"repo_key,omitempty"`
 	ParentSessionID       string    `json:"parent_session_id,omitempty"`
 	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
 	SubagentID            string    `json:"subagent_id,omitempty"`
@@ -634,8 +639,13 @@ type Metadata struct {
 	// ProjectName is the basename of the session's project root at publish
 	// time, so list can label the project without local config. Omitted when
 	// unknown.
-	ProjectName string    `json:"project_name,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
+	ProjectName string `json:"project_name,omitempty"`
+	// RepoKey identifies the git repository the session ran in, independent
+	// of where it is checked out: a hash of the normalized origin URL (see
+	// RepoKey), never the URL. Omitted when the project had no portable
+	// origin remote.
+	RepoKey   string    `json:"repo_key,omitempty"`
+	StartedAt time.Time `json:"started_at"`
 	// EndedAt is the latest timestamp any retained record of the session
 	// carries, never earlier than StartedAt. Omitted when no record carries
 	// a timestamp (a Cursor transcript) or the source could not be parsed.
