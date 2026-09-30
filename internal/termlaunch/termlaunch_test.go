@@ -187,22 +187,33 @@ func TestOpenRemovesTheScriptWhenTheTerminalFails(t *testing.T) {
 	}
 }
 
+// Outside tmux, only macOS has a terminal Open drives: Linux, and a system
+// the program does not know, are never treated as a Mac.
 func TestOpenWithoutATerminal(t *testing.T) {
-	spec := testSpec(t)
-	env, calls := fakeEnv(platform.Linux, map[string]string{"TERM_PROGRAM": "iTerm.app"}, "")
-	_, err := Open(context.Background(), spec, env)
-	if !errors.Is(err, ErrNoTerminal) {
-		t.Fatalf("err = %v, want ErrNoTerminal", err)
+	for _, system := range []platform.OS{platform.Linux, platform.Unknown, "freebsd", ""} {
+		spec := testSpec(t)
+		env, calls := fakeEnv(system, map[string]string{"TERM_PROGRAM": "iTerm.app"}, "")
+		_, err := Open(context.Background(), spec, env)
+		if !errors.Is(err, ErrNoTerminal) {
+			t.Fatalf("%q: err = %v, want ErrNoTerminal", system, err)
+		}
+		want := `cd '/work/app #1' && env -u CODEX_THREAD_ID '/opt/bin/codex' '--cd' '/work/app #1' 'read it'\''s $(here)'`
+		if !strings.HasSuffix(err.Error(), "\n  "+want) {
+			t.Errorf("%q: err = %q, want it to end with the command %q", system, err, want)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("%q: ran %q", system, *calls)
+		}
+		if entries, _ := os.ReadDir(spec.ScriptDir); len(entries) != 0 {
+			t.Errorf("%q: wrote %v", system, entries)
+		}
 	}
-	want := `cd '/work/app #1' && env -u CODEX_THREAD_ID '/opt/bin/codex' '--cd' '/work/app #1' 'read it'\''s $(here)'`
-	if !strings.HasSuffix(err.Error(), "\n  "+want) {
-		t.Errorf("err = %q, want it to end with the command %q", err, want)
-	}
-	if len(*calls) != 0 {
-		t.Errorf("ran %q", *calls)
-	}
-	if entries, _ := os.ReadDir(spec.ScriptDir); len(entries) != 0 {
-		t.Errorf("wrote %v", entries)
+}
+
+// The real environment answers for the system the process runs on.
+func TestDefaultEnvironmentIsTheRunningSystem(t *testing.T) {
+	if got := DefaultEnvironment().OS; got != platform.Current() {
+		t.Errorf("DefaultEnvironment().OS = %q, want %q", got, platform.Current())
 	}
 }
 

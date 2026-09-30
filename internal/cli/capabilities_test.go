@@ -254,6 +254,11 @@ func TestDiscoverCursorVersionOnLinuxClaimsNothing(t *testing.T) {
 	if got := discoverCursorVersion(userHome, platform.Darwin); !got.Installed || got.VersionKind != versionKindAppBundle {
 		t.Errorf("darwin: a bundle in ~/Applications is not found: %+v", got)
 	}
+	// The real discovery answers for the system the process runs on: a Mac
+	// finds the bundle, Linux claims nothing.
+	if got, want := discoverApplications(userHome)["cursor"], discoverCursorVersion(userHome, platform.Current()); !reflect.DeepEqual(got, want) {
+		t.Errorf("discoverApplications: cursor %+v, want %+v (for %s)", got, want, platform.Current())
+	}
 }
 
 func TestCompareDottedVersions(t *testing.T) {
