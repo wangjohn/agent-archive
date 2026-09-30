@@ -696,6 +696,17 @@ func (m *Metadata) ApplyProjectName(projectRoot string) {
 	m.ProjectName = base
 }
 
+// ApplyRepoKey sets RepoKey from key, the registration's or the one the
+// collector derived from the project's origin remote. A key that is not the
+// shape RepoKey returns is dropped, so nothing else (a URL, say) can reach
+// the sidecar through this field.
+func (m *Metadata) ApplyRepoKey(key string) {
+	if !IsRepoKey(key) {
+		return
+	}
+	m.RepoKey = key
+}
+
 type lifecycleObservation struct {
 	at         time.Time
 	event      lifecycleEvent

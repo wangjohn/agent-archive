@@ -483,10 +483,16 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 // loaded job: it neither starts nor stops it.
 func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 	t.Parallel()
-	// The fake fails every load and unload, and records every question.
-	newQuiet := func() (launchd fakeLaunchd, asked func() []string) {
+	// The fake fails every load and unload, and records every question, and
+	// every backend a job is resolved through: a files-only journal names no
+	// job to drive, so it never resolves one, whatever backend it records.
+	newQuiet := func() (backends Backends, asked func() []string) {
 		var questions []string
-		return fakeLaunchd{state: func(plist string) string { questions = append(questions, plist); return "running" }}, func() []string { return questions }
+		launchd := fakeLaunchd{state: func(plist string) string { questions = append(questions, plist); return "running" }}
+		return func(name string) (scheduler.Scheduler, error) {
+			questions = append(questions, "the "+name+" backend")
+			return plistScheduler{launchd}, nil
+		}, func() []string { return questions }
 	}
 	newJournal := func(t *testing.T) (home string, journal Journal, settings, added string) {
 		t.Helper()
@@ -511,7 +517,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 			}
 		}()
 		home, journal, settings, added := newJournal(t)
-		if err := Commit(home, journal, backends(quiet)); err != nil {
+		if err := Commit(home, journal, quiet); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.ReadFile(settings); string(got) != "new" {
@@ -538,7 +544,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(filepath.Dir(added), 0o700) })
-		err := Commit(home, journal, backends(quiet))
+		err := Commit(home, journal, quiet)
 		if err == nil || !strings.Contains(err.Error(), "previous installation restored") {
 			t.Fatalf("err = %v", err)
 		}
@@ -564,7 +570,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 		if err := hooks.Apply(journal.Changes); err != nil {
 			t.Fatal(err)
 		}
-		if err := Recover(home, backends(quiet), noLock); err != nil {
+		if err := Recover(home, quiet, noLock); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.ReadFile(settings); string(got) != "old" {
