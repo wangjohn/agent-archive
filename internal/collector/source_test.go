@@ -92,13 +92,23 @@ func (d *cursorDB) chat(id string, lastUpdatedAt int64, bubbles ...string) {
 // chatSaying is chat with every message's text.
 func (d *cursorDB) chatSaying(id string, lastUpdatedAt int64, text string, bubbles ...string) {
 	d.t.Helper()
+	d.namedChatSaying(id, "", lastUpdatedAt, text, bubbles...)
+}
+
+// namedChatSaying is chatSaying for a chat Cursor has named, or not ("").
+func (d *cursorDB) namedChatSaying(id, name string, lastUpdatedAt int64, text string, bubbles ...string) {
+	d.t.Helper()
 	headers := []map[string]any{}
 	for _, b := range bubbles {
 		headers = append(headers, map[string]any{"bubbleId": b, "type": 1})
 		row, _ := json.Marshal(map[string]any{"_v": 3, "bubbleId": b, "type": 1, "text": text, "createdAt": 1767225600000})
 		d.put("bubbleId:"+id+":"+b, string(row))
 	}
-	value, _ := json.Marshal(map[string]any{"_v": 18, "composerId": id, "createdAt": 1767225600000, "lastUpdatedAt": lastUpdatedAt, "status": "completed", "fullConversationHeadersOnly": headers})
+	composer := map[string]any{"_v": 18, "composerId": id, "createdAt": 1767225600000, "lastUpdatedAt": lastUpdatedAt, "status": "completed", "fullConversationHeadersOnly": headers}
+	if name != "" {
+		composer["name"] = name
+	}
+	value, _ := json.Marshal(composer)
 	d.put("composerData:"+id, string(value))
 }
 

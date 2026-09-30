@@ -122,20 +122,33 @@ def wait_frame(text, after, end='q quit'):
 def wait_for(text, start=0):
     while output.find(text, start) < 0: pump()
     return output.find(text, start) + len(text)
+def drain():
+    # Whatever the child wrote is still to be read once it has exited or
+    # stopped: the script can be descheduled while the child writes and
+    # exits, and on Linux output reaches the master through a worker a
+    # moment after the write. A marker written on the slave side queues
+    # behind all of it, so the output is complete once the marker is read.
+    # Output, unlike input, is not echoed or discarded by the terminal's
+    # modes, and pump gives up at the deadline.
+    global output
+    marker = b'<<end of output>>'
+    while not select.select([], [slave], [], 0)[1]: pump()
+    os.write(slave, marker)
+    while marker not in output: pump()
+    output = output.replace(marker, b'')
 def finish(code):
     while p.poll() is None: pump()
+    drain()
     assert p.returncode == code, (p.returncode, output[-800:])
 def wait_stopped():
-    global output
     limit = min(deadline, time.monotonic() + 30)
     while True:
         pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
         if pid: break
         if time.monotonic() > limit: raise RuntimeError('the job did not stop', output[-300:])
         pump()
-    while select.select([master], [], [], 0)[0]:
-        try: output += os.read(master, 65536)
-        except OSError: break
+    # What it wrote before it stopped.
+    drain()
     return status
 def resize(rows, cols):
     # As the terminal emulator does: the size changes and the foreground job

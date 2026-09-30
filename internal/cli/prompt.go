@@ -32,6 +32,9 @@ type prompter struct {
 	// reviewHint, when set, is a line the setup review repeats: where to
 	// change what an answer chose for the person.
 	reviewHint string
+	// createdBuckets are the S3 buckets setup created in this run (see
+	// setup_s3_create.go); in memory only.
+	createdBuckets []createdS3Bucket
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.

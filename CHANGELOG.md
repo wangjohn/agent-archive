@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -276,6 +291,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Privacy filter 13: a session's name and linked pull request are now
+  archived.** Claude Code's session name (the one in its sidebar, set from
+  your prompt or by `/rename`) and the pull request a session linked (its
+  `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
+  only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
+  that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
+  `last-prompt` records are still dropped. `list`, `show`, and `handoff` do
+  not show the new fields yet. The next sync re-reads and republishes each
+  session whose transcript is still on the Mac, so it can carry them. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - **`list`, `show`, and `handoff` start from the repository you are in.**
   Run inside a project, `agent-archive list` and `list --json` now return
   that repository's sessions (every checkout and worktree of it, and its
@@ -295,7 +324,6 @@ follow [Semantic Versioning](https://semver.org/).
   column every row shares and name the value in the heading, add a PR column
   (the last pull request the session created) when a row has one, dim the ID
   in the picker, and mark a session active in the last 2 minutes with a dot.
-
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
