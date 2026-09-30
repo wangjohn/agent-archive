@@ -12,6 +12,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -442,8 +443,14 @@ func TestEmptyBucketListPromptHasNoSpecialWords(t *testing.T) {
 	if err != nil || cfg.Bucket != "new" || len(creator.calls) != 0 {
 		t.Fatalf("cfg=%+v calls=%q err=%v\n%s", cfg, creator.calls, err, &out)
 	}
-	if !strings.Contains(out.String(), `choose "Amazon S3: create a new bucket for me" at the storage question`) {
-		t.Errorf("the message doesn't point at the menu choice:\n%s", &out)
+	label := ""
+	for _, o := range storageMenuOptions() {
+		if o.Key == storageChoiceS3New {
+			label = o.Label
+		}
+	}
+	if label == "" || !strings.Contains(out.String(), `choose "`+label+`" at the storage question`) {
+		t.Errorf("the message doesn't quote the menu choice %q:\n%s", label, &out)
 	}
 }
 
@@ -579,8 +586,9 @@ func TestSetupThroughStorageCheckWithACreatedS3Bucket(t *testing.T) {
 		"✓ Connected to your storage.",
 		"s3://agent-archive-1/agent-archive/  us-west-2 · profile default",
 		`"Resource": "arn:aws:s3:::agent-archive-1/agent-archive/*"`,
-		// The review is cancelled, so the bucket is not in use: setup says so.
-		"Setup created bucket agent-archive-1 in us-west-2; it is empty. Delete it in the S3 console if you don't want it.",
+		// The review is cancelled, so the bucket is not in use, but the saved
+		// draft names it: setup says that.
+		"Setup created bucket agent-archive-1 in us-west-2; it is empty. Your saved setup draft uses it, so running setup again will resume with it.",
 	} {
 		if !strings.Contains(out, text) {
 			t.Errorf("output lacks %q:\n%s", text, out)
@@ -832,9 +840,10 @@ func TestCreateS3BucketAsksWhichProfileArchivingShouldUse(t *testing.T) {
 		t.Fatalf("cfg=%+v, want the narrower profile with the created bucket and its region", cfg)
 	}
 	policyAt := strings.Index(out, `"Sid": "ArchiveObjects"`)
+	reminderAt := strings.Index(out, "Setup created bucket agent-archive-1 in us-east-1; it is empty and will stay in your account if you stop now.")
 	askAt := strings.Index(out, "Setup saves the profile you used to create the bucket unless you choose another now.")
-	if policyAt < 0 || askAt < policyAt {
-		t.Errorf("the profile question should follow the policy:\n%s", out)
+	if policyAt < 0 || reminderAt < policyAt || askAt < reminderAt {
+		t.Errorf("the bucket is named again, then the profile asked, after the policy:\n%s", out)
 	}
 }
 
@@ -971,5 +980,33 @@ func TestCreateS3BucketCredentialsCheckFailureIsNotABucketPermissionProblem(t *t
 	}
 	if !strings.Contains(out, "Couldn't check the credentials of profile work with AWS (access denied).") || strings.Contains(out, "isn't allowed to create buckets") {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestNoteUnusedCreatedBucketsSaysWhenTheSavedDraftUsesIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		draft bool
+		want  string
+		not   string
+	}{
+		{"draft names the bucket", true, "Your saved setup draft uses it, so running setup again will resume with it. To not use it, choose a different bucket there and delete this one in the S3 console.", "Delete it in the S3 console if you don't want it."},
+		{"no draft", false, "Setup created bucket left-over in eu-west-1; it is empty. Delete it in the S3 console if you don't want it.", "saved setup draft"},
+	} {
+		home := t.TempDir()
+		if tc.draft {
+			draft := setupDraft{Version: draftFormat, Step: 2, Config: config.Config{Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "left-over"}}}
+			if err := local.Write(draftPath(home), draft); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(""), &out)
+		p.createdBuckets = []createdS3Bucket{{name: "left-over", region: "eu-west-1", secured: true}}
+		noteUnusedCreatedBuckets(p, home)
+		if !strings.Contains(out.String(), tc.want) || strings.Contains(out.String(), tc.not) {
+			t.Errorf("%s: output:\n%s", tc.name, &out)
+		}
 	}
 }

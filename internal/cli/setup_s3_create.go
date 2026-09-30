@@ -26,8 +26,13 @@ import (
 // Setup never creates IAM users or keys, and does not set a lifecycle rule
 // (see the note on bucket-permissions.md).
 
-// storageChoiceS3New is the storage menu's key for creating an S3 bucket.
-const storageChoiceS3New = "s3-new"
+// storageChoiceS3New is the storage menu's key for creating an S3 bucket,
+// and storageLabelS3New its label, which messages that point at the choice
+// quote.
+const (
+	storageChoiceS3New = "s3-new"
+	storageLabelS3New  = "Amazon S3: create a new bucket for me"
+)
 
 // createdS3Bucket is a bucket this setup run created, kept in memory for the
 // run so that setup can offer it again instead of creating a second one,
@@ -98,80 +103,108 @@ func promptS3Bucket(p *prompter, cfg *credentials.Config, env Env, failedRegion 
 	if err != nil {
 		return err
 	}
-	if created, err := createS3Bucket(p, cfg, env, profileRegion, noCredentials); err != nil || created {
+	bucket, created, err := createS3Bucket(p, cfg, env, profileRegion, noCredentials)
+	if err != nil {
 		return err
 	}
-	return promptS3ExistingBucket(p, cfg, env, failedRegion, profileRegion, noCredentials)
+	if !created {
+		return promptS3ExistingBucket(p, cfg, env, failedRegion, profileRegion, noCredentials)
+	}
+	// Two different choices: the profile that created the bucket (asked
+	// first) and the one archiving will use (asked here). A bucket offered
+	// again from earlier in the run was already through this question.
+	if bucket.fresh {
+		if err := chooseArchiveProfile(p, cfg, env, bucket); err != nil {
+			return err
+		}
+	}
+	cfg.Bucket, cfg.Region = bucket.name, bucket.region
+	return nil
 }
 
-// createS3Bucket creates a bucket with the profile in cfg and
-// records its name and region in cfg. It returns false, having said why,
-// when setup should ask for an existing bucket instead: the profile cannot
-// create buckets, or the attempt failed with nothing left to clean up.
-func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (bool, error) {
+// newS3Bucket is the bucket createS3Bucket made or offered again.
+type newS3Bucket struct {
+	name   string
+	region string
+	// fresh is set for a bucket created just now, which still needs the
+	// choice of the profile to archive with.
+	fresh bool
+}
+
+// chooseArchiveProfile asks which profile archiving should use, after the
+// bucket was created with another. The profile that created it is the
+// default, and it can do far more than archiving needs. The answer is
+// recorded in cfg.AWSProfile; the bucket and its region are not cfg's yet, so
+// a change of profile cannot clear them.
+func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket newS3Bucket) error {
+	terminal.Println(p.out, "Setup created bucket "+bucket.name+" in "+bucket.region+"; it is empty and will stay in your account if you stop now.")
+	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
+	if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+		return err
+	}
+	setArchiveProfile(p, bucket.name, cfg.AWSProfile)
+	return nil
+}
+
+// createS3Bucket creates a bucket with the profile in cfg and returns its
+// name and region; it writes neither to cfg. It returns false, having said
+// why, when setup should ask for an existing bucket instead: the profile
+// cannot create buckets, or the attempt failed with nothing left to clean up.
+func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (newS3Bucket, bool, error) {
 	profile := cfg.AWSProfile
 	if noCredentials {
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so it can't create a bucket. Pick an existing bucket instead.\n", profile)
-		return false, nil
+		return newS3Bucket{}, false, nil
 	}
-	if used, err := offerCreatedBucket(p, cfg); err != nil || used {
-		return used, err
+	if offered, used, err := offerCreatedBucket(p, cfg.AWSProfile); err != nil || used {
+		return offered, used, err
 	}
 	terminal.Printf(p.out, "Setup will create a bucket in the AWS account of profile %s, using that profile now, and turn on Block Public Access for it.\n", profile)
 	terminal.Println(p.out, "That needs permission to create buckets and set Block Public Access, which day-to-day archiving does not.")
 	region, err := promptRegion(p, "Region for the new bucket (for example us-east-1)", firstNonEmpty(cfg.Region, profileRegion))
 	if err != nil {
-		return false, err
+		return newS3Bucket{}, false, err
 	}
 	if !standardAWSRegion(region) {
 		terminal.Printf(p.out, "Setup can only create buckets in the standard AWS regions (such as us-east-1 or eu-west-2), and %s isn't one. Create the bucket yourself (see the bucket guide) and pick it instead.\n", region)
-		return false, nil
+		return newS3Bucket{}, false, nil
 	}
 	creator, err := env.awsBucketCreator(profile, region)
 	if err != nil {
 		terminal.Printf(p.out, "Couldn't open profile %s (%s). Pick an existing bucket instead.\n", profile, discoveryReason(err))
-		return false, nil
+		return newS3Bucket{}, false, nil
 	}
 	name, created, err := createNamedBucket(p, creator, profile, region)
 	if err != nil || !created {
-		return false, err
+		return newS3Bucket{}, false, err
 	}
 	p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: profile})
 	if secured, err := secureNewBucket(p, creator, name, profile); err != nil || !secured {
-		return false, err
+		return newS3Bucket{}, false, err
 	}
 	rememberSecuredBucket(p, name)
 	printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
-	// The profile that created the bucket is what setup would save, and it can
-	// do far more than archiving needs: ask which profile archiving should use.
-	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
-	if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
-		return false, err
-	}
-	cfg.Bucket, cfg.Region = name, region
-	setArchiveProfile(p, name, cfg.AWSProfile)
-	return true, nil
+	return newS3Bucket{name: name, region: region, fresh: true}, true, nil
 }
 
 // offerCreatedBucket offers a bucket this run already created and secured
-// with the profile in cfg (or the one chosen to archive with) instead of
-// creating another, and records it in cfg when it is taken.
-func offerCreatedBucket(p *prompter, cfg *credentials.Config) (bool, error) {
+// with profile (or the one chosen to archive with) instead of creating
+// another. used is set when it is taken, and bucket is then that bucket.
+func offerCreatedBucket(p *prompter, profile string) (bucket newS3Bucket, used bool, err error) {
 	for _, b := range p.createdBuckets {
-		if !b.secured || (cfg.AWSProfile != b.profile && cfg.AWSProfile != b.archiveProfile) {
+		if !b.secured || (profile != b.profile && profile != b.archiveProfile) {
 			continue
 		}
 		terminal.Printf(p.out, "Setup already created bucket %s in %s in this run; it is empty.\n", b.name, b.region)
 		use, err := p.yesNo("Use it instead of creating another bucket?", true)
 		if err != nil {
-			return false, err
+			return newS3Bucket{}, false, err
 		}
 		if use {
-			cfg.Bucket, cfg.Region = b.name, b.region
-			return true, nil
+			return newS3Bucket{name: b.name, region: b.region}, true, nil
 		}
 	}
-	return false, nil
+	return newS3Bucket{}, false, nil
 }
 
 func rememberSecuredBucket(p *prompter, name string) {
@@ -207,15 +240,21 @@ func noteUnusedCreatedBuckets(p *prompter, home string) {
 	if len(p.createdBuckets) == 0 {
 		return
 	}
-	active := ""
+	active, drafted := "", ""
 	if cfg, found, err := config.Load(home); err == nil && found && cfg.Storage.Provider == credentials.ProviderS3 {
 		active = cfg.Storage.Bucket
+	}
+	if draft, found, problem, err := readDraft(home); err == nil && found && problem == "" && draft.Config.Storage.Provider == credentials.ProviderS3 {
+		drafted = draft.Config.Storage.Bucket
 	}
 	for _, b := range p.createdBuckets {
 		if b.name == active {
 			continue
 		}
 		note := "Setup created bucket " + b.name + " in " + b.region + "; it is empty. Delete it in the S3 console if you don't want it."
+		if b.name == drafted {
+			note = "Setup created bucket " + b.name + " in " + b.region + "; it is empty. Your saved setup draft uses it, so running setup again will resume with it. To not use it, choose a different bucket there and delete this one in the S3 console."
+		}
 		if !b.secured {
 			note += " Block Public Access is not on for it."
 		}

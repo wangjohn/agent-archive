@@ -377,6 +377,7 @@ func TestReadBlockPublicAccess(t *testing.T) {
 	}{
 		{"all four on", func(w http.ResponseWriter) { _, _ = io.WriteString(w, all) }, true, false, false},
 		{"one off", func(w http.ResponseWriter) { _, _ = io.WriteString(w, partial) }, false, false, false},
+		{"no settings in the answer", status(http.StatusOK), false, false, true},
 		{"denied", apiError(http.StatusForbidden, "AccessDenied"), false, true, true},
 		{"not there yet", apiError(http.StatusNotFound, "NoSuchBucket"), false, false, true},
 	} {
@@ -495,5 +496,31 @@ func TestBucketAdminInspectPrivacyReadsBlockPublicAccessBack(t *testing.T) {
 	report := adminIn(server, "us-east-1").InspectPrivacy(context.Background(), "agent-archive-1")
 	if report.State != "verified_private" {
 		t.Fatalf("report %+v, want verified_private", report)
+	}
+}
+
+func TestCredentialFailureIsDecidedByCodesAndNamedNoCredentialErrorsOnly(t *testing.T) {
+	t.Parallel()
+	stsOp := func(operation string, err error) error {
+		return &smithy.OperationError{ServiceID: "STS", OperationName: operation, Err: err}
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"expired token", stsOp("GetCallerIdentity", &smithy.GenericAPIError{Code: "ExpiredToken"}), true},
+		{"unknown key", stsOp("GetCallerIdentity", &smithy.GenericAPIError{Code: "InvalidClientTokenId"}), true},
+		{"bad signature", stsOp("GetCallerIdentity", &smithy.GenericAPIError{Code: "SignatureDoesNotMatch"}), true},
+		{"empty static credentials", stsOp("GetCallerIdentity", &awscredentials.StaticCredentialsEmptyError{}), true},
+		{"a proxy's AccessDenied", stsOp("GetCallerIdentity", &smithy.GenericAPIError{Code: "AccessDenied"}), false},
+		{"an unrecognized code", stsOp("GetCallerIdentity", &smithy.GenericAPIError{Code: "SomethingNew"}), false},
+		{"a plain error", stsOp("GetCallerIdentity", errors.New("boom")), false},
+		{"a doubly wrapped non-credential operation error", stsOp("GetCallerIdentity", stsOp("AssumeRole", errors.New("boom"))), false},
+		{"a doubly wrapped proxy refusal", stsOp("GetCallerIdentity", stsOp("AssumeRole", &smithy.GenericAPIError{Code: "AccessDenied"})), false},
+	} {
+		if got := credentialFailure(tc.err); got != tc.want {
+			t.Errorf("%s: credentialFailure = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

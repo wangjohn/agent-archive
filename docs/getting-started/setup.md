@@ -151,7 +151,8 @@ already have a profile with credentials, and R2 otherwise.
   verifies whichever you chose. If you choose storage again later in the same
   run, setup offers the bucket it already created instead of making another,
   and if setup ends without using a bucket it created, it says so and that
-  the bucket is empty, so you can delete it. Guided creation is interactive
+  the bucket is empty, so you can delete it (or, when your saved setup draft
+  still names it, that running setup again resumes with it). Guided creation is interactive
   only; `setup --yes` still takes an existing bucket.
 
 Setup checks the connection in two steps. First it lists at most one object

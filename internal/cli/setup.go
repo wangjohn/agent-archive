@@ -1241,7 +1241,7 @@ func storageMenuOptions() []option {
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
 // (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
 func guidedStorageOptions() []option {
-	return []option{{storageChoiceS3New, "Amazon S3: create a new bucket for me"}}
+	return []option{{storageChoiceS3New, storageLabelS3New}}
 }
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {

@@ -364,7 +364,7 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
-		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name; to create one instead, choose \"Amazon S3: create a new bucket for me\" at the storage question.\n", profile)
+		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name; to create one instead, choose \"%s\" at the storage question.\n", profile, storageLabelS3New)
 		bucket, err = p.required("Bucket name", saved)
 		return bucket, nil, err
 	}

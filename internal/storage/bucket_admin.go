@@ -160,9 +160,9 @@ func (a *BucketAdmin) checkCredentials(ctx context.Context) error {
 // credentialFailure reports whether err from STS's GetCallerIdentity says the
 // credentials themselves are unusable: STS refused them (an unknown key, a bad
 // signature, an expired token), or none could be had for the request (no
-// profile or keys, an expired sign-in, a credential process or role that
-// failed). A network failure, a timeout, a server error, or an answer of any
-// other kind is not.
+// profile or keys, an expired sign-in, a failed credential process; see
+// diagnoseNoCredentials). Anything else, a network failure, a timeout, a
+// server error, an answer of any other kind, is inconclusive.
 func credentialFailure(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
@@ -171,25 +171,7 @@ func credentialFailure(err error) bool {
 			return true
 		}
 	}
-	if isNetworkError(err) {
-		return false
-	}
-	// Fetching credentials for the request failed in a call of its own
-	// (an AssumeRole, an SSO token): an operation error inside the operation
-	// error of the request.
-	var op *smithy.OperationError
-	if errors.As(err, &op) {
-		var inner *smithy.OperationError
-		if errors.As(op.Unwrap(), &inner) {
-			return true
-		}
-	}
-	var response *smithyhttp.ResponseError
-	if errors.As(err, &response) && response.Response != nil {
-		// STS answered, with something that is not a refusal of the keys.
-		return false
-	}
-	_, noCredentials := diagnoseCredentials(err)
+	_, noCredentials := diagnoseNoCredentials(err)
 	return noCredentials
 }
 
@@ -245,6 +227,10 @@ func answerUnclear(err error) bool {
 	return errors.As(err, &response) && response.HTTPStatusCode() >= http.StatusInternalServerError
 }
 
+// errPublicAccessBlockNotVisible is ReadBlockPublicAccess's error when S3
+// answered without any Block Public Access settings.
+var errPublicAccessBlockNotVisible = errors.New("storage: the answer has no Block Public Access settings")
+
 // ReadBlockPublicAccess reads bucket's Block Public Access settings back. On
 // success allOn says whether all four are on; the error, when there is
 // one, is why they could not be read (s3:GetBucketPublicAccessBlock, a
@@ -256,7 +242,9 @@ func (a *BucketAdmin) ReadBlockPublicAccess(ctx context.Context, bucket string) 
 	}
 	b := output.PublicAccessBlockConfiguration
 	if b == nil {
-		return false, nil
+		// No settings in the answer: not a bucket whose settings are off, but
+		// one whose settings cannot be seen (yet), which a caller may retry.
+		return false, errPublicAccessBlockNotVisible
 	}
 	return aws.ToBool(b.BlockPublicAcls) && aws.ToBool(b.IgnorePublicAcls) && aws.ToBool(b.BlockPublicPolicy) && aws.ToBool(b.RestrictPublicBuckets), nil
 }
