@@ -97,7 +97,7 @@ func promptS3Bucket(p *prompter, cfg *credentials.Config, env Env, failedRegion 
 // createS3Bucket creates a private bucket with the profile in cfg and
 // records its name and region in cfg. It returns false, having said why,
 // when setup should ask for an existing bucket instead: the profile cannot
-// create buckets, or the attempt failed with nothing left behind.
+// create buckets, or the attempt failed with nothing left to clean up.
 func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (bool, error) {
 	profile := cfg.AWSProfile
 	if noCredentials {
@@ -109,6 +109,10 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	region, err := promptRegion(p, "Region for the new bucket (for example us-east-1)", firstNonEmpty(cfg.Region, profileRegion))
 	if err != nil {
 		return false, err
+	}
+	if partition := awsPartition(region); partition != "aws" {
+		terminal.Printf(p.out, "Setup can only create buckets in the standard AWS partition, and %s is in the %s partition. Create the bucket yourself (see the bucket guide) and pick it instead.\n", region, partition)
+		return false, nil
 	}
 	creator, err := env.awsBucketCreator(profile, region)
 	if err != nil {
@@ -127,17 +131,41 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	return true, nil
 }
 
+// awsPartition names the AWS partition a region is in, from its name: "aws"
+// (the standard one), "aws-cn", "aws-us-gov", or "aws-iso" for the isolated
+// ones. ARNs, and so the runtime policy, differ by partition, and guided
+// creation is only built and worded for the standard one.
+func awsPartition(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	case strings.Contains(region, "-iso"):
+		return "aws-iso"
+	}
+	return "aws"
+}
+
+// namesTakenBeforeAsking is how many "name in use" answers in a row setup
+// takes before it offers to give up on creating and pick an existing bucket.
+// The first answer for a suggested name is retried on its own, so the offer
+// comes with the second.
+const namesTakenBeforeAsking = 2
+
 // createNamedBucket asks for the bucket's name, defaulting to a random one,
-// and creates it. A default name that is taken is replaced once by another
-// random one; any other taken name is asked for again. created is false,
-// with the reason said, when the profile cannot create buckets or S3 failed
-// in another way.
+// and creates it. A suggested name that is in use is replaced once by another
+// random one; any other name in use is asked for again. After two in-use
+// answers in a row every further one offers picking an existing bucket, so
+// the loop always has an exit even when S3's answers make every name look
+// taken. created is false, with the reason said, when setup should ask for an
+// existing bucket instead.
 func createNamedBucket(p *prompter, creator BucketCreator, profile, region string) (name string, created bool, err error) {
 	suggested := newBucketName()
 	if name, err = promptNewBucketName(p, suggested); err != nil {
 		return "", false, err
 	}
-	autoRetried := false
+	autoRetried, inUse := false, 0
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
 		err = creator.CreateBucket(ctx, name, region)
@@ -146,19 +174,36 @@ func createNamedBucket(p *prompter, creator BucketCreator, profile, region strin
 		case err == nil:
 			terminal.Printf(p.out, "Created bucket %s in %s.\n", name, region)
 			return name, true, nil
-		case errors.Is(err, storage.ErrBucketNameTaken) && name == suggested && !autoRetried:
-			autoRetried = true
-			next := newBucketName()
-			terminal.Printf(p.out, "The name %s is taken (bucket names are shared by everyone on AWS); trying %s.\n", name, next)
-			name, suggested = next, next
 		case errors.Is(err, storage.ErrBucketNameTaken):
-			terminal.Printf(p.out, "The name %s is taken; bucket names are shared by everyone on AWS. Choose another.\n", name)
+			inUse++
+			terminal.Printf(p.out, "The name %s is already in use, by you or by someone else (bucket names are shared by everyone on AWS).\n", name)
+			if name == suggested && !autoRetried {
+				autoRetried = true
+				name = newBucketName()
+				suggested = name
+				terminal.Printf(p.out, "Trying %s instead.\n", name)
+				continue
+			}
+			if inUse >= namesTakenBeforeAsking {
+				answer, err := p.menu("What now?", "name",
+					option{"name", "Choose another name"},
+					option{"existing", "Pick an existing bucket instead"})
+				if err != nil || answer == "existing" {
+					return "", false, err
+				}
+			}
+			suggested = newBucketName()
+			if name, err = promptNewBucketName(p, suggested); err != nil {
+				return "", false, err
+			}
+		case errors.Is(err, storage.ErrInvalidBucketName):
+			terminal.Printf(p.out, "S3 doesn't accept the name %s. Choose another.\n", name)
 			suggested = newBucketName()
 			if name, err = promptNewBucketName(p, suggested); err != nil {
 				return "", false, err
 			}
 		default:
-			noteCreateFailure(p, profile, err)
+			noteCreateFailure(p, profile, name, err)
 			return "", false, nil
 		}
 	}
@@ -179,23 +224,31 @@ func promptNewBucketName(p *prompter, def string) (string, error) {
 	}
 }
 
-// noteCreateFailure says in plain words why a bucket could not be created,
-// and that setup goes on to pick an existing one. It never quotes S3's error.
-func noteCreateFailure(p *prompter, profile string, err error) {
+// noteCreateFailure says in plain words why the bucket called name could not
+// be created, and that setup goes on to pick an existing one. It never quotes
+// S3's error. When the answer was unclear the bucket may exist, so it says
+// where to look and offers nothing that deletes.
+func noteCreateFailure(p *prompter, profile, name string, err error) {
+	const fallback = " For now, pick an existing bucket instead."
 	d := storage.Diagnose(err)
-	if d.Cause == storage.CauseAccessDenied {
-		terminal.Printf(p.out, "Profile %s isn't allowed to create buckets. This step needs a profile with s3:CreateBucket and s3:PutBucketPublicAccessBlock;\n", profile)
-		terminal.Println(p.out, "use one that has them (an administrator profile, say) for this step only. For now, pick an existing bucket instead.")
-		return
-	}
-	if d.Cause == storage.CauseWrongRegion {
+	switch {
+	case errors.Is(err, storage.ErrBucketMayExist):
+		terminal.Printf(p.out, "S3 didn't answer clearly, so the bucket %s may have been created. Check the S3 console for it, and delete it there if you don't want it; setup won't touch it.%s\n", name, fallback)
+	case errors.Is(err, storage.ErrTooManyBuckets):
+		terminal.Println(p.out, "This AWS account has reached its limit on buckets. Delete one you don't need, or ask AWS to raise the limit."+fallback)
+	case d.Cause == storage.CauseAccessDenied:
+		terminal.Printf(p.out, "Profile %s isn't allowed to create buckets. This step needs a profile with s3:CreateBucket and s3:PutBucketPublicAccessBlock (and s3:DeleteBucket to undo a failed attempt);\n", profile)
+		terminal.Println(p.out, "an organization policy (a service control policy or permissions boundary) can also forbid it. Use a profile that may create buckets, for this step only."+fallback)
+	case d.Cause == storage.CauseWrongRegion:
 		// For CreateBucket this is S3 refusing the region, not a bucket in
 		// another one.
-		terminal.Println(p.out, "S3 didn't accept that region for a new bucket. Check its name, and that your account has the region enabled. For now, pick an existing bucket instead.")
-		return
+		terminal.Println(p.out, "S3 didn't accept that region for a new bucket. Check its name, and that your account has the region enabled."+fallback)
+	case d.Cause == storage.CauseNoCredentials || d.Cause == storage.CauseNetwork:
+		terminal.Println(p.out, "Couldn't create the bucket. "+d.Explanation)
+		terminal.Println(p.out, strings.ReplaceAll(d.Fix, "<profile>", profile)+fallback)
+	default:
+		terminal.Println(p.out, "Couldn't create the bucket: S3 returned an error setup doesn't recognize. Check the region and your AWS account, then run setup again."+fallback)
 	}
-	terminal.Println(p.out, "Couldn't create the bucket. "+d.Explanation)
-	terminal.Println(p.out, strings.ReplaceAll(d.Fix, "<profile>", profile)+" For now, pick an existing bucket instead.")
 }
 
 // secureChoice is what the person chose after Block Public Access could not
@@ -221,16 +274,12 @@ func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string)
 		}
 		terminal.Printf(p.out, "Bucket %s was created, but %s\n", bucket, problem)
 		terminal.Println(p.out, "Setup won't store sessions in it until Block Public Access is on.")
-		answer, err := p.menu("What now?", string(secureRetry),
-			option{string(secureRetry), "Try again"},
-			option{string(secureDelete), "Delete the empty bucket and pick an existing one"},
-			option{string(secureStop), "Stop setup and leave the bucket as it is"})
+		choice, err := askSecureChoice(p, creator, bucket, profile)
 		if err != nil {
 			return false, err
 		}
-		switch secureChoice(answer) {
+		switch choice {
 		case secureDelete:
-			deleteNewBucket(p, creator, bucket, profile)
 			return false, nil
 		case secureStop:
 			return false, fmt.Errorf("bucket %s was created but Block Public Access is not on; turn it on in the S3 console, or delete the bucket, then run setup again", bucket)
@@ -239,20 +288,80 @@ func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string)
 	}
 }
 
+// askSecureChoice asks what to do about a bucket whose Block Public Access
+// is not on, and carries out a deletion itself. S3 gives a successful
+// CreateBucket no sign that the bucket was created just now rather than
+// already being the account's (in us-east-1 it answers both alike), and two
+// runs that pick the same name at the same moment can both succeed, so
+// deleting is never done on a single keypress: the person types the
+// bucket's name to confirm, and S3 refuses to delete one that has objects.
+func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string) (secureChoice, error) {
+	for {
+		answer, err := p.menu("What now?", string(secureRetry),
+			option{string(secureRetry), "Try again"},
+			option{string(secureDelete), "Delete the empty bucket and pick an existing one"},
+			option{string(secureStop), "Stop setup and leave the bucket as it is"})
+		if err != nil {
+			return secureStop, err
+		}
+		if secureChoice(answer) != secureDelete {
+			return secureChoice(answer), nil
+		}
+		typed, err := p.withDefault("Type the bucket name "+bucket+" to delete it, or press Enter to keep it", "")
+		if err != nil {
+			return secureStop, err
+		}
+		if typed == bucket {
+			deleteNewBucket(p, creator, bucket, profile)
+			return secureDelete, nil
+		}
+		terminal.Printf(p.out, "Not deleted: %q isn't %s.\n", typed, bucket)
+	}
+}
+
+// Block Public Access is read back a few times, since a bucket that was
+// just created can briefly answer "no such bucket" or nothing to the calls
+// that follow it.
+const bucketSettleAttempts = 3
+
+// bucketSettleDelay is the wait between those attempts. A variable only so
+// tests do not wait.
+var bucketSettleDelay = time.Second
+
 // blockPublicAccess turns Block Public Access on for bucket and reads it
 // back, and returns why not when it could not, or "" on success. A read-back
-// that only lacks permission is a note, not a failure: setup's storage check
-// reads it again with the profile it saves.
+// the profile may not make (no s3:GetBucketPublicAccessBlock) is a warning,
+// not a failure: setup's storage check reads it again with the profile it
+// saves. A read-back that shows a setting off is a failure.
 func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*bucketCreateTimeout)
 	defer cancel()
-	if err := creator.BlockPublicAccess(ctx, bucket); err != nil {
+	var err error
+	for attempt := range bucketSettleAttempts {
+		if attempt > 0 {
+			time.Sleep(bucketSettleDelay)
+		}
+		err = creator.BlockPublicAccess(ctx, bucket)
+		if err == nil || storage.Diagnose(err).Cause != storage.CauseNoSuchBucket {
+			break
+		}
+	}
+	if err != nil {
 		if storage.Diagnose(err).Cause == storage.CauseAccessDenied {
-			return "setup couldn't turn on Block Public Access: the profile needs s3:PutBucketPublicAccessBlock."
+			return "setup couldn't turn on Block Public Access: the profile needs s3:PutBucketPublicAccessBlock, and an organization policy can also forbid it."
 		}
 		return "setup couldn't turn on Block Public Access (" + discoveryReason(err) + ")."
 	}
-	report := creator.InspectPrivacy(ctx, bucket)
+	var report storage.PrivacyReport
+	for attempt := range bucketSettleAttempts {
+		if attempt > 0 {
+			time.Sleep(bucketSettleDelay)
+		}
+		report = creator.InspectPrivacy(ctx, bucket)
+		if report.State != "not_verified" || readBlockPublicAccess(report) {
+			break
+		}
+	}
 	if report.State == "public_or_risky" {
 		return "it still looks public after Block Public Access was turned on (" + privacyReasonText(report.Reason) + ")."
 	}
@@ -260,8 +369,17 @@ func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string
 		terminal.Println(p.out, "  "+p.style.okMark()+" Checked: Block Public Access is on for all four settings.")
 		return ""
 	}
+	if readBlockPublicAccess(report) {
+		return "Block Public Access reads back with a setting still off."
+	}
 	p.warn("Block Public Access was turned on, but this profile can't read it back to confirm (that needs s3:GetBucketPublicAccessBlock). Setup checks again at the review.")
 	return ""
+}
+
+// readBlockPublicAccess reports whether report includes the bucket's Block
+// Public Access settings as S3 answered them.
+func readBlockPublicAccess(report storage.PrivacyReport) bool {
+	return containsString(report.Checks, "bucket_public_access_block")
 }
 
 // deleteNewBucket deletes the empty bucket this run created. When S3 refuses,
@@ -300,7 +418,7 @@ var (
 // the start and end of a general purpose bucket name.
 var (
 	reservedBucketPrefixes = []string{"xn--", "sthree-", "amzn-s3-demo-"}
-	reservedBucketSuffixes = []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"}
+	reservedBucketSuffixes = []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3", "-an"}
 )
 
 // bucketNameProblem says in a few words why name is not an S3 bucket name,
@@ -381,6 +499,7 @@ func printRuntimePolicyAdvice(p *prompter, bucket, prefix string) {
 	terminal.Println(p.out, "")
 	terminal.Println(p.out, runtimePolicy(bucket, prefix))
 	terminal.Println(p.out, "")
+	terminal.Println(p.out, p.style.dim("This policy hasn't been tested against a real AWS bucket yet. If the storage check fails once you switch to the new profile, see the note in the bucket permissions guide."))
 	terminal.Println(p.out, "More: https://github.com/wangjohn/agent-archive/blob/main/docs/security/bucket-permissions.md")
 	terminal.Println(p.out, "")
 }

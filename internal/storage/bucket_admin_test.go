@@ -62,91 +62,219 @@ func adminIn(server *httptest.Server, region string) *BucketAdmin {
 	return NewBucketAdmin(NewClient(cfg, server.URL, true, 1))
 }
 
-func TestCreateBucketInUSEast1SendsNoLocationConstraintAfterCheckingTheNameIsFree(t *testing.T) {
-	t.Parallel()
-	fake := &bucketRecorder{reply: func(c bucketCall, w http.ResponseWriter) {
-		if c.method == http.MethodHead {
-			w.WriteHeader(http.StatusNotFound)
-			return
+// bucketAnswers scripts the fake server: how it answers the HEAD request
+// (name check), the STS call (credentials check), and the PUT that creates
+// the bucket. A nil answer is a 404 for HEAD, a caller identity for STS, and
+// 200 for PUT.
+type bucketAnswers struct {
+	head func(http.ResponseWriter)
+	sts  func(http.ResponseWriter)
+	put  func(http.ResponseWriter)
+}
+
+func status(code int) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) { w.WriteHeader(code) }
+}
+
+func apiError(code int, name string) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) { replyS3Error(w, code, name) }
+}
+
+// stsRefuses answers the credentials check as STS answers a key it does not
+// recognize.
+func stsRefuses(code string) func(http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprintf(w, `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>%s</Code><Message>synthetic</Message></Error><RequestId>r</RequestId></ErrorResponse>`, code)
+	}
+}
+
+func stsIdentity(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/xml")
+	_, _ = io.WriteString(w, `<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetCallerIdentityResult><Arn>arn:aws:iam::111111111111:user/synthetic</Arn><UserId>AIDAEXAMPLE</UserId><Account>111111111111</Account></GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></GetCallerIdentityResponse>`)
+}
+
+func (a bucketAnswers) reply(c bucketCall, w http.ResponseWriter) {
+	answer := func(f, fallback func(http.ResponseWriter)) {
+		if f == nil {
+			f = fallback
 		}
-		w.WriteHeader(http.StatusOK)
-	}}
-	server := httptest.NewServer(fake)
-	defer server.Close()
-	if err := adminIn(server, "us-east-1").CreateBucket(context.Background(), "agent-archive-1", "us-east-1"); err != nil {
-		t.Fatal(err)
+		f(w)
 	}
-	want := []string{"HEAD /agent-archive-1/?", "PUT /agent-archive-1/?"}
-	if got := fake.methods(); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("requests %q, want %q", got, want)
-	}
-	if body := fake.calls[1].body; strings.Contains(body, "LocationConstraint") {
-		t.Fatalf("us-east-1 must not send a location constraint (S3 refuses one), got %q", body)
+	switch {
+	case c.method == http.MethodHead:
+		answer(a.head, status(http.StatusNotFound))
+	case c.method == http.MethodPost && strings.Contains(c.body, "GetCallerIdentity"):
+		answer(a.sts, stsIdentity)
+	default:
+		answer(a.put, status(http.StatusOK))
 	}
 }
 
-func TestCreateBucketOutsideUSEast1SendsTheLocationConstraint(t *testing.T) {
-	t.Parallel()
-	fake := &bucketRecorder{reply: func(_ bucketCall, w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }}
+// createWith runs CreateBucket for a bucket in region against a fake server
+// that answers as answers says, and returns the error and the requests made.
+func createWith(t *testing.T, region string, answers bucketAnswers) (requests []string, err error) {
+	t.Helper()
+	fake := &bucketRecorder{reply: answers.reply}
 	server := httptest.NewServer(fake)
 	defer server.Close()
-	if err := adminIn(server, "eu-west-2").CreateBucket(context.Background(), "agent-archive-1", "eu-west-2"); err != nil {
-		t.Fatal(err)
-	}
-	if got := fake.methods(); len(got) != 1 || got[0] != "PUT /agent-archive-1/?" {
-		t.Fatalf("requests %q, want one PUT (other regions report an owned bucket themselves)", got)
-	}
-	if body := fake.calls[0].body; !strings.Contains(body, "<LocationConstraint>eu-west-2</LocationConstraint>") {
-		t.Fatalf("body %q lacks the location constraint", body)
-	}
+	err = adminIn(server, region).CreateBucket(context.Background(), "agent-archive-1", region)
+	return fake.methods(), err
 }
 
-func TestCreateBucketNameInUseIsTakenAndChangesNothing(t *testing.T) {
+func TestCreateBucketChecksTheNameThenCreatesWithTheRightConstraint(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		region string
-		reply  func(bucketCall, http.ResponseWriter)
-		puts   int
+		region     string
+		constraint string
 	}{
-		{"us-east-1 name owned by this account", "us-east-1", func(_ bucketCall, w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }, 0},
-		{"us-east-1 name owned by another account", "us-east-1", func(_ bucketCall, w http.ResponseWriter) { w.WriteHeader(http.StatusForbidden) }, 0},
-		{"us-east-1 name in another region", "us-east-1", func(_ bucketCall, w http.ResponseWriter) { w.WriteHeader(http.StatusMovedPermanently) }, 0},
-		{"BucketAlreadyExists", "eu-west-1", func(_ bucketCall, w http.ResponseWriter) { replyS3Error(w, http.StatusConflict, "BucketAlreadyExists") }, 1},
-		{"BucketAlreadyOwnedByYou", "eu-west-1", func(_ bucketCall, w http.ResponseWriter) {
-			replyS3Error(w, http.StatusConflict, "BucketAlreadyOwnedByYou")
-		}, 1},
-		{"OperationAborted", "eu-west-1", func(_ bucketCall, w http.ResponseWriter) { replyS3Error(w, http.StatusConflict, "OperationAborted") }, 1},
+		{"us-east-1", ""},
+		{"eu-west-2", "<LocationConstraint>eu-west-2</LocationConstraint>"},
+	} {
+		fake := &bucketRecorder{reply: bucketAnswers{}.reply}
+		server := httptest.NewServer(fake)
+		err := adminIn(server, tc.region).CreateBucket(context.Background(), "agent-archive-1", tc.region)
+		server.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", tc.region, err)
+		}
+		want := []string{"HEAD /agent-archive-1/?", "PUT /agent-archive-1/?"}
+		if got := fake.methods(); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("%s: requests %q, want %q (the name is checked first in every region)", tc.region, got, want)
+		}
+		body := fake.calls[1].body
+		if tc.constraint == "" && strings.Contains(body, "LocationConstraint") {
+			t.Errorf("us-east-1 must not send a location constraint (S3 refuses one), got %q", body)
+		}
+		if tc.constraint != "" && !strings.Contains(body, tc.constraint) {
+			t.Errorf("%s: body %q lacks %s", tc.region, body, tc.constraint)
+		}
+	}
+}
+
+func TestCreateBucketNameInUseIsTakenAndCreatesNothingMoreThanNeeded(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		region  string
+		answers bucketAnswers
+		puts    int
+	}{
+		{"name owned by this account", "us-east-1", bucketAnswers{head: status(http.StatusOK)}, 0},
+		{"name owned by another account", "us-east-1", bucketAnswers{head: status(http.StatusForbidden)}, 0},
+		{"name in another region", "us-east-1", bucketAnswers{head: status(http.StatusMovedPermanently)}, 0},
+		{"same name owned in us-east-1, creating elsewhere", "eu-west-1", bucketAnswers{head: status(http.StatusMovedPermanently)}, 0},
+		{"BucketAlreadyExists after a free check", "eu-west-1", bucketAnswers{put: apiError(http.StatusConflict, "BucketAlreadyExists")}, 1},
+		{"BucketAlreadyOwnedByYou after a free check", "eu-west-1", bucketAnswers{put: apiError(http.StatusConflict, "BucketAlreadyOwnedByYou")}, 1},
+		{"OperationAborted after a free check", "eu-west-1", bucketAnswers{put: apiError(http.StatusConflict, "OperationAborted")}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fake := &bucketRecorder{reply: tc.reply}
-			server := httptest.NewServer(fake)
-			defer server.Close()
-			err := adminIn(server, tc.region).CreateBucket(context.Background(), "taken-name", tc.region)
+			requests, err := createWith(t, tc.region, tc.answers)
 			if !errors.Is(err, ErrBucketNameTaken) {
 				t.Fatalf("err = %v, want ErrBucketNameTaken", err)
 			}
 			puts := 0
-			for _, call := range fake.calls {
-				if call.method == http.MethodPut {
+			for _, request := range requests {
+				if strings.HasPrefix(request, "PUT") {
 					puts++
 				}
 			}
 			if puts != tc.puts {
-				t.Fatalf("%d PUTs, want %d: %q", puts, tc.puts, fake.methods())
+				t.Fatalf("%d PUTs, want %d: %q", puts, tc.puts, requests)
 			}
 		})
 	}
 }
 
+// A refused key gets the same bare 403 to a HEAD request as another
+// account's bucket does; it must read as a credential problem, never as a
+// taken name, or setup would say "taken" for every name.
+func TestCreateBucketRefusedCredentialsAreNotATakenName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		code string
+		want string
+	}{
+		{"InvalidClientTokenId", "The storage provider doesn't recognize the access key, or its secret is wrong."},
+		{"SignatureDoesNotMatch", "The storage provider doesn't recognize the access key, or its secret is wrong."},
+		{"ExpiredToken", "The storage credentials have expired."},
+	} {
+		requests, err := createWith(t, "us-east-1", bucketAnswers{head: status(http.StatusForbidden), sts: stsRefuses(tc.code)})
+		if err == nil || errors.Is(err, ErrBucketNameTaken) {
+			t.Fatalf("%s: err = %v, want a credentials failure", tc.code, err)
+		}
+		if d := Diagnose(err); d.Cause != CauseNoCredentials || d.Explanation != tc.want {
+			t.Errorf("%s: diagnosis %+v", tc.code, d)
+		}
+		for _, request := range requests {
+			if strings.HasPrefix(request, "PUT") {
+				t.Errorf("%s: a bucket was requested with refused credentials: %q", tc.code, requests)
+			}
+		}
+	}
+}
+
+// Any HEAD answer other than found, missing, forbidden or redirected leaves
+// the name's state unknown, so nothing is created.
+func TestCreateBucketUnexpectedNameCheckAnswerStopsBeforeCreating(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable} {
+		requests, err := createWith(t, "eu-west-1", bucketAnswers{head: status(code)})
+		if err == nil || errors.Is(err, ErrBucketNameTaken) || errors.Is(err, ErrBucketMayExist) {
+			t.Fatalf("HEAD %d: err = %v, want the request's own error", code, err)
+		}
+		if len(requests) != 1 || !strings.HasPrefix(requests[0], "HEAD") {
+			t.Errorf("HEAD %d: requests %q, want the HEAD alone", code, requests)
+		}
+	}
+}
+
 func TestCreateBucketDeniedIsAccessDeniedNotTaken(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(&bucketRecorder{reply: func(_ bucketCall, w http.ResponseWriter) { replyS3Error(w, http.StatusForbidden, "AccessDenied") }})
+	_, err := createWith(t, "eu-west-1", bucketAnswers{put: apiError(http.StatusForbidden, "AccessDenied")})
+	if err == nil || errors.Is(err, ErrBucketNameTaken) || errors.Is(err, ErrBucketMayExist) || Diagnose(err).Cause != CauseAccessDenied {
+		t.Fatalf("err = %v, want access denied that is neither taken nor unclear", err)
+	}
+}
+
+func TestCreateBucketWithNoClearAnswerMayHaveCreatedIt(t *testing.T) {
+	t.Parallel()
+	_, err := createWith(t, "eu-west-1", bucketAnswers{put: status(http.StatusServiceUnavailable)})
+	if !errors.Is(err, ErrBucketMayExist) {
+		t.Fatalf("500-class answer: err = %v, want ErrBucketMayExist", err)
+	}
+	// The connection drops after the name check.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("no hijacker")
+			return
+		}
+		conn, _, _ := hijacker.Hijack()
+		_ = conn.Close()
+	}))
 	defer server.Close()
-	err := adminIn(server, "eu-west-1").CreateBucket(context.Background(), "agent-archive-1", "eu-west-1")
-	if err == nil || errors.Is(err, ErrBucketNameTaken) || Diagnose(err).Cause != CauseAccessDenied {
-		t.Fatalf("err = %v, want access denied that is not a taken name", err)
+	err = adminIn(server, "eu-west-1").CreateBucket(context.Background(), "agent-archive-1", "eu-west-1")
+	if !errors.Is(err, ErrBucketMayExist) {
+		t.Fatalf("dropped connection: err = %v, want ErrBucketMayExist", err)
+	}
+}
+
+func TestCreateBucketNamesTheAccountLimitAndInvalidNames(t *testing.T) {
+	t.Parallel()
+	_, err := createWith(t, "eu-west-1", bucketAnswers{put: apiError(http.StatusBadRequest, "TooManyBuckets")})
+	if !errors.Is(err, ErrTooManyBuckets) {
+		t.Fatalf("err = %v, want ErrTooManyBuckets", err)
+	}
+	_, err = createWith(t, "eu-west-1", bucketAnswers{put: apiError(http.StatusBadRequest, "InvalidBucketName")})
+	if !errors.Is(err, ErrInvalidBucketName) {
+		t.Fatalf("err = %v, want ErrInvalidBucketName", err)
 	}
 }
 

@@ -15,9 +15,11 @@ follow [Semantic Versioning](https://semver.org/).
   turns on all four Block Public Access settings, and reads them back, then
   prints the least-privilege policy for the new bucket and recommends a
   separate runtime profile. The profile needs `s3:CreateBucket` and
-  `s3:PutBucketPublicAccessBlock`; without them setup says so and lets you
-  pick an existing bucket. If Block Public Access can't be turned on, setup
-  offers to retry or delete the empty bucket and never uploads to it.
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS partition is supported.
   Setup does not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,

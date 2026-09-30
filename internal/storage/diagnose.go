@@ -64,6 +64,12 @@ func Diagnose(err error) Diagnosis {
 	if err == nil {
 		return Diagnosis{}
 	}
+	// A credentials check made before a bucket call (BucketAdmin) names the
+	// credentials whatever the error inside it is.
+	var check *credentialsCheckError
+	if errors.As(err, &check) {
+		return diagnoseCredentialsCheck(check)
+	}
 	// Credentials come first: fetching them can itself fail with an API
 	// error (an STS or SSO refusal) or a network error (an unreachable EC2
 	// metadata service), and that is still a credential problem, not a

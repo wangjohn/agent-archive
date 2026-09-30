@@ -94,8 +94,22 @@ uses the profile you chose, once, with these extra permissions:
 | --- | --- |
 | `s3:CreateBucket` | Creating the bucket. |
 | `s3:PutBucketPublicAccessBlock` | Turning on all four Block Public Access settings. |
-| `s3:DeleteBucket` | Deleting the still-empty bucket only if you ask to after Block Public Access could not be turned on. |
+| `s3:DeleteBucket` | Deleting the still-empty bucket only if you ask to after Block Public Access could not be turned on, and confirm by typing its name. |
 | `s3:GetBucketPublicAccessBlock` | Reading the settings back (also in the runtime policy). |
+
+Setup also asks STS who the profile is (`sts:GetCallerIdentity`, which needs
+no permission) when S3 answers a check that a bucket name is free with
+"forbidden", so that a refused key is reported as one and not as a taken
+name. An organization policy (a service control policy or a permissions
+boundary) can deny the actions above even to a profile whose own policy
+allows them; setup's message says so when creation is refused.
+
+Guided creation works in the standard AWS partition only; for a region in
+China, GovCloud or an isolated partition, create the bucket yourself and pick
+it. Two runs that choose the same name at the same moment can both be told the
+name is free; the second is then refused, or, in us-east-1, shares the
+bucket. That is why setup never deletes a bucket on one keypress: you type
+its name first, and S3 refuses to delete a bucket that holds objects.
 
 Setup does not set a bucket policy, ACLs, a lifecycle rule, or default
 encryption (S3 already encrypts new buckets with SSE-S3), and it never

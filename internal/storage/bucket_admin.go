@@ -9,14 +9,30 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// ErrBucketNameTaken means S3 would not create a bucket because the name is
-// already in use, in this account or another. S3 bucket names are global.
-// Nothing was created or changed.
-var ErrBucketNameTaken = errors.New("storage: that bucket name is already taken")
+// Errors BucketAdmin.CreateBucket returns for outcomes a caller acts on. Each
+// wraps the provider's error where there is one.
+var (
+	// ErrBucketNameTaken means S3 would not create a bucket because the name
+	// is already in use, in this account or another (bucket names are
+	// global), or its state cannot be told apart from that. Nothing was
+	// created or changed.
+	ErrBucketNameTaken = errors.New("storage: that bucket name is already in use")
+	// ErrBucketMayExist means the request to create the bucket got no clear
+	// answer (the connection failed, or S3 answered with a server error), so
+	// the bucket may or may not have been created. A caller must not delete
+	// or reuse it on the strength of this call.
+	ErrBucketMayExist = errors.New("storage: the bucket may have been created")
+	// ErrTooManyBuckets means the account has reached its bucket limit.
+	ErrTooManyBuckets = errors.New("storage: the account has reached its bucket limit")
+	// ErrInvalidBucketName means S3 does not accept the name.
+	ErrInvalidBucketName = errors.New("storage: S3 does not accept that bucket name")
+)
 
 // awsDefaultRegion is the region whose CreateBucket takes no location
 // constraint.
@@ -35,34 +51,132 @@ type BucketAdmin struct{ client *s3.Client }
 func NewBucketAdmin(client *s3.Client) *BucketAdmin { return &BucketAdmin{client: client} }
 
 // CreateBucket creates a bucket named name in region, with a location
-// constraint everywhere except us-east-1, where S3 refuses one. A name that
-// is already in use, whoever owns it, is ErrBucketNameTaken and leaves the
-// existing bucket untouched: in us-east-1 S3 answers a request to create a
-// bucket its caller already owns with success and resets its ACLs, so
-// setup would go on to change a bucket it did not create. That region is
-// therefore asked first whether the name exists at all (a HEAD request,
-// answered 404 only for a name nobody owns), and anything but that 404 is
-// taken. Other regions answer BucketAlreadyOwnedByYou, which needs no
-// such check.
+// constraint everywhere except us-east-1, where S3 refuses one.
+//
+// It first asks whether the name exists at all (a HEAD request, answered
+// 404 only for a name nobody owns), in every region. In us-east-1 that is
+// what stops setup changing a bucket it did not create: S3 answers a request
+// to create a bucket its caller already owns there with success and resets
+// its ACLs. Elsewhere it spares a same-name bucket the caller owns in
+// us-east-1 a confusing result, and narrows (does not close) the window in
+// which two runs choosing the same name can both succeed: S3 gives a
+// successful CreateBucket no signal that says "created just now" as opposed
+// to "already yours" in us-east-1, so callers must treat a bucket this call
+// created as identified by the name alone.
+//
+// An existing name, whoever owns it, is ErrBucketNameTaken and is left
+// untouched. A 403 or 301 to the HEAD request reads as taken only once the
+// credentials are shown to work (see checkCredentials): a refused key gets 403
+// too, and would otherwise make every name look taken. A request that gets
+// no clear answer is ErrBucketMayExist.
 func (a *BucketAdmin) CreateBucket(ctx context.Context, name, region string) error {
-	if region == awsDefaultRegion {
-		_, err := a.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
-		switch {
-		case err == nil, isBucketOwnedElsewhere(err):
-			return ErrBucketNameTaken
-		case !isMissingBucket(err):
-			return err
-		}
+	if err := a.checkNameFree(ctx, name); err != nil {
+		return err
 	}
 	var constraint *types.CreateBucketConfiguration
 	if region != awsDefaultRegion {
 		constraint = &types.CreateBucketConfiguration{LocationConstraint: types.BucketLocationConstraint(region)}
 	}
 	_, err := a.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name), CreateBucketConfiguration: constraint})
-	if err != nil && bucketNameInUse(err) {
-		return fmt.Errorf("%w: %w", ErrBucketNameTaken, err)
+	if err != nil {
+		return classifyCreateError(err)
+	}
+	return nil
+}
+
+// checkNameFree returns nil when no bucket has the name, ErrBucketNameTaken
+// when one does, and the error itself when the answer is unclear.
+func (a *BucketAdmin) checkNameFree(ctx context.Context, name string) error {
+	_, err := a.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
+	switch {
+	case err == nil:
+		return ErrBucketNameTaken
+	case isMissingBucket(err):
+		return nil
+	case isBucketOwnedElsewhere(err):
+		if credentialsErr := a.checkCredentials(ctx); credentialsErr != nil {
+			return credentialsErr
+		}
+		return ErrBucketNameTaken
 	}
 	return err
+}
+
+// credentialsCheckError is a failed credentials check: the client's
+// credentials are refused, expired, missing, or could not be checked.
+type credentialsCheckError struct{ err error }
+
+func (e *credentialsCheckError) Error() string { return "storage: check credentials: " + e.err.Error() }
+
+func (e *credentialsCheckError) Unwrap() error { return e.err }
+
+// checkCredentials asks STS who the client's credentials belong to, a call
+// that needs no permission, so it fails only when the credentials do not
+// work. It reuses the S3 client's credentials, region, HTTP client and
+// endpoint override (so a test's fake server answers it too).
+func (a *BucketAdmin) checkCredentials(ctx context.Context) error {
+	options := a.client.Options()
+	client := sts.NewFromConfig(aws.Config{Region: options.Region, Credentials: options.Credentials, HTTPClient: options.HTTPClient}, func(o *sts.Options) {
+		o.BaseEndpoint = options.BaseEndpoint
+		o.Logger = logging.Nop{}
+		o.Retryer = aws.NopRetryer{}
+	})
+	if _, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}); err != nil {
+		return &credentialsCheckError{err: err}
+	}
+	return nil
+}
+
+// diagnoseCredentialsCheck explains a failed credentials check in the terms
+// of the storage check's credential diagnoses.
+func diagnoseCredentialsCheck(check *credentialsCheckError) Diagnosis {
+	var apiErr smithy.APIError
+	if errors.As(check.err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ExpiredToken", "ExpiredTokenException":
+			return credentialsExpired
+		case "InvalidClientTokenId", "SignatureDoesNotMatch", "InvalidAccessKeyId", "InvalidToken":
+			return credentialsRejected
+		}
+	}
+	return Diagnose(check.err)
+}
+
+// classifyCreateError turns a CreateBucket error into the sentinel a caller
+// acts on, keeping the original error in the chain; any other error is
+// returned as is.
+func classifyCreateError(err error) error {
+	if bucketNameInUse(err) {
+		return fmt.Errorf("%w: %w", ErrBucketNameTaken, err)
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "TooManyBuckets":
+			return fmt.Errorf("%w: %w", ErrTooManyBuckets, err)
+		case "InvalidBucketName":
+			return fmt.Errorf("%w: %w", ErrInvalidBucketName, err)
+		}
+	}
+	if answerUnclear(err) {
+		return fmt.Errorf("%w: %w", ErrBucketMayExist, err)
+	}
+	return err
+}
+
+// answerUnclear reports whether a request may have been carried out although
+// it returned err: the connection failed or timed out after it was sent, or
+// S3 answered with a server error. A failure to get credentials is not
+// unclear: no request was sent.
+func answerUnclear(err error) bool {
+	if credentialService(err) != "" {
+		return false
+	}
+	if isNetworkError(err) {
+		return true
+	}
+	var response *smithyhttp.ResponseError
+	return errors.As(err, &response) && response.HTTPStatusCode() >= http.StatusInternalServerError
 }
 
 // BlockPublicAccess turns on all four Block Public Access settings for
@@ -80,8 +194,8 @@ func (a *BucketAdmin) BlockPublicAccess(ctx context.Context, bucket string) erro
 	return err
 }
 
-// DeleteBucket deletes bucket, which must be empty. It needs
-// s3:DeleteBucket.
+// DeleteBucket deletes bucket, which must be empty (S3 refuses otherwise).
+// It needs s3:DeleteBucket.
 func (a *BucketAdmin) DeleteBucket(ctx context.Context, bucket string) error {
 	_, err := a.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
 	return err
@@ -110,9 +224,9 @@ func isMissingBucket(err error) bool {
 	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound
 }
 
-// isBucketOwnedElsewhere reports whether a HeadBucket error shows that the
-// name exists: 403 (another account's bucket, or one this profile cannot
-// list) or 301 (a bucket in another region).
+// isBucketOwnedElsewhere reports whether a HeadBucket error may show that
+// the name exists: 403 (another account's bucket, one this profile cannot
+// list, or credentials S3 refuses) or 301 (a bucket in another region).
 func isBucketOwnedElsewhere(err error) bool {
 	var response *smithyhttp.ResponseError
 	if !errors.As(err, &response) {
