@@ -128,6 +128,12 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	}
 	if !strings.HasSuffix(out.String(), "  q) quit\nEnter p, c, w, or q [p]: ") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
+	}	out.Reset()
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.String(), "\nEnter 1, p, c, w, or q [1]: ") {
+		t.Fatalf("prompt with one agent installed:\n%s", out.String())
 	}
 }
 
