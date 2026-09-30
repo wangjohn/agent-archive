@@ -65,7 +65,7 @@ func (a scopedArchive) add(t *testing.T, id, title, project string, change ...fu
 	t.Helper()
 	m := a.base
 	m.SessionID, m.Title, m.ProjectName = id, title, project
-	m.ProjectID = archive.ProjectID(filepath.Join("/elsewhere", project))
+	m.ProjectID = archive.ProjectID("/elsewhere/" + project)
 	if project == a.label {
 		m.ProjectID = archive.ProjectID(a.dir)
 	}

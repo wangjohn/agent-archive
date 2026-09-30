@@ -245,8 +245,8 @@ Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), PR (the last pull request the session created,
 when any row has one), relative capture time, harness, project,
 and a short SESSION_ID. A harness or project every row shares is left out of
-the table and named in the heading. On a terminal with an interactive stdin, list a
-numbered table and pick a session to show its summary, then t for its
+the table and named in the heading. On a terminal with an interactive stdin,
+list a numbered table and pick a session to show its summary, then t for its
 transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
 wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
 never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it

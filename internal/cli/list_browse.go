@@ -496,6 +496,34 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 	}
 }
 
+// lineCommand is what an answer at the line-mode prompt asks for besides a
+// row: to leave, or (when the scope can change) the other scope.
+type lineCommand int
+
+const (
+	lineOther lineCommand = iota
+	lineQuit
+	lineScope
+)
+
+func (l *sessionPicker) lineCommand(answer string) lineCommand {
+	switch {
+	case answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit"):
+		return lineQuit
+	case l.toggles && strings.EqualFold(answer, "a"):
+		return lineScope
+	}
+	return lineOther
+}
+
+// printHeading writes the heading, cut to one row of a terminal width
+// columns wide (0 when its size is unknown).
+func (l *sessionPicker) printHeading(stdout io.Writer, width int) {
+	if l.heading != "" {
+		terminal.Println(stdout, oneRow(l.heading, width))
+	}
+}
+
 // headRows is how many terminal rows the heading takes: one, cut to fit.
 func (l *sessionPicker) headRows() int {
 	if l.heading == "" {
@@ -548,9 +576,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 			}
 		}
 		paged := len(pages) > 1
-		if l.heading != "" {
-			terminal.Println(stdout, oneRow(l.heading, width))
-		}
+		l.printHeading(stdout, width)
 		if paged {
 			l.start = pages[page].start
 			if err := printSessionGroups(stdout, pageSessionGroups(groups, pages[page]), format); err != nil {
@@ -585,11 +611,8 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				return listRow{}, false, err
 			}
 			answer = strings.TrimSpace(answer)
-			if answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit") {
-				return listRow{}, false, nil
-			}
-			if l.toggles && strings.EqualFold(answer, "a") {
-				l.toggled = true
+			if command := l.lineCommand(answer); command != lineOther {
+				l.toggled = command == lineScope
 				return listRow{}, false, nil
 			}
 			message, turned := "", false
@@ -802,15 +825,14 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 }
 
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
-// interactive show and handoff.
-func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, int, bool, error) {
+// interactive show and handoff. It reads every match, for the caller to scope
+// and limit.
+func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
-		return nil, 0, false, err
+		return nil, err
 	}
-	sessions = filterListOrigin(sessions, opts.imported, opts.hookCaptured)
-	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
-	return shown, totalMatched, truncated, nil
+	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), nil
 }
 
 // archiveRows builds the choices of a browser over archived sessions, read
@@ -833,7 +855,7 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 		return nil, false, 1
 	}
 	stopBrowse := startActivity(stdout, "Finding sessions…")
-	sessions, _, _, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}}, stderr, command)
+	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}}, stderr, command)
 	stopBrowse()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)

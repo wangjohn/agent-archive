@@ -1,7 +1,7 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PR 1 in review. Where this plan and the code differ once packages merge, the
+PR 1 merged; PR 4 in review. Where this plan and the code differ once packages merge, the
 code is the reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
@@ -653,3 +653,44 @@ guide. Live check on the owner's Mac:
   need admitting, or the parser would need to keep the last human prompt.
 - A configured default scope (always all projects), if `a` and
   `--all-projects` prove not enough.
+
+## Deviations
+
+- PR 4: bare `show` (its browser and `show --json`'s picker) also starts in
+  the working directory's scope, with `a`, because it shares the browser and
+  `findBrowseSessions`; it has no `--all-projects` or `--project` flag yet.
+  `show "<words>"` is unchanged (PR 5 replaces its matcher).
+- PR 4: title search keeps today's matcher (`matchSessionsByQuery`) and only
+  gains the scope-first order: this Mac's in-scope sessions, then the
+  archive's in-scope, then everywhere (this Mac's, then the archive's). The
+  subagent tier is PR 5's. The "N more in other projects" count covers what
+  was searched: a title answered on this Mac does not read the archive, which
+  needs the network, so its other matches are not counted.
+- PR 4: a scope is applied before `--limit`, so a `list` that can narrow (a
+  scope, or a terminal that can switch to one) reads the whole archive
+  listing instead of the index's newest page. `list --all-projects` piped, or
+  with `--json`, keeps the index fast path. The index spec's scoped window
+  will replace this.
+- PR 4: a scope exists only inside a project: a directory with a repository
+  key, or inside a configured project root. Elsewhere there is no scope
+  (every session), which also means a directory with neither has none to fall
+  back from. A scope made from a worktree's directory is named after the
+  project its sessions have, not the directory (`sessionScope.relabeled`).
+- PR 4: `listScope.label` is the scope's name even when it is turned off
+  (`all_projects` says so); `outside_matches` counts the sessions outside the
+  scope that match the same filters. The object is omitted outside a project.
+- PR 4: the PR column reads the last `pr_created` event of `git_activity`
+  (`createdPRLabel`); PR 3's `LatestPR` replaces it. `listRow.Live` (owned by
+  PR 6 in the shared-names table) is added here for the dot; local rows only
+  (the archive says nothing about what is running here).
+- PR 4: HARNESS and PROJECT are left out only for two or more rows (one row
+  shares its value with nothing), and the verbose table keeps every column.
+  With one project the table is not grouped, so a repository's checkouts are
+  one list.
+- PR 4: `handoff --project NAME` with `--latest` still reads its value as a
+  directory (a project that no longer exists on disk is still searched by
+  its ID). `--project` and `--all-projects` are usage errors with `--file`,
+  and `--all-projects` with `--latest`; `--project` sets where a launched agent
+  starts only with `--latest`, as before.
+- PR 4: the picker's line-mode `a` takes precedence over a short ID prefix
+  typed as `a`, as `n` and `p` do.

@@ -32,7 +32,7 @@ func (f pickerFixture) addArchived(t *testing.T, id, title, project string) {
 		t.Fatal(err)
 	}
 	m.SessionID, m.Title, m.ProjectName = id, title, project
-	m.ProjectID = archive.ProjectID(filepath.Join("/elsewhere", project))
+	m.ProjectID = archive.ProjectID("/elsewhere/" + project)
 	if project == filepath.Base(f.project) {
 		m.ProjectID = archive.ProjectID(f.project)
 	}

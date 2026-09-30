@@ -66,7 +66,8 @@ agent-archive handoff [SESSION_ID | --latest] [flags]
 |---|---|---|
 | `SESSION_ID` | — | Archive session ID from `list`. Mutually exclusive with `--latest` and `--file`. |
 | `--latest` | off | Most recent session for the project (see [Selection](#selection)). |
-| `--project DIR` | current directory | Project used by `--latest`. |
+| `--project DIR\|NAME` | current directory | The project the picker and a title look at first (a directory's repository, or a project name), and the directory `--latest` searches. See [session finding](session-finding.md#3-scope-this-repository-first). |
+| `--all-projects` | off | The picker and a title look at every project, not only the working directory's repository. Not with `--project`, `--latest`, or `--file`. |
 | `--harness NAME` | any | Restrict `--latest`, or disambiguate an ID, to `claude`, `codex`, or `cursor`. |
 | `--file PATH --harness NAME` | — | Render a native transcript file directly. Same machine only; still filtered. |
 | `--source auto\|local\|archive` | `auto` | Where the session content comes from (see [Content source](#content-source)). |

@@ -60,14 +60,16 @@ func scopeFor(env scopeDependencies, project string, allProjects bool) (sessionS
 	if err != nil {
 		return sessionScope{}, fmt.Errorf("load config: %w", err)
 	}
-	dir, named := "", false
+	var dir string
 	if project != "" {
-		if dir, named, err = projectArgument(project); err != nil {
-			return sessionScope{}, err
-		}
-		if named {
+		if !isDirectory(project) {
 			return nameScope(cfg, project, allProjects), nil
 		}
+		abs, err := filepath.Abs(project)
+		if err != nil {
+			return sessionScope{}, fmt.Errorf("--project %s: %w", project, err)
+		}
+		dir = filepath.Clean(abs)
 	} else {
 		var ok bool
 		if dir, ok = workingDirOrNone(env); !ok {
@@ -101,18 +103,11 @@ func workingDirOrNone(env workingDirDependencies) (string, bool) {
 	return filepath.Clean(dir), true
 }
 
-// projectArgument reads a --project value: an existing directory (returned
-// absolute), or else a project's name.
-func projectArgument(value string) (dir string, named bool, err error) {
-	info, statErr := os.Stat(value)
-	if statErr != nil || !info.IsDir() {
-		return "", true, nil
-	}
-	abs, err := filepath.Abs(value)
-	if err != nil {
-		return "", false, fmt.Errorf("--project %s: %w", value, err)
-	}
-	return filepath.Clean(abs), false, nil
+// isDirectory reports whether path is an existing directory: a --project
+// value that is one names it, and any other is a project's name.
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // nameScope is the scope of the projects called name: sessions whose project

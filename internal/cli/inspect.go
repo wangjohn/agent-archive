@@ -149,7 +149,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if full {
 			return applyListLimit(s.filter(sessions), opts.limit)
 		}
-		shown, totalMatched, truncated = applyListLimit(sessions, opts.limit)
+		shown, _, _ = applyListLimit(sessions, opts.limit)
 		if !listed.Complete {
 			return shown, -1, true
 		}
@@ -188,25 +188,26 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // the scope object says which).
 func listJSON(scope sessionScope, sessions []archive.Metadata, full bool, limit int, view func(sessionScope) ([]archive.Metadata, int, bool)) listDocument {
 	shown, totalMatched, truncated := view(scope)
-	doc := listScope{Label: scope.Label, AllProjects: scope.All}
+	fellBack, outside := false, 0
 	if scope.narrowed() {
 		if len(shown) == 0 {
-			doc.FellBack, doc.AllProjects = true, true
+			fellBack = true
 			shown, totalMatched, truncated = view(scope.everything())
 		} else {
-			doc.OutsideMatches = len(sessions) - len(scope.filter(sessions))
+			outside = len(sessions) - len(scope.filter(sessions))
 		}
 	}
-	if full && scope.Label != "" {
+	label := scope.Label
+	if full && label != "" {
 		names := make([]string, 0, len(sessions))
 		for _, m := range scope.only().filter(sessions) {
 			names = append(names, m.ProjectName)
 		}
-		doc.Label = scope.only().relabeled(names).Label
+		label = scope.only().relabeled(names).Label
 	}
 	out := newListDocument(shown, limit, totalMatched, truncated)
 	if scope.Label != "" {
-		out.Scope = &doc
+		out.Scope = &listScope{Label: label, AllProjects: scope.All || fellBack, FellBack: fellBack, OutsideMatches: outside}
 	}
 	return out
 }

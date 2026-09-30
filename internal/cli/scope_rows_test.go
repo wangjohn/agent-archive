@@ -96,7 +96,9 @@ func TestTableLeavesOutHiddenColumns(t *testing.T) {
 // git_activity.
 func TestPRColumnIsTheLastCreatedPullRequest(t *testing.T) {
 	t.Parallel()
-	at := func(kind archive.GitEventKind, n int) archive.GitEvent { return archive.GitEvent{Kind: kind, PRNumber: n} }
+	at := func(kind archive.GitEventKind, n int) archive.GitEvent {
+		return archive.GitEvent{Kind: kind, PRNumber: n}
+	}
 	for _, tc := range []struct {
 		name   string
 		events []archive.GitEvent

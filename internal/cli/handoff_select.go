@@ -130,7 +130,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
-		archived, _, _, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
+		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
 	}
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true,
@@ -290,11 +290,11 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 // says which project it belongs to, for a scope to decide on before its
 // transcript is read.
 func registrationMetadata(reg archive.SessionRegistration) archive.Metadata {
-	m := archive.Metadata{ProjectID: reg.ProjectID, RepoKey: reg.RepoKey}
+	name := ""
 	if reg.ProjectRoot != "" {
-		m.ProjectName = filepath.Base(filepath.Clean(reg.ProjectRoot))
+		name = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
-	return m
+	return archive.Metadata{ProjectID: reg.ProjectID, RepoKey: reg.RepoKey, ProjectName: name}
 }
 
 // activeNow reports whether a session was last active within

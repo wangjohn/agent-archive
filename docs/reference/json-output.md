@@ -33,6 +33,16 @@ explicitly.
   true: the indexed read stopped once it found one more match than the limit.
   When true, `total_matched` is the exact match count and `truncated` is
   present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Run inside a project, `list` and `list --json` return that repository's
+  sessions, and the document gains an optional `scope` object:
+  `{"label": "agent-archive", "all_projects": false, "fell_back": false,
+  "outside_matches": 3}`. `label` names the scope; `all_projects` is true when
+  it was not applied (`--all-projects`, or the scope held nothing);
+  `fell_back` is true when it held nothing and all projects are listed;
+  `outside_matches` is how many more sessions the same filters match outside
+  it. Outside any project there is no `scope` and every session is listed.
+  Scripts that want every session pass `--all-projects`. The field is
+  additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on
   stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
   current parsers cannot prove non-use. Schema version `3` removed the
