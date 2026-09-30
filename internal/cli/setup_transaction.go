@@ -17,7 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -381,45 +381,46 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, commands...)
-	plistPath := env.installation(home, userHome).collectorPlist()
+	in := env.installation(home, userHome)
 	// The collector gets the AWS files and PATH this storage was just
 	// verified with; launchd would otherwise start it with none of them.
-	plist, err := launchd.LaunchAgent(executable, home, launchd.Label(plistPath), env.collectorEnvironment(next.Storage))
+	plan, err := in.planJob(userHome, collectorJob(executable, home, env.collectorEnvironment(next.Storage)))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
-	change, err := fileChange(plistPath, plist)
+	jobChanges, err := artifactChanges(plan.Artifacts)
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
-	changes = append(changes, change)
+	changes = append(changes, jobChanges...)
 	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
-	change, err = fileChange(filepath.Join(home, "config.json"), append(data, '\n'))
+	change, err := fileChange(filepath.Join(home, "config.json"), append(data, '\n'))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
-	job := env.jobState(userHome, plistPath)
+	job := env.jobStatus(userHome, plan.Ref)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
-	if job == "unknown" {
-		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
+	if job.State == scheduler.Unknown {
+		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.definer().Words().Tool)
 	}
-	if job == setupjournal.JobAnotherInstallation {
-		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchd.Label(plistPath), plistPath)
+	if job.State == scheduler.AnotherInstallation {
+		problem, words := problemOf(job), in.definer().Words()
+		return setupjournal.Journal{}, fmt.Errorf("%s's %s job was loaded from a %s other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. %s", words.Manager, plan.Ref, words.Definition, problem.Expected, problem.Fix)
 	}
 	// The prototype's job is the account's, retired only by the account's
 	// default installation: a test installation must not change it.
 	var legacy *setupjournal.LegacyJob
-	if env.installation(home, userHome).isDefault() {
+	if in.isDefault() {
 		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd()); err != nil {
 			return setupjournal.Journal{}, err
 		}
 	}
-	relabeled, err := setupjournal.PlanRelabel(env.installation(home, userHome).previousCollectorPlists(), env.launchd())
+	relabeled, err := setupjournal.PlanRelabel(in.previousCollectorPlists(), env.launchd())
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -428,7 +429,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if len(relabeled) > 0 {
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
-	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: setupjournal.JobActive(job)}
+	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State)}
 	return journal, nil
 }
 

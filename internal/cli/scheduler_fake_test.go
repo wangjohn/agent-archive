@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // fakeScheduler is the scheduler every test but the ones of the real launchd
@@ -23,6 +24,10 @@ import (
 // launchd code (the argv characterization) do not use it: they stub launchctl
 // (stubLaunchctl) and drive launchd.Scheduler through a nil Env.Scheduler.
 type fakeScheduler struct {
+	// Scheduler defines jobs and reads their definitions on disk, as launchd
+	// does (its Run is never set, so it can ask launchctl nothing); the
+	// fake answers everything about the manager itself.
+	launchd.Scheduler
 	t *testing.T
 	// forbidChanges makes a load or unload fail the test (and the call), for
 	// a test that must not start or stop a job (testEnv's).
@@ -90,12 +95,31 @@ func (f *fakeScheduler) record(call string) {
 	f.calls = append(f.calls, call)
 }
 
-func (f *fakeScheduler) JobState(_ context.Context, _ scheduler.Site, ref scheduler.Ref) scheduler.JobState {
+// Inspect is launchd's own answer over a launchctl that says what the fake
+// holds for ref, so the definition on disk and the problem a state carries are
+// the adapter's.
+func (f *fakeScheduler) Inspect(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.Status {
 	f.record("state " + string(ref))
+	state := f.state(ref)
 	if f.stateFn != nil {
-		return scheduler.JobState(f.stateFn(ref))
+		state = f.stateFn(ref)
 	}
-	return scheduler.JobState(f.state(ref))
+	plist := launchd.PlistPath(site, ref)
+	printed := func(context.Context, string, ...string) ([]byte, error) {
+		switch scheduler.JobState(state) {
+		case scheduler.Loaded:
+			return []byte("path = " + plist + "\nstate = waiting\n"), nil
+		case scheduler.Running:
+			return []byte("path = " + plist + "\nstate = running\n"), nil
+		case scheduler.AnotherInstallation:
+			return []byte("path = /elsewhere/" + string(ref) + ".plist\nstate = running\n"), nil
+		case scheduler.Missing:
+			return []byte("Could not find service"), errors.New("exit status 113")
+		case scheduler.Unknown:
+		}
+		return []byte("launchctl could not answer"), errors.New("exit status 1")
+	}
+	return launchd.Scheduler{Run: printed}.Inspect(ctx, site, ref)
 }
 
 func (f *fakeScheduler) Load(_ context.Context, _ scheduler.Site, ref scheduler.Ref) error {

@@ -1,16 +1,22 @@
 // Package scheduler is the port between agent-archive and whatever runs its
 // background collector: launchd on macOS today, and another manager for
 // another system as its adapter arrives. It holds the types the commands
-// speak in (a job's Ref, where its definitions live, its JobState) and the
-// interface every adapter implements, and nothing that runs a program: an
-// adapter runs its manager's tool through a Runner it is given, so this
-// package and everything that only names it is pure
-// (TestSchedulerImportBoundary). The adapters live under this directory
-// (internal/scheduler/launchd), and internal/scheduler/host chooses one for
-// the system the program runs on.
+// speak in (a job's Ref, where its definitions live, its JobState, the desired
+// state of a job as a JobSpec and a Plan) and the interfaces every adapter
+// implements, and nothing that runs a program: an adapter runs its manager's
+// tool through a Runner it is given, so this package and everything that only
+// names it is pure (TestSchedulerImportBoundary). The adapters live under this
+// directory (internal/scheduler/launchd), and internal/scheduler/host chooses
+// one for the system the program runs on.
 package scheduler
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
 
 // Ref names one background job to its scheduler. It is opaque to callers and
 // minted by the adapter's own vocabulary: for launchd, the job's label.
@@ -43,24 +49,216 @@ const (
 	AnotherInstallation JobState = "another_installation"
 )
 
-// Scheduler is the background job manager as every command uses it. A test
-// stands in with a fake; the real one for this system is host.Default.
-//
-// JobState is short (launchd: 2 s). Load and Unload run on a bounded context
-// of their own (launchd: 30 s) that ctx's cancellation never reaches, so an
-// interrupt never stops a change halfway.
-type Scheduler interface {
-	// JobState says whether the job ref names is loaded, without changing
-	// anything.
-	JobState(ctx context.Context, site Site, ref Ref) JobState
-	// Load loads (bootstraps) the definition on disk for ref, so scheduled
-	// collection starts without a login.
+// Installation is what an adapter derives a job's Ref from: the data
+// directory one installation of the tool archives into.
+type Installation struct {
+	// DataHome is the data directory, canonical (local.CanonicalPath).
+	DataHome string
+	// Default is whether this is the account's own installation, which keeps
+	// the job an earlier release gave every installation. cli decides it.
+	Default bool
+}
+
+// JobSpec is the job an adapter defines: what runs, with what environment,
+// how often. Everything is a value; an adapter turns it into its manager's
+// definition (Plan) and reads nothing else, so a definition holds only what a
+// JobSpec holds.
+type JobSpec struct {
+	// Executable is the absolute path of the program the job runs.
+	Executable string
+	// Args are its arguments: "_collect".
+	Args []string
+	// DataHome is the absolute data directory the job runs for. It reaches the
+	// job as AGENT_ARCHIVE_HOME, and the adapter derives the job's log files
+	// from it (collector.log, collector-error.log).
+	DataHome string
+	// Env is the environment the job runs with besides AGENT_ARCHIVE_HOME,
+	// which the adapter always sets from DataHome (naming it here is an
+	// error). It never carries credentials: a definition is a file in the
+	// user's home, so it holds file locations, a PATH and settings.
+	Env map[string]string
+	// Interval is how often the job runs.
+	Interval time.Duration
+	// RunAtLoad starts the job once as soon as it is loaded.
+	RunAtLoad bool
+}
+
+// Artifact is one thing a definition changes. Version 1 of the port is
+// file-only: ID is "file:" and the absolute path (see FileArtifact). A backend
+// whose definition is not a file (a crontab, a registered task) would need an
+// applier on Controller to read what is there and apply After; that is not
+// built until such a backend exists.
+type Artifact struct {
+	ID    string
+	After []byte
+	Mode  os.FileMode
+}
+
+// fileScheme is the prefix of an Artifact ID that names a file.
+const fileScheme = "file:"
+
+// FileArtifact is the artifact that puts after in the file at path.
+func FileArtifact(path string, after []byte, mode os.FileMode) Artifact {
+	return Artifact{ID: fileScheme + path, After: after, Mode: mode}
+}
+
+// Path is the file an artifact writes, and false for an artifact that is not
+// a file.
+func (a Artifact) Path() (string, bool) { return strings.CutPrefix(a.ID, fileScheme) }
+
+// Plan is what defining a job changes: the job's Ref and the artifacts that
+// hold its definition. It is pure: an adapter builds it from an installation
+// and a JobSpec alone, reading no file and asking no manager. Shared code
+// reads what each artifact holds now (the journal's before) and applies them.
+type Plan struct {
+	Ref       Ref
+	Artifacts []Artifact
+}
+
+// ProblemKind says what kind of Problem a job has.
+type ProblemKind string
+
+const (
+	// ProblemNotOwned is a job the manager runs from a definition that is not
+	// this installation's.
+	ProblemNotOwned ProblemKind = "not_owned"
+	// ProblemCannotTell is a job the manager cannot be asked about.
+	ProblemCannotTell ProblemKind = "cannot_tell"
+)
+
+// Problem is the facts behind a state that blocks a command, not a sentence:
+// the commands' messages are templates in cli, filled from these facts and the
+// adapter's Words.
+type Problem struct {
+	// Kind is ProblemNotOwned or ProblemCannotTell.
+	Kind ProblemKind
+	// Ref is the job.
+	Ref Ref
+	// LoadedFrom is the definition the manager loaded the job from, for a job
+	// that is not owned; empty when the manager did not say.
+	LoadedFrom string
+	// Expected is the definition this installation expects the job to be
+	// loaded from.
+	Expected string
+	// Fix is the adapter's next step, as a sentence without its full stop.
+	Fix string
+}
+
+// Words is the small set of nouns a scheduler goes by, for the messages that
+// name it: nouns only, no verbs and no plurals.
+type Words struct {
+	// Manager is the scheduler: "launchd".
+	Manager string
+	// Job is what it runs: "LaunchAgent".
+	Job string
+	// Definition is the file that defines a job: "plist".
+	Definition string
+	// Tool is the command that drives it: "launchctl".
+	Tool string
+}
+
+// Status is everything a scheduler can say about one job. Program, Env and
+// DataHome come from the definition on disk whatever the State is, since
+// launchd reports a job whose program is gone as loaded.
+type Status struct {
+	State JobState
+	// Defined is whether a definition for this job exists on disk.
+	Defined bool
+	// Program is the executable the definition runs, "" when it cannot be
+	// read.
+	Program string
+	// Env is the environment the definition sets, without AGENT_ARCHIVE_HOME
+	// (that is DataHome), so it round-trips into JobSpec.Env. It is nil when
+	// it cannot be read, and empty, not nil, when the definition sets none.
+	Env map[string]string
+	// DataHome is the AGENT_ARCHIVE_HOME the definition sets, "" when it sets
+	// none.
+	DataHome string
+	// Paths are the files the definition is in, which uninstall removes.
+	Paths []string
+	// Problem is set for unknown and another_installation.
+	Problem *Problem
+	// Degraded says what works, but not robustly.
+	Degraded []string
+	// DefinitionErr is why a definition that exists could not be read or
+	// understood, which refresh tells apart from an absent one: the error of
+	// the read, or of the first part that could not be parsed (Program is set
+	// when the program was read before it).
+	DefinitionErr error
+}
+
+// Definer defines jobs: the desired state, without touching anything.
+type Definer interface {
+	// Name is the adapter's name, which the setup journal records to find its
+	// adapter again ("launchd").
+	Name() string
+	// Words are the nouns messages name the scheduler with.
+	Words() Words
+	// Ref is the job of the installation: for launchd, its label.
+	Ref(inst Installation) Ref
+	// Plan renders the definition of spec for inst at site, purely.
+	Plan(site Site, inst Installation, spec JobSpec) (Plan, error)
+	// DefaultPATH is the PATH a job gets when its definition sets none.
+	DefaultPATH() string
+}
+
+// Inspector asks what a scheduler knows, and changes nothing.
+type Inspector interface {
+	// Inspect says what the manager and the disk say about the job ref names.
+	// It never fails for "cannot tell": that is State unknown and a Problem.
+	// It is short (launchd: 2 s) and read-only, so it is safe beside a running
+	// collector.
+	Inspect(ctx context.Context, site Site, ref Ref) Status
+	// Definition is Inspect without the manager: State is empty, and nothing
+	// is asked of the scheduler. Refresh reads a definition this way, so a
+	// job whose definition it leaves alone is never asked about.
+	Definition(site Site, ref Ref) Status
+}
+
+// Controller changes what runs. Its operations run on a bounded context that
+// an interrupt never cancels, since the setup journal handles what is half
+// applied.
+type Controller interface {
+	// Load loads the definition on disk for ref, so scheduled collection
+	// starts without a login.
 	Load(ctx context.Context, site Site, ref Ref) error
 	// Unload stops the job ref names, only when the scheduler loaded it from
-	// this site's own definition: nil when it is not loaded, and an error,
-	// stopping nothing, when it belongs to another installation or the
-	// scheduler cannot say.
+	// this site's own definition: nil when it is not loaded, and, stopping
+	// nothing, a *NotOwnedError when another installation owns it or an
+	// *IndeterminateError when the scheduler cannot say.
 	Unload(ctx context.Context, site Site, ref Ref) error
+}
+
+// Scheduler is the background job manager as every command uses it. A test
+// stands in with a fake; the real one for this system is host.Default.
+type Scheduler interface {
+	Definer
+	Inspector
+	Controller
+}
+
+// NotOwnedError is an Unload refused because the manager runs the job from a
+// definition that belongs to another installation. Nothing was stopped.
+type NotOwnedError struct {
+	Words   Words
+	Problem Problem
+}
+
+// Error says whose job was left running.
+func (e *NotOwnedError) Error() string {
+	return fmt.Sprintf("%s's %s job was not loaded from %s; it belongs to another installation and was left running", e.Words.Manager, e.Problem.Ref, e.Problem.Expected)
+}
+
+// IndeterminateError is an Unload refused because the manager could not say
+// whose the job is. Nothing was stopped.
+type IndeterminateError struct {
+	Words   Words
+	Problem Problem
+}
+
+// Error says the job was left as it is.
+func (e *IndeterminateError) Error() string {
+	return fmt.Sprintf("cannot confirm which %s %s's %s job was loaded from; it was left as it is", e.Words.Definition, e.Words.Manager, e.Problem.Ref)
 }
 
 // Runner runs a program and returns its combined standard output and
