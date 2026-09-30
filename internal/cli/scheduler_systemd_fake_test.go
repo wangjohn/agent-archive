@@ -40,6 +40,12 @@ type fakeUserManager struct {
 	noBus bool
 	// failLoad, when set, is the output of an `enable --now` that fails.
 	failLoad string
+	// searchHome, when set, is the home the manager searches for unit files
+	// in place of userHome: a manager whose own environment sets
+	// XDG_CONFIG_HOME does not look where the adapter wrote them.
+	searchHome string
+	// dropIn makes the timer report a drop-in that overrides it.
+	dropIn bool
 }
 
 const fakeSystemdVersion = "systemd 255 (255.4-1ubuntu8.17)\n+PAM +AUDIT +SELINUX default-hierarchy=unified\n"
@@ -54,16 +60,19 @@ func (m *fakeUserManager) scheduler() systemd.Scheduler { return systemd.Schedul
 
 // units are the two unit files of job ref, where the user manager searches.
 func (m *fakeUserManager) units(ref string) (timer, service string) {
-	dir := filepath.Join(m.userHome, ".config", "systemd", "user")
+	home := m.userHome
+	if m.searchHome != "" {
+		home = m.searchHome
+	}
+	dir := filepath.Join(home, ".config", "systemd", "user")
 	return filepath.Join(dir, ref+".timer"), filepath.Join(dir, ref+".service")
 }
 
 // put sets the state of the job called ref.
-func (m *fakeUserManager) put(ref string, state scheduler.JobState) *fakeUserManager {
+func (m *fakeUserManager) put(ref string, state scheduler.JobState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.state[ref] = state
-	return m
 }
 
 func (m *fakeUserManager) held(ref string) scheduler.JobState {
@@ -95,8 +104,16 @@ func (m *fakeUserManager) changing() []string {
 
 func (m *fakeUserManager) show(ref string) string {
 	timer, service := m.units(ref)
+	dropIns := ""
+	if m.dropIn {
+		dropIns = timer + ".d/override.conf"
+	}
 	block := func(id, path, load, active, sub string) string {
-		return fmt.Sprintf("Id=%s\nLoadState=%s\nActiveState=%s\nSubState=%s\nFragmentPath=%s\nDropInPaths=\n", id, load, active, sub, path)
+		in := ""
+		if strings.HasSuffix(id, ".timer") {
+			in = dropIns
+		}
+		return fmt.Sprintf("Id=%s\nLoadState=%s\nActiveState=%s\nSubState=%s\nFragmentPath=%s\nDropInPaths=%s\n", id, load, active, sub, path, in)
 	}
 	switch m.held(ref) {
 	case scheduler.Loaded:

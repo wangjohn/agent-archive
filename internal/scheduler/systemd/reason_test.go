@@ -24,7 +24,9 @@ func TestUnknownJobsSayWhatIsWrong(t *testing.T) {
 		}
 	}
 	fail := func(text string) scheduler.Runner {
-		return func(context.Context, string, ...string) ([]byte, error) { return []byte(text), errors.New("exit status 1") }
+		return func(context.Context, string, ...string) ([]byte, error) {
+			return []byte(text), errors.New("exit status 1")
+		}
 	}
 	// What the manager says about the units themselves, from the captured
 	// fixtures.
