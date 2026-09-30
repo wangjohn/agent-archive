@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build this checkout for this Mac or Linux machine and install a persistent dev binary.
+# Build this checkout for the current Mac and install a persistent dev binary.
+# It also builds for Linux (CGO_ENABLED=0), which is not yet a supported platform.
 set -euo pipefail
 
 usage() {

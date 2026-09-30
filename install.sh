@@ -1,23 +1,20 @@
 #!/bin/sh
-# Installs the latest agent-archive release for this Mac or Linux machine.
+# Installs the latest agent-archive release for this Mac.
 #
 #   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
 #
-# Downloads the binary for this machine's OS and architecture from GitHub
-# Releases, checks it against the release's SHA256SUMS (which catches a
-# damaged download, not a tampered release, since both come from the same
-# place), and installs it as `agent-archive`. It never runs setup and never
-# needs sudo.
+# Downloads the signed, notarized binary for this Mac's architecture from
+# GitHub Releases, checks it against the release's SHA256SUMS (which catches
+# a damaged download, not a tampered release, since both come from the same
+# place), checks that it is signed with this project's Developer ID (which
+# does catch a binary someone else built), and installs it as
+# `agent-archive`. It never runs setup and never needs sudo.
 #
-# On macOS the binary is signed and notarized, and this script also checks
-# that it is signed with this project's Developer ID (which does catch a
-# binary someone else built). Linux binaries are not signed: there the
-# checksum, which is mandatory, is the only check this script makes, and the
-# release's build attestation is what ties the binary to this repository's
-# release workflow (`gh attestation verify <binary> --repo
-# wangjohn/agent-archive`). An install never proceeds unverified: no
-# SHA-256 tool, a missing or malformed SHA256SUMS entry, or a mismatch stops
-# it before anything is installed.
+# The script also recognises Linux release assets (linux-amd64, linux-arm64).
+# Linux is not yet a supported platform. Those binaries are not signed, so
+# the Developer ID check does not apply to them. On every OS the SHA256SUMS
+# check is mandatory: the install stops before anything is installed if
+# there is no SHA-256 tool, no single well-formed entry, or a mismatch.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -56,6 +53,13 @@ main() {
   version="${AGENT_ARCHIVE_VERSION:-}"
   if [ -n "$version" ]; then
     case "$version" in v*) ;; *) version="v${version}" ;; esac
+    # A release tag is one path segment of the download URL: no slashes, no
+    # "..", nothing but tag characters.
+    case "$version" in
+      v | *[!0-9A-Za-z._+-]* | *..*)
+        fail "AGENT_ARCHIVE_VERSION is not a release tag: ${AGENT_ARCHIVE_VERSION}"
+        ;;
+    esac
     default_base="${repo_url}/releases/download/${version}"
   else
     default_base="${repo_url}/releases/latest/download"
@@ -65,11 +69,16 @@ main() {
   install_dir="$(choose_install_dir)"
   target="${install_dir}/agent-archive"
 
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  tmp="$(mktemp -d)" || fail "cannot create a temporary directory"
+  staged=
+  trap 'cleanup' EXIT
   trap 'exit 130' INT TERM
+  trap 'exit 129' HUP
 
   say "Downloading ${asset} (${version:-latest})"
+  if [ -n "${AGENT_ARCHIVE_DOWNLOAD_URL:-}" ]; then
+    say "Downloading from ${base}"
+  fi
   download "${base}/${asset}" "${tmp}/${asset}"
   download "${base}/SHA256SUMS" "${tmp}/SHA256SUMS"
 
@@ -95,28 +104,36 @@ main() {
     verify_signature "${tmp}/${asset}"
     say "Signature verified (Developer ID, team ${team_id})"
   else
-    say "Skipping the code signature check, which is macOS only. Linux binaries are not signed:"
-    say "trust rests on the checksum above and the release's build attestation. To check it:"
-    say "  gh attestation verify ${target} --repo wangjohn/agent-archive"
+    say "Skipping the Developer ID signature check, which is macOS only."
   fi
 
+  [ ! -d "$target" ] || fail "${target} is a directory; not installing over it."
   mkdir -p "$install_dir"
   # Stage beside the target, then rename over it: replacing the file (a new
   # inode) rather than overwriting it in place keeps macOS from killing the
   # upgraded binary at launch.
-  staged="${install_dir}/.agent-archive.install.$$"
+  staged="$(mktemp "${install_dir}/.agent-archive.install.XXXXXXXX")" ||
+    fail "cannot create a temporary file in ${install_dir}"
   cp "${tmp}/${asset}" "$staged"
   chmod 755 "$staged"
   mv -f "$staged" "$target"
+  staged=
 
   installed_version="$("$target" --version 2>&1)" ||
     fail "installed ${target}, but it failed to run: ${installed_version}"
   say "✓ installed agent-archive ${installed_version} to ${target}"
+  if [ "$os" != darwin ]; then
+    say ""
+    say "The checksum only guards against a damaged download, and this binary is not signed."
+    say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
+    say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
+  fi
 
   case ":${PATH}:" in
     *":${install_dir}:"*) ;;
     *)
       say ""
+      # shellcheck disable=SC2088 # the tilde is printed for the user, not expanded
       case "${SHELL:-}" in
         */bash)
           # A macOS terminal starts login shells, which read
@@ -141,11 +158,34 @@ main() {
   say "agent-archive setup"
 }
 
+cleanup() {
+  rm -rf "$tmp"
+  if [ -n "${staged:-}" ]; then
+    rm -f "$staged"
+  fi
+}
+
+# shell_quote prints $1 as one single-quoted shell word.
+shell_quote() {
+  quote_rest="$1"
+  quote_out=
+  while :; do
+    case "$quote_rest" in
+      *"'"*)
+        quote_out="${quote_out}${quote_rest%%"'"*}'\\''"
+        quote_rest="${quote_rest#*"'"}"
+        ;;
+      *) break ;;
+    esac
+  done
+  printf "'%s%s'" "$quote_out" "$quote_rest"
+}
+
 detect_os() {
   case "$(uname -s)" in
     Darwin) echo darwin ;;
     Linux) echo linux ;;
-    *) fail "agent-archive supports macOS and Linux only (this system reports $(uname -s))." ;;
+    *) fail "this script recognises macOS and Linux release assets only (this system reports $(uname -s))." ;;
   esac
 }
 

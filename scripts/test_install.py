@@ -105,7 +105,7 @@ class InstallScriptTest(unittest.TestCase):
 
     def run_install(self, system='Darwin', machine='arm64', rosetta='0', extra_env=None, path_dirs=(),
                     default_dir=False, script=None, signing_team=TEAM,
-                    hermetic=False, codesign=True, hash_tools=None):
+                    hermetic=False, codesign=True, hash_tools=None, overrides=None, start=False):
         """Run install.sh under shims for uname, sysctl and codesign.
 
         By default PATH ends in the host's /usr/bin:/bin. hermetic=True puts
@@ -113,7 +113,9 @@ class InstallScriptTest(unittest.TestCase):
         so the presence of codesign and of each checksum tool is under the
         test's control: codesign=False leaves it out, and hash_tools maps
         'sha256sum' and/or 'shasum' to a HASH_BEHAVIOR key (default: both,
-        'ok'). Passing hash_tools implies hermetic."""
+        'ok'). Passing hash_tools implies hermetic. overrides maps a tool
+        name to the body of a shell shim that replaces it. start=True returns
+        the running Popen instead of waiting for the result."""
         self.runs += 1
         hermetic = hermetic or hash_tools is not None or not codesign
         shims = self.root / f'shims-{self.runs}'
@@ -146,12 +148,17 @@ class InstallScriptTest(unittest.TestCase):
             'HASH_HELPER': str(self.root / 'hash.py'),
             'FAKE_SIGNING_TEAM': signing_team,
         }
+        for tool, body in (overrides or {}).items():
+            (shims / tool).unlink(missing_ok=True)
+            write_executable(shims / tool, f'#!/bin/sh\n{body}\n')
         if not default_dir:
             # The default choice may be the real /usr/local/bin.
             env['AGENT_ARCHIVE_INSTALL_DIR'] = str(self.home / '.local' / 'bin')
         env.update(extra_env or {})
-        return subprocess.run([shutil.which('sh'), str(script or self.install_sh)], env=env,
-                              capture_output=True, text=True)
+        argv = [shutil.which('sh'), str(script or self.install_sh)]
+        if start:
+            return subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return subprocess.run(argv, env=env, capture_output=True, text=True)
 
     def assert_nothing_installed(self):
         self.assertFalse((self.home / '.local').exists(), 'something was installed')
@@ -315,7 +322,7 @@ class InstallScriptTest(unittest.TestCase):
                 result = self.run_install(system=system, machine='x86_64', extra_env={
                     'AGENT_ARCHIVE_DOWNLOAD_URL': (self.root / 'no-release').as_uri()})
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('supports macOS and Linux only', result.stderr)
+                self.assertIn('recognises macOS and Linux release assets only', result.stderr)
                 self.assertIn(system, result.stderr)
                 self.assertNotIn('download failed', result.stderr)
                 self.assert_nothing_installed()
@@ -325,9 +332,28 @@ class InstallScriptTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('Signature verified', result.stdout)
         self.assertIn('Checksum verified', result.stdout)
-        self.assertIn('code signature check, which is macOS only', result.stdout)
-        self.assertIn("checksum above and the release's build attestation", result.stdout)
-        self.assertIn(f'gh attestation verify {self.default_target} --repo wangjohn/agent-archive', result.stdout)
+        self.assertIn('Skipping the Developer ID signature check, which is macOS only.', result.stdout)
+        # The attestation advice follows the install and names the final path.
+        advice = f"gh attestation verify '{self.default_target}' --repo wangjohn/agent-archive"
+        self.assertIn(advice, result.stdout)
+        self.assertGreater(result.stdout.index(advice), result.stdout.index('✓ installed'))
+        self.assertIn('only guards against a damaged download', result.stdout)
+        self.assertNotIn('trust rests', result.stdout)
+
+    def test_the_attestation_advice_quotes_awkward_paths(self):
+        awkward = self.root / "it's here"
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True,
+                                  extra_env={'AGENT_ARCHIVE_INSTALL_DIR': str(awkward)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Pasted into a shell, the printed word is exactly the installed path.
+        word = re.search(r'gh attestation verify (.*) --repo', result.stdout).group(1)
+        pasted = subprocess.run(['sh', '-c', f'printf %s {word}'], capture_output=True, text=True).stdout
+        self.assertEqual(pasted, str(awkward / 'agent-archive'))
+
+    def test_darwin_prints_no_attestation_advice(self):
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('attestation', result.stdout)
 
     def test_linux_never_invokes_codesign(self):
         result = self.run_install(system='Linux', machine='aarch64', hermetic=True)
@@ -592,7 +618,8 @@ class InstallScriptTest(unittest.TestCase):
         for system, machine, name in self.each_system():
             marker = self.root / 'ran'
             marker.unlink(missing_ok=True)
-            write_executable(self.release / name, f'#!/bin/sh\ntouch {marker}\necho v1\n')
+            # A shell builtin: the hermetic PATH has no touch.
+            write_executable(self.release / name, f'#!/bin/sh\n: > {marker}\necho v1\n')
             self.write_sums({name: '1' * 64})
             result = self.run_install(system=system, machine=machine, hermetic=True)
             self.assertNotEqual(result.returncode, 0)
@@ -658,11 +685,150 @@ class InstallScriptTest(unittest.TestCase):
     def test_darwin_messages_are_unchanged(self):
         result = self.run_install(extra_env={'SHELL': '/bin/bash'})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines()[:3], [
+        self.assertEqual(result.stdout.splitlines()[:4], [
             'Downloading agent-archive-darwin-arm64 (latest)',
+            f'Downloading from {self.release.as_uri()}',
             'Checksum verified',
             f'Signature verified (Developer ID, team {TEAM})',
         ])
+
+    # --- Inputs, downloads, and cleanup --------------------------------
+
+    def test_release_version_must_look_like_a_tag(self):
+        for version in ('v1/../x', '../evil', 'v1.0.0/', 'v1..2', 'v', 'v1 2', 'v1;id', 'v1$x', '/x', 'v1?x=y'):
+            with self.subTest(version=version):
+                result = self.run_install(extra_env={'AGENT_ARCHIVE_VERSION': version})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('AGENT_ARCHIVE_VERSION is not a release tag', result.stderr)
+                self.assertNotIn('Downloading', result.stdout)
+                self.assert_nothing_installed()
+
+    def test_release_version_accepts_tags_with_or_without_the_v(self):
+        for given, shown in (('v1.2.3', 'v1.2.3'), ('1.2.3', 'v1.2.3'), ('v1.0.0-rc.1', 'v1.0.0-rc.1'),
+                             ('v1.0.0+build5', 'v1.0.0+build5')):
+            with self.subTest(version=given):
+                result = self.run_install(extra_env={'AGENT_ARCHIVE_VERSION': given})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'Downloading agent-archive-darwin-arm64 ({shown})', result.stdout)
+
+    def test_the_version_becomes_the_release_url_when_no_override_is_given(self):
+        # A curl stand-in that only reports what it was asked for.
+        log = self.root / 'curl.log'
+        result = self.run_install(hermetic=True, overrides={'curl': f'echo "$@" >> {log}\nexit 1'}, extra_env={
+            'AGENT_ARCHIVE_DOWNLOAD_URL': '', 'AGENT_ARCHIVE_VERSION': '1.2.3'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('https://github.com/wangjohn/agent-archive/releases/download/v1.2.3/agent-archive-darwin-arm64',
+                      log.read_text())
+        self.assertNotIn('Downloading from', result.stdout)
+
+    def test_plain_http_download_bases_are_refused_without_a_request(self):
+        import http.server
+        import threading
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        for system, machine in (('Linux', 'x86_64'), ('Darwin', 'arm64')):
+            with self.subTest(system=system):
+                result = self.run_install(system=system, machine=machine, hermetic=True, extra_env={
+                    'AGENT_ARCHIVE_DOWNLOAD_URL': f'http://127.0.0.1:{server.server_port}/rel'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('download failed', result.stderr)
+                self.assertEqual(seen, [])
+                self.assert_nothing_installed()
+
+    def temp_dir_entries(self):
+        tmpdir = self.root / 'tmpdir'
+        return sorted(p.name for p in tmpdir.iterdir())
+
+    def private_tmpdir(self):
+        """Overrides that make `mktemp -d` create its directory under
+        self.root / 'tmpdir' (macOS's mktemp ignores TMPDIR)."""
+        (self.root / 'tmpdir').mkdir(exist_ok=True)
+        real = shutil.which('mktemp')
+        return {'mktemp': f'[ "$1" = -d ] && [ $# -eq 1 ] && exec {real} -d "{self.root}/tmpdir/install.XXXXXXXX"\n'
+                          f'exec {real} "$@"'}
+
+    def test_failed_installs_leave_no_temporary_files(self):
+        overrides = self.private_tmpdir()
+        self.write_sums({'agent-archive-linux-amd64': '0' * 64})
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides=overrides)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.temp_dir_entries(), [])
+        self.write_sums()
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides=overrides)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.temp_dir_entries(), [])
+
+    def test_a_hangup_during_the_download_removes_the_temporary_directory(self):
+        import signal
+        import time
+        started = self.root / 'curl.started'
+        # A download that is still running when the terminal closes.
+        slow_curl = f': > {started}\n/bin/sleep 2\nexit 1'
+        proc = self.run_install(system='Linux', machine='x86_64', hermetic=True, start=True,
+                                overrides={'curl': slow_curl, **self.private_tmpdir()})
+        try:
+            deadline = time.time() + 10
+            while not started.exists() and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(started.exists(), 'the download never started')
+            self.assertEqual(len(self.temp_dir_entries()), 1)
+            proc.send_signal(signal.SIGHUP)
+            proc.communicate(timeout=20)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        self.assertEqual(proc.returncode, 129)
+        self.assertEqual(self.temp_dir_entries(), [])
+        self.assert_nothing_installed()
+
+    def test_fails_clearly_when_no_temporary_directory_can_be_made(self):
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides={'mktemp': 'exit 1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot create a temporary directory', result.stderr)
+        self.assert_nothing_installed()
+
+    def test_the_staged_file_is_not_predictable_and_is_removed_on_failure(self):
+        for tool in ('cp', 'chmod'):
+            with self.subTest(failing=tool):
+                result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides={tool: 'exit 1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(list((self.home / '.local' / 'bin').iterdir()), [])
+        # It is made with mktemp beside the target, not named after $$.
+        log = self.root / 'mktemp.log'
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides={
+            'mktemp': f'echo "$@" >> {log}\nexec {shutil.which("mktemp")} "$@"'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'{self.home}/.local/bin/.agent-archive.install.XXXXXXXX', log.read_text())
+
+    def test_fails_clearly_when_no_staging_file_can_be_made(self):
+        # mktemp works for the download directory but not beside the target.
+        real = shutil.which('mktemp')
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides={
+            'mktemp': f'[ "$1" = -d ] && exec {real} -d\nexit 1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot create a temporary file in', result.stderr)
+        self.assertEqual(list((self.home / '.local' / 'bin').iterdir()), [])
+
+    def test_refuses_to_install_over_a_directory(self):
+        (self.default_target).mkdir(parents=True)
+        result = self.run_install(system='Linux', machine='x86_64', hermetic=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('is a directory', result.stderr)
+        self.assertEqual(list(self.default_target.iterdir()), [])
 
 
 class ManualInstallGuideTest(unittest.TestCase):

@@ -74,15 +74,17 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
-- `install.sh` and `scripts/install-from-source.sh` work on Linux (x86_64 and
-  aarch64) as well as macOS. On Linux the installer picks
-  `agent-archive-linux-<arch>` and checks it against the release's
-  `SHA256SUMS` with `sha256sum` or `shasum`; that check is mandatory, and the
-  install stops before anything is installed if there is no such tool, no
-  matching entry, or a mismatch. Linux binaries are not signed, so the
-  installer skips the macOS Developer ID check there and says how to verify
-  the release attestation (`gh attestation verify`). On macOS nothing
-  changes, and the Developer ID check is still required.
+- `install.sh` and `scripts/install-from-source.sh` now recognise Linux release
+  assets (x86_64 and aarch64): the installer selects
+  `agent-archive-linux-<arch>`, skips the macOS-only Developer ID check for
+  it, and on every OS refuses to install unless the download matches its
+  entry in `SHA256SUMS`, which must be exactly one well-formed lowercase
+  SHA-256 line; an empty download also stops the install. The macOS Developer
+  ID check is unchanged. On macOS, `sha256sum` is now preferred over `shasum`
+  when both are present, an unset or empty `HOME` now fails with a clear
+  message when no install directory can be chosen otherwise, and
+  `AGENT_ARCHIVE_VERSION` must look like a release tag. Linux is not yet a
+  supported platform.
 
 ### Changed
 
