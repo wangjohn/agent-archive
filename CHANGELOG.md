@@ -347,6 +347,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The `agent-archive` skill no longer claims the session you are in is
+  never matched, and `uninstall --help` names both skills.** The skill said
+  the calling session is always skipped, but only Claude Code is known to
+  expose a session ID to skip, so it now says "skipped where your agent
+  reports it". `uninstall --help` listed only the
+  `/handoff` skill; it now names the `agent-archive` skill too. A skill file
+  installed by an earlier build shows as out of date until `setup --refresh`.
 - A Claude Code subagent resumed after it stopped (continued with
   SendMessage) no longer fails `sync` with "subagent transcript has
   incomplete native timestamp provenance" while it runs. Its archive keeps
