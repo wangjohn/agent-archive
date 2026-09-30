@@ -315,8 +315,11 @@ type Segment struct {
 
 // Composition splits the window's tokens four ways. Fresh input is input
 // that was not read from or written to the cache (Codex's input minus its
-// cached input and cache-write input: its total_tokens is input plus output),
-// so the four add up to Total without counting anything twice.
+// cached input and cache-write input: OpenAI reports both as parts of
+// input_tokens, and a Codex record's total_tokens is input plus output), so
+// the four add up to Total without counting anything twice. A Codex record
+// whose cache counts exceed its input contradicts that; it has no fresh input
+// (never a negative one) and keeps both cache counts, so nothing is dropped.
 // ReasoningOfOutput is the part of Output spent reasoning: a subset, never
 // an addition.
 type Composition struct {
