@@ -1,0 +1,58 @@
+\e[1magent-archive stats\e[0m\e[2m · detail · last 30 days · 3 agents\e[0m
+
+\e[1mOVERVIEW\e[0m     \e[2mlast 30d\e[0m
+Est. spend    ~$3,989
+Sessions           93
+Prompts           673
+Tokens            10B
+Active days   3 of 30
+\e[2m97% of tokens were served from cache.\e[0m
+
+\e[1mAGENTS\e[0m         \e[2msessions\e[0m  \e[2mshare\e[0m  \e[2m tokens\e[0m  \e[2mest. cost\e[0m  \e[2mcache hit\e[0m
+\e[33m●\e[0m Claude Code        84    90%     9.9B     $3,940        97%
+\e[34m●\e[0m Cursor              8     9%  unknown        n/a        n/a
+\e[32m●\e[0m Codex               1     1%     100M        $49        90%
+
+\e[1mDAILY SPEND\e[0m                           \e[2mpeak \e[0m\e[33m~$2,910\e[0m\e[2m · Sep 27\e[0m
+                                                      \e[36m█\e[0m
+                                                      \e[36m█\e[0m
+\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[36m▂\e[0m\e[2m▁\e[0m\e[36m█\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[36m▇\e[0m
+\e[2mAug 31                                               Sep 29\e[0m
+
+\e[1mWHAT USED YOUR TOKENS\e[0m
+\e[34m████████████████████████████████████████████\e[0m \e[33m█\e[0m \e[32m█\e[0m \e[35m█\e[0m
+\e[34m●\e[0m Cache read    97%  9.7B
+\e[33m●\e[0m Cache write    2%  200M
+\e[32m●\e[0m Fresh input   <1%  30M
+\e[35m●\e[0m Output         1%  70M
+Subagents  77% of tokens (7.7B) in 497 runs
+
+\e[1mHIGHLIGHTS\e[0m
+\e[2mStreak        \e[0m  none now (best 1 day)
+\e[2mBusiest day   \e[0m  Sep 27 (70 sessions)
+\e[2mFavorite model\e[0m  opus
+\e[2mThis month    \e[0m  the heaviest of the last 6 months, by tokens so far
+\e[2mTool errors   \e[0m  5.0% of 4,200 tool results flagged as errors, 70 sessions
+                measured (13 do not record them)
+\e[2mCostliest     \e[0m  ~$564 · styleprofile · long context, 38 subagents
+
+\e[1mSKILLS AND MCP\e[0m
+\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+\e[2mMCP   \e[0m  github 41 · linear 12 calls (Claude Code and Cursor only)
+\e[2mSkills count the sessions that used each one; MCP counts calls.\e[0m
+
+\e[1mHEADS UP\e[0m
+\e[33m●\e[0m 77% of tokens came from subagents (497 runs)
+\e[33m●\e[0m Costliest session ~$564 · styleprofile · long context, 38 subagents
+\e[33m●\e[0m 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+\e[1mNOTES\e[0m
+\e[2mScope: this archive only.\e[0m
+\e[2m83 of 93 sessions report token counts.\e[0m
+\e[2mSessions with no token data are left out of token and cost totals (Claude Code:\e[0m
+\e[2m2, Cursor: 8).\e[0m
+\e[2mPrices 2026-09-29, as of 2026-09-29.\e[0m
+\e[2m~ marks an estimate at list price.\e[0m
+\e[2mMCP: Claude Code and Cursor only; Codex MCP calls are not recorded.\e[0m
+
+\e[2mEstimated at list price, not a bill.   --view overview\e[0m

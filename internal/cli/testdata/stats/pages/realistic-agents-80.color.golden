@@ -1,0 +1,14 @@
+\e[1magent-archive stats\e[0m\e[2m · agents · last 30 days · 3 agents\e[0m
+
+\e[1mAGENTS\e[0m                            \e[2msessions\e[0m  \e[2mshare\e[0m  \e[2m tokens\e[0m  \e[2mest. cost\e[0m  \e[2mcache hit\e[0m
+\e[33m●\e[0m Claude Code  \e[33m███████████████\e[0m          84    90%     9.9B     $3,940        97%
+\e[34m●\e[0m Cursor       \e[34m█\e[0m                         8     9%  unknown        n/a        n/a
+\e[32m●\e[0m Codex        \e[32m█\e[0m                         1     1%     100M        $49        90%
+
+\e[2mClaude Code: 2 of 84 have no token data, so they are left out of tokens and\e[0m
+\e[2mspend.\e[0m
+\e[2mCursor: 8 of 8 have no token data, so they are left out of tokens and spend.\e[0m
+\e[2mCodex: MCP calls and tool errors are not recorded.\e[0m
+\e[2mCache hit is cache reads over all input-side tokens.\e[0m
+
+\e[2mEstimated at list price, not a bill.   --view overview\e[0m

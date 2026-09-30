@@ -1,0 +1,58 @@
+agent-archive stats · detail · last 30 days · 3 agents
+
+OVERVIEW     last 30d  prior 30d  change
+Est. spend     ~$163+       ~$28  ▲ 486%
+Sessions           22          6  ▲ 267%
+Prompts           246         42  ▲ 486%
+Tokens            88M        14M  ▲ 533%
+Active days  18 of 30    6 of 30  ▲ 200%
+81% of tokens were served from cache.
+
+AGENTS         sessions  share   tokens  est. cost  cache hit
+● Claude Code        13    59%      83M       $158        85%
+● Codex               6    27%       5M     $5.69+        77%
+● Cursor              3    14%  unknown        n/a        n/a
+
+DAILY SPEND                              peak ~$66 · Sep 17
+                                  █
+                                  █
+▁▁▁▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▂▁▃▁·▁▃▁█▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▁▁▁▁▁▁▁▁▁
+Aug 31                                               Sep 29
+
+WHAT USED YOUR TOKENS
+██████████████████████████████████████ ████ ███ ██
+● Cache read    81%  71M
+● Cache write    8%  7.4M
+● Fresh input    7%  5.9M
+● Output         4%  3.9M
+Subagents  11% of tokens (10M) in 2 runs
+
+HIGHLIGHTS
+Streak          none now (best 7 days)
+Busiest day     Sep 17 (2 sessions)
+Favorite model  opus
+This month      the heaviest of the last 6 months, by tokens so far
+Tool errors     5.5% of 1,700 tool results flagged as errors, 13 sessions
+                measured (9 do not record them)
+Costliest       ~$65 · proj-api · long context, 2 subagents
+
+SKILLS AND MCP
+Skills  review-pr 13 · create-skill 1 sessions
+MCP     github 102 · linear 12 calls (Claude Code and Cursor only)
+Skills count the sessions that used each one; MCP counts calls.
+
+HEADS UP
+● Costliest session ~$65 · proj-api · long context, 2 subagents
+● 3 sessions have no token data (Cursor 3)
+
+NOTES
+Scope: this archive only.
+19 of 22 sessions report token counts.
+Sessions with no token data are left out of token and cost totals (Cursor: 3).
+Prices golden-1, as of 2026-09-29, with your --prices file applied.
+~ marks an estimate at list price.
++ leaves out tokens of models the price table does not list (codex-auto-review).
+MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.
+
+Estimated at list price, not a bill. + leaves out models with no price.
+--view overview

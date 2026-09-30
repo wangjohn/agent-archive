@@ -117,6 +117,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `agent-archive stats` has a new default screen: a short summary with the
+  headline numbers (estimated spend, sessions, tokens, with the change from the
+  previous period only when there was one, and how much of the tokens were
+  cache reads), one bar for which agents did the work, a three-row chart of
+  each day's spend, where it went by project and model (two columns from 80
+  terminal columns, stacked from 60), the skills and MCP servers used most,
+  and up to three heads-up notes, in the terminal's 16 colors (`NO_COLOR` and
+  pipes are plain; bars have no shaded track). The rest moved behind
+  `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
+  the tool error rate, the token breakdown, the agents table and the notes on
+  what the numbers rest on. `--view projects`, `models` and `agents` list every
+  project, model family and agent. `--by project` is now `--view projects`, and
+  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  terminals down to 40 columns. `--json` and `--html` are unchanged.
+
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
