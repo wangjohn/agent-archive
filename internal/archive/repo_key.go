@@ -39,9 +39,11 @@ func IsRepoKey(s string) bool { return repoKeyShape.MatchString(s) }
 
 // NormalizeRemoteURL reduces a git remote URL to "host/owner/repo", so an SSH
 // clone (git@host:owner/repo.git, ssh://git@host/owner/repo.git) and an HTTPS
-// clone of one repository normalize to the same string. Userinfo
-// (user:token@) is split off with the host and never reaches the result, so
-// a credential does not enter the hash input or vary it. The scheme, the port
+// clone of one repository normalize to the same string. In a URL or scp-style
+// remote that parses, userinfo (user:token@) is split off with the host and
+// never reaches the result, so a credential does not enter the hash input or
+// vary it; input that does not parse as a remote, including credentials in
+// an unparsable place, gives "". The scheme, the port
 // (an SSH port is a transport detail, not part of the repository's
 // identity), any query or fragment, a trailing ".git" in any case (and
 // repeated), trailing slashes, and a trailing dot on the host are dropped,
@@ -109,7 +111,10 @@ func splitURLRemote(raw string) (host, repoPath string) {
 // a host before the first colon is a local path.
 func splitSCPRemote(raw string) (host, repoPath string) {
 	hostPart, rest, found := strings.Cut(raw, ":")
-	if !found || strings.Contains(hostPart, "/") {
+	// A second "@" after the colon is credentials in the wrong place
+	// (user:token@host:owner/repo), not a repository path: refuse it rather
+	// than hash a token.
+	if !found || strings.Contains(hostPart, "/") || strings.Contains(rest, "@") {
 		return "", ""
 	}
 	if at := strings.LastIndex(hostPart, "@"); at >= 0 {

@@ -100,12 +100,9 @@ func (r *Resolver) Key(root string) string {
 // would answer for another repository), git never prompts, and output past a
 // few kilobytes is an error, not a truncated URL.
 func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
-	git, err := exec.LookPath("git")
+	git, err := realLocator.find()
 	if err != nil {
 		return nil, err
-	}
-	if git == macGitStub && !stubUsable() {
-		return nil, errors.New("git is not installed (the macOS stub needs the developer tools)")
 	}
 	cmd := exec.CommandContext(ctx, git, args...)
 	cmd.Env = environment(os.Environ())
@@ -128,35 +125,73 @@ func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
 // the LaunchAgent must never do that.
 const macGitStub = "/usr/bin/git"
 
-// developerGits are where the developer tools keep the real git.
+// xcodeSelectLink is what `xcode-select -p` reads: a symbolic link to the
+// active developer directory (the command line tools, or an Xcode wherever it
+// was installed, /Applications/Xcode-15.4.app included).
+const xcodeSelectLink = "/var/db/xcode_select_link"
+
+// developerGits are where the developer tools usually keep the real git, also
+// found without following the link.
 var developerGits = []string{
 	"/Library/Developer/CommandLineTools/usr/bin/git",
 	"/Applications/Xcode.app/Contents/Developer/usr/bin/git",
 }
 
-var (
-	gitUsableOnce   sync.Once
-	gitUsableResult bool
-)
-
-// usableGit reports whether git, as LookPath found it, can be run without the
-// macOS stub's prompt: anything but the stub is, and the stub is when the
-// developer tools provide a git (a DEVELOPER_DIR pointing elsewhere is not
-// consulted: refusing is the safe error). exists is a file check, a parameter
-// for tests.
-func usableGit(path, goos string, exists func(string) bool) bool {
-	if goos != "darwin" || path != macGitStub {
-		return true
-	}
-	return slices.ContainsFunc(developerGits, exists)
+// locator finds the git to run. Its parts are fields so a test can stand in
+// for the file system and for macOS.
+type locator struct {
+	lookPath func(name string) (string, error)
+	exists   func(path string) bool
+	readlink func(path string) (string, error)
+	goos     string
+	// stubUsable, when set, answers usableStub in place of checking (the real
+	// locator caches the answer for the process).
+	stubUsable func() bool
 }
 
-// stubUsable is usableGit for the real stub, answered once per process.
-func stubUsable() bool {
-	gitUsableOnce.Do(func() {
-		gitUsableResult = usableGit(macGitStub, runtime.GOOS, fileExists)
+var (
+	stubOnce   sync.Once
+	stubResult bool
+)
+
+// realLocator looks on the real PATH and file system, and checks the macOS
+// stub once per process.
+var realLocator = locator{lookPath: exec.LookPath, exists: fileExists, readlink: os.Readlink, goos: runtime.GOOS, stubUsable: func() bool {
+	stubOnce.Do(func() {
+		stubResult = locator{exists: fileExists, readlink: os.Readlink}.usableStub()
 	})
-	return gitUsableResult
+	return stubResult
+}}
+
+// find is the git on PATH, or an error when there is none or it is the macOS
+// stub without the developer tools behind it.
+func (l locator) find() (string, error) {
+	git, err := l.lookPath("git")
+	if err != nil {
+		return "", err
+	}
+	if l.goos == "darwin" && git == macGitStub {
+		usable := l.stubUsable
+		if usable == nil {
+			usable = l.usableStub
+		}
+		if !usable() {
+			return "", errors.New("git is not installed (the macOS stub needs the developer tools)")
+		}
+	}
+	return git, nil
+}
+
+// usableStub reports whether the developer tools provide a git for the macOS
+// stub to hand off to: at a usual location, or under the directory the
+// xcode-select link names. A DEVELOPER_DIR is not consulted: refusing is the
+// safe error.
+func (l locator) usableStub() bool {
+	if slices.ContainsFunc(developerGits, l.exists) {
+		return true
+	}
+	target, err := l.readlink(xcodeSelectLink)
+	return err == nil && filepath.IsAbs(target) && l.exists(filepath.Join(target, "usr", "bin", "git"))
 }
 
 func fileExists(path string) bool {

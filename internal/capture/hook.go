@@ -147,37 +147,56 @@ func WithRepoKey(repoKey RepoKeyFunc) Option {
 // process before its timeout starts, so the wait is bounded here too.
 const repoKeyBudget = 600 * time.Millisecond
 
+// hooksLockWait is how long a hook waits for hooks.lock when it did not spend
+// time on a repository key, and minHooksLockWait the least it waits when it
+// did.
+const (
+	hooksLockWait    = 750 * time.Millisecond
+	minHooksLockWait = 150 * time.Millisecond
+)
+
+// lockWaitAfter is how long to wait for hooks.lock once spent has gone on the
+// repository key: the usual wait less spent, and never less than the floor.
+func lockWaitAfter(spent time.Duration) time.Duration {
+	return min(hooksLockWait, max(hooksLockWait-spent, minHooksLockWait))
+}
+
 // startRepoKey is newSessionRepoKey for an event that can register a session:
 // a start, or, for Cursor only (see the hookEventTurnStart case), a turn
 // start. Any other event gets "".
-func startRepoKey(home, harness string, kind hookEventKind, payload map[string]any, repoKey RepoKeyFunc) string {
+func startRepoKey(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, repoKey RepoKeyFunc) string {
 	if repoKey == nil {
 		return ""
 	}
 	if kind == hookEventStart || (kind == hookEventTurnStart && archive.CanonicalHarness(harness) == "cursor") {
-		return newSessionRepoKey(home, payload, repoKey)
+		return newSessionRepoKey(home, harness, payload, now, repoKey)
 	}
 	return ""
 }
 
 // newSessionRepoKey is the repository key for a session this event may
-// register: "" unless it starts in an included configured project and is not
-// a continuation of a session already registered, so the lookup runs for at
-// most one event per session, and never for a project that is not archived.
-// It reads the configuration and the session index without hooks.lock; a
-// stale answer only costs a key that is not recorded (the collector derives
-// one later).
-func newSessionRepoKey(home string, payload map[string]any, repoKey RepoKeyFunc) string {
+// register: "" unless capture is on, the start is in an included configured
+// project, would be admitted (declinedStart, the rule the registration itself
+// applies), and is not a continuation of a session already registered. So the
+// lookup runs for at most one admitted start per session, and never for a
+// project that is not archived or a start that will be declined. It reads the
+// configuration and the session index without hooks.lock; a stale answer only
+// costs a key that is not recorded (the collector derives one later).
+func newSessionRepoKey(home, harness string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) string {
 	cfg, found, err := config.Load(home)
-	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
+	if err != nil || !found || cfg.Paused {
 		return ""
 	}
 	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
 	owner, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if nativeSessionID == "" || !owned || !owner.Included {
+	// declinedStart is also what says capture is enabled and the project is
+	// included and active (archive.Config.Eligible).
+	if nativeSessionID == "" || !owned || declinedStart(cfg, owner.Root, now, harness, payload, false) != "" {
 		return ""
 	}
-	if _, registered, err := state.OpenReadOnly(home).ArchiveSessionID(nativeSessionID); err != nil || registered {
+	// An index entry with no registration behind it is treated as never seen
+	// by the registration below, so it still gets a key.
+	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || registered {
 		return ""
 	}
 	return boundedRepoKey(repoKey, owner.Root)
@@ -227,11 +246,15 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 	}
 	// Asked before hooks.lock is taken, never under it: a slow lookup must not
 	// use up the hook's budget or make concurrent hooks find the lock busy.
-	sessionRepoKey := startRepoKey(home, harness, kind, payload, repoKey)
+	lookupStarted := time.Now()
+	sessionRepoKey := startRepoKey(home, harness, kind, payload, now, repoKey)
 	// Leave room in the harness's two-second timeout for a retry intent and
 	// diagnostic if capture is contended. Those writes are synchronous and
 	// cannot be guaranteed against an indefinitely stalled filesystem.
-	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", 750*time.Millisecond)
+	// Whatever the lookup used comes off the lock wait, so the two together
+	// stay inside the budget; the wait keeps a floor for an uncontended lock.
+	lockWait := lockWaitAfter(time.Since(lookupStarted))
+	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", lockWait)
 	if lockErr != nil {
 		if errors.Is(lockErr, local.ErrBusy) {
 			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
@@ -557,18 +580,9 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 	if !owned || !owner.Included {
 		return nil
 	}
-	// The diagnostic names the most specific reason capture was declined:
-	// a project that is not yet active cannot capture any start, so check
-	// activation before asking whether this start is provably fresh.
-	if !cfg.Archive.Eligible(root, now) {
+	if code := declinedStart(cfg, root, now, harness, payload, provedAtHook); code != "" {
 		return RecordDiagnostic(home, Diagnostic{
-			Code: DiagnosticPreActivationStart, Harness: archive.CanonicalHarness(harness),
-			ProjectRoot: root, ObservedAt: now,
-		})
-	}
-	if !provedAtHook && !provesFreshSessionStart(harness, payload) {
-		return RecordDiagnostic(home, Diagnostic{
-			Code: DiagnosticUnknownSessionStart, Harness: archive.CanonicalHarness(harness),
+			Code: code, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
@@ -603,6 +617,22 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 		return fmt.Errorf("register session: %w", err)
 	}
 	return saveLifecycleEvidence(store, reg.ArchiveSessionID, harness, reason, payload, now)
+}
+
+// declinedStart is the diagnostic code a start in an included project is
+// declined with, or "" when it would be admitted. It names the most specific
+// reason: a project that is not yet active cannot capture any start, so
+// activation is checked before whether this start is provably fresh. The
+// repository-key lookup asks it too, so git never runs for a start that will
+// be declined.
+func declinedStart(cfg config.Config, root string, now time.Time, harness string, payload map[string]any, provedAtHook bool) DiagnosticCode {
+	if !cfg.Archive.Eligible(root, now) {
+		return DiagnosticPreActivationStart
+	}
+	if !provedAtHook && !provesFreshSessionStart(harness, payload) {
+		return DiagnosticUnknownSessionStart
+	}
+	return ""
 }
 
 var (

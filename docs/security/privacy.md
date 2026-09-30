@@ -115,7 +115,11 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   remote's port is ignored, so two repositories with the same name on
   different ports of one host share a key. Only `origin` is read, as written
   in your git configuration: a remote that is a `url.insteadOf` shorthand is
-  not expanded and may not match the full address used elsewhere.
+  not expanded and may not match the full address used elsewhere. The key can
+  be out of date: one recorded when the session started is never looked up
+  again; one derived later stays if the remote is removed or git cannot be
+  run; a changed remote replaces it only at the session's next content
+  publish or metadata refresh; and a finished session never updates.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

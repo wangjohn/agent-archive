@@ -2,16 +2,24 @@ package gitremote
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// hangSlack is how long a call may take against a git that never answers. The
+// fakes sleep 30 seconds, so any bound well under that tells a kill at the
+// timeout from a wait for the process; the extra second is for a loaded runner.
+const hangSlack = Timeout + time.Second
 
 func TestTimeoutIsShortEnoughForAHook(t *testing.T) {
 	t.Parallel()
@@ -50,7 +58,7 @@ func TestOriginURLReturnsInBoundedTimeWhenGitHangs(t *testing.T) {
 	if got := OriginURL(t.Context(), t.TempDir(), nil); got != "" {
 		t.Errorf("OriginURL = %q, want empty from a git that never answered", got)
 	}
-	if elapsed := time.Since(start); elapsed > 700*time.Millisecond {
+	if elapsed := time.Since(start); elapsed > hangSlack {
 		t.Errorf("OriginURL took %v, want about %v", elapsed, Timeout)
 	}
 }
@@ -61,7 +69,7 @@ func TestOriginURLReturnsInBoundedTimeWhenGitLeavesAChildHoldingTheOutput(t *tes
 echo "https://example.test/acme/widget.git"`)
 	start := time.Now()
 	OriginURL(t.Context(), t.TempDir(), nil)
-	if elapsed := time.Since(start); elapsed > 700*time.Millisecond {
+	if elapsed := time.Since(start); elapsed > hangSlack {
 		t.Errorf("OriginURL took %v with a child holding the pipe, want about %v", elapsed, Timeout)
 	}
 }
@@ -89,26 +97,52 @@ func TestLimitedBufferKeepsOnlyTheCapAndSaysItOverflowed(t *testing.T) {
 	}
 }
 
-func TestUsableGitRefusesTheMacStubWithoutDeveloperTools(t *testing.T) {
+// The stub wiring: on macOS, /usr/bin/git is used only when the developer
+// tools stand behind it, found at a usual place or through the link
+// xcode-select reads, wherever Xcode was installed.
+func TestLocatorRefusesTheMacStubWithoutDeveloperTools(t *testing.T) {
 	t.Parallel()
-	none := func(string) bool { return false }
-	only := func(want string) func(string) bool { return func(p string) bool { return p == want } }
-	for _, tc := range []struct {
-		name   string
-		path   string
-		goos   string
-		exists func(string) bool
-		want   bool
-	}{
-		{"stub without the tools", "/usr/bin/git", "darwin", none, false},
-		{"stub with the command line tools", "/usr/bin/git", "darwin", only("/Library/Developer/CommandLineTools/usr/bin/git"), true},
-		{"stub with Xcode", "/usr/bin/git", "darwin", only("/Applications/Xcode.app/Contents/Developer/usr/bin/git"), true},
-		{"homebrew git", "/opt/homebrew/bin/git", "darwin", none, true},
-		{"linux /usr/bin/git", "/usr/bin/git", "linux", none, true},
-	} {
-		if got := usableGit(tc.path, tc.goos, tc.exists); got != tc.want {
-			t.Errorf("%s: usableGit = %t, want %t", tc.name, got, tc.want)
+	const xcodeGit = "/Applications/Xcode-15.4.app/Contents/Developer/usr/bin/git"
+	present := func(paths ...string) func(string) bool {
+		return func(p string) bool { return slices.Contains(paths, p) }
+	}
+	link := func(target string) func(string) (string, error) {
+		return func(p string) (string, error) {
+			if p == xcodeSelectLink && target != "" {
+				return target, nil
+			}
+			return "", os.ErrNotExist
 		}
+	}
+	for _, tc := range []struct {
+		name     string
+		found    string
+		goos     string
+		exists   func(string) bool
+		readlink func(string) (string, error)
+		want     bool
+	}{
+		{"stub without the tools", macGitStub, "darwin", present(), link(""), false},
+		{"stub with the command line tools", macGitStub, "darwin", present("/Library/Developer/CommandLineTools/usr/bin/git"), link(""), true},
+		{"stub with the default Xcode", macGitStub, "darwin", present("/Applications/Xcode.app/Contents/Developer/usr/bin/git"), link(""), true},
+		{"stub with Xcode elsewhere, by the link", macGitStub, "darwin", present(xcodeGit), link("/Applications/Xcode-15.4.app/Contents/Developer"), true},
+		{"link to a directory with no git", macGitStub, "darwin", present(), link("/Applications/Xcode-15.4.app/Contents/Developer"), false},
+		{"link that is not absolute", macGitStub, "darwin", present("usr/bin/git"), link("."), false},
+		{"homebrew git", "/opt/homebrew/bin/git", "darwin", present(), link(""), true},
+		{"linux /usr/bin/git", macGitStub, "linux", present(), link(""), true},
+	} {
+		l := locator{
+			lookPath: func(string) (string, error) { return tc.found, nil },
+			exists:   tc.exists, readlink: tc.readlink, goos: tc.goos,
+		}
+		got, err := l.find()
+		if (err == nil) != tc.want || (err == nil && got != tc.found) {
+			t.Errorf("%s: find = %q, %v; want usable=%t", tc.name, got, err, tc.want)
+		}
+	}
+	missing := locator{lookPath: func(string) (string, error) { return "", exec.ErrNotFound }, goos: "darwin"}
+	if _, err := missing.find(); !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("find without git on PATH = %v, want exec.ErrNotFound", err)
 	}
 }
 

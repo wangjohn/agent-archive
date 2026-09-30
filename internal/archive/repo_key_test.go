@@ -41,6 +41,8 @@ func TestNormalizeRemoteURL(t *testing.T) {
 		{".git before a slash", "https://github.com/acme/widget.git//", want},
 		{"fully qualified host", "https://github.com./acme/widget", want},
 		{"fully qualified scp host", "git@github.com.:acme/widget.git", want},
+		{"credentials after the colon of an scp-style remote", "user:token@github.com:acme/widget.git", ""},
+		{"credentials in a path", "git@github.com:acme/token@widget.git", ""},
 		{"escaped newline in the path", "https://github.com/acme/wid%0Aget", ""},
 		{"escaped NUL in the path", "https://github.com/acme/widget%00", ""},
 		{"escaped space in the path", "https://github.com/acme/wid%20get", ""},

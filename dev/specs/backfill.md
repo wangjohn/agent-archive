@@ -468,7 +468,7 @@ matching rule wins.
    `gitdir:` and `commondir` to the main repository. If the directory no
    longer exists, `<repo>/.claude/worktrees/<name>` still maps to `<repo>` by
    its path. A missing Codex or Cursor worktree can't be mapped that way, and
-   is skipped with `worktree_unresolved`. Backfill never runs `git`.
+   is skipped with `worktree_unresolved`. Backfill never runs `git` to find a project (worktree or repository resolution is by files, as above); the one `git config --get remote.origin.url` it runs, at registration and only when the project root still exists, is for the session's `repo_key`.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
    The walk stops at home.
 5. **Desktop app workspaces.** Anything under
