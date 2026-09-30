@@ -117,6 +117,42 @@ linters:
               desc: cli owns process signals
             - pkg: github.com/wangjohn/agent-archive/internal/credentials
               desc: the journal never opens credentials
+        # The statistics engine takes metadata, options and a clock as
+        # arguments and returns numbers: it reads no file, runs no program,
+        # and uses no network, clock or randomness, and knows only the
+        # archive's types. TestStatsImportBoundary and
+        # TestStatsReadsNoClockOrEnvironment check the same on every platform.
+        stats-is-pure:
+          files:
+            - "**/internal/stats/*.go"
+            - "!$test"
+          deny:
+            - pkg: os$
+              desc: stats reads no files or environment; the caller passes everything in
+            - pkg: os/exec
+              desc: stats runs no program
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: net$
+              desc: stats never touches the network
+            - pkg: net/http
+              desc: stats never touches the network
+            - pkg: math/rand
+              desc: stats is deterministic
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli renders stats, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: return numbers; cli renders them
+            - pkg: golang.org/x/term
+              desc: prompts belong to cli
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: the caller reads metadata; stats never opens the bucket
+            - pkg: github.com/wangjohn/agent-archive/internal/reader
+              desc: the caller reads metadata; stats never opens the bucket
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: stats never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: stats never reads local state
     revive:
       rules:
         - name: exported
