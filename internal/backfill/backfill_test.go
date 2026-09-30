@@ -86,7 +86,10 @@ func (tr *tree) worktree(repoRel, rel, name string) string {
 
 func (tr *tree) env() Environment {
 	return Environment{
-		Home:     tr.home,
+		Home: tr.home,
+		// These tests model a Mac (Library folders, Documents/Codex, TCC);
+		// linux_test.go covers the other branch.
+		GOOS:     "darwin",
 		TempDirs: []string{tr.path("tmp")},
 		Now:      func() time.Time { return fixedNow },
 		// Birth times are whatever the test run's clock says; pin them.
