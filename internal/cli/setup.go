@@ -759,10 +759,10 @@ func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskill
 				installed = append(installed, displayPath(f.Path, userHome))
 				continue
 			}
-			terminal.Print(p.out, leftSkillLine(f.Path, userHome))
+			terminal.Print(p.out, leftSkillLine(skill.Title(), f.Path, userHome))
 		}
 		if len(installed) > 0 {
-			what := "/" + skill.Name
+			what := skill.Title()
 			if skill.Summary != "" {
 				what += ", which " + skill.Summary
 			}

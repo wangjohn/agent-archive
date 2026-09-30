@@ -25,6 +25,7 @@ If your app still has no captured session, use its specific steps: [Claude Code]
 | [Uninstall](getting-started/uninstall.md) | Removing hooks, the collector, local data, and the binary; deleting the archive in the bucket; downgrading. |
 | [Backfill](guides/backfill.md) | Importing sessions already on your Mac, and undoing an import. |
 | [Handoff](guides/handoff.md) | Continuing a session in another agent, on this Mac or another. |
+| [Agent skills](guides/agent-skills.md) | Asking Claude Code, Codex, or Cursor to pull in a past session; what setup installs and what the agent may run. |
 | [List, show, and feedback](guides/list-and-show.md) | Inspecting the archive; skill evidence; subagent sessions. |
 | [Stats](guides/stats.md) | Usage over time: tokens, estimated cost, agents, models, projects. |
 | [Multiple Macs](guides/multiple-macs.md) | Several Macs sharing one bucket; Migration Assistant and Time Machine. |
