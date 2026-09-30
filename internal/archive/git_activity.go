@@ -103,7 +103,7 @@ var (
 	ghMergedLine      = regexp.MustCompile(`(?:Merged|Squashed and merged|Rebased and merged) pull request (?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#([0-9]+)`)
 	ghRepoFlag        = regexp.MustCompile(`(?:-R|--repo)[= ]\s*(?:([A-Za-z0-9.-]+)/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:\s|$)`)
 	exitCodeLine      = regexp.MustCompile(`(?mi)^(?:exit code:?|process exited with code)\s+(-?[0-9]+)\s*$`)
-	commandSeparator  = regexp.MustCompile(`&&|\|\||;|\n`)
+	commandSeparator  = regexp.MustCompile(`[|;&\n]`)
 	pushDryRunFlag    = regexp.MustCompile(`(?:^|\s)(?:--dry-run|-n|--porcelain)(?:\s|$)`)
 	ghAutoMergeFlag   = regexp.MustCompile(`(?:^|\s)--auto(?:\s|$)`)
 )
@@ -290,10 +290,21 @@ func commitBranch(label string) string {
 func pushEvents(output string) []GitEvent {
 	var events []GitEvent
 	host, repository := "", ""
+	// Ref lines count only under a push's "To <remote>" header: git fetch
+	// and git pull print the same shapes under "From <remote>".
+	pushing := false
 	for line := range strings.SplitSeq(output, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if match := pushRemoteLine.FindStringSubmatch(line); match != nil {
 			host, repository = parseRemote(match[1])
+			pushing = true
+			continue
+		}
+		if strings.HasPrefix(line, "From ") {
+			pushing = false
+			continue
+		}
+		if !pushing {
 			continue
 		}
 		var sha, ref string
@@ -395,22 +406,24 @@ func pullRequestEvent(kind GitEventKind, host, owner, name, number string) (GitE
 
 // ghMergeEvents reads gh pr merge's confirmation. The repository comes from
 // the confirmation when gh named it, else from the command's --repo flag or
-// pull request URL argument; fillMergedFromCreated may supply it later.
+// pull request URL argument; fillMergedFromCreated may supply it later. The
+// host comes from the command, since the confirmation never names one;
+// without one gh means github.com.
 func ghMergeEvents(segment, output string) []GitEvent {
+	host, commandOwner, commandName := "github.com", "", ""
+	if flag := ghRepoFlag.FindStringSubmatch(segment); flag != nil {
+		commandOwner, commandName = flag[2], flag[3]
+		if flag[1] != "" {
+			host = flag[1]
+		}
+	} else if pr := pullURLAnywhere.FindStringSubmatch(segment); pr != nil {
+		host, commandOwner, commandName = pr[1], pr[2], pr[3]
+	}
 	var events []GitEvent
 	for _, match := range ghMergedLine.FindAllStringSubmatch(output, -1) {
-		// gh names a pull request's repository as owner/repo; with no
-		// host given it means github.com, as its --repo flag does.
-		host, owner, name := "github.com", match[1], match[2]
+		owner, name := match[1], match[2]
 		if owner == "" {
-			if flag := ghRepoFlag.FindStringSubmatch(segment); flag != nil {
-				host, owner, name = flag[1], flag[2], flag[3]
-				if host == "" {
-					host = "github.com"
-				}
-			} else if pr := pullURLAnywhere.FindStringSubmatch(segment); pr != nil {
-				host, owner, name = pr[1], pr[2], pr[3]
-			}
+			owner, name = commandOwner, commandName
 		}
 		if owner == "" {
 			n, err := strconv.Atoi(match[3])
