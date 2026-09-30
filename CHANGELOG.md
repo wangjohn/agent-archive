@@ -280,7 +280,9 @@ follow [Semantic Versioning](https://semver.org/).
   archived.** Claude Code's session name (the one in its sidebar, set from
   your prompt or by `/rename`) and the pull request a session linked (its
   `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
-  name. The name passes the same redaction as your prompts; the link is kept
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
   only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
   that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
   `last-prompt` records are still dropped. `list`, `show`, and `handoff` do

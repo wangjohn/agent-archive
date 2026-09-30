@@ -89,6 +89,21 @@ func TestFilterV13CustomTitleKeepsOnlyItsTitle(t *testing.T) {
 	}
 }
 
+// Claude Code appends a custom-title record for each name a session is given.
+// Every one is kept, so a renamed session keeps its earlier names too, as
+// docs/security/privacy.md says.
+func TestFilterV13KeepsEveryNameASessionHad(t *testing.T) {
+	t.Parallel()
+	_, records := filterClaudeLines(t,
+		`{"type":"custom-title","customTitle":"First name","sessionId":"s1"}`,
+		`{"type":"custom-title","customTitle":"Second name","sessionId":"s1"}`,
+	)
+	titles := claudeRecordsOfType(records, "custom-title")
+	if len(titles) != 2 || titles[0]["customTitle"] != "First name" || titles[1]["customTitle"] != "Second name" {
+		t.Fatalf("custom-title records = %#v", titles)
+	}
+}
+
 // A pr-link is kept with the pull request's number as an integer, its
 // repository, and its URL when that is the GitHub URL of those two, however
 // the number was written.

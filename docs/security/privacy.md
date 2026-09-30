@@ -64,12 +64,13 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   64 KB; working directories (which usually contain your username); Git
   branch names; model names; token counts; timestamps; the app's own session
   and message IDs; summaries the app wrote when compacting a conversation;
-  the name the app gave the session (Claude Code's session name, set
-  automatically from your prompt or by `/rename`, and Cursor's chat name),
-  which passes the same redaction as your prompts; the pull request a
-  Claude Code session linked (its `owner/repo`, number, and GitHub link,
-  and nothing of the pull request's text); and final messages hooks
-  reported.
+  the names the app gave the session, which pass the same redaction as
+  your prompts: every Claude Code session name the transcript records (set
+  automatically from your prompt or by `/rename`; renaming adds a name and
+  does not remove the earlier ones) and Cursor's current chat name; the
+  pull requests a Claude Code session linked (their `owner/repo`, number,
+  and GitHub link, and nothing of the pull requests' text); and final
+  messages hooks reported.
 - **Skill evidence**: fresh setup defaults to `metadata`: names and SHA-256
   hashes of filtered `SKILL.md` text, with no body. Choose `none` for no
   filesystem skill inventory or snapshots, or `body` to include up to 16 KB

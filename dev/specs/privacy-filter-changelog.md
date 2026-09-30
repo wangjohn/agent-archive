@@ -21,7 +21,9 @@ below. Nothing else that was dropped is kept.
   other key of the record (`uuid`, `cwd`, …) is dropped and its name listed
   in the `unknown_field_omitted` gap. A record with no title, an empty or
   blank one, or one that is not a string is dropped, with an
-  `unsupported_value_omitted` gap (`record omitted`).
+  `unsupported_value_omitted` gap (`record omitted`). Claude Code appends
+  one of these records for each name a session is given, and each is kept:
+  renaming a session adds a name and does not remove the earlier ones.
 - **Claude Code's `pr-link` record.** `type`, `prNumber`, `prRepository`,
   `prUrl`, and, when they are strings, `sessionId` and `timestamp`.
   - `prRepository` must be `owner/name`, each part matching the pattern

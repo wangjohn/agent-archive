@@ -26,7 +26,9 @@ below are admitted on those records only:
   `timestamp` when they are strings. `customTitle` must be a string with
   something in it and passes the value rules like a prompt. Any other key is
   dropped (named in the `unknown_field_omitted` gap); a record without a
-  usable title is dropped with an `unsupported_value_omitted` gap.
+  usable title is dropped with an `unsupported_value_omitted` gap. Claude
+  Code appends a record for each name a session is given, and every one is
+  kept, so a renamed session keeps its earlier names too.
 - Claude Code `pr-link`: `type`, `prNumber`, `prRepository`, `prUrl`, and
   `sessionId` and `timestamp` when they are strings. `prRepository` is
   `owner/name` with each part matching `git_activity`'s repository pattern;
