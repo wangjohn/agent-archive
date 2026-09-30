@@ -1,0 +1,13 @@
+# Written by agent-archive setup; setup and setup --refresh rewrite this file.
+[Unit]
+Description=agent-archive background collector
+
+[Service]
+Type=oneshot
+ExecStart=/Users/test/bin/agent-archive _collect
+Environment="AGENT_ARCHIVE_HOME=/Users/test/other data"
+Environment=AWS_CONFIG_FILE=/Users/test/.aws/config
+Environment=AWS_PROFILE=work
+Environment=PATH=/opt/tools/bin:/usr/bin
+StandardOutput=append:/Users/test/other data/collector.log
+StandardError=append:/Users/test/other data/collector-error.log

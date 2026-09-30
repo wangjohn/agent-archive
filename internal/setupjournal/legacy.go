@@ -2,19 +2,12 @@ package setupjournal
 
 import (
 	"bytes"
-	"encoding/xml"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
-
-// LegacyLaunchLabel is the launchd label of the prototype's upload job,
-// which the default installation's setup retires.
-const LegacyLaunchLabel = "com.agent-skills.skill-runs-upload"
 
 // LegacyJob is a job a setup retires: the prototype's upload job, or a
 // collector an earlier release installed under another label. Change holds
@@ -22,88 +15,38 @@ const LegacyLaunchLabel = "com.agent-skills.skill-runs-upload"
 type LegacyJob struct {
 	Change    hooks.Change `json:"change"`
 	WasLoaded bool         `json:"was_loaded"`
+	// Backend and JobRef say which scheduler runs the job and what it calls
+	// it, as Journal's do for the collector; both are optional, and absent
+	// means DefaultBackend and the job Change.Path names.
+	Backend string `json:"backend,omitempty"`
+	JobRef  string `json:"job_ref,omitempty"`
 }
 
-// PlanLegacyMigration prepares retiring the prototype's upload job in
-// userHome, or returns nil when there is none. Only the prototype's exact
-// label and command shape establish ownership. Do not execute the plist or
-// remove the private records referenced by --home.
-func PlanLegacyMigration(userHome string, launchd Launchd) (*LegacyJob, error) {
-	path := filepath.Join(userHome, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	var key, label string
-	var args []string
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
+// RetireeJobs is the journal's record of the jobs setup retires: the
+// prototype's job (at most one: the journal has a field of its own for it, as
+// every release has written it) and the collectors under earlier labels, in
+// order. Each job's definition is a single file, as found, which is what the
+// journal restores.
+func RetireeJobs(retirees []scheduler.Retiree) (legacy *LegacyJob, relabeled []*LegacyJob, err error) {
+	for _, r := range retirees {
+		if len(r.Artifacts) != 1 {
+			return nil, nil, fmt.Errorf("cannot record the %s job %s: it has %d definitions, and the journal records one file", r.Backend, r.Ref, len(r.Artifacts))
 		}
-		if err != nil {
-			return nil, fmt.Errorf("cannot verify legacy upload job ownership: %w", err)
-		}
-		start, ok := token.(xml.StartElement)
+		path, ok := r.Artifacts[0].Path()
 		if !ok {
+			return nil, nil, fmt.Errorf("cannot record the %s job %s: %s is not a file", r.Backend, r.Ref, r.Artifacts[0].ID)
+		}
+		job := &LegacyJob{Change: hooks.Change{Path: path, Before: r.Artifacts[0].After, Existed: true, Mode: r.Artifacts[0].Mode}, WasLoaded: r.WasLoaded, Backend: r.Backend, JobRef: string(r.Ref)}
+		if r.Alias == scheduler.Prototype && legacy == nil {
+			legacy = job
 			continue
 		}
-		//lint:ignore LV1001 XML element names from a launchd plist, an external format
-		switch start.Name.Local {
-		case "key":
-			if err := decoder.DecodeElement(&key, &start); err != nil {
-				return nil, err
-			}
-		case "string":
-			var value string
-			if err := decoder.DecodeElement(&value, &start); err != nil {
-				return nil, err
-			}
-			if key == "Label" {
-				label = value
-			}
-			key = ""
-		case "array":
-			if key == "ProgramArguments" {
-				var a struct {
-					Values []string `xml:"string"`
-				}
-				if err := decoder.DecodeElement(&a, &start); err != nil {
-					return nil, err
-				}
-				args = a.Values
-				key = ""
-			}
-		}
+		relabeled = append(relabeled, job)
 	}
-	if label != LegacyLaunchLabel || len(args) != 5 || filepath.Base(args[1]) != "skill_runs.py" || args[2] != "--home" || args[3] == "" || args[4] != "upload" {
-		return nil, fmt.Errorf("legacy job path contains an unrecognized command; preserve %s and resolve it before setup", path)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	// Only an existing, recognized prototype job needs launchctl to answer:
-	// retiring it without knowing whether it is loaded could leave the
-	// prototype uploader running with its plist gone. With no legacy plist
-	// on disk (the common fresh install) this function returned nil above,
-	// so an unknown launchctl state never blocks setup, matching applySetup's
-	// tolerance for the main job on a fresh install.
-	state := launchd.JobState(path)
-	if state == "unknown" {
-		return nil, fmt.Errorf("cannot determine legacy upload job state; restore launchctl access and retry")
-	}
-	if state == JobAnotherInstallation {
-		return nil, fmt.Errorf("launchd's legacy upload job was loaded from a plist other than %s; preserve it and resolve it before setup", path)
-	}
-	return &LegacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: JobActive(state)}, nil
+	return legacy, relabeled, nil
 }
 
-func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
+func retireLegacyJob(job *LegacyJob, backends Backends) error {
 	if job == nil {
 		return nil
 	}
@@ -115,7 +58,7 @@ func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
 		return fmt.Errorf("legacy upload job changed during setup; retry")
 	}
 	if job.WasLoaded {
-		if err := launchd.Unload(job.Change.Path); err != nil {
+		if err := backends.target(job.Backend, job.JobRef, job.Change.Path).unload(); err != nil {
 			return err
 		}
 	}
@@ -126,7 +69,7 @@ func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
 // a collector an earlier release installed under another label. name
 // says which in errors, and home is the data directory whose interrupted
 // setup is being recovered.
-func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd) error {
+func restoreLegacyJob(home string, job *LegacyJob, name string, backends Backends) error {
 	if job == nil {
 		return nil
 	}
@@ -139,12 +82,11 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd)
 		}
 	}
 	if job.WasLoaded {
-		state := launchd.JobState(job.Change.Path)
-		//lint:ignore LV1001 Launchd.JobState reports launchd states as plain strings, and tests stub it with string-returning funcs
-		switch state {
-		case "unknown":
-			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
-		case JobAnotherInstallation, "loaded", "running":
+		target := backends.target(job.Backend, job.JobRef, job.Change.Path)
+		switch target.state() {
+		case scheduler.Unknown:
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to %s and rerun setup", name, target.tool())}
+		case scheduler.AnotherInstallation, scheduler.Loaded, scheduler.Running:
 			// Running already; or launchd runs the label from another
 			// installation's plist now, a job that is not this one's and
 			// that launchd refuses to bootstrap over, so the plist is back
@@ -152,9 +94,9 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd)
 			// Stopping recovery there would only keep the record until
 			// --abandon-recovery, with the jobs after this one not put
 			// back; setup, run again, plans from what launchd runs then.
-		default:
-			if err := launchd.Load(job.Change.Path); err != nil {
-				return launchctlBlocked(home, "restart the "+name, err)
+		case scheduler.Missing:
+			if err := target.load(); err != nil {
+				return target.blocked(home, "restart the "+name, err)
 			}
 		}
 	}

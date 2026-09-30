@@ -254,7 +254,7 @@ func TestStatusDestinationNewerStorageCheckOutranksOlderHealth(t *testing.T) {
 func TestStatusBackgroundUnknownIsNotCalledStopped(t *testing.T) {
 	t.Parallel()
 	view := statusView{Background: "unknown", Apps: []appStatus{{Name: "codex", Hooks: "installed"}}}
-	chooseInstallationStep(&view, "/Users/alex/Library/LaunchAgents/x.plist")
+	chooseInstallationStep(&view, statusBackground{ref: "x"})
 	if view.problem != "The background collector couldn't be checked" || view.Next != "Run agent-archive setup to restore the background collector." {
 		t.Fatalf("problem %q next %q", view.problem, view.Next)
 	}

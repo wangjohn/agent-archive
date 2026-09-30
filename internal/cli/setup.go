@@ -658,11 +658,14 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
 	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
-	// A paused Mac imports nothing (backfill refuses too); resume says so.
+	printNextSteps(p, cfg, paused, !finish.offerImport)
+	// The import is offered last, once the person knows how to see capture
+	// working, so it is a choice about history and not a step of setup. A
+	// paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
+	printAnotherMac(p, cfg, finish.userHome)
 	return nil
 }
 
@@ -773,8 +776,9 @@ func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskill
 	return installedAny
 }
 
-// verifyStorage checks that setup can write, read, and delete in the
-// configured bucket, and records the bucket's privacy evidence and the check
+// verifyStorage checks that the credentials are accepted, then that setup can
+// write, read, and delete in the configured bucket, and records the bucket's
+// privacy evidence and the check
 // time in cfg. connectErr is a failure to build a client at all; accessErr
 // is a failed check, which new settings may fix.
 func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
@@ -783,6 +787,12 @@ func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
 	store, err := env.openStore(*cfg)
 	if err != nil {
 		return fmt.Errorf("connect storage: %w", err), nil
+	}
+	// A wrong account, key, or profile fails here on one cheap listing that
+	// writes nothing, before the round trip's upload and clean-up each fail
+	// in turn. Only VerifyAccess decides that the bucket works.
+	if err = storage.Probe(ctx, store); err != nil {
+		return nil, err
 	}
 	if err = storage.VerifyAccess(ctx, store); err != nil {
 		return nil, err
@@ -908,9 +918,8 @@ var hookNextStep = map[string]string{
 // printNextSteps ends a committed setup with one line per app on what to do
 // next. Capture needs a proven fresh start (provesFreshSessionStart), so it
 // says that sessions already open are not captured. setup --yes asks
-// nothing, so it points at backfill for past sessions instead. The last line
-// sets up another Mac with the same storage.
-func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, unattended bool) {
+// nothing, so it points at backfill for past sessions instead.
+func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	if paused {
 		terminal.Println(p.out, "\nNext: run "+p.style.cmd("agent-archive resume")+" when you’re ready to start archiving.")
 	} else {
@@ -926,6 +935,11 @@ func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, una
 		}
 		terminal.Println(p.out, "Check progress with "+p.style.cmd("agent-archive status")+".")
 	}
+}
+
+// printAnotherMac ends a committed setup with the command that sets up
+// another Mac with the same storage.
+func printAnotherMac(p *prompter, cfg config.Config, userHome string) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
@@ -1009,24 +1023,26 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		known = func(config.Config) []backfill.KnownProject { return nil }
 	}
 	p.step(1, "Choose what to capture")
-	err := chooseHarnesses(p, env.detectHarnesses(userHome), cfg)
+	detected := env.detectHarnesses(userHome)
+	// In a Git repository with no projects yet, the repository heads the
+	// recent-projects list, already included.
+	p.reviewHint = ""
+	current := ""
+	if len(cfg.Archive.Projects) == 0 {
+		var refused string
+		if current, refused = currentProject(env, userHome); refused != "" {
+			terminal.Println(p.out, p.style.dim(refused))
+		}
+	}
+	if done, e := offerFirstCapture(p, cfg, detected, current, userHome, known); e != nil || done {
+		return e
+	}
+	err := chooseHarnesses(p, detected, cfg)
 	if err != nil {
 		return err
 	}
 	if len(cfg.Harnesses) == 0 {
 		return fmt.Errorf("choose at least one application")
-	}
-	// In a Git repository with no projects yet, the repository heads the
-	// recent-projects list, already included.
-	current := ""
-	if len(cfg.Archive.Projects) == 0 {
-		dir, e := os.Getwd()
-		if env.WorkingDir != nil {
-			dir, e = env.WorkingDir()
-		}
-		if e == nil {
-			current = suggestedProject(dir)
-		}
 	}
 	// addProjects asks again while no project is included, so both paths
 	// end with at least one.
@@ -1047,6 +1063,116 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return nil
+}
+
+// offerFirstCapture is the first setup's one question for what to capture,
+// when it can guess both halves: the apps found on this Mac, and the Git
+// repository setup was run from. Yes takes both; the review step's "Edit a
+// setting" changes apps, projects, and retention (which stays at its
+// default), and on no chooseCapture asks for each in turn. It reports
+// whether the answer settled the choice. Anything but a first setup, or one
+// that cannot guess both, asks the longer questions. current is the
+// repository setup was run from, or "" (see currentProject). known lists the
+// projects the apps' history mentions, so the answer can say how many others
+// there are.
+func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
+	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0
+	if !first || current == "" {
+		return false, nil
+	}
+	var apps []string
+	for _, app := range allHarnesses {
+		if containsString(detected, app) {
+			apps = append(apps, app)
+		}
+	}
+	if len(apps) == 0 {
+		return false, nil
+	}
+	yes, err := p.yesNo("Archive "+appList(apps)+" sessions in "+displayPath(current, userHome)+"?", true)
+	if err != nil || !yes {
+		return false, err
+	}
+	cfg.Harnesses = apps
+	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	hint := "Edit a setting adds projects, drops apps, and changes how long sessions are kept."
+	if known != nil {
+		// The scan reads the apps' history, which can take a while on a slow
+		// disk: say so, as for the check of installed applications. Its
+		// result, empty when it fails, is kept for the rest of setup.
+		stop := startAnnouncedActivity(p.out, "Looking for your other projects...")
+		found := known(*cfg)
+		stop()
+		others := 0
+		for _, project := range foldInto(found, current) {
+			if project.Root != current {
+				others++
+			}
+		}
+		if others > 0 {
+			hint = fmt.Sprintf("Your apps also have sessions in %s. Edit a setting adds them, drops apps, and changes how long sessions are kept.", countNoun(others, "other project"))
+		}
+	}
+	terminal.Println(p.out, "On the review screen: "+hint)
+	p.reviewHint = hint
+	return true, nil
+}
+
+// currentProject is the Git repository setup was run from, which heads the
+// project list already included, or "" when there is none. A repository too
+// broad to archive on one Enter is no project, and refused says why, as one
+// line to print: it is the home folder or a folder that holds it (a dotfiles
+// checkout, or a stray .git above it), or a temporary folder or a folder that
+// holds one. Setup then asks for the projects and pre-selects none. A
+// repository inside a temporary folder is an ordinary project, as backfill
+// treats it: only the folder itself is too broad.
+func currentProject(env Env, userHome string) (current, refused string) {
+	dir, err := os.Getwd()
+	if env.WorkingDir != nil {
+		dir, err = env.WorkingDir()
+	}
+	if err != nil {
+		return "", ""
+	}
+	repo := suggestedProject(dir)
+	if repo == "" {
+		return "", ""
+	}
+	if reason := broadFolder(repo, userHome, env.backfillTempDirs()); reason != "" {
+		return "", "Not offering " + displayPath(repo, local.CanonicalPath(userHome)) + " as a project: " + reason + ". Enter the projects you want."
+	}
+	return repo, ""
+}
+
+// broadFolder says why archiving dir on the strength of one Enter would take
+// in too much, or returns "": dir is the home folder or holds it, or is one
+// of the temporary folders (the ones backfill skips, see backfillTempDirs)
+// or holds one. Folders are compared by CanonicalPath, which resolves
+// symlinks and, on a case-insensitive volume, spells each folder as its
+// directory lists it, as a project root is saved.
+func broadFolder(dir, userHome string, temps []string) string {
+	dir = local.CanonicalPath(dir)
+	if home := local.CanonicalPath(userHome); userHome != "" {
+		switch {
+		case dir == home:
+			return "it is your home folder"
+		case local.PathWithin(home, dir):
+			return "it holds your home folder"
+		}
+	}
+	for _, temp := range temps {
+		if temp = strings.TrimSpace(temp); temp == "" {
+			continue
+		}
+		temp = local.CanonicalPath(temp)
+		switch {
+		case dir == temp:
+			return "it is a temporary folder"
+		case local.PathWithin(temp, dir):
+			return "it holds a temporary folder"
+		}
+	}
+	return ""
 }
 
 // foldInto merges the listed projects inside root, such as a repository
@@ -1090,14 +1216,30 @@ func storedCredentialReadable(env Env, ref string) bool {
 	return err == nil
 }
 
+// bucketDocURL is the guide to creating a bucket by hand, which the storage
+// menu's instructions point at.
+const bucketDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/bucket.md"
+
+// storageMenuOptions is the storage menu: the providers to use an existing
+// bucket with, then the instructions.
+func storageMenuOptions() []option {
+	options := []option{
+		{"r2", "Cloudflare R2"},
+		{"s3", "Amazon S3"},
+	}
+	options = append(options, guidedStorageOptions()...)
+	return append(options, option{"help", "Show setup instructions"})
+}
+
+// guidedStorageOptions is where the "Create a new bucket for me" choices go
+// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
+// Part 2). Until then the menu offers only existing buckets.
+func guidedStorageOptions() []option { return nil }
+
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
-	providers := []option{
-		{"r2", "Cloudflare R2"},
-		{"s3", "Amazon S3"},
-		{"help", "Show setup instructions"},
-	}
+	providers := storageMenuOptions()
 	// A saved provider wins, so discovery runs only when there is none.
 	defaultProvider := existing.Provider
 	if defaultProvider == "" {
@@ -1105,14 +1247,8 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	}
 	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	for err == nil && choice == "help" {
-		terminal.Println(p.out, "Cloudflare R2, in the dashboard at https://dash.cloudflare.com:")
-		terminal.Println(p.out, "  1. R2 Object Storage > Create bucket. Leave public access off.")
-		terminal.Println(p.out, "  2. Manage API tokens > Create API token: Object Read & Write, applied to only that bucket.")
-		terminal.Println(p.out, "     Copy the Access Key ID and Secret Access Key.")
-		terminal.Println(p.out, "  3. Copy the Account ID from the R2 overview page, or the bucket's URL from its settings.")
-		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
-		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
-		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
+		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
+		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {
@@ -1751,22 +1887,26 @@ func lastUsed(at, now time.Time) string {
 // first (backfill.KnownProjects). A scan reads every transcript's first
 // records, so it is kept for the rest of the run and repeated only for
 // another set of projects, which changes how sessions resolve. It is only an
-// offer, so a failure or a slow disk leaves the list empty.
+// offer, so a failure or a slow disk leaves the list empty, and that is kept
+// too.
 func knownProjectsOnce(env Env, userHome string) func(config.Config) []backfill.KnownProject {
 	var scannedFor string
 	var projects []backfill.KnownProject
+	scanned := false
 	return func(cfg config.Config) []backfill.KnownProject {
 		key, _ := json.Marshal(cfg.Archive.Projects)
-		if projects != nil && string(key) == scannedFor {
+		if scanned && string(key) == scannedFor {
 			return projects
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		found, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
 		if err != nil {
-			return nil
+			// A failed or timed-out scan is kept as empty, so a later
+			// question does not wait for another.
+			found = nil
 		}
-		scannedFor, projects = string(key), found
+		scanned, scannedFor, projects = true, string(key), found
 		return projects
 	}
 }

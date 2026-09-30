@@ -15,7 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 // unreadInput is setup's input in a test that must stop before the first
@@ -129,7 +129,7 @@ func TestSetupYesStopsOnACommentedSettingsFile(t *testing.T) {
 // they would stop it only when applying otherwise.
 func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 	t.Parallel()
-	states := []string{"unknown", setupjournal.JobAnotherInstallation}
+	states := []string{"unknown", string(scheduler.AnotherInstallation)}
 	wants := []string{"✗ Background job: launchctl did not say whether", "belongs to another installation"}
 	for i, state := range states {
 		want := wants[i]

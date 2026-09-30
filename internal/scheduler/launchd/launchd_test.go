@@ -229,9 +229,9 @@ func TestChangesIgnoreTheCallersCancellation(t *testing.T) {
 
 	// Asking changes nothing, so a question alone is the caller's to cancel.
 	delete(r.seen, "print")
-	s.JobState(ctx, site, ref)
+	s.Inspect(ctx, site, ref)
 	if got := r.seen["print"]; got.err == nil {
-		t.Errorf("launchctl print for JobState ran uncancelled with %v to its deadline", got.left)
+		t.Errorf("launchctl print for Inspect ran uncancelled with %v to its deadline", got.left)
 	}
 }
 

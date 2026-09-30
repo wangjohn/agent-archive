@@ -16,7 +16,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // twoInstallations is the account's default installation and a test one
@@ -365,7 +364,7 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
-	sched := newFakeScheduler(t, setupjournal.JobAnotherInstallation)
+	sched := newFakeScheduler(t, string(scheduler.AnotherInstallation))
 	env.Scheduler = sched
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
@@ -388,12 +387,12 @@ func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 func TestStatusNamesAnotherInstallationsJob(t *testing.T) {
 	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
-	env.Scheduler = newFakeScheduler(t, setupjournal.JobAnotherInstallation)
+	env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
 	view, err := readStatus(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Background != setupjournal.JobAnotherInstallation || !strings.Contains(view.Next, "Another agent-archive installation") || strings.Contains(view.Next, "restore the background collector") {
+	if view.Background != string(scheduler.AnotherInstallation) || !strings.Contains(view.Next, "Another agent-archive installation") || strings.Contains(view.Next, "restore the background collector") {
 		t.Fatalf("background %q next %q", view.Background, view.Next)
 	}
 }
