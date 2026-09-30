@@ -660,11 +660,14 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `allowed-tools` for that command only. Setup writes it as a
    `hooks.Change` in the setup journal, so a failed setup rolls it back.
    The journal is deleted once setup commits, so it is not what later
-   commands read: a file at that path is setup's when its content equals
-   what `agentcommands.Files` renders for the current executable or
-   `config.InstalledExecutable`. Setup replaces only such a file; uninstall
-   removes only such a file; status lists them. Any other file at that
-   path (the person's own, or one they edited) is left alone and reported.
+   commands read: a file at that path is setup's when it carries the
+   marker line every rendering has, and this installation's when its
+   command names the same `AGENT_ARCHIVE_HOME` (none for the default
+   installation), which a relocated installation's skill sets as its hooks
+   do. Setup replaces only such a file; uninstall removes only such a
+   file; status lists them. Any other file at that path (the person's own,
+   one they edited and unmarked, or another installation's) is left alone
+   and reported.
 
 ### Shared names
 
@@ -679,7 +682,7 @@ Packages rely on these; change them only in this section first.
 | C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
 | E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
-| F `internal/agentcommands` | `Files(userHome string, harnesses []string, executable string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
+| F `internal/agentcommands` | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
 
 Each `Env` field gets an unexported method with a default (as
 `Env.launchHandoff` does today), and callers take a small

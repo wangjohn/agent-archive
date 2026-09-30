@@ -17,6 +17,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -130,8 +131,11 @@ type statusView struct {
 	SkillEvidence            string                 `json:"skill_evidence,omitempty"`
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
-	Collector                state.Status           `json:"collector"`
-	CaptureDiagnostics       []capture.Diagnostic   `json:"capture_diagnostics,omitempty"`
+	// AgentCommands lists the in-agent command files (the /handoff skill)
+	// setup installed that are there now.
+	AgentCommands      []string             `json:"agent_commands,omitempty"`
+	Collector          state.Status         `json:"collector"`
+	CaptureDiagnostics []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -352,6 +356,9 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.Authentication.State = "stale"
 	}
 	view.Paused = cfg.Paused
+	if userHome, err := env.userHomeDir(); err == nil {
+		view.AgentCommands = agentcommands.Installed(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome())
+	}
 	for _, p := range cfg.Archive.Projects {
 		if p.Included {
 			view.Projects = append(view.Projects, p.Root)
@@ -1722,6 +1729,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	}
 	for _, app := range view.Apps {
 		printAppDetails(out, app)
+	}
+	for _, command := range view.AgentCommands {
+		terminal.Printf(out, "  /handoff:      %s\n", displayPath(command, view.userHome))
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))

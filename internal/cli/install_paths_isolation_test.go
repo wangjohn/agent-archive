@@ -179,6 +179,9 @@ func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 			t.Fatalf("hooks were written under %s", path)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "handoff", "SKILL.md")); err != nil {
+		t.Fatalf("Claude Code's /handoff skill is not in CLAUDE_CONFIG_DIR: %v", err)
+	}
 	vars = nil
 	view, err := readStatus(env)
 	if err != nil {
@@ -197,6 +200,10 @@ func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 		if b, _ := os.ReadFile(path); strings.Contains(string(b), hooks.Owner) {
 			t.Fatalf("uninstall left hooks in %s", path)
 		}
+	}
+	// Claude Code's /handoff skill went beside its settings, and is gone.
+	if _, err := os.Stat(filepath.Join(claudeDir, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left Claude Code's skill: %v", err)
 	}
 }
 

@@ -111,8 +111,9 @@ Example: agent-archive resume
 `,
 	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--yes]
 
-Remove hooks and the background collector. Keep local evidence, settings,
-and credentials by default, so setup can restore the installation.
+Remove hooks, the /handoff skill, and the background collector. Keep local
+evidence, settings, and credentials by default, so setup can restore the
+installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
 --yes skips the confirmations; it is required without a terminal.

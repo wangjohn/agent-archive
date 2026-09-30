@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup installs a `/handoff` skill for Claude Code
+  (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/handoff/SKILL.md`) that runs
+  `agent-archive handoff --to <agent>` from inside the agent. Setup leaves a
+  file it did not write, uninstall removes only its own, and
+  `status --json` lists them in `agent_commands`.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record. The session can be local or archived. With no
   session named, run inside Claude Code, Codex, or Cursor, it hands off that
