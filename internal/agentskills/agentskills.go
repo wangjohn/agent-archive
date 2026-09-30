@@ -1,12 +1,14 @@
-// Package agentcommands is the in-agent commands setup installs: a
-// `handoff` skill that runs `agent-archive handoff --to <agent>` from inside
-// Claude Code, Codex, or Cursor. It says what each file holds (Files) and
+// Package agentskills is the agent skills setup installs into Claude Code,
+// Codex, and Cursor: the Registry of skills, each rendered per destination
+// (a Skill), such as `handoff`, which runs `agent-archive handoff --to
+// <agent>` from inside an agent. It says what each file holds (Files) and
 // plans writing and removing them as setup-journal changes (PlanInstall,
 // PlanRemoval). Nothing records the files once setup commits, so a file is
 // setup's by its content alone (a marker line), and an installation's by
 // the data directory its command names; anything else at the path is left
-// alone.
-package agentcommands
+// alone. Stale finds the files an upgrade has outdated. The plan is
+// dev/specs/agent-skill.md.
+package agentskills
 
 import (
 	"errors"
@@ -20,77 +22,55 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// File is one command file: where it goes, what it holds, and the
-// harnesses (values of config.Config.Harnesses) that read it.
+// File is one skill file: which skill it is (Skill.Name), where it goes,
+// what it holds, and the harnesses (values of config.Config.Harnesses) that
+// read it.
 type File struct {
+	Skill     string
 	Harnesses []string
 	Path      string
 	Content   []byte
 }
 
-// allHarnesses is every harness a command file is written for.
+// allHarnesses is every harness a skill file is written for.
 var allHarnesses = []string{"codex", "claude", "cursor"}
 
-// Files is the command files for harnesses, running executable with
-// AGENT_ARCHIVE_HOME=dataHome, or with none for the default data directory
-// (dataHome ""), as the installation's hooks do: the agent's environment
-// need not have it. Claude Code reads the skills in its configuration
-// directory claudeDir (~/.claude, or $CLAUDE_CONFIG_DIR); Codex and Cursor
-// both read ~/.agents/skills (Cursor reads ~/.claude/skills too, so the
-// instructions suit any of the three).
+// Files is the skill files of every skill in Registry for harnesses, in
+// Registry order (each skill's Claude Code file, then its shared one),
+// running executable with AGENT_ARCHIVE_HOME=dataHome, or with none for the
+// default data directory (dataHome ""), as the installation's hooks do: the
+// agent's environment need not have it. Claude Code reads the skills in its
+// configuration directory claudeDir (~/.claude, or $CLAUDE_CONFIG_DIR);
+// Codex and Cursor both read ~/.agents/skills (Cursor reads ~/.claude/skills
+// too, so the instructions suit any of the three).
 func Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
+	return skillFiles(Registry, userHome, claudeDir, harnesses, executable, dataHome)
+}
+
+// skillFiles is Files for the skills in registry.
+func skillFiles(registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
 	var files []File
-	if slices.Contains(harnesses, "claude") {
-		files = append(files, File{Harnesses: []string{"claude"}, Path: filepath.Join(claudeDir, "skills", "handoff", "SKILL.md"), Content: claudeSkill(executable, dataHome)})
-	}
 	var shared []string
 	for _, h := range []string{"codex", "cursor"} {
 		if slices.Contains(harnesses, h) {
 			shared = append(shared, h)
 		}
 	}
-	if len(shared) > 0 {
-		files = append(files, File{Harnesses: shared, Path: filepath.Join(userHome, ".agents", "skills", "handoff", "SKILL.md"), Content: agentsSkill(executable, dataHome)})
+	for _, s := range registry {
+		if slices.Contains(harnesses, "claude") {
+			files = append(files, File{Skill: s.Name, Harnesses: []string{"claude"}, Path: filepath.Join(claudeDir, "skills", s.Name, "SKILL.md"), Content: s.Render(Claude, executable, dataHome)})
+		}
+		if len(shared) > 0 {
+			files = append(files, File{Skill: s.Name, Harnesses: shared, Path: filepath.Join(userHome, ".agents", "skills", s.Name, "SKILL.md"), Content: s.Render(Shared, executable, dataHome)})
+		}
 	}
 	return files
 }
 
-// marker is the line every command file carries. A file with it is setup's,
+// marker is the line every skill file carries. A file with it is setup's,
 // whichever release or executable path wrote it; the person keeps a file of
 // their own by deleting the line.
 const marker = "<!-- Written by agent-archive setup, which replaces this file; agent-archive uninstall removes it. Delete this line to keep your own version. -->"
-
-// claudeSkill is Claude Code's skill: /handoff [agent], with $ARGUMENTS for
-// the agent, only the person may invoke it, and it may run the one command
-// without asking.
-func claudeSkill(executable, dataHome string) []byte {
-	command := commandLine(executable, dataHome)
-	front := []string{
-		"name: handoff",
-		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab or window.",
-		`argument-hint: "[claude|codex|cursor]"`,
-		"disable-model-invocation: true",
-	}
-	// A quoted path or a variable would not read back as a plain YAML value
-	// or a permission rule; without the rule the command is simply asked
-	// about.
-	if command == executable {
-		front = append(front, "allowed-tools: Bash("+command+" handoff:*)")
-	}
-	return skill(front, command, "The agent they named, if any: $ARGUMENTS\n\n")
-}
-
-// agentsSkill is the skill Codex ($handoff) and Cursor read. Codex has no
-// argument substitution, so the agent comes from the request itself. Nor
-// does either have disable-model-invocation, and the command opens another
-// agent, so the body repeats the description's guard.
-func agentsSkill(executable, dataHome string) []byte {
-	front := []string{
-		"name: handoff",
-		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab or window. Use only when the person explicitly asks to hand off.",
-	}
-	return skill(front, commandLine(executable, dataHome), "Only if they explicitly asked you to hand off, or to continue in another\nagent, run the command below; otherwise run nothing.\n\n")
-}
 
 // dataHomeVariable begins a command line naming a relocated data directory.
 const dataHomeVariable = "AGENT_ARCHIVE_HOME="
@@ -101,24 +81,6 @@ func commandLine(executable, dataHome string) string {
 		return shellQuote(executable)
 	}
 	return dataHomeVariable + shellQuote(dataHome) + " " + shellQuote(executable)
-}
-
-func skill(front []string, command, arguments string) []byte {
-	return []byte("---\n" + strings.Join(front, "\n") + "\n---\n" + marker + `
-
-The person wants to continue this session in another coding agent.
-` + arguments + `Run exactly this command, and nothing else:
-
-    ` + command + ` handoff --to <agent>
-
-<agent> is the one the person named: claude, codex, or cursor. If they named
-none, choose a different agent than yourself: codex if you are Claude Code,
-claude if you are Codex or Cursor.
-
-The command opens that agent in a new terminal tab or window with this
-session as its context, and returns at once. Report its output. Do not
-paste the handoff content, and do nothing else.
-`)
 }
 
 // shellQuote quotes s for the shell only when it needs it.
@@ -144,7 +106,7 @@ func owned(content []byte, dataHome string) bool {
 	return strings.Contains(string(content), dataHomeVariable+shellQuote(dataHome)+" ")
 }
 
-// PlanInstall plans the command files for harnesses, running executable:
+// PlanInstall plans the skill files for harnesses, running executable:
 // each is written where there is none and replaced only while it is setup's
 // (see owned), and a file of setup's for a harness no longer chosen is
 // removed, as is one in previousClaudeDir, where Claude Code's
@@ -152,8 +114,13 @@ func owned(content []byte, dataHome string) bool {
 // directories included, is left alone; a wanted path holding one is
 // returned in foreign.
 func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
+	return planInstall(Registry, userHome, claudeDir, harnesses, executable, dataHome, previousClaudeDir)
+}
+
+// planInstall is PlanInstall for the skills in registry.
+func planInstall(registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
 	wanted := map[string]bool{}
-	for _, f := range Files(userHome, claudeDir, harnesses, executable, dataHome) {
+	for _, f := range skillFiles(registry, userHome, claudeDir, harnesses, executable, dataHome) {
 		wanted[f.Path] = true
 		current, state, err := read(f.Path)
 		if err != nil {
@@ -169,7 +136,7 @@ func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dat
 			foreign = append(foreign, f.Path)
 		}
 	}
-	for _, f := range append(Files(userHome, claudeDir, allHarnesses, "", ""), Files(userHome, previousClaudeDir, []string{"claude"}, "", "")...) {
+	for _, f := range append(skillFiles(registry, userHome, claudeDir, allHarnesses, "", ""), skillFiles(registry, userHome, previousClaudeDir, []string{"claude"}, "", "")...) {
 		if wanted[f.Path] {
 			continue
 		}
@@ -185,11 +152,16 @@ func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dat
 	return changes, foreign, nil
 }
 
-// PlanRemoval plans removing every command file of setup's, for
-// uninstall. A file at one of their paths that is not setup's is returned
-// in kept and left alone.
+// PlanRemoval plans removing every skill file of setup's, for uninstall. A
+// file at one of their paths that is not setup's is returned in kept and
+// left alone.
 func PlanRemoval(userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
+	return planRemovalOf(Registry, userHome, claudeDir, dataHome)
+}
+
+// planRemovalOf is PlanRemoval for the skills in registry.
+func planRemovalOf(registry []Skill, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
 		change, found, err := planRemoval(f.Path, dataHome)
 		if err != nil {
 			return nil, nil, err
@@ -212,10 +184,15 @@ func planRemoval(path, dataHome string) (hooks.Change, bool, error) {
 	return hooks.Change{Path: path, Before: current, Existed: true, Mode: mode(path), Delete: true}, true, nil
 }
 
-// Installed is the command files of setup's that are there now, for status.
+// Installed is the skill files of setup's that are there now, for status.
 func Installed(userHome, claudeDir, dataHome string) []string {
+	return installedOf(Registry, userHome, claudeDir, dataHome)
+}
+
+// installedOf is Installed for the skills in registry.
+func installedOf(registry []Skill, userHome, claudeDir, dataHome string) []string {
 	var paths []string
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
+	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
 		if current, state, err := read(f.Path); err == nil && state == regular && owned(current, dataHome) {
 			paths = append(paths, f.Path)
 		}
@@ -223,14 +200,42 @@ func Installed(userHome, claudeDir, dataHome string) []string {
 	return paths
 }
 
-// RemoveEmptyDirs removes the directories each command file's path is in,
+// Stale is the skill files of setup's that are there but differ from what
+// this release renders for executable: written by an earlier release or
+// executable, so setup (which replaces a file it owns) refreshes them. It
+// is a subset of Installed, for status. With no executable recorded there
+// is nothing to compare with, and it reports none.
+func Stale(userHome, claudeDir, executable, dataHome string) []string {
+	return staleOf(Registry, userHome, claudeDir, executable, dataHome)
+}
+
+// staleOf is Stale for the skills in registry.
+func staleOf(registry []Skill, userHome, claudeDir, executable, dataHome string) []string {
+	if executable == "" {
+		return nil
+	}
+	var paths []string
+	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, executable, dataHome) {
+		if current, state, err := read(f.Path); err == nil && state == regular && owned(current, dataHome) && string(current) != string(f.Content) {
+			paths = append(paths, f.Path)
+		}
+	}
+	return paths
+}
+
+// RemoveEmptyDirs removes the directories each skill file's path is in,
 // deepest first, while they are empty: what writing a file there created,
 // once the file is gone. It stops at the home folder, and at Claude Code's
 // configuration directory claudeDir; a directory holding anything is kept,
 // with every one above it. A link is never removed: os.Remove would unlink
 // it whatever it names.
 func RemoveEmptyDirs(userHome, claudeDir string) {
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
+	removeEmptyDirs(Registry, userHome, claudeDir)
+}
+
+// removeEmptyDirs is RemoveEmptyDirs for the skills in registry.
+func removeEmptyDirs(registry []Skill, userHome, claudeDir string) {
+	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
 		stop := userHome
 		if slices.Contains(f.Harnesses, "claude") {
 			stop = claudeDir

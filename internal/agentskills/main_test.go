@@ -1,4 +1,4 @@
-package agentcommands
+package agentskills
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 
 // testTempPrefix names the folder under /tmp that holds one test run's
 // temporary files.
-const testTempPrefix = "agent-archive-agentcommands-test-"
+const testTempPrefix = "agent-archive-agentskills-test-"
 
 // TestMain runs every test in a process that cannot reach this Mac's real
 // home, where the skills live.

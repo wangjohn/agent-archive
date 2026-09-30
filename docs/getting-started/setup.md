@@ -266,6 +266,16 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   Run setup again after moving your AWS files or the helper; `status` warns
   when they no longer match
   ([configuration](../reference/configuration.md#environment-variables)).
+- **Agent skill files**, one folder per skill under each app's skills
+  directory: `/handoff` is written to `$CLAUDE_CONFIG_DIR/skills/handoff/SKILL.md`
+  (`~/.claude/skills/…` by default) for Claude Code and to
+  `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor
+  ([handoff](../guides/handoff.md#from-inside-an-agent-handoff)). Each file
+  carries a marker line: setup replaces, `status` lists, and uninstall
+  removes only a file with it (naming this installation's data directory),
+  and leaves any other file at that path alone, saying so. After you upgrade
+  `agent-archive`, `status` warns about a skill file written by an earlier
+  release; `agent-archive setup` refreshes it.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
   see [local state](../reference/local-state.md)), private to your account.
   It holds registrations, frozen uploads, and caches; transcripts are read in
@@ -275,7 +285,8 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   build without a Keychain, a credentials file in the data directory). S3
   credentials stay in your AWS profile.
 
-`agent-archive uninstall` removes the hooks and the LaunchAgent;
+`agent-archive uninstall` removes the hooks, the skill files, and the
+LaunchAgent;
 `--delete-local-data` also removes the local state and the Keychain item
 (or credentials file).
 Neither touches the bucket ([uninstall](uninstall.md)).

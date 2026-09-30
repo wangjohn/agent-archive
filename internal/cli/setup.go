@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -637,7 +637,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
@@ -646,19 +646,35 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	return nil
 }
 
-// printAgentCommands says in one line where setup installed the /handoff
-// command, and names each path it left alone because it is not setup's.
-func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
-	var installed []string
-	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
-		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
-			installed = append(installed, displayPath(f.Path, userHome))
-			continue
+// printAgentSkills says in one line per skill (/handoff, and any other in
+// agentskills.Registry) where setup installed it, and names each path it
+// left alone because it is not setup's.
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
+	printSkillFiles(p, agentskills.Registry, agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome), userHome)
+}
+
+// printSkillFiles is printAgentSkills for the files of skills, each one
+// reported under its own skill.
+func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskills.File, userHome string) {
+	for _, skill := range skills {
+		var installed []string
+		for _, f := range files {
+			if f.Skill != skill.Name {
+				continue
+			}
+			if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+				installed = append(installed, displayPath(f.Path, userHome))
+				continue
+			}
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(f.Path, userHome), skill.Name)
 		}
-		terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n", displayPath(f.Path, userHome))
-	}
-	if len(installed) > 0 {
-		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))
+		if len(installed) > 0 {
+			what := "/" + skill.Name
+			if skill.Summary != "" {
+				what += ", which " + skill.Summary
+			}
+			terminal.Printf(p.out, "Installed %s: %s\n", what, strings.Join(installed, ", "))
+		}
 	}
 }
 
