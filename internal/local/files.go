@@ -103,17 +103,26 @@ func ResolveExistingSymlinks(path string) (string, error) {
 // Write stores value as indented JSON with a trailing newline, atomically,
 // as WriteBytes does.
 func Write(path string, value any) error {
-	b, e := json.MarshalIndent(value, "", "  ")
+	write, e := indentedJSON(value)
 	if e != nil {
 		return e
 	}
-	return writeAtomic(path, func(w io.Writer) error {
+	return writeAtomic(path, write)
+}
+
+// indentedJSON encodes value as Write stores it and returns what writes it.
+func indentedJSON(value any) (func(io.Writer) error, error) {
+	b, e := json.MarshalIndent(value, "", "  ")
+	if e != nil {
+		return nil, e
+	}
+	return func(w io.Writer) error {
 		if _, e := w.Write(b); e != nil {
 			return e
 		}
 		_, e := w.Write([]byte{'\n'})
 		return e
-	})
+	}, nil
 }
 
 // WriteCompact stores value as compact JSON (json.Marshal's bytes) with a
@@ -143,31 +152,85 @@ func WriteBytes(path string, b []byte) error {
 // report any failure to write it: nothing is renamed over path unless it
 // returns nil.
 func writeAtomic(path string, write func(io.Writer) error) error {
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
-		return e
-	}
-	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
+	s, e := stage(path, write)
 	if e != nil {
 		return e
 	}
-	// After a successful rename there is nothing left to remove.
-	defer func() { _ = os.Remove(f.Name()) }()
+	defer s.Discard()
+	if e = s.Replace(); e != nil {
+		return e
+	}
+	return SyncDir(path)
+}
+
+// Staged is a replacement for a file, written and synced beside it by Stage,
+// that Replace renames over the file. Write does all three steps at once;
+// staging lets a caller that must hold a lock across a read-modify-write hold
+// it only for the rename. The syncs, which are F_FULLFSYNCs on macOS, can
+// take seconds on a busy Mac.
+type Staged struct {
+	path     string
+	temp     string
+	replaced bool
+}
+
+// Stage writes value as Write does to a synced 0600 temporary file in path's
+// directory (created 0700 if missing), without replacing path. The caller
+// must Replace or Discard it.
+func Stage(path string, value any) (*Staged, error) {
+	write, e := indentedJSON(value)
+	if e != nil {
+		return nil, e
+	}
+	return stage(path, write)
+}
+
+func stage(path string, write func(io.Writer) error) (*Staged, error) {
+	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+		return nil, e
+	}
+	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
+	if e != nil {
+		return nil, e
+	}
 	if e = f.Chmod(0600); e == nil {
 		e = write(f)
 	}
 	if e == nil {
 		e = f.Sync()
 	}
-	ce := f.Close()
+	if ce := f.Close(); e == nil {
+		e = ce
+	}
 	if e != nil {
+		_ = os.Remove(f.Name())
+		return nil, e
+	}
+	return &Staged{path: path, temp: f.Name()}, nil
+}
+
+// Replace renames the staged file over its path; a reader sees the old
+// content or the new, never a partial file. It does not sync the directory:
+// until SyncDir does, a crash may bring the old content back.
+func (s *Staged) Replace() error {
+	if e := os.Rename(s.temp, s.path); e != nil {
 		return e
 	}
-	if ce != nil {
-		return ce
+	s.replaced = true
+	return nil
+}
+
+// Discard removes the staged file unless Replace renamed it. It does nothing
+// on nil, for a caller that had nothing to stage.
+func (s *Staged) Discard() {
+	if s != nil && !s.replaced {
+		_ = os.Remove(s.temp)
 	}
-	if e = os.Rename(f.Name(), path); e != nil {
-		return e
-	}
+}
+
+// SyncDir syncs the directory holding path, which makes a rename of path
+// durable.
+func SyncDir(path string) error {
 	d, e := os.Open(filepath.Dir(path))
 	if e != nil {
 		return e

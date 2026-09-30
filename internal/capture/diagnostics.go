@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +13,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // DiagnosticCode names the boundary that prevented a capture.
@@ -64,9 +65,18 @@ const (
 	// DiagnosticsLockName serializes every read-modify-write of
 	// capture-diagnostics.json: each hook-side record and setup's prune.
 	DiagnosticsLockName = "diagnostics.lock"
-	// pruneDiagnosticsWait is setup's wait. Holders keep the lock for one
-	// small file write, so this only has to outlast a burst of hooks.
-	pruneDiagnosticsWait = 2 * time.Second
+	// pruneDiagnosticsWait is setup's wait. Holders keep the lock only to
+	// reread the file, check the configuration and rename (see
+	// diagnosticsUpdate), but while other processes sync, APFS can stall a
+	// rename for over a second, and a burst of hooks queues several. Setup
+	// waits only while the lock is held, so the bound is generous; it still
+	// keeps setup from hanging on a holder that never finishes, such as a
+	// stopped process.
+	pruneDiagnosticsWait = 10 * time.Second
+	// diagnosticsAttempts bounds how often an update is built again because
+	// another writer replaced the file first. Each retry means another update
+	// landed, and diagnostics are written only for rare events.
+	diagnosticsAttempts = 5
 )
 
 // hookDiagnosticsWait bounds how long a hook waits for diagnostics.lock. A
@@ -74,6 +84,10 @@ const (
 // the diagnostic is dropped rather than the turn delayed. A variable only so
 // a race test can rule out timeout drops and observe lost updates alone.
 var hookDiagnosticsWait = 50 * time.Millisecond
+
+// errDiagnosticsKeptChanging is an update that other writers overtook
+// diagnosticsAttempts times. A hook drops its diagnostic, as on a busy lock.
+var errDiagnosticsKeptChanging = fmt.Errorf("capture diagnostics kept changing while being updated: %w", local.ErrBusy)
 
 // RecordDiagnostic adds a diagnostic under diagnostics.lock, or drops it
 // if the lock is not free within hookDiagnosticsWait. Under the lock it rereads
@@ -89,49 +103,175 @@ func RecordDiagnostic(home string, diagnostic Diagnostic) error {
 // recordDiagnostic can report diagnostics-lock contention to callers whose
 // stderr is the only remaining place to explain a dropped hook event.
 func recordDiagnostic(home string, diagnostic Diagnostic, busyIsError bool) error {
-	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, hookDiagnosticsWait)
+	err := recordUpdate(home, diagnostic).run(home)
 	if errors.Is(err, local.ErrBusy) {
 		if busyIsError {
 			return fmt.Errorf("capture diagnostics busy; status may not show this missed hook: %w", err)
 		}
 		return nil
 	}
+	return err
+}
+
+// recordUpdate adds diagnostic, for a project the committed configuration
+// includes.
+func recordUpdate(home string, diagnostic Diagnostic) diagnosticsUpdate {
+	diagnostic.ObservedAt = diagnostic.ObservedAt.UTC()
+	return diagnosticsUpdate{
+		wait: hookDiagnosticsWait,
+		admit: func() (bool, error) {
+			cfg, found, err := config.Load(home)
+			if err != nil {
+				return false, fmt.Errorf("load config: %w", err)
+			}
+			return found && len(IncludedDiagnostics([]Diagnostic{diagnostic}, cfg.Archive.Projects)) > 0, nil
+		},
+		// Advisory, and rewritten whole: a file that no longer decodes is
+		// replaced rather than left to fail every later diagnostic.
+		next: func(diagnostics []Diagnostic, _ bool) ([]Diagnostic, bool) {
+			// Keep only the latest instance of a reason for an app/project
+			// pair. This bounds local status data even when a harness repeats
+			// the same hook.
+			kept := diagnostics[:0]
+			for _, existing := range diagnostics {
+				if existing.Code == diagnostic.Code && existing.Harness == diagnostic.Harness && existing.ProjectRoot == diagnostic.ProjectRoot {
+					continue
+				}
+				kept = append(kept, existing)
+			}
+			kept = append(kept, diagnostic)
+			sort.Slice(kept, func(i, j int) bool { return kept[i].ObservedAt.Before(kept[j].ObservedAt) })
+			if len(kept) > 50 {
+				kept = kept[len(kept)-50:]
+			}
+			return kept, true
+		},
+	}
+}
+
+// diagnosticsUpdate is one read-modify-write of capture-diagnostics.json
+// that holds diagnostics.lock without syncing anything. A durable write syncs
+// twice, and on macOS each sync is an F_FULLFSYNC that can take seconds on a
+// busy Mac, longer than hooks (hookDiagnosticsWait) and setup's prune
+// (pruneDiagnosticsWait) wait for the lock. So run writes and syncs the new
+// file before it takes the lock, and syncs the directory after releasing it.
+// Under the lock it only rereads the file, checks admit, and renames. A file
+// that another writer replaced since it was read is not overwritten: the
+// update is built again from what that writer left, so none is lost.
+type diagnosticsUpdate struct {
+	wait time.Duration
+	// admit, when set, says whether the update may be written at all. It is
+	// asked before the update is built and again under the lock.
+	admit func() (bool, error)
+	// next returns the file's new content from the current one, and whether
+	// to write it. diagnostics is empty when the file is missing or no longer
+	// decodes, and undecodable says which.
+	next func(diagnostics []Diagnostic, undecodable bool) ([]Diagnostic, bool)
+	// afterStage, a test seam, runs once the new content is synced, before
+	// the lock is taken.
+	afterStage func()
+}
+
+func (u diagnosticsUpdate) run(home string) error {
+	path := DiagnosticsPath(home)
+	for range diagnosticsAttempts {
+		if u.admit != nil {
+			if admitted, err := u.admit(); err != nil || !admitted {
+				return err
+			}
+		}
+		before, err := readDiagnosticsFile(path)
+		if err != nil {
+			return err
+		}
+		content, write := u.next(before.decode())
+		var staged *local.Staged
+		if write {
+			if staged, err = local.Stage(path, content); err != nil {
+				return err
+			}
+			if u.afterStage != nil {
+				u.afterStage()
+			}
+		}
+		replaced, changed, err := u.commit(home, before, staged)
+		staged.Discard()
+		switch {
+		case err != nil:
+			return err
+		case changed:
+			continue
+		case replaced:
+			return local.SyncDir(path)
+		default:
+			return nil
+		}
+	}
+	return errDiagnosticsKeptChanging
+}
+
+// commit takes the lock and, when the file is still what the update was built
+// from and admit allows it, renames staged (nil for no change) over it.
+// changed reports a file another writer replaced meanwhile.
+func (u diagnosticsUpdate) commit(home string, before diagnosticsFile, staged *local.Staged) (replaced, changed bool, err error) {
+	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, u.wait)
 	if err != nil {
-		return fmt.Errorf("lock capture diagnostics: %w", err)
+		return false, false, fmt.Errorf("lock capture diagnostics: %w", err)
 	}
 	defer unlock()
-	cfg, found, err := config.Load(home)
+	current, err := readDiagnosticsFile(DiagnosticsPath(home))
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return false, false, err
 	}
-	if !found || len(IncludedDiagnostics([]Diagnostic{diagnostic}, cfg.Archive.Projects)) == 0 {
-		return nil
+	if !current.equal(before) {
+		return false, true, nil
 	}
-	diagnostics, err := ReadDiagnostics(home)
-	if state.IsUndecodable(err) {
-		// Advisory, and rewritten whole below: a file that no longer decodes
-		// is replaced rather than left to fail every later diagnostic.
-		diagnostics, err = nil, nil
+	if staged == nil {
+		return false, false, nil
 	}
-	if err != nil {
-		return err
-	}
-	diagnostic.ObservedAt = diagnostic.ObservedAt.UTC()
-	// Keep only the latest instance of a reason for an app/project pair. This
-	// bounds local status data even when a harness repeats the same hook.
-	kept := diagnostics[:0]
-	for _, existing := range diagnostics {
-		if existing.Code == diagnostic.Code && existing.Harness == diagnostic.Harness && existing.ProjectRoot == diagnostic.ProjectRoot {
-			continue
+	if u.admit != nil {
+		if admitted, err := u.admit(); err != nil || !admitted {
+			return false, false, err
 		}
-		kept = append(kept, existing)
 	}
-	kept = append(kept, diagnostic)
-	sort.Slice(kept, func(i, j int) bool { return kept[i].ObservedAt.Before(kept[j].ObservedAt) })
-	if len(kept) > 50 {
-		kept = kept[len(kept)-50:]
+	if err := staged.Replace(); err != nil {
+		return false, false, err
 	}
-	return local.Write(DiagnosticsPath(home), kept)
+	return true, false, nil
+}
+
+// diagnosticsFile is capture-diagnostics.json's bytes as read, or none.
+type diagnosticsFile struct {
+	data   []byte
+	exists bool
+}
+
+func readDiagnosticsFile(path string) (diagnosticsFile, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return diagnosticsFile{}, nil
+	}
+	if err != nil {
+		return diagnosticsFile{}, err
+	}
+	return diagnosticsFile{data: data, exists: true}, nil
+}
+
+func (f diagnosticsFile) equal(other diagnosticsFile) bool {
+	return f.exists == other.exists && bytes.Equal(f.data, other.data)
+}
+
+// decode returns the stored diagnostics, and whether a file that exists no
+// longer decodes (with no diagnostics).
+func (f diagnosticsFile) decode() ([]Diagnostic, bool) {
+	if !f.exists {
+		return nil, false
+	}
+	var diagnostics []Diagnostic
+	if err := json.Unmarshal(f.data, &diagnostics); err != nil {
+		return nil, true
+	}
+	return diagnostics, false
 }
 
 // IncludedDiagnostics keeps only diagnostics for projects that are
@@ -156,25 +296,25 @@ func IncludedDiagnostics(diagnostics []Diagnostic, projects []archive.ProjectAct
 // calls it after committing the configuration those projects come from; see
 // RecordDiagnostic for why that order plus the shared lock is enough.
 func PruneDiagnostics(home string, projects []archive.ProjectActivation) error {
-	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, pruneDiagnosticsWait)
-	if err != nil {
-		return fmt.Errorf("lock capture diagnostics: %w", err)
+	return pruneUpdate(projects).run(home)
+}
+
+// pruneUpdate keeps the diagnostics of included projects. Even when there is
+// nothing to drop it takes the lock, so a hook that checked the configuration
+// before setup committed it and is renaming its diagnostic finishes first.
+func pruneUpdate(projects []archive.ProjectActivation) diagnosticsUpdate {
+	return diagnosticsUpdate{
+		wait: pruneDiagnosticsWait,
+		next: func(diagnostics []Diagnostic, undecodable bool) ([]Diagnostic, bool) {
+			if undecodable {
+				// Replaced by an empty list: nothing in it can be pruned, and
+				// it must not stop setup.
+				return []Diagnostic{}, true
+			}
+			kept := IncludedDiagnostics(diagnostics, projects)
+			return kept, len(kept) != len(diagnostics)
+		},
 	}
-	defer unlock()
-	diagnostics, err := ReadDiagnostics(home)
-	if state.IsUndecodable(err) {
-		// Replaced by an empty list: nothing in it can be pruned, and it
-		// must not stop setup.
-		return local.Write(DiagnosticsPath(home), []Diagnostic{})
-	}
-	if err != nil {
-		return err
-	}
-	kept := IncludedDiagnostics(diagnostics, projects)
-	if len(kept) == len(diagnostics) {
-		return nil
-	}
-	return local.Write(DiagnosticsPath(home), kept)
 }
 
 // DiagnosticMessage says in words what a diagnostic code means.
