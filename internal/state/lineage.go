@@ -135,44 +135,89 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // request for it after that snapshot. When deferForWork is set, the pending
 // work is checked again under the lock, and a session that now has a request
 // or a pending publication is kept (forgotten reports false) so the collector
-// publishes that evidence. A session the collector no longer publishes is
-// forgotten regardless: its work would never be done.
+// publishes that evidence, as is one with a subagent candidate whose lock a
+// hook or the collector holds right then. A session the collector no longer
+// publishes is forgotten regardless: its work would never be done (a held
+// candidate lock then fails the attempt with ErrBusy, for the next to retry).
 //
-// A non-nil removal is recorded (see RecordRemoval) under the same lock,
-// after that recheck and before anything is forgotten: a session kept alive
-// gets no record, and a record that cannot be written leaves the session
-// registered, so the caller's next attempt retries both.
+// A non-nil removal is recorded (see RecordRemoval) before anything is
+// forgotten, so a record that cannot be written leaves the session
+// registered and the caller's next attempt retries both. It is written
+// before the request lock is taken, not under it: the record is a durable
+// write, whose syncs can take seconds on a busy Mac, and a hook waits only
+// a second for that lock on the user's turn. A session the locked recheck
+// keeps alive has the record taken back, so it gets none. Until then, or
+// after a crash in between, the record sits beside a registration, where
+// nothing reads it: backfill consults removal records only for sessions
+// that are not registered.
 func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	takeBack := func() error { return nil }
+	if removal != nil {
+		if takeBack, err = s.recordRemovalRevocably(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+			return false, err
+		}
+		if s.afterRemovalRecord != nil {
+			s.afterRemovalRecord()
+		}
+	}
+	started, err := s.forgetIdleLocked(archiveSessionID, nativeSessionID, deferForWork)
+	if started {
+		// A forget that failed part way keeps its record: the session may
+		// be unregistered already.
+		return err == nil, err
+	}
+	// None of the session's own records are gone, so the record goes back.
+	if err != nil {
+		return false, errors.Join(err, takeBack())
+	}
+	// Keeping the session was right, and a record the take-back could not
+	// remove sits inert beside its registration; it is not a failure.
+	_ = takeBack()
+	return false, nil
+}
+
+// forgetIdleLocked is the part of ForgetIdleSession done under the request
+// lock: the recheck, then the forget. started reports whether the forget
+// began removing the session's own records.
+func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, deferForWork bool) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
 	if deferForWork {
-		_, requested, err := s.LoadRequest(archiveSessionID)
-		if err != nil {
-			return false, err
-		}
-		pending, err := s.HasPending(archiveSessionID)
-		if err != nil {
-			return false, err
-		}
-		if requested || pending {
-			return false, nil
-		}
-	}
-	if removal != nil {
-		if err := s.RecordRemoval(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+		if work, err := s.hasWork(archiveSessionID); err != nil || work {
 			return false, err
 		}
 	}
-	if err := s.ForgetSession(archiveSessionID, nativeSessionID); err != nil {
+	// ForgetSession would wait up to a second for each subagent candidate's
+	// lock while this one is held, and hooks wait only a second for this
+	// one. So the candidates go first, without waiting: a candidate lock
+	// held now means a hook or the collector is at work on the session's
+	// subagents, work that keeps the session like a request does.
+	busy, err := s.removeSubagentCandidatesWithoutWaiting(archiveSessionID)
+	switch {
+	case err != nil:
 		return false, err
+	case busy && deferForWork:
+		return false, nil
+	case busy:
+		return false, fmt.Errorf("forget session %q: a subagent of it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
-	return true, nil
+	return true, s.forgetSession(archiveSessionID, nativeSessionID, false)
+}
+
+// hasWork reports whether a session has a request or a pending publication:
+// work the collector will do.
+func (s *Store) hasWork(archiveSessionID string) (bool, error) {
+	_, requested, err := s.LoadRequest(archiveSessionID)
+	if err != nil || requested {
+		return requested, err
+	}
+	return s.HasPending(archiveSessionID)
 }
 
 // orphanDirs are the directories whose files outlive a registration that is
@@ -281,11 +326,19 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID, nativeSessionID string) error {
+	return s.forgetSession(archiveSessionID, nativeSessionID, true)
+}
+
+// forgetSession is ForgetSession; withCandidates false is for a caller that
+// already removed the session's subagent candidates under their locks.
+func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCandidates bool) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
-		return fmt.Errorf("remove linked subagent candidates: %w", err)
+	if withCandidates {
+		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
+			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
 	}
 	paths := []string{
 		s.registrationPath(archiveSessionID),
