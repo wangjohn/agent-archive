@@ -5,8 +5,8 @@ These commands print JSON for scripts. Each document carries a
 keeps its meaning, and an incompatible change bumps `schema_version`, from
 `v0.1.0` on. Check `schema_version`, and read the
 [changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
-conversation content, except `show --transcript --json`, which you ask for
-explicitly.
+conversation content, except `show --transcript --json` and a full
+`eval export` record, which you ask for explicitly.
 
 ## `list --json`
 
@@ -381,6 +381,17 @@ Before setup, `state` says setup is needed, `background` is `missing`, and
 `authentication` is `not_configured`. When a command has held the collector
 lock for over two hours, `next_action` says collection is stuck and names the
 command and process ID.
+
+## `eval export`
+
+`agent-archive eval export SESSION_ID...` prints JSON Lines, never a single
+document: one record per session, `"record": "session"` or
+`"record": "error"`, each with its own `schema_version` (currently `1`),
+described by [`eval-export.schema.json`](schemas.md) and the
+[guide](../guides/eval-export.md). Unlike every other JSON output here, a
+full record (`--detail full`, the default) holds conversation text: the
+filtered human prompts and the final response. `--detail metadata` holds
+none.
 
 ## `backfill --dry-run --json` and `handoff --format json`
 

@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`agent-archive eval export`** prints archived sessions for an evaluation
+  tool: one JSON line per session, in a versioned format
+  ([`schemas/eval-export.schema.json`](schemas/eval-export.schema.json)).
+  `--detail metadata` reads only metadata sidecars and prints identity,
+  commits (`git_head`), counts, tokens, tools, and outcome; `--detail full`
+  (the default) adds every filtered human prompt in order, the final
+  response, the edited files, and feedback. A session that cannot be
+  exported is an error record on its own line and the rest still print.
+  `--max-bytes` bounds each record. Read-only and never interactive. See the
+  [guide](docs/guides/eval-export.md).
 - **The commit a session started on.** When a session starts in a git
   repository, the hook records the commit checked out in its working
   directory and whether the working tree had uncommitted changes, and each

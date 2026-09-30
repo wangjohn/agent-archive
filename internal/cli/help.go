@@ -12,6 +12,27 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"eval": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       [--harness codex|claude|cursor] [--max-bytes N]
+
+Export archived sessions for an evaluation tool, one JSON Lines record per
+session (schemas/eval-export.schema.json). Read-only and never interactive.
+`,
+	"eval export": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       [--harness codex|claude|cursor] [--max-bytes N]
+
+Print one JSON line per session, in the order given: its identity, commits,
+counts, tokens and tools, and with --detail full (the default) its filtered
+human prompts in order, final response, edited files and feedback. Only
+full archive session IDs are accepted. A session that cannot be exported is
+an error record on its own line; the others are still printed, and the exit
+code is 1. Everything printed is already filtered; nothing is uploaded.
+  --detail metadata|full     metadata reads only metadata sidecars and prints
+                             no conversation text (default full)
+  --harness NAME             Only needed when a session exists under two apps
+  --max-bytes N              Cut each record's longest texts to fit N bytes
+                             (default 120000; 0 for no limit)
+`,
 	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
        [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]

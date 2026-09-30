@@ -476,6 +476,9 @@ Import history
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
 
+Evaluate agents
+  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
   agent-archive purge       Review and remove unreferenced source objects
@@ -560,6 +563,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":
 		return runPurgeCommand(args[1:], stdin, stdout, stderr, env)
+	case "eval":
+		return runEvalCommand(args[1:], stdout, stderr, env)
 	default:
 		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2
