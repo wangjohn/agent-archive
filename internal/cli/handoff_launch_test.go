@@ -346,3 +346,43 @@ func TestLaunchHandoffDirectoriesArePrunedAndUninstalled(t *testing.T) {
 		t.Fatalf("launch handoff survived uninstall: %v", err)
 	}
 }
+
+// The prune removes an old launch directory whole, but never follows a
+// symlink: not one named like a launch directory, and not one inside a
+// launch directory. A saved handoff younger than 7 days is kept.
+func TestPruneHandoffsDoesNotFollowSymlinks(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := filepath.Join(home, handoffDir)
+	elsewhere := t.TempDir()
+	precious := filepath.Join(elsewhere, "precious.md")
+	if err := os.MkdirAll(filepath.Join(dir, "launch-real"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{precious, filepath.Join(dir, "launch-real", "handoff.md"), filepath.Join(dir, "old.md"), filepath.Join(dir, "young.md")} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, link := range []string{filepath.Join(dir, "launch-link"), filepath.Join(dir, "launch-real", "inner")} {
+		if err := os.Symlink(elsewhere, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Everything just made is 8 days old at prune time except young.md.
+	now := time.Now().Add(8 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "young.md"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	pruneHandoffs(home, now)
+	for _, gone := range []string{"launch-link", "launch-real", "old.md"} {
+		if _, err := os.Lstat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s not pruned: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{precious, filepath.Join(dir, "young.md")} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s removed: %v", kept, err)
+		}
+	}
+}
