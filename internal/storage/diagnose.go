@@ -159,6 +159,29 @@ func diagnoseCredentials(err error) (Diagnosis, bool) {
 			Fix:         "Run that command yourself to see why, fix it, then try again.",
 		}, true
 	}
+	// The credentials file, kept where there is no Keychain, is told apart
+	// by the error it returns; the Keychain's wording below is unchanged.
+	if errors.Is(err, credentials.ErrCredentialFileNotFound) {
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The R2 access key isn't in the credentials file.",
+			Fix:         "Run setup again and paste the R2 access key ID and secret, or set AGENT_ARCHIVE_R2_ACCESS_KEY_ID and AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY in the environment.",
+		}, true
+	}
+	if errors.Is(err, credentials.ErrInsecurePermissions) {
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "agent-archive won't read the credentials file: it, or the folder holding it, is open to other users, isn't yours, or is a link.",
+			Fix:         "Make it private: chmod 600 on the credentials file and chmod 700 on its folder, both in agent-archive's data directory, then try again.",
+		}, true
+	}
+	if errors.Is(err, credentials.ErrCredentialFileUnreadable) {
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The R2 access key couldn't be read from the credentials file.",
+			Fix:         "Run setup again and choose storage to save the access key again.",
+		}, true
+	}
 	if errors.Is(err, credentials.ErrMissingCredential) {
 		return Diagnosis{
 			Cause:       CauseNoCredentials,

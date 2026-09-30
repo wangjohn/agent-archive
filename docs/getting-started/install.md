@@ -24,7 +24,19 @@ the line to add to your shell profile when the directory isn't on your
 `PATH` (`~/.bash_profile` for Bash or `~/.zshrc` for zsh). Open a new terminal
 after adding it. It never runs setup.
 
-Run the same command again to upgrade. To pin both the installer script and
+Run the same command again to upgrade. On a Mac that is already set up (a
+`config.json` in `~/.local/share/agent-archive`, or in `AGENT_ARCHIVE_HOME`
+when that is set), the installer then runs the new binary's
+`agent-archive setup --refresh` and prints its one-line result. That brings
+the app hooks, the background collector's plist, and the
+[skill files](setup.md#what-setup-changes-on-your-mac) up to date for the
+new binary, and changes nothing else: it asks nothing, needs no terminal, and
+leaves your storage, credentials, projects, and retention alone. If it
+cannot (for example, an interrupted setup needs recovery), the installer
+says why and how to run it yourself, and the install still succeeds. Run
+under `sudo` (which the installer never needs), it skips the refresh, since it
+would leave root-owned files in your home directory, and says to run it as
+yourself. A fresh install runs nothing. To pin both the installer script and
 the published release, or to choose a directory, use this `v0.1.1` example:
 
 ```sh
@@ -65,8 +77,23 @@ replace the `agent-archive` currently on `PATH` at the same path, run
 `--destination /absolute/path/to/agent-archive`. The command does not run
 setup or change hooks, data, credentials, or the background collector. Run
 setup from the development binary only when you intend to point hooks and the
-collector at it. Source builds are unsigned and do not test the release
-download, signature, or notarization.
+collector at it. Source builds do not test the release download, signature,
+or notarization.
+
+A source build is signed ad hoc, which macOS treats as a new program after
+every rebuild, so it asks again for Keychain access to the R2 key each time,
+even after "Always Allow". To keep that approval across rebuilds, set
+`AGENT_ARCHIVE_SIGN_IDENTITY` (for example in your shell profile) and
+`install-from-source.sh` and `build-release.sh` sign each build with it:
+`auto` picks a Developer ID Application certificate from your Keychain,
+otherwise the first valid code signing identity; you can also give an
+identity's name or SHA-1 hash, or `-` for the ad hoc signature. A build
+signed with the project's own Developer ID matches the release's signature,
+so a Keychain that already trusts the release asks nothing; any other
+identity is asked once. That trust covers every build you sign this way,
+including one from a branch you have not reviewed. If signing fails (for
+example, a locked Keychain over SSH), the build stays signed ad hoc with a
+warning.
 
 Put the binary on your `PATH` as plain `agent-archive`, for example:
 
@@ -83,8 +110,10 @@ it.
 To upgrade, move or remove the old binary before putting the new one in
 place. Overwriting it in place with `cp` can leave macOS killing it at launch
 until the file is recreated. Setup records the binary's path in the hooks and
-the LaunchAgent; if you move it, rerun `agent-archive setup` from the new
-location (`status` reports hooks and background as `broken` until you do).
+the LaunchAgent; if you move it, run `agent-archive setup --refresh` from the
+new location (`status` reports hooks and background as `broken` until you
+do). It points them at the binary you run it from, and refuses a temporary
+build such as `go run`'s.
 
 ## Install a release build by hand
 
@@ -133,8 +162,8 @@ location (`status` reports hooks and background as `broken` until you do).
    `~/.bash_profile` (Bash) if that directory is not already on your `PATH`,
    then open a new terminal. If you already installed `agent-archive`
    elsewhere, move or remove that older copy so your shell uses this one. If
-   its path changed, rerun `agent-archive setup` to update the hooks and
-   background collector.
+   its path changed, run `agent-archive setup --refresh` to update the hooks
+   and background collector.
 
 5. Confirm it runs: `agent-archive --version`.
 

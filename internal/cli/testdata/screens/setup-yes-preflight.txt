@@ -9,6 +9,9 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Configuration saved.
+Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
+Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.agents/skills/agent-archive/SKILL.md
+To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
   Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).

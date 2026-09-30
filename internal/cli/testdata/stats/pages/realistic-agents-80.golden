@@ -1,0 +1,13 @@
+agent-archive stats · agents · last 30 days · 3 agents
+
+AGENTS                            sessions  share   tokens  est. cost  cache hit
+● Claude Code  ███████████████          84    90%     9.9B     $3,940        97%
+● Cursor       █                         8     9%  unknown        n/a        n/a
+● Codex        █                         1     1%     100M        $49        90%
+
+Claude Code: 2 of 84 sessions have no token data; left out of tokens and spend.
+Cursor: 8 of 8 sessions have no token data; left out of tokens and spend.
+Codex: MCP calls and tool errors are not recorded.
+Cache hit is cache reads over all input-side tokens.
+
+Estimated at list price, not a bill.   --view overview

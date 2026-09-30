@@ -12,10 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -31,7 +33,7 @@ func discardDraft(home string, draft setupDraft, active config.Config, env Env) 
 		if ref == active.Storage.R2CredentialRef {
 			continue
 		}
-		kc, err := env.keychain()
+		kc, err := env.credentialStore()
 		if err != nil {
 			return err
 		}
@@ -224,8 +226,36 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	return setupjournal.Commit(home, journal, env.launchd())
+	err = setupjournal.Commit(home, journal, env.launchd())
+	// A command file created and rolled back, or removed, leaves the
+	// directories written for it; they go while empty.
+	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
+	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
+	return err
 }
+
+// planAgentSkills is the journal changes for the agent skills of cfg: its
+// apps' skill files, or, when it turns them off (cfg.NoSkills), the removal
+// of every skill file of this installation's, in claudeDir and where
+// Claude Code's configuration was when setup last ran (previousClaudeDir).
+// Only a file setup wrote is replaced or removed (see agentskills.PlanInstall).
+// While they are off the other files at the skills' paths are returned in
+// kept, for setup to say it left them.
+func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	if !cfg.NoSkills {
+		changes, _, err = agentskills.PlanInstall(userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
+		return changes, nil, err
+	}
+	if changes, _, err = agentskills.PlanInstall(userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
+		return nil, nil, err
+	}
+	_, kept, err = agentskills.PlanRemoval(userHome, claudeDir, dataHome)
+	return changes, kept, err
+}
+
+// claudeConfigDir is Claude Code's configuration directory, which holds its
+// hook file (files) and its skills.
+func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["claude"]) }
 
 // mergeCommittedSetupState carries operational ownership from the committed
 // configuration, never from a resumable draft. It does no I/O.
@@ -344,10 +374,17 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 			changes = append(changes, removal)
 		}
 	}
+	// The agent skills (/handoff), for the apps chosen, or none while they
+	// are turned off. Only a file setup wrote is replaced or removed.
+	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome())
+	if err != nil {
+		return setupjournal.Journal{}, err
+	}
+	changes = append(changes, commands...)
 	plistPath := env.installation(home, userHome).collectorPlist()
 	// The collector gets the AWS files and PATH this storage was just
 	// verified with; launchd would otherwise start it with none of them.
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
+	plist, err := launchd.LaunchAgent(executable, home, launchd.Label(plistPath), env.collectorEnvironment(next.Storage))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -365,14 +402,14 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
-	job := env.jobState(plistPath)
+	job := env.jobState(userHome, plistPath)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job == "unknown" {
 		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
 	}
 	if job == setupjournal.JobAnotherInstallation {
-		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
+		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchd.Label(plistPath), plistPath)
 	}
 	// The prototype's job is the account's, retired only by the account's
 	// default installation: a test installation must not change it.

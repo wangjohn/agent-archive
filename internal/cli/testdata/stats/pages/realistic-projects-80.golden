@@ -1,0 +1,15 @@
+agent-archive stats · projects · last 30 days · 3 agents
+
+PROJECTS (10)                        sessions   tokens  est. cost  share
+agent-archive  ████████████████████        31     4.6B     $1,862    47%
+levenshtein    ████████                    18     1.9B       $751    19%
+styleprofile   ██████                       9     1.5B       $586    15%
+family_books   █████                       12     1.1B       $427    11%
+benchplan      ██                           6     500M       $200     5%
+notes          █                            5     170M        $70     2%
+blog           █                            4     110M        $45     1%
+scripts        █                            3      70M        $28     1%
+infra          █                            3      50M        $20     1%
+dotfiles                                    2  unknown        n/a
+
+Estimated at list price, not a bill.   --view overview

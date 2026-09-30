@@ -60,3 +60,46 @@ func Forbid(tb testing.TB, what string, imports []string, forbidden ...string) {
 		}
 	}
 }
+
+// ModuleImports returns, for every package of the module the test runs in,
+// the packages its production (non-test) files import directly, for
+// the current build context. An architecture test that says "only these
+// packages may import that one" scans it. Keys are import paths; each list is
+// sorted.
+func ModuleImports(tb testing.TB) map[string][]string {
+	tb.Helper()
+	all := map[string][]string{}
+	module := goListLines(tb, "-m", "-f", "{{.Path}}")[0]
+	for _, line := range goListLines(tb, "-f", `{{.ImportPath}} {{join .Imports " "}}`, module+"/...") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		imports := slices.Clone(fields[1:])
+		slices.Sort(imports)
+		all[fields[0]] = imports
+	}
+	return all
+}
+
+// Importers returns the sorted packages of the module whose production files
+// import path directly, from a ModuleImports result.
+func Importers(module map[string][]string, path string) []string {
+	var found []string
+	for pkg, imports := range module {
+		if slices.Contains(imports, path) {
+			found = append(found, pkg)
+		}
+	}
+	slices.Sort(found)
+	return found
+}
+
+func goListLines(tb testing.TB, args ...string) []string {
+	tb.Helper()
+	out, err := exec.CommandContext(tb.Context(), "go", append([]string{"list"}, args...)...).Output()
+	if err != nil {
+		tb.Fatalf("go list %s: %v", strings.Join(args, " "), err)
+	}
+	return strings.Split(strings.TrimSpace(string(out)), "\n")
+}

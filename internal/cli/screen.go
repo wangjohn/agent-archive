@@ -19,7 +19,7 @@ const (
 )
 
 type altScreenDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
 }
@@ -45,11 +45,15 @@ type altScreen struct {
 	// it to stop.
 	stopPager func()
 	pending   os.Signal
+	// restoreInput, when set, gives the terminal its line input back as
+	// the screen is left, on every way out: quitting, an error, a panic,
+	// or a signal.
+	restoreInput func()
 }
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
 	s := &altScreen{out: out, exit: env.exit}
-	if !env.isTerminal(out) {
+	if !env.interactive(out) {
 		return s
 	}
 	signals, stop := env.interrupts()
@@ -129,6 +133,16 @@ func (s *altScreen) reenter() {
 	}
 }
 
+// hide shows the normal screen while the process is stopped (Ctrl-Z);
+// reenter shows the browser's again.
+func (s *altScreen) hide() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active {
+		terminal.Print(s.out, leaveAltScreenSequence)
+	}
+}
+
 // exitForSignal restores the screen and exits as sig would have.
 func (s *altScreen) exitForSignal(sig os.Signal) {
 	s.leave()
@@ -150,6 +164,25 @@ func signalExitCode(sig os.Signal) int {
 	return 130
 }
 
+// draw writes one frame while the screen is up, and nothing once it has been
+// left: a frame that was being drawn as a signal restored the terminal must
+// not land on the normal screen after it.
+func (s *altScreen) draw(frame string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active {
+		terminal.Print(s.out, frame)
+	}
+}
+
+// clears reports whether clear blanks the screen, so a view can be drawn
+// again in place instead of below itself.
+func (s *altScreen) clears() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
+}
+
 // clear blanks the screen before the next view is drawn.
 func (s *altScreen) clear() {
 	s.mu.Lock()
@@ -159,11 +192,22 @@ func (s *altScreen) clear() {
 	}
 }
 
+// restoreOnLeave has leave call restore, before it returns to the normal
+// screen.
+func (s *altScreen) restoreOnLeave(restore func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restoreInput = restore
+}
+
 // leave returns to the normal screen, where the terminal shows what it
-// showed before the browser started.
+// showed before the browser started, and restores line input.
 func (s *altScreen) leave() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.restoreInput != nil {
+		s.restoreInput()
+	}
 	if !s.active {
 		return
 	}

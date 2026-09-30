@@ -49,7 +49,7 @@ Only the hash is stored (D1). The URL itself is never written to the sidecar, re
 1. At hook registration (`internal/capture/hook.go:~487`), store it on the registration as optional `RepoKey string json:"repo_key,omitempty"` (`internal/archive/types.go:~316`). The registration has no git fields today. The hook path must stay fast (2 s budget), so run `git` with a small timeout and skip on failure.
 2. At publish and refresh, if the registration has none, compute it from `reg.ProjectRoot` as a fallback (this is how already-registered sessions gain it).
 
-**Metadata.** Add `Metadata.RepoKey` (`json:"repo_key,omitempty"`) beside `ProjectName` (`types.go:~575`), an `ApplyRepoKey` beside `ApplyProjectName` (`internal/archive/metadata.go:451`), and call it in both places `ApplyProjectName` is called (`internal/collector/session.go:596`, `internal/collector/metadata.go:106`). Add it to `schemas/metadata.schema.json` (`additionalProperties: false`, so the schema must change in the same PR). Optional field: no `MetadataSchemaVersion` bump. Bump `DefaultParserVersion` `0.13.0` to `0.14.0` (`internal/archive/adapters.go:67`) so existing sessions refresh and gain it.
+**Metadata.** Add `Metadata.RepoKey` (`json:"repo_key,omitempty"`) beside `ProjectName` (`types.go:~575`), an `ApplyRepoKey` beside `ApplyProjectName` (`internal/archive/metadata.go:451`), and call it in both places `ApplyProjectName` is called (`internal/collector/session.go:596`, `internal/collector/metadata.go:106`). Add it to `schemas/metadata.schema.json` (`additionalProperties: false`, so the schema must change in the same PR). Optional field: no `MetadataSchemaVersion` bump. Bump `DefaultParserVersion` to `0.16.0` (`0.14.0` and `0.15.0` went to the token fields and git activity first) (`internal/archive/adapters.go:67`) so existing sessions refresh and gain it.
 
 Limit: refresh can only add `repo_key` on the machine that owns the registration and still has the repo. Sessions from other machines, or with the repo gone, stay on `ProjectID` matching. That is acceptable: the field matters most for sessions captured from now on.
 
@@ -172,7 +172,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 - Detected apps and the current repository are one question on a first setup run from a Git repository ("Archive Codex, Claude Code, and Cursor sessions in ~/src/app?"); a no falls back to the separate app and project questions, and the review step's "Edit a setting" still changes apps, projects, and retention. Retention was already silent (90 days), so it is unchanged. The answer says how many other known projects were found, and the review repeats the "Edit a setting" hint. A repository that is the home folder, holds it, or is one of backfill's temporary folders (`Env.backfillTempDirs`: `DefaultTempDirs` and `$TMPDIR`) or holds one (`broadFolder`, `currentProject`) is never pre-selected, in the combined question or the project list, and setup prints one line saying so. A repository inside a temporary folder stays an ordinary project, as backfill treats it: only the folder itself is too broad to take on one Enter.
 - The past-sessions offer now follows the next steps ("Check progress with `agent-archive status`"), not the "Configuration saved." line. It stays skippable, and `setup --yes` is unchanged. It is not tied to a first successful capture check: at that moment no session has been captured yet, so nothing there could be checked.
 - The manual storage help is two lines pointing at `docs/getting-started/bucket.md`; `guidedStorageOptions` (`setup.go`) is the slot where "Create a new bucket for me" goes (S2, S3).
-- `storage.Probe` (one `ListObjectsV2` with max keys 1 under the `.setup-test/` folder, no writes) runs before `VerifyAccess` in `verifyStorage`, so it covers R2 keys, S3 profiles, and `setup --yes` alike. It runs at the storage check, straight after the key is entered, not inside the key prompt: the pasted secret is staged in the Keychain first and the store reads it from there.
+- `storage.Probe` (one `ListObjectsV2` with max keys 1 under the `.setup-test/` folder, no writes) runs before `VerifyAccess` in `verifyStorage`, so it covers R2 keys, S3 profiles, and `setup --yes` alike. It runs at the storage check, straight after the key is entered, not inside the key prompt: the pasted secret is staged in the credential store first and the store reads it from there.
 - **Not done: the `AGENT_ARCHIVE_*` printout.** Cloud mode is not implemented (`AGENT_ARCHIVE_CLOUD` appears nowhere in `internal/`), so printing those variables would describe a feature that does not exist. TODO when cloud mode ships: in `printAnotherMac` (`setup.go`), print the variables named in [cloud-capture.md](cloud-capture.md) "Cloud mode configuration" for the configured provider, bucket, prefix, endpoint, and region, with `<access key id>` and `<secret access key>` placeholders (never the values), and one line saying that a cloud environment's variables are readable by anyone with access to it, so it needs a separate bucket-scoped key.
 
 ### Interaction with `--yes`
@@ -211,6 +211,8 @@ Independent of creation, these are sequencing changes over existing defaults:
 ---
 
 ## Part 3. Linux support (persistent capture)
+
+> **Update 2026-09-30.** PRs 5 to 7 below (scheduler refactor, systemd backend, terminology) are re-planned around one scheduler port and one OS value in [platform-abstraction.md](platform-abstraction.md), which supersedes sections 3c to 3e and the PR list here. PRs 1 to 4 stand.
 
 ### Scope
 
@@ -312,7 +314,7 @@ Parts 1 and 2 are split into PRs with fixed names so parallel work does not coll
 
 | Package | Scope | Owns |
 | --- | --- | --- |
-| R1 | `repo_key`: normalizer, hash, registration field, metadata field, schema, parser 0.14.0, refresh. No CLI matching change | `internal/archive` (bundle.go, metadata.go, types.go, adapters.go), `internal/capture/hook.go`, `internal/collector/{session,metadata}.go`, `schemas/metadata.schema.json`, docs for metadata |
+| R1 | `repo_key`: normalizer, hash, registration field, metadata field, schema, parser 0.16.0, refresh. No CLI matching change | `internal/archive` (bundle.go, metadata.go, types.go, adapters.go), `internal/capture/hook.go`, `internal/collector/{session,metadata}.go`, `schemas/metadata.schema.json`, docs for metadata |
 | R2 | Handoff matching by `repo_key`, branch note, `--to` with archived sessions, `noMatch` text | `internal/cli/handoff*.go`, handoff render in `internal/archive`, handoff docs; depends on R1 |
 | S1 | Setup trims, immediate credential validation, cloud-variables printout | `internal/cli/setup*.go`, `internal/cli/prompt.go`, setup docs |
 | S2 | Cloudflare client and guided R2 creation | new `internal/cloudflare`, `internal/cli/setup_r2_create*.go`, minimal hooks into `setup.go`; depends on S1 landing first for `setup.go` |

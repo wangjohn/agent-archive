@@ -16,6 +16,7 @@ func TestSetupJournalImportBoundary(t *testing.T) {
 	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/setupjournal")
 	importgraph.Forbid(t, "internal/setupjournal (transitively)", all,
 		"github.com/wangjohn/agent-archive/internal/cli",
+		"github.com/wangjohn/agent-archive/internal/scheduler/host", // the real scheduler: it gets a Launchd from its caller
 		"github.com/wangjohn/agent-archive/internal/capture",
 		"github.com/wangjohn/agent-archive/internal/terminal",
 		"golang.org/x/term",

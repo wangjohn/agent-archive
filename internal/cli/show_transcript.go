@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -19,6 +20,9 @@ type transcriptOptions struct {
 	summaryOptions
 	// Full also prints each tool call's trimmed result.
 	Full bool
+	// FullRecord is where the untrimmed transcript was saved when the
+	// transcript's Elisions trimmed it; the footer names it.
+	FullRecord string
 }
 
 // Per-result limits for `show --transcript --full`, the same head-and-tail
@@ -81,7 +85,11 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 		}
 		terminal.Println(w, s.bold("── "+heading+" "+strings.Repeat("─", max(4, 40-visibleWidth(heading)))))
 		if exchange.Kind == archive.TranscriptExchangePrompt && exchange.Text != "" {
-			renderPrompt(w, exchange.Text, s)
+			text := exchange.Text
+			if exchange.TextTruncated {
+				text += " …(truncated)"
+			}
+			renderPrompt(w, text, s)
 		}
 		renderTranscriptSteps(w, exchange.Steps, agent, opts)
 	}
@@ -93,6 +101,23 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 	if opts.Full && t.ToolResultsUnavailable {
 		terminal.Println(w)
 		terminal.Println(w, s.dim("This app records no tool results."))
+	}
+	renderTranscriptFooter(w, t, opts)
+}
+
+// renderTranscriptFooter says what --max-bytes trimmed and where all of it
+// can be read.
+func renderTranscriptFooter(w io.Writer, t archive.Transcript, opts transcriptOptions) {
+	if len(t.Elisions) == 0 {
+		return
+	}
+	s := opts.Style
+	terminal.Println(w)
+	terminal.Println(w, s.dim("Omitted to fit the size limit: "+archive.DescribeTranscriptElisions(t.Elisions)+"."))
+	if opts.FullRecord != "" {
+		terminal.Println(w, s.dim(fmt.Sprintf("Full record: %s (kept for 7 days; read it for anything omitted here).", archive.DisplayLine(opts.FullRecord))))
+	} else {
+		terminal.Println(w, s.dim("The full version could not be saved; --max-bytes 0 prints all of it, which may be very long."))
 	}
 }
 
@@ -126,8 +151,9 @@ func splitColumns(line string, width int) []string {
 	var rows []string
 	var row strings.Builder
 	column := 0
-	for _, r := range line {
-		w := runeWidth(r)
+	for line != "" {
+		r, size := utf8.DecodeRuneInString(line)
+		w := runeWidthBefore(r, line[size:])
 		if column > 0 && column+w > width {
 			rows = append(rows, row.String())
 			row.Reset()
@@ -135,6 +161,7 @@ func splitColumns(line string, width int) []string {
 		}
 		row.WriteRune(r)
 		column += w
+		line = line[size:]
 	}
 	return append(rows, row.String())
 }
@@ -160,17 +187,17 @@ func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, agent st
 		previousLine, speaking = isLine, isAgent
 		switch step.Kind {
 		case archive.TranscriptStepText:
-			terminal.Println(w, step.Text)
+			terminal.Println(w, shortenedText(step))
 		case archive.TranscriptStepShell:
 			// The person's own `!` command; its output only with --full.
-			terminal.Println(w, "  "+s.cmd("$ "+firstTextLine(step.Text)))
+			terminal.Println(w, "  "+s.cmd("$ "+commandLine(step)))
 			if opts.Full {
 				renderOutput(w, step.Output, s)
 			}
 		case archive.TranscriptStepCommand:
 			// A local slash command's output is the app's short reply
 			// ("Set model to …"), so it is always shown.
-			terminal.Println(w, "  "+s.cmd("» "+firstTextLine(step.Text)))
+			terminal.Println(w, "  "+s.cmd("» "+commandLine(step)))
 			renderOutput(w, step.Output, s)
 		case archive.TranscriptStepOutput:
 			if opts.Full {
@@ -178,11 +205,31 @@ func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, agent st
 			}
 		case archive.TranscriptStepSummary:
 			terminal.Println(w, s.dim("[Compacted: the agent continued from this summary]"))
-			terminal.Println(w, s.dim(step.Text))
+			terminal.Println(w, s.dim(shortenedText(step)))
 		case archive.TranscriptStepTool:
 			renderToolLine(w, step.Tool, opts)
+		case archive.TranscriptStepCollapsed:
+			terminal.Println(w, "  "+s.dim("▸ "+step.Text))
 		}
 	}
+}
+
+// commandLine is the first line of a shell or slash command, marked when
+// --max-bytes cut it short.
+func commandLine(step archive.TranscriptStep) string {
+	line := firstTextLine(step.Text)
+	if step.TextTruncated {
+		line += " …(truncated)"
+	}
+	return line
+}
+
+// shortenedText is a step's text, marked when --max-bytes cut it short.
+func shortenedText(step archive.TranscriptStep) string {
+	if step.TextTruncated {
+		return step.Text + " …(shortened)"
+	}
+	return step.Text
 }
 
 func renderToolLine(w io.Writer, tool *archive.HandoffToolCall, opts transcriptOptions) {
@@ -199,6 +246,9 @@ func renderToolLine(w io.Writer, tool *archive.HandoffToolCall, opts transcriptO
 	}
 	terminal.Println(w, line)
 	if opts.Full {
+		if tool.ResultOmitted {
+			terminal.Println(w, "      "+s.dim("│ (output omitted)"))
+		}
 		renderOutput(w, tool.Result, s)
 	}
 }

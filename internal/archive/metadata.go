@@ -357,6 +357,10 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, workspaceRoot(bundle))
 		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, workspaceRoot(bundle))
 		metadata.ModelTokens = view.ModelTokens
+		var git gitCounts
+		metadata.GitActivity, git = deriveGitActivity(bundle, view.ToolCalls)
+		metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
+		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	metadata.Models = models
@@ -690,6 +694,17 @@ func (m *Metadata) ApplyProjectName(projectRoot string) {
 		return
 	}
 	m.ProjectName = base
+}
+
+// ApplyRepoKey sets RepoKey from key, the registration's or the one the
+// collector derived from the project's origin remote. A key that is not the
+// shape RepoKey returns is dropped, so nothing else (a URL, say) can reach
+// the sidecar through this field.
+func (m *Metadata) ApplyRepoKey(key string) {
+	if !IsRepoKey(key) {
+		return
+	}
+	m.RepoKey = key
 }
 
 type lifecycleObservation struct {

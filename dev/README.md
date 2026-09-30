@@ -25,9 +25,10 @@ differ, the code and the user documentation describe current behavior.
 | [Privacy filter changelog](specs/privacy-filter-changelog.md) | What each filter version changed, and why. |
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
-| [Agent skills](specs/agent-skill.md) | Planned; not implemented. |
+| [Agent skills](specs/agent-skill.md) | Implemented; follow-ups listed in the spec. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
 | [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Proposed. Parts 1 and 2 in progress; Part 3 (Linux) planned. |
+| [Git activity in metadata](proposals/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
 
 ## Maintainers

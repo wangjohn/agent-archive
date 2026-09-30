@@ -139,8 +139,8 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 			terminal.Println(stderr, "agent-archive: backfill: "+refusal)
 			return 1
 		}
-		if !opts.yes && !env.isTerminal(stdin) {
-			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
+		if !opts.yes && !env.interactive(stdin) {
+			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan."+env.overrideHint(stdin))
 			return 1
 		}
 	}
@@ -665,15 +665,15 @@ func configFingerprint(cfg config.Config) string {
 }
 
 // backfillTempDirs are the temporary folders backfill skips sessions from,
-// and setup will not offer as a project: the defaults and $TMPDIR, or the
-// list a test sets.
+// and setup will not offer as a project: the operating system's defaults
+// and $TMPDIR, or the list a test sets.
 func (e Env) backfillTempDirs() []string {
-	temps := e.BackfillTempDirs
-	if temps == nil {
-		temps = append([]string(nil), backfill.DefaultTempDirs...)
-		if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
-			temps = append(temps, strings.TrimSpace(tmp))
-		}
+	if e.BackfillTempDirs != nil {
+		return e.BackfillTempDirs
+	}
+	temps := backfill.Environment{OS: e.OS}.DefaultTempDirs()
+	if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
+		temps = append(temps, strings.TrimSpace(tmp))
 	}
 	return temps
 }
@@ -683,12 +683,15 @@ func (e Env) backfillTempDirs() []string {
 // system, and Cursor's database is opened read-only to count the chats only
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
-	temps := e.backfillTempDirs()
 	claude, codex := e.appSessionDirs(userHome, cfg)
-	return backfill.Environment{
+	env := backfill.Environment{
 		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
-		TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome),
+		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
+		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
+		Getenv: e.getenv,
 	}
+	env.CursorDatabase = backfill.CursorDatabaseReaderFor(env)
+	return env
 }
 
 // appSessionDirs are the folders Claude Code and Codex keep their sessions

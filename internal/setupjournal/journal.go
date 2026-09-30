@@ -44,6 +44,19 @@ type Journal struct {
 	Changes       []hooks.Change `json:"changes"`
 	Plist         string         `json:"plist"`
 	WasLoaded     bool           `json:"was_loaded"`
+	// FilesOnly is a transaction of files alone (setup --refresh, when it
+	// leaves the collector's job as it is): neither Commit nor Restore asks
+	// launchd anything, or starts, stops, or reloads the job. Without it a
+	// commit starts the collector, and a rollback stops the one a failed
+	// commit started.
+	//
+	// A release before this field existed ignores it (encoding/json skips
+	// unknown fields) and recovers such a journal as an ordinary one: it
+	// puts the files back, but stops a loaded collector and, since WasLoaded
+	// is false here, does not start it again, so the collector stays off
+	// until setup runs. Only an interrupted refresh (a crash or SIGKILL;
+	// refresh absorbs the signals) followed by a downgrade can meet that.
+	FilesOnly bool `json:"files_only,omitempty"`
 }
 
 // relabeled lists every collector the journal retires under another label.
@@ -67,6 +80,15 @@ func Commit(home string, journal Journal, launchd Launchd) error {
 			return errors.Join(cause, fmt.Errorf("rollback incomplete; run setup again: %w", rb))
 		}
 		return fmt.Errorf("previous installation restored: %w", cause)
+	}
+	if journal.FilesOnly {
+		if err := hooks.Apply(journal.Changes); err != nil {
+			return fail(err)
+		}
+		if err := os.Remove(JournalPath(home)); err != nil {
+			return fail(err)
+		}
+		return nil
 	}
 	if journal.WasLoaded {
 		if err := launchd.Unload(journal.Plist); err != nil {
@@ -109,6 +131,12 @@ func Restore(home string, journal Journal, launchd Launchd) error {
 		}
 		changed = append(changed, c)
 	}
+	if journal.FilesOnly {
+		if err := hooks.Rollback(changed); err != nil {
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
+		}
+		return os.Remove(JournalPath(home))
+	}
 	if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
 		return err
 	}
@@ -128,7 +156,14 @@ func Restore(home string, journal Journal, launchd Launchd) error {
 	if err := hooks.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
-	if journal.WasLoaded {
+	// A label another installation runs from its own plist is not this
+	// one's to restart: launchd refuses to bootstrap over it, and stopping
+	// it is not ours to do. The files are back and the record is removed
+	// below, so the journal never outlives the point where anything more
+	// can be done for the job. Setup, run again, refuses to install over
+	// the other installation and says what to do (uninstall it, or set
+	// AGENT_ARCHIVE_HOME).
+	if journal.WasLoaded && state != JobAnotherInstallation {
 		if err := launchd.Load(journal.Plist); err != nil {
 			return launchctlBlocked(home, "restart the background collector", err)
 		}

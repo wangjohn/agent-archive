@@ -551,6 +551,11 @@ Settled 2026-09-22.
 Planned 2026-09-29. Goal: continuing a session in another agent takes one
 command and no copying. #132 (picker) and #136 (`--to`) are the base.
 
+**Status: implemented.** 0 in #146, A in #150, B in #151, C in #147, D in
+#163, E in #162, F in #152, and G (docs) in the PR that adds this line.
+What shipped differs from the plan below in the ways listed under
+[Deviations](#deviations); the rest is as written.
+
 ### Target experience
 
 ```text
@@ -581,14 +586,17 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `--source archive`: an archived bundle is filtered like a local one,
    and the preamble still applies.
 2. **Launch (B).** The launch copy of the handoff is written to
-   `<data dir>/handoffs/launch-<name>-<unix>.md`, where `<name>` is the file
-   component `handoffFullPath` uses (0600, created with `O_EXCL`; the
-   7-day prune and `uninstall --delete-local-data` already cover the
-   directory, and it is never removed early) so a resumed session can
-   still read it. Without a data directory (`--file` before setup) it goes
-   to a private `os.MkdirTemp` directory as today: removed when an
-   in-terminal launch exits, left for the OS to clean after a new-window
-   launch (which returns before the agent reads it). The child's
+   `<data dir>/handoffs/launch-<name>-<unix>-<random>/handoff.md`, where
+   `<name>` is the file component `handoffFullPath` uses (directory 0700
+   created with `os.MkdirTemp`, so two launches in the same second get
+   separate directories and no existing name, symlink included, is reused;
+   file 0600 created with `O_EXCL`). Each launch has its own directory so Claude's
+   `--add-dir` exposes no other saved handoff. `pruneHandoffs` removes
+   `launch-*` directories older than 7 days by the directory's mtime, and
+   `uninstall --delete-local-data` already covers `handoffs/`; it is never
+   removed early, so a resumed session can still read it. Without a data directory (`--file` before setup) it goes
+   to a private `os.MkdirTemp` directory, also never removed early (a
+   resumed session may read it again) and left for the OS to clean. The child's
    environment drops the calling agent's session variables
    (`handoffSessionEnv`, an explicit list, never a prefix: settings such as
    `CLAUDE_CODE_USE_BEDROCK` must survive). It includes every
@@ -597,13 +605,20 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `CLAUDE_CODE_ENTRYPOINT`. Arguments after `--` go to the agent. The
    binary is resolved to an absolute path with `Env.LookPath`. The prompt
    is always the last argument, after a `--` (Claude's `--add-dir` takes a
-   variadic list that would otherwise swallow it). B confirms by hand that
-   each CLI accepts `--` there and records it in the PR. Per agent:
-   - Claude Code: `claude --add-dir <handoff dir> [extra] -- <prompt>`, run
+   variadic list that would otherwise swallow it). Claude Code's help
+   (`Usage: claude [options] [command] [prompt]`, commander) and Codex's
+   source (clap, `prompt: Option<String>` positional) end options at `--`;
+   Cursor's `agent` is closed source and was not verified, so its prompt
+   is last without a `--`. A `--` among the extra arguments is refused;
+   an option left without its value at the end of them would take the
+   `--` (or Cursor's prompt) as its value, which cannot be detected
+   without knowing each agent's options, so the guide tells users to give
+   every option its value. Per agent:
+   - Claude Code: `claude --add-dir <launch dir> [extra] -- <prompt>`, run
      in the directory. Without `--add-dir` the read is refused (verified).
    - Codex: `codex --cd <dir> [extra] -- <prompt>`; every sandbox mode can
      read the whole disk.
-   - Cursor: `agent` (else `cursor-agent`) `--workspace <dir> [extra] -- <prompt>`.
+   - Cursor: `agent` (else `cursor-agent`) `--workspace <dir> [extra] <prompt>`.
 
    `config.Handoff` may set per-agent default arguments and a default
    destination per source harness; there are no built-in extra flags.
@@ -650,11 +665,19 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `allowed-tools` for that command only. Setup writes it as a
    `hooks.Change` in the setup journal, so a failed setup rolls it back.
    The journal is deleted once setup commits, so it is not what later
-   commands read: a file at that path is setup's when its content equals
-   what `agentcommands.Files` renders for the current executable or
-   `config.InstalledExecutable`. Setup replaces only such a file; uninstall
-   removes only such a file; status lists them. Any other file at that
-   path (the person's own, or one they edited) is left alone and reported.
+   commands read: a file at that path is setup's when it carries the
+   marker line every rendering has, and this installation's when its
+   command names the same `AGENT_ARCHIVE_HOME` (none for the default
+   installation), which a relocated installation's skill sets as its hooks
+   do. Setup replaces only such a file; uninstall removes only such a
+   file; status lists them, and reports one whose text differs from what
+   this release renders as out of date. Any other file at that path (the
+   person's own, one they edited and unmarked, or another installation's)
+   is left alone and reported. The installer is `internal/agentskills`: it
+   installs a registry of skills, of which `handoff` is one, with its text
+   in `internal/agentskills/skills/handoff/SKILL.md.tmpl`. It was
+   `internal/agentcommands` when this package landed; the plan for the
+   registry and the other skills is [agent-skill.md](agent-skill.md).
 
 ### Shared names
 
@@ -663,13 +686,13 @@ Packages rely on these; change them only in this section first.
 | Owner | Name |
 |---|---|
 | A `handoff_select.go` | `selectHandoffSession(env handoffSelectDependencies, home string, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int)`; `currentHandoffSession(env, home, opts) (sessionID string, ok bool, err error)` |
-| B `handoff_agents.go` | `type launchSpec struct { Destination handoffDestination; Binary string; Args []string; Dir string; Env []string }` (`Args` excludes the binary; `Env` is the child's full environment); `buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error)`; `handoffSessionEnv []string` |
+| B `handoff_agents.go` | `type launchSpec struct { Destination handoffDestination; Binary string; Args []string; Dir string; Env []string; HandoffFile string }` (`Args` excludes the binary; `Env` is the child's full environment; `HandoffFile` is the launch copy, for D's `ScriptDir` and no-terminal message); `buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error)`; `handoffSessionEnv []string` |
 | B `handoff_launch.go` | `writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (path string, err error)`; `prepareLaunch(...) (launchSpec, error)`; `Env.LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error` (replaces today's `func(name, cwd, prompt string, ...)` field and the matching `launchHandoff` method in `handoffCommandDependencies`); `Env.LookPath func(string) (string, error)` |
-| B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitempty"`): `Args map[string][]string`, `DefaultTo map[string]string` |
-| C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
+| B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitzero"`: `omitempty` never omits a struct): `Args map[string][]string`, `DefaultTo map[string]string` |
+| C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { OS platform.OS; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
-| E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
-| F `internal/agentcommands` | `Files(userHome string, harnesses []string, executable string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
+| E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
+| F `internal/agentskills` (was `agentcommands`) | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Skill string; Harnesses []string; Path string; Content []byte }`; `var Registry []Skill`; the rest of the shared names are in [agent-skill.md](agent-skill.md#shared-names) |
 
 Each `Env` field gets an unexported method with a default (as
 `Env.launchHandoff` does today), and callers take a small
@@ -718,3 +741,45 @@ CI's `deadcode` step fails on any function `main` cannot reach, tests
 aside. Every PR wires what it adds into the command, except C, whose
 package has no caller until D: C adds `^internal/termlaunch/` to the
 exception pattern in `.github/workflows/test.yml`, and D removes it.
+
+### Deviations
+
+Recorded when the packages merged; the code is the reference.
+
+- **`agentskills.Files`** (`agentcommands.Files` until the agent skills plan renamed the package) takes `claudeDir` (Claude Code's configuration
+  directory, `$CLAUDE_CONFIG_DIR` when set) and `dataHome` (the
+  installation's `AGENT_ARCHIVE_HOME`, empty for the default):
+  `Files(userHome, claudeDir string, harnesses []string, executable,
+  dataHome string) []File`. Claude Code's skill lists `allowed-tools` only
+  when the command is the bare executable path; a quoted path or an
+  `AGENT_ARCHIVE_HOME=` prefix would not read back as a permission rule, so
+  the command is then asked about.
+- **Ownership** of a skill file is decided by the marker line plus the data
+  directory its command names (item 6), not by a record of what setup
+  wrote: the setup journal is deleted once setup commits. Setup also
+  removes its file from Claude Code's previous configuration directory
+  when `$CLAUDE_CONFIG_DIR` changed.
+- **`launchSpec.HandoffFile`** was added (the launch copy's path) so D can
+  pass its directory as termlaunch's `ScriptDir` and name it when no
+  terminal opens.
+- **`prepareLaunchDir`** takes an `answers io.Reader` beside `stdin`:
+  `stdin` is only checked for a terminal, and every prompt of one command
+  (picker, destination, active source) reads through one shared
+  `bufio.Reader`, so answers typed ahead are not lost. The worktree is made
+  after the launch command is built, so a missing agent or bad arguments
+  fail before any worktree exists; a failed launch removes its launch-copy
+  directory.
+- **`--worktree` without `--to`** is accepted on a terminal where the
+  destination prompt is offered; the worktree is made only if an agent is
+  chosen (print, copy, and write say none was created). `--here` and
+  `--new-window` are accepted the same way. Elsewhere all three still need
+  `--to`.
+- **`--no-preamble`** also suppresses the destination prompt (item 4):
+  `--to` refuses it, so printing is its only use.
+- **Choosing an agent at the prompt** runs it in this terminal unless
+  `--new-window` is given; only without a terminal does a launch open a new
+  window by default.
+- **Terminal.app** gets a new window, not a tab (`do script` with no target
+  window), and so does the fallback from a Ghostty older than 1.3. iTerm2
+  and Ghostty 1.3+ get tabs. The launcher script also waits for Enter when
+  it cannot `cd` to the directory.

@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // installation locates one data directory's integrations: the hook command
@@ -55,6 +56,11 @@ func (in installation) hook(executable string) hooks.Hook {
 	}
 	return hooks.Hook{Executable: executable, DataHome: dataHome, DefaultDataHome: defaultHome}
 }
+
+// commandDataHome is the AGENT_ARCHIVE_HOME this installation's commands
+// run with (see hook): "" for the default one. Its /handoff skills name it
+// too, which is how each installation tells its own apart.
+func (in installation) commandDataHome() string { return in.hook("").DataHome }
 
 // owner identifies this installation's hook handlers, for removing them;
 // the executable they run does not matter there.
@@ -113,13 +119,13 @@ func shellQuote(s string) string {
 }
 
 // label is the background collector's launchd label (see
-// hooks.CollectorLabel): the default label only for the default
+// launchd.CollectorLabel): the default label only for the default
 // installation.
 func (in installation) label() string {
 	if in.isDefault() {
-		return hooks.LaunchLabel
+		return launchd.LaunchLabel
 	}
-	return hooks.CollectorLabel(local.CanonicalPath(in.home), "")
+	return launchd.CollectorLabel(local.CanonicalPath(in.home), "")
 }
 
 // collectorPlist is the LaunchAgent path of the background collector; its
@@ -128,15 +134,9 @@ func (in installation) collectorPlist() string {
 	return filepath.Join(in.userHome, "Library", "LaunchAgents", in.label()+".plist")
 }
 
-// launchLabel is the launchd label of the job a plist defines. Every job
-// this tool loads is named after its label, so the file name is the label.
-func launchLabel(plist string) string {
-	return strings.TrimSuffix(filepath.Base(plist), ".plist")
-}
-
 // previousCollectorPlists are the LaunchAgents earlier releases installed
 // for this data directory under labels other than its own: every collector
-// plist (a label hooks.CollectorLabel can produce) that runs the collector
+// plist (a label launchd.CollectorLabel can produce) that runs the collector
 // for this data directory. Earlier releases used two other labels. The
 // default one, which releases before labels were derived from the directory
 // gave a non-default data directory. And the label derived from the
@@ -146,7 +146,7 @@ func launchLabel(plist string) string {
 // such spellings left one job for each. A plist for any other directory is
 // never returned, so another installation's is never touched, and stopping
 // the job one defines still needs launchd to have loaded it from that very
-// file (unloadLaunchAgent).
+// file (launchd.Scheduler.Unload).
 func (in installation) previousCollectorPlists() []string {
 	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
 	entries, err := os.ReadDir(dir)
@@ -165,7 +165,7 @@ func (in installation) previousCollectorPlists() []string {
 		if err != nil {
 			continue
 		}
-		dataHome, err := hooks.LaunchAgentDataHome(data)
+		dataHome, err := launchd.LaunchAgentDataHome(data)
 		if err != nil || dataHome == "" || !local.SameLocation(dataHome, in.home) {
 			continue
 		}
@@ -174,13 +174,13 @@ func (in installation) previousCollectorPlists() []string {
 	return found
 }
 
-// isCollectorLabel reports whether label is one hooks.CollectorLabel
+// isCollectorLabel reports whether label is one launchd.CollectorLabel
 // produces: the default label, or it followed by 12 hex digits.
 func isCollectorLabel(label string) bool {
-	if label == hooks.LaunchLabel {
+	if label == launchd.LaunchLabel {
 		return true
 	}
-	suffix, ok := strings.CutPrefix(label, hooks.LaunchLabel+".")
+	suffix, ok := strings.CutPrefix(label, launchd.LaunchLabel+".")
 	return ok && len(suffix) == 12 && strings.Trim(suffix, "0123456789abcdef") == ""
 }
 

@@ -19,7 +19,10 @@ validate against a fixed version.
   a later version may add one, and older sidecars may carry retired ones.
 - A change that removes or redefines a field bumps the document's
   `schema_version` (see [versions](../../dev/maintainers/versions.md)); adding an optional field
-  does not.
+  does not. `repo_key`, added in parser `0.16.0`, is such a field: `repo-`
+  and 16 lowercase hex digits (a hash of the normalized git `origin`; never
+  the address). It is absent when the project had no `origin` or was gone
+  when the metadata was derived. See [privacy](../security/privacy.md).
 
 ## How they are kept honest
 
@@ -28,7 +31,8 @@ validate against a fixed version.
 
 - every line of every fixture's source bundle, and its metadata sidecar as
   both a hook-captured and an imported session
-  (`TestFixtureOutputMatchesPublishedSchemas`);
+  (`TestFixtureOutputMatchesPublishedSchemas`), and that `repo_key` accepts
+  only a key, never an address;
 - that each schema enum matches the Go constants value for value, reading
   the constants from the source (`TestSchemaEnumsMatchGoConstants`);
 - that both schemas list exactly `archive.CaptureGapCodes`, and every gap

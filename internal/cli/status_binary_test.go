@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // installedWithBinary runs setup for Codex and Claude and returns the data
@@ -88,7 +88,7 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 			if view.Background != backgroundBroken {
 				t.Errorf("background = %q, want %q (launchd still calls the job loaded)", view.Background, backgroundBroken)
 			}
-			if view.State != "Needs attention" || !strings.Contains(view.Next, "agent-archive setup from the binary's new location") || !strings.Contains(view.Next, installed) {
+			if view.State != "Needs attention" || !strings.Contains(view.Next, "agent-archive setup --refresh from the binary's new location") || !strings.Contains(view.Next, installed) {
 				t.Errorf("state=%q next=%q", view.State, view.Next)
 			}
 			warnings := strings.Join(view.Warnings, "\n")
@@ -167,7 +167,7 @@ func TestBackgroundAloneBrokenWhenTheLaunchAgentRunsAMissingFile(t *testing.T) {
 	t.Parallel()
 	home, userHome, env, _ := installedWithBinary(t)
 	stale := filepath.Join(t.TempDir(), "old", "agent-archive")
-	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
+	plist, err := launchd.LaunchAgent(stale, home, launchd.Label(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

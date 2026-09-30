@@ -8,6 +8,7 @@
 package backfill
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // SkipReason says why a found session is not imported. Every session found is
@@ -255,19 +257,63 @@ type Environment struct {
 	EvalSymlinks func(string) (string, error)
 	// FileCreated returns a file's birth time, Cursor's start time. The
 	// default reads it from the file system where it is recorded (macOS);
-	// where it is not, or it fails, the modification time is used.
+	// where it is not (Linux: the standard library exposes no birth time,
+	// and statx is not used), or it fails, the modification time is used, so
+	// a Cursor chat's start time there is when its transcript was last
+	// written, not when it began, and the order of Cursor chats that were
+	// resumed can differ from the same archive built on a Mac.
 	FileCreated func(string) (time.Time, error)
 	// CursorDatabase lists the chats in Cursor's database (composerData
 	// entries with messages, not drafts, and not subagents) and reads them.
-	// Nil means not checked; the CLI uses CursorDatabaseReader. Undo reads
+	// Nil means not checked; the CLI uses CursorDatabaseReaderFor. Undo reads
 	// the database under Home instead (see resumedSinceImport).
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
+	// OS is the operating system whose app locations are looked in: the
+	// macOS desktop-app folders and privacy-protected folders only exist on
+	// platform.Darwin, and Cursor keeps its data under ~/Library/Application
+	// Support there and under the XDG config home on Linux (see
+	// platform.Locations, which answers for every OS, an unknown one
+	// included). Empty means platform.Current; only tests set it, so both
+	// branches run on any OS.
+	OS platform.OS
+	// Getenv reads the process environment (XDG_CONFIG_HOME, which places
+	// Cursor's data folder off macOS). Nil means os.Getenv.
+	Getenv func(string) string
 }
 
-// DefaultTempDirs are the temporary directories on macOS besides $TMPDIR.
-var DefaultTempDirs = []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+// DefaultTempDirs are the temporary directories besides $TMPDIR on the
+// environment's operating system (platform.Locations.TempRoots); a fresh
+// slice.
+func (e Environment) DefaultTempDirs() []string {
+	return slices.Clone(e.locations().TempRoots)
+}
+
+// operatingSystem is the operating system to answer for.
+func (e Environment) operatingSystem() platform.OS {
+	return cmp.Or(e.OS, platform.Current())
+}
+
+// locations are where the environment's operating system keeps what backfill
+// looks for, under Home. Symlinks in the privacy-protected folders' home are
+// resolved the way the rest of backfill resolves them (resolved).
+func (e Environment) locations() platform.Locations {
+	return platform.NewLocations(e.operatingSystem(), e.Home, e.getenv, platform.LocationDeps{
+		ResolveSymlinks: e.resolved,
+	})
+}
+
+func (e Environment) getenv(key string) string {
+	if e.Getenv != nil {
+		return e.Getenv(key)
+	}
+	return os.Getenv(key)
+}
+
+// cursorStateDatabase is Cursor's state.vscdb under Home, "" where the
+// environment's operating system has no known place for it.
+func (e Environment) cursorStateDatabase() string { return e.locations().CursorStateDB }
 
 func (e Environment) now() time.Time {
 	if e.Now != nil {
@@ -358,7 +404,7 @@ func (e Environment) tempDirs() []string {
 	if e.TempDirs != nil {
 		return e.TempDirs
 	}
-	return DefaultTempDirs
+	return e.locations().TempRoots
 }
 
 // exists reports whether path exists.
