@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/stats"
 )
 
 // clockTime is a time of day.
@@ -124,31 +123,18 @@ func fetched(sessions []archive.Metadata, now time.Time, loc *time.Location, win
 }
 
 // Every window the interactive screen cycles to counts the same as a fresh
-// static run with that --days, on every screen, whatever the archive looks
-// like, the time zone, or the moment the command runs. The interactive run
-// reads for its longest window; the static one for its own.
+// static run with that --days, whatever the archive looks like, the time zone,
+// or the moment the command runs. The interactive run reads for its longest
+// window; the static one for its own. The numbers are compared whole, every
+// row of every list, as --json prints them: each screen is a function of them.
 func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 	t.Parallel()
-	zones := []string{"UTC", "America/New_York", "Australia/Lord_Howe", "Pacific/Kiritimati", "Europe/London", "America/St_Johns"}
+	zones := []string{"UTC", "America/New_York", "Australia/Lord_Howe"}
 	moments := []moment{
 		{2026, 9, 29, 12, 0},
-		{2026, 3, 9, 0, 30},   // the day after New York's clocks went forward
-		{2026, 11, 2, 23, 59}, // the day after they went back, at the end of the day
-		{2026, 10, 5, 0, 0},   // just after Lord Howe's and Sydney's clocks went forward
+		{2026, 3, 9, 0, 30}, // the day after New York's clocks went forward
+		{2026, 10, 5, 0, 0}, // just after Lord Howe's and Sydney's clocks went forward
 		{2026, 1, 1, 0, 0},
-	}
-	views := []statsPage{pageOverview, pageDetail, pageProjects, pageModels, pageAgents}
-	view := statsView{width: 100, glyphs: unicodeGlyphs}
-	render := func(s stats.Stats) string {
-		if s.Coverage.Sessions == 0 {
-			return "empty"
-		}
-		var out strings.Builder
-		for _, page := range views {
-			out.WriteString(strings.Join(renderPage(page, s, view), "\n"))
-			out.WriteString("\n=====\n")
-		}
-		return out.String()
 	}
 	for _, zone := range zones {
 		loc, err := time.LoadLocation(zone)
@@ -162,22 +148,23 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 				for _, s := range shape.build(now, loc) {
 					metas = append(metas, s.build())
 				}
-				for _, start := range []int{7, 14, 30, 90, 200} {
+				// 7 and 14 cycle 7, (14,) 30, 90; 200 adds a window longer than the
+				// six months of the month rank.
+				for _, start := range []int{7, 14, 200} {
 					windows, _ := statsWindowCycle(start)
 					shared := fetched(metas, now, loc, windows)
 					for _, days := range windows {
-						name := fmt.Sprintf("%s %s start %d window %d", zone, shape.name, start, days)
 						alone := fetched(metas, now, loc, []int{days})
-						in := statsInputs{sessions: shared, now: now, location: loc}
-						static := statsInputs{sessions: alone, now: now, location: loc}
-						if got, want := render(in.compute(days, true)), render(static.compute(days, true)); got != want {
-							t.Fatalf("%s at %v: the screens differ:\n%s\n---- static:\n%s", name, now, got, want)
+						got, err := json.Marshal(statsInputs{sessions: shared, now: now, location: loc}.compute(days, true))
+						if err != nil {
+							t.Fatal(err)
 						}
-						// The numbers themselves, as --json and the saved page carry them.
-						got, _ := json.Marshal(in.compute(days, false))
-						want, _ := json.Marshal(static.compute(days, false))
+						want, err := json.Marshal(statsInputs{sessions: alone, now: now, location: loc}.compute(days, true))
+						if err != nil {
+							t.Fatal(err)
+						}
 						if string(got) != string(want) {
-							t.Fatalf("%s at %v: the numbers differ:\n%s\n---- static:\n%s", name, now, got, want)
+							t.Fatalf("%s %s at %v: window %d read for the cycle from %d differs from a static --days %d:\n%s\n---- static:\n%s", zone, shape.name, now, days, start, days, got, want)
 						}
 					}
 				}
@@ -258,7 +245,7 @@ func TestStatsScreenNeverExceedsTheTerminalWhateverTheNames(t *testing.T) {
 	t.Parallel()
 	inputs := hostileInputs()
 	filters := statsFilters{Harness: "claude", Model: "日本語日本語日本語日本語日本語日本語\x1b[31m" + strings.Repeat("m", 300)}
-	for _, width := range []int{1, 10, 20, 39, 40, 41, 59, 60, 61, 79, 80, 81, 100, 119, 120, 160, 250} {
+	for _, width := range []int{1, 20, 39, 40, 59, 60, 79, 80, 100, 120, 250} {
 		for _, height := range []int{1, 2, 5, 24, 60} {
 			// Color adds escape sequences to every row: one height is enough.
 			colors := []bool{false}

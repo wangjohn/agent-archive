@@ -316,8 +316,8 @@ screen, like the `list` browser, so quitting leaves your scrollback as it was.
 | `?` | List the keys; any key that is not a scroll key closes the list. |
 | `q`, Ctrl-C, Ctrl-D | Quit. Esc does not quit: over a slow connection an arrow key can arrive in two pieces, and the first looks like a lone Esc. (At the file name prompt of `h`, Esc cancels.) |
 
-A view taller than the terminal is cut to fit and scrolls (the overview needs
-about 32 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
+A view taller than the terminal is cut to fit and scrolls (the overview can
+need over 30 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
 below), a percentage or `End` where it can. On a narrow terminal the bar shortens its
 labels and then drops keys (`q` last) rather than wrap. Resizing the window
 redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP` and
