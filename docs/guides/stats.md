@@ -118,8 +118,8 @@ the agents table (with cache hit rate), the daily chart, what used your
 tokens (cache reads and writes, fresh input and output, and how much subagents
 used), highlights (days active and streaks, the busiest day, your favorite
 model, how this month ranks against your last six, the share of tool results
-the app flagged as errors, the costliest session), every skill and MCP server,
-and notes on what the numbers rest on. `--by day|week|month` adds a table of
+the app flagged as errors, the costliest session), the skills and MCP servers
+(up to 40 of each, with how many more there are), and notes on what the numbers rest on. `--by day|week|month` adds a table of
 the window broken down that way (weeks start on Monday) under it.
 
 ```text
@@ -185,9 +185,9 @@ Estimated at list price, not a bill.   --view overview
 
 ### Projects, models and agents
 
-`--view projects` lists every project with a bar, its sessions, tokens, spend
+`--view projects` lists the projects (up to 500) with a bar, its sessions, tokens, spend
 and share of the spend (a project is the project's name only). `--view models`
-lists every model family, with any model the price table does not list flagged
+lists the model families (up to 500), with any model the price table does not list flagged
 `unpriced` and its tokens shown. `--view agents` is the agents table, with each
 agent's share of sessions, tokens, spend and cache hit rate, and a note on
 what each agent does not record. `--by project` is `--view projects`.
@@ -239,8 +239,15 @@ Cache hit is cache reads over all input-side tokens.
 Estimated at list price, not a bill.   --view overview
 ```
 
-Lists are cut at 500 rows, and say how many more there are: `--json` has them
-all.
+The projects and models screens are cut at 500 rows, and say how many more
+there are and where they all are: `+ 40 more (all in --json --by project)`
+under projects (`--json` alone keeps only the top five, so it does not have
+them), `+ 40 more (all in --json)` under models (`models` is never cut). The
+detail screen's `--by day`, `--by week` and `--by month` tables keep the
+newest 60 rows, and say `12 earlier rows not shown (all in --json --by day)`.
+The skills and MCP servers are cut at 40 in the detail screen and at a few in
+the overview, and say `+ 3 more`; `--json` has only the top five of each, so
+past 40 no command lists every one.
 
 ### Narrow terminals
 
