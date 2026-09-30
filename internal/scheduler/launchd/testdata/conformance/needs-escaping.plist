@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.agent-archive.collector.c78e5b9be819</string>
+<key>ProgramArguments</key><array><string>/Users/test/bin/agent-archive</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>/Users/test/a &amp; &lt;b&gt; &#34;c&#34;</string><key>HTTPS_PROXY</key><string>http://proxy.example:3128/?a&amp;b&lt;2&gt;</string><key>PATH</key><string>/usr/bin</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>/Users/test/a &amp; &lt;b&gt; &#34;c&#34;/collector.log</string>
+<key>StandardErrorPath</key><string>/Users/test/a &amp; &lt;b&gt; &#34;c&#34;/collector-error.log</string>
+</dict></plist>

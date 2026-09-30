@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.agent-archive.collector.0728e9099f4e</string>
+<key>ProgramArguments</key><array><string>/Users/test/My Apps/agent-archive</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>/Users/test/100% $HOME&#39;s data</string><key>AWS_PROFILE</key><string>it&#39;s &#34;work&#34; \ 50%</string><key>PATH</key><string>/opt/$tools/bin:/usr/bin</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>/Users/test/100% $HOME&#39;s data/collector.log</string>
+<key>StandardErrorPath</key><string>/Users/test/100% $HOME&#39;s data/collector-error.log</string>
+</dict></plist>
