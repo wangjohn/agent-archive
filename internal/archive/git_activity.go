@@ -59,7 +59,10 @@ const MaxGitActivity = 100
 
 // gitCounts are the uncapped totals behind Metadata.GitActivity.
 type gitCounts struct {
-	commits, pushes, prsCreated, prsMerged int
+	commits    int
+	pushes     int
+	prsCreated int
+	prsMerged  int
 }
 
 func (c *gitCounts) add(kind GitEventKind) {
@@ -293,7 +296,7 @@ func pushEvents(output string) []GitEvent {
 			host, repository = parseRemote(match[1])
 			continue
 		}
-		sha, ref := "", ""
+		var sha, ref string
 		if match := pushUpdateLine.FindStringSubmatch(line); match != nil {
 			sha, ref = match[1], match[2]
 		} else if match := pushNewBranchLine.FindStringSubmatch(line); match != nil {
@@ -424,6 +427,18 @@ func ghMergeEvents(segment, output string) []GitEvent {
 	return events
 }
 
+// gitHubMCPTool names the GitHub MCP tools whose results mcpGitEvents reads.
+type gitHubMCPTool string
+
+// The GitHub MCP tools mcpGitEvents recognizes, by the tool part of an
+// mcp__<server>__<tool> name.
+const (
+	mcpCreatePullRequest gitHubMCPTool = "create_pull_request"
+	mcpMergePullRequest  gitHubMCPTool = "merge_pull_request"
+	mcpPushFiles         gitHubMCPTool = "push_files"
+	mcpCreateOrUpdate    gitHubMCPTool = "create_or_update_file"
+)
+
 // mcpGitEvents reads a GitHub MCP tool's result: create_pull_request,
 // merge_pull_request, and the tools that commit on the server (push_files,
 // create_or_update_file). Other tools, including enable_pr_auto_merge,
@@ -432,15 +447,15 @@ func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
 	result := decodeObject(call.resultText)
 	owner, name := firstString(call.Input, "owner"), firstString(call.Input, "repo")
 	githubServer := strings.Contains(strings.ToLower(server), "github")
-	switch tool {
-	case "create_pull_request":
+	switch gitHubMCPTool(tool) {
+	case mcpCreatePullRequest:
 		event, ok := mcpPullRequest(GitEventPRCreated, call.resultText, result, owner, name, numberText(result["number"]), githubServer)
 		if !ok {
 			return nil
 		}
 		event.Branch = validBranch(firstString(call.Input, "head"))
 		return []GitEvent{event}
-	case "merge_pull_request":
+	case mcpMergePullRequest:
 		// The merged flag decides when the result has one; a text result
 		// must say the merge succeeded.
 		merged, flagged := result["merged"].(bool)
@@ -458,7 +473,7 @@ func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
 			event.SHA = sha
 		}
 		return []GitEvent{event}
-	case "push_files", "create_or_update_file":
+	case mcpPushFiles, mcpCreateOrUpdate:
 		sha := nestedString(result, "commit", "sha")
 		if sha == "" {
 			sha = nestedString(result, "object", "sha")
