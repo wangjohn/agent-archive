@@ -30,7 +30,9 @@ for each check: a ✓, or a ✗ with the problem and how to fix it.
 - **Background job.** `launchctl` must say whether the collector's job is
   already loaded.
 - **Keychain.** When your saved settings or an unfinished setup store in
-  R2, the macOS Keychain, where the R2 key is kept, must open.
+  R2, the macOS Keychain, where the R2 key is kept, must open. (A build
+  without a Keychain checks the credentials file instead:
+  [where credentials are kept](../security/privacy.md#where-credentials-are-kept).)
 
 A ✗ stops setup before it asks anything: nothing is changed, and an
 unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
@@ -74,7 +76,8 @@ already have a profile with credentials, and R2 otherwise.
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
   account and the bucket, so the bucket isn't asked for. Any other S3 API
   endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
-  on a terminal and stored in the macOS Keychain.
+  on a terminal and stored in the macOS Keychain (or, on a build without one,
+  in a private credentials file).
 - **S3:** choose an existing AWS profile, then the bucket. Setup offers
   the profiles in your AWS settings. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
@@ -289,12 +292,14 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   It holds registrations, frozen uploads, and caches; transcripts are read in
   place, not copied, except a Cursor database copy that exists only while a
   read of it is in progress.
-- **A Keychain item** (service `agent-archive`) for R2 credentials. S3
+- **A Keychain item** (service `agent-archive`) for R2 credentials (on a
+  build without a Keychain, a credentials file in the data directory). S3
   credentials stay in your AWS profile.
 
 `agent-archive uninstall` removes the hooks, the skill files, and the
 LaunchAgent;
-`--delete-local-data` also removes the local state and the Keychain item.
+`--delete-local-data` also removes the local state and the Keychain item
+(or credentials file).
 Neither touches the bucket ([uninstall](uninstall.md)).
 
 Only the account's own default installation, in `~/.local/share/agent-archive`

@@ -435,20 +435,21 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 }
 
 // openConfiguredStore resolves cfg.Storage into a live ObjectStore. Only R2
-// keeps its secret in the Keychain, so only R2 opens it (through keychain,
-// Env.keychain), and a Keychain that is unavailable (a non-darwin build, or
-// cgo disabled) fails only an R2 configuration.
-func openConfiguredStore(cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
-	return openConfiguredStoreContext(context.Background(), cfg, keychain)
+// keeps its secret in the credential store (the Keychain on macOS, a private
+// file elsewhere), so only R2 opens it (through credentialStore,
+// Env.credentialStore), and a store that is unavailable (a macOS build
+// without cgo, say) fails only an R2 configuration.
+func openConfiguredStore(cfg config.Config, credentialStore func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	return openConfiguredStoreContext(context.Background(), cfg, credentialStore)
 }
 
-func openConfiguredStoreContext(ctx context.Context, cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credentialStore func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
 	var store credentials.CredentialStore
 	// Spelled as storage.NewConfiguredStore reads it.
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
 		var err error
-		if store, err = keychain(); err != nil {
-			return nil, fmt.Errorf("keychain unavailable: %w", err)
+		if store, err = credentialStore(); err != nil {
+			return nil, storageOpenError(credentialGOOS, err)
 		}
 	}
 	return storage.NewConfiguredStore(ctx, cfg.Storage, store)

@@ -194,7 +194,7 @@ func TestUninstallDeletesStoredR2CredentialsOnly(t *testing.T) {
 func TestUninstallWithS3NeverOpensKeychain(t *testing.T) {
 	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
-	env.Keychain = func() (credentials.CredentialStore, error) {
+	env.Credentials = func() (credentials.CredentialStore, error) {
 		t.Fatal("an S3 configuration references no Keychain item; uninstall must not open Keychain")
 		return nil, nil
 	}

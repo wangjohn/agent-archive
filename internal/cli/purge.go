@@ -44,6 +44,7 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("purge plan", stderr)
 	mode := fs.String("mode", "unreferenced", "unreferenced or old-filter")
 	before := fs.String("before-filter", "", "for old-filter, include source versions below this number")
+	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
@@ -82,17 +83,28 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 	if err := local.Write(file, plan); err != nil {
 		return purgeError(stderr, err)
 	}
-	terminal.Printf(stdout, "Plan: %s\nBucket: %s\nPrefix: %s\nExpires: %s\nDigest: %s\n", file, plan.Bucket, plan.Prefix, plan.ExpiresAt.Format("2006-01-02T15:04:05Z"), plan.Digest)
-	terminal.Printf(stdout, "Unreferenced source deletion candidates (%d):\n", len(plan.Candidates))
-	for _, c := range plan.Candidates {
-		terminal.Printf(stdout, "  %s (%d bytes, filter %s)\n", c.Key, c.Size, c.FilterVersion)
+	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		printPurgePlan(w, file, plan)
+		return nil
+	}); err != nil {
+		return purgeError(stderr, err)
 	}
-	terminal.Printf(stdout, "Still-current older-filter sessions (%d; never planned for deletion):\n", len(plan.CurrentOldSessions))
-	for _, s := range plan.CurrentOldSessions {
-		terminal.Printf(stdout, "  %s -> %s (filter %s)\n", s.MetadataKey, s.SourceKey, s.FilterVersion)
-	}
-	terminal.Println(stdout, "Pause every uploading Mac before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.")
 	return 0
+}
+
+// printPurgePlan prints a saved plan, saved at file, for review: every
+// candidate key, then the still-current sessions it leaves alone.
+func printPurgePlan(w io.Writer, file string, plan purge.Plan) {
+	terminal.Printf(w, "Plan: %s\nBucket: %s\nPrefix: %s\nExpires: %s\nDigest: %s\n", file, plan.Bucket, plan.Prefix, plan.ExpiresAt.Format("2006-01-02T15:04:05Z"), plan.Digest)
+	terminal.Printf(w, "Unreferenced source deletion candidates (%d):\n", len(plan.Candidates))
+	for _, c := range plan.Candidates {
+		terminal.Printf(w, "  %s (%d bytes, filter %s)\n", c.Key, c.Size, c.FilterVersion)
+	}
+	terminal.Printf(w, "Still-current older-filter sessions (%d; never planned for deletion):\n", len(plan.CurrentOldSessions))
+	for _, s := range plan.CurrentOldSessions {
+		terminal.Printf(w, "  %s -> %s (filter %s)\n", s.MetadataKey, s.SourceKey, s.FilterVersion)
+	}
+	terminal.Println(w, "Pause every uploading Mac before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.")
 }
 
 func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -104,6 +116,11 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	}
 	if name == "" {
 		return fs.usageError("a PLAN path is required")
+	}
+	// The digest is typed at a prompt that reads standard input whether or
+	// not it is a terminal, so an agent's shell would wait there for it.
+	if mode, _ := env.nonInteractive(); mode.on && !*yes {
+		return purgeError(stderr, fmt.Errorf("confirming a purge needs a person to type the digest. Nothing was changed. Run again with --yes to delete without asking, only when the person asked for the deletion. Prompts are off because %s; to be asked here anyway, run with %s=0", mode.reason, envNonInteractive))
 	}
 	home, err := env.readHome()
 	if err != nil {
@@ -150,14 +167,8 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 		return purgeError(stderr, errors.New("pause this Mac and every other uploading Mac before purge apply"))
 	}
 	if !*yes {
-		terminal.Printf(stdout, "Delete %d unreferenced sources from %s/%s? Type %s to continue: ", len(plan.Candidates), plan.Bucket, plan.Prefix, plan.Digest[:12])
-		answer, err := bufio.NewReader(stdin).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return purgeError(stderr, err)
-		}
-		if strings.TrimSpace(answer) != plan.Digest[:12] {
-			terminal.Println(stderr, "Purge cancelled.")
-			return 1
+		if code, confirmed := confirmPurge(plan, stdin, stdout, stderr); !confirmed {
+			return code
 		}
 	}
 	store, err := env.openStore(cfg)
@@ -192,6 +203,21 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	}
 	terminal.Printf(stdout, "Deleted %d unreferenced sources. Report: %s\n", len(report.Deleted), reportPath)
 	return 0
+}
+
+// confirmPurge asks for the first twelve characters of the plan's digest.
+// When it is not confirmed, code is the exit status to return.
+func confirmPurge(plan purge.Plan, stdin io.Reader, stdout, stderr io.Writer) (code int, confirmed bool) {
+	terminal.Printf(stdout, "Delete %d unreferenced sources from %s/%s? Type %s to continue: ", len(plan.Candidates), plan.Bucket, plan.Prefix, plan.Digest[:12])
+	answer, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return purgeError(stderr, err), false
+	}
+	if strings.TrimSpace(answer) != plan.Digest[:12] {
+		terminal.Println(stderr, "Purge cancelled.")
+		return 1, false
+	}
+	return 0, true
 }
 
 func purgeError(stderr io.Writer, err error) int {

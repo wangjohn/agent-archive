@@ -143,6 +143,7 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	add("Model", summaryModels(m.Models)...)
 	add("Activity", wrapList(summaryActivity(m.Counts), " · ", width)...)
 	add("Tools", wrapList(summaryTools(m.ToolsUsed), " · ", width)...)
+	add("Git", wrapList(summaryGit(m), " · ", width)...)
 	add("Skills", wrapList(displayAll(skillNames(m)), ", ", width)...)
 	add("Subagents", summarySubagents(m, view.LinkedAvailability))
 	if m.ParentSessionID != "" {
@@ -376,6 +377,48 @@ func summaryTools(tools []archive.ToolUsage) []string {
 		if name := archive.DisplayLine(tool.Name); name != "" {
 			items = append(items, fmt.Sprintf("%s %d", name, tool.Count))
 		}
+	}
+	return items
+}
+
+// summaryGit lists the session's git work: how many commits and pushes,
+// then each pull request opened and merged by number. When the event list
+// was capped and holds fewer pull requests than were counted, the count is
+// shown instead. Nothing when the session did none or the counts are
+// unknown.
+func summaryGit(m archive.Metadata) []string {
+	var items []string
+	if c := m.Counts.Commits; c != nil && *c > 0 {
+		items = append(items, plural(*c, "commit"))
+	}
+	if c := m.Counts.Pushes; c != nil && *c > 0 {
+		if *c == 1 {
+			items = append(items, "1 push")
+		} else {
+			items = append(items, fmt.Sprintf("%d pushes", *c))
+		}
+	}
+	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRCreated, m.Counts.PRsCreated, "opened")...)
+	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRMerged, m.Counts.PRsMerged, "merged")...)
+	return items
+}
+
+// summaryPullRequests is "PR #n <verb>" for each pull request of kind in
+// events, or "N PRs <verb>" when count says events do not hold them all.
+func summaryPullRequests(events []archive.GitEvent, kind archive.GitEventKind, count *int, verb string) []string {
+	var items []string
+	listed := 0
+	for _, event := range events {
+		if event.Kind != kind {
+			continue
+		}
+		listed++
+		if event.PRNumber > 0 {
+			items = append(items, fmt.Sprintf("PR #%d %s", event.PRNumber, verb))
+		}
+	}
+	if count != nil && *count > 0 && (*count > listed || len(items) < listed) {
+		return []string{plural(*count, "PR") + " " + verb}
 	}
 	return items
 }

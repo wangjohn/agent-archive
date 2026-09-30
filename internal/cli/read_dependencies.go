@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // Run passes Env at the command boundary. The read commands and their
@@ -22,26 +23,50 @@ type metadataCacheDependencies interface {
 }
 
 type sessionBrowseDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
+	terminalSizeDependencies
+}
+
+// terminalSizeDependencies is what the session pickers and browser read
+// before each redraw to fit the window.
+type terminalSizeDependencies interface {
+	terminalSize(io.Writer) (width, height int, ok bool)
 }
 
 type sessionSelectionDependencies interface {
 	metadataCacheDependencies
+	terminalSizeDependencies
 	now() time.Time
 }
 
 // sessionBrowserDependencies is what the interactive session browser uses:
-// the pager for transcripts, and interrupts so it can restore the screen
-// before it exits.
+// the pager for transcripts and the details, the window's size, and
+// interrupts so it can restore the screen before it exits, and stdin read
+// a key at a time on a terminal.
 type sessionBrowserDependencies interface {
 	pagerDependencies
+	terminalSizeDependencies
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
+	openKeyTerminal(io.Reader) (keyTerminal, bool)
 }
 
 type listCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
+	now() time.Time
+	newCommandFlags(string, io.Writer) *commandFlags
+}
+
+// statsCommandDependencies is what `stats` uses: list's store and cache, the
+// pager, and the environment for the character set.
+type statsCommandDependencies interface {
+	readOnlyStoreDependencies
+	pagerDependencies
+	// isTerminal is whether stdout is a terminal, whatever the agent switch
+	// says: stats --html never fills one with markup.
+	isTerminal(any) bool
+	interrupts() (<-chan os.Signal, func())
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
@@ -60,9 +85,14 @@ type showQueryDependencies interface {
 }
 
 type pagerDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 	lookupEnv(string) (string, bool)
-	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
+	runPager(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
+	lessVersion(string) (int, bool)
+	// interrupts and exit let withPager leave Ctrl-C to the pager and
+	// stop it on other signals.
+	interrupts() (<-chan os.Signal, func())
+	exit(int)
 }
 
 type handoffResolverDependencies interface {
@@ -87,6 +117,10 @@ type handoffOptionsDependencies interface {
 type handoffTargetDependencies interface {
 	handoffResolverDependencies
 	currentSessionDependencies
+	workingDirDependencies
+}
+
+type workingDirDependencies interface {
 	workingDir() (string, error)
 }
 
@@ -94,7 +128,33 @@ type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	sessionBrowseDependencies
+	handoffLaunchDependencies
+	handoffDestinationDependencies
+}
+
+type launchSpecDependencies interface {
+	lookPath(string) (string, error)
+	environ() []string
+}
+
+type handoffLaunchDependencies interface {
+	launchSpecDependencies
+	worktreeDependencies
 	executable() (string, error)
 	tempDir() string
-	launchHandoff(string, string, string, io.Reader, io.Writer, io.Writer) error
+	workingDirDependencies
+	now() time.Time
+	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
+	openTerminal(termlaunch.Spec) (string, error)
+}
+
+// handoffDestinationDependencies is what the destination prompt uses: which
+// agents are installed, the pager for printing, the clipboard, and the
+// directories a written file's path is resolved against.
+type handoffDestinationDependencies interface {
+	launchSpecDependencies
+	pagerDependencies
+	workingDirDependencies
+	userHomeDir() (string, error)
+	clipboard([]byte) error
 }

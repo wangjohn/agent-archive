@@ -1,6 +1,6 @@
 # JSON output
 
-Three commands print JSON for scripts. Each document carries a
+These commands print JSON for scripts. Each document carries a
 `schema_version`. The aim is that fields are only added, an existing field
 keeps its meaning, and an incompatible change bumps `schema_version`, from
 `v0.1.0` on. Check `schema_version`, and read the
@@ -101,6 +101,32 @@ Codex record's fresh input is its input minus both, and never below zero, so
 a record whose cache counts exceed its input keeps both counts and has no
 fresh input rather than a negative one.
 
+From parser `0.15.0` a sidecar also carries the session's git work, also
+optional:
+
+- `git_activity`: up to 100 events, in transcript order, as `{"kind",
+  "at", "source", "sha", "branch", "repository", "pr_number", "url"}`.
+  `kind` is `commit`, `push`, `pr_created`, or `pr_merged`; `source` is
+  `shell` (a `git` or `gh` command's output) or `mcp` (a GitHub MCP tool's
+  result); `at` is when the confirming result was recorded. An event is
+  recorded only when the call's result was not an error and shows the
+  effect: the new commit's SHA, a push's ref update, the new pull request's
+  URL, or a merge confirmation. A failed, rejected, up-to-date, or dry-run
+  attempt, and `gh pr merge --auto`, are not events. Every other field is
+  optional: `sha` is abbreviated as `git commit` printed it and absent for a
+  new branch's push; `url` is rebuilt from the parsed host and repository
+  and absent when the host is unknown (a `gh pr merge` whose command names no
+  host, unless the session created that pull request) or is not a public DNS
+  name (a local git proxy).
+  Commit messages, pull request text, and commands are never kept.
+- `counts.commits`, `counts.pushes`, `counts.prs_created`,
+  `counts.prs_merged`: the same events counted, exact even beyond the 100
+  listed.
+
+Work done outside the session, such as a pull request merged on GitHub's
+website, is not seen. Work a subagent did is in the subagent's own
+metadata.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
@@ -116,6 +142,87 @@ whose `input` was dropped), `assistant_text` and `prompt_text` (turns whose
 (turns, calls, and results dropped, oldest first). `full_record` is the saved untrimmed output,
 kept 7 days, and is absent if it could not be saved. Neither field exists in
 untrimmed output. See [list and show](../guides/list-and-show.md#size).
+
+## `stats --json`
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-29T12:00:00-07:00",
+  "filters": { "harness": "claude" },
+  "window": { "days": 30, "timezone": "America/Los_Angeles", "first_day": "2026-08-31", "last_day": "2026-09-29", "...": "from, to, previous_from, previous_to" },
+  "prices": { "version": "2026-09.2", "as_of": "2026-09-29", "currency": "USD", "...": "sources, notes, overridden" },
+  "coverage": { "sessions": 412, "sessions_with_tokens": 371, "unknown_tokens_by_agent": { "cursor": 41 }, "...": "" },
+  "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000 } ],
+  "peak": { "date": "2026-09-17", "tokens": 4900000 },
+  "overview": { "sessions": { "value": 412, "previous": 349, "change_pct": 18.05 }, "...": "prompts, tokens, cost, active_days, streaks" },
+  "agents": [], "models": [], "projects": [], "total_projects": 12,
+  "composition": {}, "subagents": {}, "skills": [], "mcp": {},
+  "highlights": {},
+  "groups": { "by": "project", "rows": [] }
+}
+```
+
+(`stats --html` writes a web page for people; it is not a format to parse.
+Use `--json` in scripts.)
+
+`stats` prints how you use your agents over a window of calendar days ending
+today, with the period of the same length before it beside it, from session
+metadata only. The document is the statistics engine's result with its fields
+at the top level. Read the rules below before using a number:
+
+- **Unknown is `null`, never `0`.** A number that no session in scope
+  reported is `null`: Cursor records no tokens, Codex records no tool-error
+  flag, and a sidecar written before parser `0.14.0` has no per-model split,
+  tool errors or MCP calls. `coverage` says how many sessions each rests on
+  (`sessions_with_tokens`, `unknown_tokens_by_agent`,
+  `sessions_before_parser_0_14_0`, `sessions_priced_at_main_model`,
+  `sessions_without_tool_errors`). A day with no sessions has `tokens: 0`; a
+  day whose sessions record no tokens has `tokens: null`.
+- **The window.** `--days N` (default 30) or `--since`, which starts the
+  window on the local day it names (a date is a local day here, unlike
+  `list --since`, which reads a date as midnight UTC). Days are counted in
+  `window.timezone`. Sessions are placed by `captured_at`, the time
+  `list --since` uses, not when they started: an imported session appears
+  on the day it was imported. `overview` compares with `window.previous_from`
+  up to `window.previous_to`; `highlights.month_rank` ranks this month so far
+  against the five before it, from sessions outside the window too.
+- **Sessions and subagents.** A subagent session's tokens, cost, tool
+  results, skills and MCP calls roll up into its parent, which is one
+  session; `subagents` reports the share of tokens they used.
+  `coverage.orphan_subagents` counts subagents whose parent is not in the
+  data, counted as sessions of their own.
+- **Token counts.** `composition` splits tokens four ways that add up to
+  `total`: `cache_read`, `cache_write`, `fresh_input` (input that was not
+  read from the cache; Codex's cached input is subtracted from its input)
+  and `output`. `reasoning_of_output` is a subset of `output`, not an
+  addition. Totals saturate at the largest 64-bit integer instead of
+  wrapping. Per-agent `cache_hit_rate` is in the JSON only.
+- **Cost is an estimate** at list price from the dated price table in
+  `prices` (`--prices FILE` puts your own entries on top and sets
+  `overridden`); it is not a bill. The field is named `usd` whatever the
+  currency. `usd` is `null` when nothing could be priced; `partial` with
+  `unpriced_tokens` says tokens of models the table does not list (including
+  `unknown` and `other`) are left out; `approximate` says some sessions with
+  no per-model split were priced at their main model.
+- **Skills** are counted in sessions that used them, not calls. **MCP**
+  servers are counted in calls, and `mcp.scope` says which agents that
+  covers (Claude Code and Cursor; Codex MCP calls are not recorded).
+- **`highlights.tool_errors`** is the share of tool results the app flagged
+  as errors (this includes calls the user rejected or interrupted), over the
+  `sessions` that record it; there is no per-tool breakdown.
+- **`groups`** is present with `--by day|week|month|project`: `by` and
+  `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
+  name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
+  or by tokens for `project`. `projects` keeps only the top few of
+  `total_projects`.
+- `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
+  (as `origin`: `hook` or `imported`); a filter that was not given is
+  absent. The document holds counts, model, project, skill and MCP server
+  names, and one session ID (`highlights.costliest_session`, which `show`
+  opens). It never holds prompts, transcript text or paths. An empty archive
+  prints a document with zero sessions. Usage errors (exit 2) print no JSON.
+  `--json` is never paged.
 
 ## `status --json`
 

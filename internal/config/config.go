@@ -57,7 +57,8 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 }
 
 // Config is this machine's complete archive configuration. It contains no
-// secrets: R2 secrets live in Keychain (see credentials.Config.R2CredentialRef)
+// secrets: R2 secrets live in the credential store (the Keychain on macOS, a
+// private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
 	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
@@ -118,6 +119,50 @@ type Config struct {
 	// RetentionDays is whole-session retention, proposed as 90 by setup.
 	// Enforcing it is the Retention slice's job, not this package's.
 	RetentionDays int `json:"retention_days"`
+	// Handoff holds preferences for `agent-archive handoff`. Setup never
+	// asks for them; they are edited by hand and carried through
+	// reconfiguration like the rest of this file.
+	Handoff HandoffConfig `json:"handoff,omitzero"`
+}
+
+// HandoffConfig is what `agent-archive handoff` launches with by default.
+// Agents are named as harnesses are: claude, codex, cursor.
+type HandoffConfig struct {
+	// Args are arguments given to an agent before any after `--` on the
+	// command line, keyed by the destination agent.
+	Args map[string][]string `json:"args,omitempty"`
+	// DefaultTo is the destination offered first, keyed by the harness of
+	// the session being handed off.
+	DefaultTo map[string]string `json:"default_to,omitempty"`
+}
+
+// handoffAgents are the agents a handoff can come from or go to.
+var handoffAgents = []string{"claude", "codex", "cursor"}
+
+// validate rejects names handoff would not recognize, so a typo in a
+// hand-edited file is reported rather than silently ignored.
+func (h HandoffConfig) validate() error {
+	for agent, args := range h.Args {
+		if !slices.Contains(handoffAgents, agent) {
+			return fmt.Errorf("handoff.args: unknown agent %q; use claude, codex, or cursor", agent)
+		}
+		for _, arg := range args {
+			// exec cannot pass a NUL byte, and an empty word is almost
+			// always a quoting mistake.
+			if arg == "" || strings.ContainsRune(arg, 0) {
+				return fmt.Errorf("handoff.args.%s: every argument must be non-empty text without a NUL byte", agent)
+			}
+		}
+	}
+	for source, dest := range h.DefaultTo {
+		if !slices.Contains(handoffAgents, source) {
+			return fmt.Errorf("handoff.default_to: unknown harness %q; use claude, codex, or cursor", source)
+		}
+		if !slices.Contains(handoffAgents, dest) {
+			return fmt.Errorf("handoff.default_to.%s: unknown agent %q; use claude, codex, or cursor", source, dest)
+		}
+	}
+	return nil
 }
 
 func path(home string) string { return filepath.Join(home, "config.json") }
@@ -142,6 +187,9 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
+	if err := cfg.Handoff.validate(); err != nil {
+		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+	}
 	return cfg, true, nil
 }
 
@@ -152,6 +200,9 @@ var ErrUnreadable = errors.New("the settings file cannot be read")
 func Save(home string, cfg Config) error {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
+	}
+	if err := cfg.Handoff.validate(); err != nil {
+		return err
 	}
 	if cfg.SchemaVersion == 0 {
 		cfg.SchemaVersion = SchemaVersion

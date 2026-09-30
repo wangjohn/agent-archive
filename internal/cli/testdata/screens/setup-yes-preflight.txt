@@ -10,7 +10,7 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
 
 Configuration saved.
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
-To remove them and keep them off, run agent-archive setup --no-skills.
+To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
   Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
