@@ -94,10 +94,11 @@ func TestUsableGitRefusesTheMacStubWithoutDeveloperTools(t *testing.T) {
 	none := func(string) bool { return false }
 	only := func(want string) func(string) bool { return func(p string) bool { return p == want } }
 	for _, tc := range []struct {
-		name       string
-		path, goos string
-		exists     func(string) bool
-		want       bool
+		name   string
+		path   string
+		goos   string
+		exists func(string) bool
+		want   bool
 	}{
 		{"stub without the tools", "/usr/bin/git", "darwin", none, false},
 		{"stub with the command line tools", "/usr/bin/git", "darwin", only("/Library/Developer/CommandLineTools/usr/bin/git"), true},
