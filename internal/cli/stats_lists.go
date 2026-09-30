@@ -17,10 +17,20 @@ const (
 )
 
 // listMore is the line under a list that says how many rows it leaves out and
-// where to find them all: hint is the command that lists every row.
+// where to find them all: hint is the command that lists every row. The
+// interactive screen takes no command, and its window is the one w chose, not
+// a flag, so there the line says to quit first and names the window (and
+// that the filters it was started with apply).
 func (p *statsPrinter) listMore(shown, total int, hint string) []string {
 	if total <= shown {
 		return nil
+	}
+	if p.v.interactive {
+		text := fmt.Sprintf("+ %d more (quit, then run agent-archive stats --days %d %s", total-shown, p.s.Window.Days, hint)
+		if p.v.filters != (statsFilters{}) {
+			text += ", with the same filters"
+		}
+		return p.dimAll(p.wrap(text + ")"))
 	}
 	return p.dimAll(p.wrap(fmt.Sprintf("+ %d more (all in %s)", total-shown, hint)))
 }

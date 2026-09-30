@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/stats"
 )
 
@@ -38,6 +39,20 @@ func runHint(t *testing.T, env Env, hint []string, extra ...string) statsDocumen
 	return doc
 }
 
+// projectAndModelSessions is n sessions an hour before statsNow, each in a
+// project and a model of its own.
+func projectAndModelSessions(n int) []syntheticSession {
+	sessions := make([]syntheticSession, 0, n)
+	for i := range n {
+		sessions = append(sessions, syntheticSession{
+			id: fmt.Sprintf("h%03d", i), harness: "claude", project: fmt.Sprintf("project-%03d", i),
+			captured: statsNow.Add(-time.Hour), models: []string{fmt.Sprintf("model-%03d", i)}, turns: 1,
+			perModel: []modelTokenSpec{{fmt.Sprintf("model-%03d", i), 1000 + i, 100, 0, 0}},
+		})
+	}
+	return sessions
+}
+
 // Every "all in ..." hint under a list a screen cuts is true: the command it
 // names really lists every row, and plain --json, which the hint used to name,
 // does not (it keeps the top five projects). The archive has more projects
@@ -46,12 +61,8 @@ func TestStatsAllInHintsListEveryRow(t *testing.T) {
 	t.Parallel()
 	const projects = statsMaxListRows + 5
 	env, mem := statsEnv(t)
-	for i := range projects {
-		syntheticSession{
-			id: fmt.Sprintf("h%03d", i), harness: "claude", project: fmt.Sprintf("project-%03d", i),
-			captured: statsNow.Add(-time.Hour), models: []string{fmt.Sprintf("model-%03d", i)}, turns: 1,
-			perModel: []modelTokenSpec{{fmt.Sprintf("model-%03d", i), 1000 + i, 100, 0, 0}},
-		}.publish(t, mem)
+	for _, s := range projectAndModelSessions(projects) {
+		s.publish(t, mem)
 	}
 	// Plain --json keeps the top five projects and has no groups; that is why
 	// no hint may name it for the projects.
@@ -97,32 +108,41 @@ func TestStatsAllInHintsListEveryRow(t *testing.T) {
 	})
 }
 
-// The day and week tables of the detail screen keep the newest 60 rows, and
-// the hint under them is true: the command it names has every row.
+// The day, week and month tables of the detail screen keep the newest 60
+// rows, and the hint under them is true: the command it names has every row.
 func TestStatsAllInHintsListEveryGroupRow(t *testing.T) {
 	t.Parallel()
-	// One session a week for 65 weeks: more week rows than the table keeps,
-	// and more day rows too.
-	const weeks = statsMaxGroupRows + 5
-	env, mem := statsEnv(t)
-	for i := range weeks {
-		syntheticSession{
-			id: fmt.Sprintf("g%03d", i), harness: "claude", project: "one", captured: statsNow.AddDate(0, 0, -7*i).Add(-time.Hour),
-			models: []string{"claude-opus-5"}, turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 100, 0, 0}},
-		}.publish(t, mem)
-	}
-	window := strconv.Itoa(7*weeks + 7)
-	for _, by := range []stats.Grouping{stats.GroupDay, stats.GroupWeek} {
-		t.Run("detail by "+string(by), func(t *testing.T) {
+	// More rows than the table keeps, one session for each.
+	const rows = statsMaxGroupRows + 5
+	for _, tc := range []struct {
+		by stats.Grouping
+		// captured is when session i happened, the newest first; days is a
+		// window that reaches the oldest.
+		captured func(i int) time.Time
+		days     int
+	}{
+		{stats.GroupDay, func(i int) time.Time { return statsNow.AddDate(0, 0, -i-1) }, rows + 7},
+		{stats.GroupWeek, func(i int) time.Time { return statsNow.AddDate(0, 0, -7*i-1) }, 7*rows + 7},
+		{stats.GroupMonth, func(i int) time.Time { return time.Date(2026, time.Month(9-i), 15, 11, 0, 0, 0, time.UTC) }, 31*rows + 62},
+	} {
+		t.Run("detail by "+string(tc.by), func(t *testing.T) {
 			t.Parallel()
-			page := mustRunStats(t, env, 100, "--by", string(by), "--view", "detail", "--days", window)
+			env, mem := statsEnv(t)
+			for i := range rows {
+				syntheticSession{
+					id: fmt.Sprintf("g%03d", i), harness: "claude", project: "one", captured: tc.captured(i),
+					models: []string{"claude-opus-5"}, turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 100, 0, 0}},
+				}.publish(t, mem)
+			}
+			window := strconv.Itoa(tc.days)
+			page := mustRunStats(t, env, 100, "--no-cache", "--by", string(tc.by), "--view", "detail", "--days", window)
 			hint := hintCommand(t, page)
-			if want := "(all in --json --by " + string(by) + ")"; !strings.Contains(page, want) {
+			if want := "(all in --json --by " + string(tc.by) + ")"; !strings.Contains(page, want) {
 				t.Errorf("the detail screen lacks %q:\n%s", want, page)
 			}
 			doc := runHint(t, env, hint, "--days", window)
-			if doc.Groups == nil || doc.Groups.By != by || len(doc.Groups.Rows) != weeks {
-				t.Fatalf("%v does not list all %d rows: %+v", hint, weeks, doc.Groups)
+			if doc.Groups == nil || doc.Groups.By != tc.by || len(doc.Groups.Rows) != rows {
+				t.Fatalf("%v does not list all %d rows: %+v", hint, rows, doc.Groups)
 			}
 			// The screen keeps the newest rows and says how many earlier ones
 			// it left out, and those are in the JSON.
@@ -132,10 +152,66 @@ func TestStatsAllInHintsListEveryGroupRow(t *testing.T) {
 			if oldest := doc.Groups.Rows[0].Key; strings.Contains(page, oldest) {
 				t.Errorf("the oldest row, %s, is on the screen that says it left out 5", oldest)
 			}
-			if newest := doc.Groups.Rows[weeks-1].Key; !strings.Contains(page, newest) {
+			if newest := doc.Groups.Rows[rows-1].Key; !strings.Contains(page, newest) {
 				t.Errorf("the newest row, %s, is not on the screen", newest)
 			}
 		})
+	}
+}
+
+// On the interactive screen a command is not one to type, and its window is
+// whatever w chose: the line says to quit first, and names the window and
+// that the filters apply. The command it names, with that window, lists every
+// row.
+func TestStatsAllInHintsOnTheInteractiveScreen(t *testing.T) {
+	t.Parallel()
+	const projects = statsMaxListRows + 5
+	env, mem := statsEnv(t)
+	var sessions []archive.Metadata
+	for _, s := range projectAndModelSessions(projects) {
+		s.publish(t, mem)
+		sessions = append(sessions, s.build())
+	}
+	inputs := statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	for _, tc := range []struct {
+		view    string
+		command string
+		rows    func(statsDocument) int
+	}{
+		{"p", "--json --by project", func(d statsDocument) int {
+			if d.Groups == nil {
+				return 0
+			}
+			return len(d.Groups.Rows)
+		}},
+		{"m", "--json", func(d statsDocument) int { return len(d.Models) }},
+	} {
+		for _, days := range []int{7, 30, 90} {
+			t.Run(fmt.Sprintf("%s %dd", tc.view, days), func(t *testing.T) {
+				t.Parallel()
+				run := runScreen(t, screenOptions{width: 100, height: 40, days: days, inputs: &inputs}, tc.view, "\x1b[F", "q")
+				text := strings.Join(run.frames[len(run.frames)-1], " ")
+				flat := strings.Join(strings.Fields(ansiEscape.ReplaceAllString(text, "")), " ")
+				want := fmt.Sprintf("+ 5 more (quit, then run agent-archive stats --days %d %s)", days, tc.command)
+				if !strings.Contains(flat, want) {
+					t.Fatalf("the interactive screen lacks %q:\n%s", want, strings.Join(run.frames[len(run.frames)-1], "\n"))
+				}
+				var doc statsDocument
+				args := append([]string{"--no-cache", "--days", strconv.Itoa(days)}, strings.Fields(tc.command)...)
+				if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, args...)), &doc); err != nil {
+					t.Fatal(err)
+				}
+				if got := tc.rows(doc); got != projects {
+					t.Errorf("stats %v lists %d rows, want all %d", args, got, projects)
+				}
+			})
+		}
+	}
+	// Filters the screen was started with are still to be given.
+	run := runScreen(t, screenOptions{width: 100, height: 40, inputs: &inputs, filters: statsFilters{Harness: "claude"}}, "p", "\x1b[F", "q")
+	flat := strings.Join(strings.Fields(ansiEscape.ReplaceAllString(strings.Join(run.frames[len(run.frames)-1], " "), "")), " ")
+	if want := "+ 5 more (quit, then run agent-archive stats --days 30 --json --by project, with the same filters)"; !strings.Contains(flat, want) {
+		t.Errorf("the interactive screen with a filter lacks %q:\n%s", want, flat)
 	}
 }
 
@@ -158,10 +234,11 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 		rows = append(rows, stats.Group{Key: fmt.Sprintf("g%d", i), Sessions: 1})
 	}
 	type mode struct {
-		color bool
-		ascii bool
+		color       bool
+		ascii       bool
+		interactive bool
 	}
-	modes := []mode{{false, false}, {true, false}, {false, true}}
+	modes := []mode{{false, false, false}, {true, false, false}, {false, true, false}, {false, false, true}, {true, true, true}}
 	// Every width up to where the layouts change, then a spread to 250.
 	var widths []int
 	for w := statsMinWidth; w <= 100; w++ {
@@ -187,11 +264,24 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 		}
 		for _, width := range widths {
 			for _, mode := range modes {
-				out := stripANSI(strings.Join(pageLines(tc.page, s, width, mode.color, mode.ascii), "\n"))
+				// The interactive screen has no --by tables.
+				if mode.interactive && tc.by != stats.GroupNone {
+					continue
+				}
+				glyphs := unicodeGlyphs
+				if mode.ascii {
+					glyphs = asciiGlyphs
+				}
+				view := statsView{style: textStyle{color: mode.color}, width: width, glyphs: glyphs, interactive: mode.interactive}
+				out := stripANSI(strings.Join(renderPage(tc.page, s, view), "\n"))
 				checkTerminalSafe(t, fmt.Sprintf("%s %d", tc.name, width), out, width)
 				// Wrapping may break the command over lines, never lose it.
-				if flat := strings.Join(strings.Fields(out), " "); !strings.Contains(flat, "(all in "+tc.want+")") {
-					t.Fatalf("%s at %d columns lost the command %q:\n%s", tc.name, width, tc.want, out)
+				want := "(all in " + tc.want + ")"
+				if mode.interactive {
+					want = fmt.Sprintf("(quit, then run agent-archive stats --days %d %s)", s.Window.Days, tc.want)
+				}
+				if flat := strings.Join(strings.Fields(out), " "); !strings.Contains(flat, want) {
+					t.Fatalf("%s at %d columns (%+v) lost the command %q:\n%s", tc.name, width, mode, want, out)
 				}
 			}
 		}

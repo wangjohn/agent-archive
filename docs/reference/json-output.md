@@ -242,13 +242,14 @@ at the top level. Read the rules below before using a number:
   top five are the five that cost the most, not the five with the most tokens
   (see below). Every project is in `groups.rows` with `--by project`, which
   is never cut; the terminal's "all in --json --by project" points at it.
-  There is no way to list more than five skills or MCP servers. `models`
-  lists every model family (the terminal's "all in --json").
-  `display_skills` is `skills` for showing to a person: a plugin prefix is
-  stripped from each name (`anthropic-skills:docs` is `docs`; only the first
-  `:` counts) and skills that then share a name are one row, counted in the
-  sessions that used any of them (a session that used both counts once);
-  `total_display_skills` is its length before the cut. `skills` keeps the names as recorded.
+  The JSON has no more than five skills or MCP servers (the terminal's detail
+  screen lists up to 40). `models` lists every model family (the terminal's
+  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
+  only the first `:` counts) and skills that then share a name are one row,
+  counted in the sessions that used any of them (a session that used both
+  counts once); `total_display_skills` is its length before the cut. `skills`
+  keeps the names as recorded.
 - **Project order.** `projects` (and `groups.rows` with `--by project`) are
   ordered by `cost.usd`, the highest first, and only then cut to the top
   five, so a project left out never has a higher `usd` than one listed. A
