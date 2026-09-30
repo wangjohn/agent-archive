@@ -390,6 +390,11 @@ follow [Semantic Versioning](https://semver.org/).
   Writers now sync before taking the lock and hold it only to reread, check
   and rename the file, and setup waits up to ten seconds for it, since a
   rename alone can stall for over a second while other programs sync.
+- The `handoff` picker no longer offers archived subagent sessions. They
+  filled the first screen under their orchestrator (one had 45 of them) and
+  were counted in "Showing 50 of 659", though only top-level sessions can be
+  handed off. The picker now lists top-level sessions only and counts only
+  those; `list` and `show` are unchanged.
 - A hook that fires while a retention sweep is expiring its session no
   longer fails with "another collector or setup is running" on a busy Mac,
   leaving the session to expire without that turn. Retention wrote the

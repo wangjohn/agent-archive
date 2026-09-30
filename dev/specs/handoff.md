@@ -574,8 +574,9 @@ which hands off *that* session and opens Codex in a new terminal tab.
 ### Behavior
 
 1. **Selection (A).** The handoff picker merges this machine's top-level
-   registrations with archived rows, joined on `ArchiveSessionID`; a local
-   row wins and is marked "not yet uploaded" when the archive lacks it.
+   registrations with top-level archived rows, joined on
+   `ArchiveSessionID`; a local row wins and is marked "not yet uploaded"
+   when the archive lacks it.
    Sessions with no prompt yet are hidden. When the archive cannot be
    read (not set up for storage, offline), the picker shows local rows
    and says why archived ones are missing. With `--to` and no selector:

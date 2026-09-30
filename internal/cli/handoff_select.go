@@ -177,13 +177,14 @@ type handoffPicker struct {
 // copy, read for all registrations at once (collector.LastActivities opens
 // the Cursor database once). Only a registration the archive lacks has its
 // transcript read, and only while rows are still needed, to title it and pass
-// over one with no prompt yet. total counts the sessions that can be offered,
-// or is -1 when some past the limit were not read to tell; truncated is set
-// when any are left out.
+// over one with no prompt yet. Subagents, archived or registered, are never
+// offered. total counts the sessions that can be offered, or is -1 when some
+// past the limit were not read to tell; truncated is set when any are left
+// out.
 func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) (rows []handoffPickerRow, total int, truncated bool) {
 	all := make([]handoffPickerRow, 0, len(archived)+len(regs))
 	index := map[string]int{}
-	for _, m := range archived {
+	for _, m := range topLevelSessions(archived) {
 		index[m.SessionID] = len(all)
 		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
