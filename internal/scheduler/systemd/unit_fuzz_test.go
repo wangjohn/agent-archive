@@ -25,7 +25,7 @@ func FuzzRenderServiceRoundTrip(f *testing.F) {
 		executable, dataHome = "/"+executable, "/"+dataHome
 		unit, err := renderService(executable, dataHome, map[string]string{name: value})
 		if err != nil {
-			if validName(name) && name != "AGENT_ARCHIVE_HOME" && validText(executable) && validText(dataHome) && validText(value) && !strings.ContainsAny(executable, `$"'\`) {
+			if validName(name) && name != "AGENT_ARCHIVE_HOME" && validText(executable) && validText(dataHome) && validText(value) && !strings.ContainsAny(executable, `$"'\*?[`) {
 				t.Fatalf("renderService refused %q, %q, %q=%q: %v", executable, dataHome, name, value, err)
 			}
 			return
@@ -58,6 +58,7 @@ func FuzzReadService(f *testing.F) {
 	f.Add([]byte("[Service]\nExecStart=/bin/x \\\n"))
 	f.Add([]byte("[Service]\nEnvironment=\"A=\\\n"))
 	f.Add([]byte("[Service]\r\nExecStart=\"\"\r\n"))
+	f.Add([]byte("[Service]\nExecStart=\\\n  # comment \\\n; comment\n\n/bin/x\n"))
 	f.Add([]byte(""))
 	f.Fuzz(func(t *testing.T, unit []byte) {
 		program, environment, err := readService(unit)

@@ -28,13 +28,28 @@ import (
 //     escapes, so a word with anything but the plainest characters is
 //     written in double quotes, with `\` and `"` escaped. A program's path
 //     is the exception: systemd refuses one with a quote or a backslash in
-//     it, however it is written ("Executable name contains special
-//     characters", load-fragment.c), so Plan refuses it too.
+//     it, however it is written, and from v261 one with a `*`, `?` or `[`
+//     too ("Executable name contains special characters", "Executable path
+//     contains special characters" from v261; string_is_safe in
+//     load-fragment.c), so Plan refuses all of them: a unit must keep
+//     working when the system's systemd is upgraded.
 //
 // StandardOutput=append: takes the rest of the line as a path, with only its
 // specifiers expanded, so a path is written as it is with `%` doubled.
 // Control characters and text that is not valid UTF-8 are refused (a unit
 // file is UTF-8, one setting to a line); a collector has no use for them.
+
+// unsafeInProgram are the characters systemd refuses in a program's path
+// (string_is_safe: the quotes and the backslash, and from v261 the glob
+// characters; control characters are refused with the rest of the text).
+const unsafeInProgram = `"'\*?[`
+
+// reinstall is what to do about a program path systemd cannot run. The path
+// is where agent-archive is installed, which install.sh makes ~/.local/bin
+// when /usr/local/bin is not writable, so a home whose name has such a
+// character in it (/home/o'brien) needs another directory; the data
+// directory can stay where it is.
+const reinstall = "install agent-archive in a directory whose path has no such character (install.sh installs into AGENT_ARCHIVE_INSTALL_DIR when it is set, /usr/local/bin for example) and run setup from that copy"
 
 // renderService is the collector's service unit: a oneshot that runs the
 // executable with `_collect`, with AGENT_ARCHIVE_HOME and environment, and
@@ -46,10 +61,10 @@ func renderService(executable, dataHome string, environment map[string]string) (
 		return nil, errors.New("a systemd unit's paths must be absolute")
 	}
 	if strings.Contains(executable, "$") {
-		return nil, fmt.Errorf("a systemd unit cannot run %q: a `$` in the program's path is expanded in ways that cannot be relied on", executable)
+		return nil, fmt.Errorf("a systemd unit cannot run %q: a `$` in the program's path is expanded in ways that cannot be relied on; %s", executable, reinstall)
 	}
-	if strings.ContainsAny(executable, `"'\`) {
-		return nil, fmt.Errorf("a systemd unit cannot run %q: systemd refuses a program whose path has a quote or a backslash in it", executable)
+	if strings.ContainsAny(executable, unsafeInProgram) {
+		return nil, fmt.Errorf("a systemd unit cannot run %q: systemd refuses a program whose path has a quote, a backslash, `*`, `?` or `[` in it; %s", executable, reinstall)
 	}
 	texts := []string{executable, dataHome}
 	var env strings.Builder
@@ -226,7 +241,11 @@ func readService(data []byte) (program string, environment map[string]string, er
 // logicalLines are the lines of a unit file with each line that ends in an
 // unescaped backslash joined to the next by a space, as systemd reads them.
 // A comment line is dropped before lines are joined, so a comment between a
-// line and its continuation is skipped, not joined (systemd.syntax(7)).
+// line and its continuation is skipped, not joined (systemd.syntax(7)), and
+// an empty line ends a continued one. That is config_parse in conf-parser.c
+// from v243. Before it, v240 to v242 skipped a blank line as if it were a
+// comment, so it did not end a continued line, and v240 took a comment only
+// in the first column; that differs only for a unit continued past one.
 func logicalLines(text string) []string {
 	var lines []string
 	var pending string
