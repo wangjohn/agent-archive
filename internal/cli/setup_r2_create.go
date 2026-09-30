@@ -121,7 +121,10 @@ type r2Handoff struct{ c *r2Creator }
 
 // r2Created is what guided creation left in the person's Cloudflare account,
 // for the storage failure text: names only, nothing secret.
-type r2Created struct{ bucket, tokenName string }
+type r2Created struct {
+	bucket    string
+	tokenName string
+}
 
 // createR2Bucket runs guided creation and returns the storage settings and
 // the derived key for setup to stage and check, as promptStorage does for a
@@ -184,7 +187,7 @@ func (p *prompter) rollbackGuidedCreation(err error) error {
 	}
 	p.guided = nil
 	terminal.Println(p.out, "Setup couldn't store the new key, so it is revoking the key's token.")
-	h.c.revoke(h.c.token, h.c.tokenName)
+	h.c.revoke(context.Background(), h.c.token, h.c.tokenName)
 	h.c.reportBucketLeftBehind()
 	h.c.api.Discard()
 	return err
@@ -490,7 +493,7 @@ func (c *r2Creator) attemptWith(ctx context.Context) (credentials.R2Credentials,
 		return credentials.R2Credentials{}, err
 	}
 	if err = c.checkKey(ctx, key); err != nil {
-		c.revoke(token, name)
+		c.revoke(ctx, token, name)
 		return credentials.R2Credentials{}, err
 	}
 	c.token, c.tokenName = token, name
@@ -606,7 +609,7 @@ func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name s
 		}
 		if token.ID != "" {
 			// The token exists but its value didn't come back.
-			c.revoke(token, name)
+			c.revoke(ctx, token, name)
 		}
 		return token, name, key, err
 	}
@@ -670,9 +673,9 @@ func (c *r2Creator) checkKey(ctx context.Context, key credentials.R2Credentials)
 // credential is left behind, in a request of its own (a canceled setup
 // still revokes). A token that is already gone counts as revoked. If
 // Cloudflare refuses, the person is told which token to remove.
-func (c *r2Creator) revoke(token cloudflare.Token, name string) {
+func (c *r2Creator) revoke(ctx context.Context, token cloudflare.Token, name string) {
 	p := c.p
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	err := c.api.DeleteToken(ctx, c.account, token.ID)
 	var apiErr *cloudflare.Error
