@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/stats"
 	"github.com/wangjohn/agent-archive/internal/statsfmt"
@@ -29,42 +30,63 @@ type bucket struct {
 	first    string
 	last     string
 	sessions int
-	// tokens is the busiest day's tokens of the run, and known whether any day
-	// of it reports tokens.
-	tokens  int64
-	known   bool
-	hasPeak bool
+	// spend is the busiest day's estimated cost of the run and cost that day's
+	// cost with its qualifiers; known is whether any day of the run has a cost.
+	spend float64
+	cost  stats.Cost
+	// tokens is the busiest day's tokens of the run, and tokensKnown whether
+	// any day of it reports tokens.
+	tokens      int64
+	tokensKnown bool
+	hasPeak     bool
 }
 
-// daily is the tokens-by-day chart, or a sentence saying why there is none.
+// spendOf is a day's estimated cost when it has one a chart can draw: a number
+// that is not negative. The engine never returns another, but the page draws
+// whatever it is given.
+func spendOf(c stats.Cost) (float64, bool) {
+	if c.USD == nil || !finite(*c.USD) || *c.USD < 0 {
+		return 0, false
+	}
+	return *c.USD, true
+}
+
+// daily is the spend-by-day chart, or a sentence saying why there is none.
 func (b *builder) daily() (*dailyChart, string) {
 	s := b.s
 	if len(s.Daily) == 0 {
 		return nil, ""
 	}
 	if s.Coverage.SessionsWithTokens == 0 {
-		return nil, "No session in this window reports token counts, so there is no token chart."
+		return nil, "No session in this window reports token counts, so there is no spend to chart."
+	}
+	if s.PeakSpend == nil || !finite(s.PeakSpend.USD) || s.PeakSpend.USD <= 0 {
+		return nil, "No day in this window has an estimated cost above zero, so there is no spend chart."
 	}
 	per := (len(s.Daily) + maxBars - 1) / maxBars
 	var buckets []bucket
 	for i := 0; i < len(s.Daily); i += per {
 		run := s.Daily[i:min(i+per, len(s.Daily))]
 		bk := bucket{first: run[0].Date, last: run[len(run)-1].Date}
+		best := -1.0
 		for _, d := range run {
 			bk.sessions += d.Sessions
+			if spend, ok := spendOf(d.Cost); ok && spend > best {
+				best, bk.spend, bk.cost = spend, spend, d.Cost
+			}
 			if d.Tokens != nil {
-				bk.known = true
+				bk.tokensKnown = true
 				bk.tokens = max(bk.tokens, *d.Tokens)
 			}
-			if s.Peak != nil && d.Date == s.Peak.Date {
+			if d.Date == s.PeakSpend.Date {
 				bk.hasPeak = true
 			}
 		}
 		buckets = append(buckets, bk)
 	}
-	var top int64
+	var top float64
 	for _, bk := range buckets {
-		top = max(top, bk.tokens)
+		top = math.Max(top, bk.spend)
 	}
 	n := len(buckets)
 	slot := 100 / float64(n)
@@ -72,6 +94,7 @@ func (b *builder) daily() (*dailyChart, string) {
 		Height: chartHeight, Baseline: chartBaseline, PlotTop: chartPlotTop, AxisY: chartAxisY,
 		MaxWidth: max(n*slotPx, minChartPx),
 	}
+	peak := b.peakText()
 	plotH := float64(chartBaseline - chartPlotTop)
 	for i, bk := range buckets {
 		barTop := float64(chartBaseline)
@@ -81,13 +104,13 @@ func (b *builder) daily() (*dailyChart, string) {
 			Title: b.bucketTitle(bk, per),
 		}
 		switch {
-		case !bk.known && bk.sessions > 0:
-			// Sessions that report no tokens: a mark of its own, not a zero.
+		case bk.sessions > 0 && !bk.known():
+			// Sessions with no cost: a mark of its own, not a zero.
 			bar.Class, bar.Y, bar.H = "unknown", num(chartBaseline-5), "5"
-		case bk.tokens == 0:
+		case bk.spend <= 0 || top <= 0:
 			bar.Class, bar.Y, bar.H = "zero", num(chartBaseline-1), "1"
 		default:
-			h := math.Max(plotH*float64(bk.tokens)/float64(top), 2)
+			h := math.Max(plotH*bk.spend/top, 2)
 			barTop = chartBaseline - h
 			bar.Class, bar.Y, bar.H = "day", num(barTop), num(h)
 			if bk.hasPeak {
@@ -95,23 +118,39 @@ func (b *builder) daily() (*dailyChart, string) {
 			}
 		}
 		c.Bars = append(c.Bars, bar)
-		if bk.hasPeak && s.Peak != nil {
-			c.PeakLabel = peakLabel(i, slot, barTop, "Peak "+statsfmt.TokenCount(s.Peak.Tokens)+" · "+dayLabel(s.Peak.Date, s.Window.Days))
-			c.Summary = fmt.Sprintf("Tokens by day, %s to %s. Peak %s tokens on %s.", dayLabel(s.Window.FirstDay, s.Window.Days),
-				dayLabel(s.Window.LastDay, s.Window.Days), statsfmt.TokenCount(s.Peak.Tokens), dayLabel(s.Peak.Date, s.Window.Days))
+		if bk.hasPeak {
+			c.PeakLabel = peakLabel(i, slot, barTop, "Peak "+peak+" · "+dayLabel(s.PeakSpend.Date, s.Window.Days))
 		}
-		c.Rows = append(c.Rows, dayRow{Label: bucketLabel(bk, s.Window.Days), Sessions: statsfmt.CommaInt(int64(bk.sessions)), Tokens: bucketTokens(bk)})
+		c.Rows = append(c.Rows, b.dayRow(bk))
 	}
-	if c.Summary == "" {
-		c.Summary = fmt.Sprintf("Tokens by day, %s to %s.", dayLabel(s.Window.FirstDay, s.Window.Days), dayLabel(s.Window.LastDay, s.Window.Days))
-	}
+	c.Summary = fmt.Sprintf("Spend by day, %s to %s. Peak %s on %s.", dayLabel(s.Window.FirstDay, s.Window.Days),
+		dayLabel(s.Window.LastDay, s.Window.Days), peak, dayLabel(s.PeakSpend.Date, s.Window.Days))
 	c.XLabels = xLabels(buckets, slot, s.Window.Days)
 	c.Caption = "Each bar is one day."
+	c.SpendHead, c.TokensHead = "Spend", "Tokens"
 	if per > 1 {
 		c.Caption = fmt.Sprintf("Each bar is %d days and shows its busiest day.", per)
+		c.SpendHead, c.TokensHead = "Busiest day's spend", "Busiest day's tokens"
 	}
-	c.Caption += " A short mark means sessions that record no tokens."
+	c.Caption += " Estimated at list price. A short grey mark means sessions that could not be priced."
 	return c, ""
+}
+
+// known is whether the run has a day with an estimated cost.
+func (bk bucket) known() bool { return bk.cost.USD != nil }
+
+// peakText is the peak day's estimated cost as shown, with the qualifiers of
+// that day's cost (a ~ for an approximate one, a + for a partial one).
+func (b *builder) peakText() string {
+	s := b.s
+	var approximate, partial bool
+	for _, d := range s.Daily {
+		if d.Date == s.PeakSpend.Date {
+			approximate, partial = d.Cost.Approximate, d.Cost.Partial
+			break
+		}
+	}
+	return b.cost.costText(s.Prices.Currency, &s.PeakSpend.USD, approximate, partial, false)
 }
 
 func bucketLabel(bk bucket, windowDays int) string {
@@ -121,8 +160,21 @@ func bucketLabel(bk bucket, windowDays int) string {
 	return dayLabel(bk.first, windowDays) + " to " + dayLabel(bk.last, windowDays)
 }
 
+// spendText is a run's spend as shown: a plain 0 when it has no sessions (as its
+// sessions and tokens are), unknown, never zero, when it has sessions but no
+// cost.
+func (b *builder) spendText(bk bucket) string {
+	switch {
+	case bk.sessions == 0:
+		return "0"
+	case bk.known():
+		return b.cost.costText(b.s.Prices.Currency, bk.cost.USD, bk.cost.Approximate, bk.cost.Partial, false)
+	}
+	return "n/a"
+}
+
 func bucketTokens(bk bucket) string {
-	if !bk.known {
+	if !bk.tokensKnown {
 		if bk.sessions == 0 {
 			return "0"
 		}
@@ -131,19 +183,26 @@ func bucketTokens(bk bucket) string {
 	return statsfmt.TokenCount(bk.tokens)
 }
 
-// bucketTitle is the tooltip of a bar: the day (or run of days), its tokens and
+func (b *builder) dayRow(bk bucket) dayRow {
+	return dayRow{
+		Label: bucketLabel(bk, b.s.Window.Days), Sessions: statsfmt.CommaInt(int64(bk.sessions)),
+		Spend: b.spendText(bk), Tokens: bucketTokens(bk),
+	}
+}
+
+// bucketTitle is the tooltip of a bar: the day (or run of days), its spend and
 // its sessions.
 func (b *builder) bucketTitle(bk bucket, per int) string {
 	label := bucketLabel(bk, b.s.Window.Days)
 	switch {
 	case bk.sessions == 0:
 		return label + " · no sessions"
-	case !bk.known:
-		return label + " · " + plural(bk.sessions, "session") + " · token count unknown"
+	case !bk.known():
+		return label + " · " + plural(bk.sessions, "session") + " · cost unknown"
 	case per > 1:
-		return label + " · busiest day " + statsfmt.TokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
+		return label + " · busiest day " + b.spendText(bk) + " · " + plural(bk.sessions, "session")
 	}
-	return label + " · " + statsfmt.TokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
+	return label + " · " + b.spendText(bk) + " · " + plural(bk.sessions, "session")
 }
 
 // peakLabel places the peak's direct label above its bar, kept inside the
@@ -189,6 +248,50 @@ func xLabels(buckets []bucket, slot float64, windowDays int) []chartLabel {
 		}
 	}
 	return labels
+}
+
+// harnessClass is the color class of an agent, by the harness the archive names
+// it with. An agent the page has no color for is neutral; the class is never
+// made from the archive's text, only chosen from this list.
+func harnessClass(harness string) string {
+	if class, ok := harnessClasses[harness]; ok {
+		return class
+	}
+	return "other"
+}
+
+// harnessClasses are the agents that have a color of their own, by harness.
+var harnessClasses = map[string]string{"claude": "claude", "cursor": "cursor", "codex": "codex"}
+
+// agentBar is the agents' share of sessions as one stacked bar: each agent's
+// segment as wide as its share, the legend in the same order naming each with
+// its share, so the colors are never the only way to tell them apart.
+func (b *builder) agentBar() *agentBar {
+	agents := b.s.Agents
+	if len(agents) == 0 {
+		return nil
+	}
+	bar := &agentBar{}
+	used := 0.0
+	var spoken []string
+	for _, a := range agents {
+		share := 0.0
+		if finite(a.SessionShare) {
+			share = math.Max(0, math.Min(a.SessionShare, 1-used))
+		}
+		label := clean(a.Label)
+		class := "agent-" + harnessClass(a.Harness)
+		text := statsfmt.Percent(a.SessionShare)
+		bar.Segments = append(bar.Segments, agentSegment{
+			Class: class, X: pct(used), W: pct(share),
+			Title: label + " · " + plural(a.Sessions, "session") + " · " + text,
+		})
+		bar.Legend = append(bar.Legend, agentLegend{Class: class, Label: label, Share: text})
+		spoken = append(spoken, label+" "+text)
+		used += share
+	}
+	bar.Summary = "Sessions by agent: " + strings.Join(spoken, ", ") + "."
+	return bar
 }
 
 // Donut geometry, in the SVG's own units.
@@ -240,7 +343,7 @@ func arcGeometry(share, start, circ float64) arc {
 	}
 }
 
-// tokens is the composition donut with its legend and the rows that appear
+// tokens is the composition donut with its legend and the sentences that appear
 // only when there is something to say.
 func (b *builder) tokens() *tokenSection {
 	c := b.s.Composition
@@ -268,32 +371,7 @@ func (b *builder) tokens() *tokenSection {
 		t.Reasoning = "Output includes " + statsfmt.TokenCount(*c.ReasoningOfOutput) + " reasoning tokens."
 	}
 	if sub := b.s.Subagents; sub != nil {
-		t.Subagents = &subagentRow{
-			Text: fmt.Sprintf("%s of tokens (%s) in %s", statsfmt.Percent(sub.Share), statsfmt.TokenCount(sub.Tokens), plural(sub.Sessions, "session")),
-			Pct:  pct(sub.Share),
-		}
-	}
-	for _, sk := range b.s.Skills {
-		t.Skills = append(t.Skills, nameCount{Name: b.skills.name(sk.Name), Count: plural(sk.Sessions, "session")})
-	}
-	if m := b.s.MCP; m != nil && len(m.Servers) > 0 {
-		for _, srv := range m.Servers {
-			t.MCP = append(t.MCP, nameCount{Name: b.servers.name(srv.Name), Count: callCount(srv.Calls)})
-		}
-	}
-	switch {
-	case len(b.s.Skills) > 0 && b.s.MCP != nil:
-		t.Notes = append(t.Notes, "Skills count sessions that used each one; MCP counts calls.")
-	case len(b.s.Skills) > 0:
-		t.Notes = append(t.Notes, "Skills count sessions that used each one.")
-	case b.s.MCP != nil:
-		t.Notes = append(t.Notes, "MCP counts calls.")
-	}
-	if b.s.MCP != nil {
-		t.Notes = append(t.Notes, "MCP: "+plain(b.s.MCP.Scope))
-	}
-	if len(t.Skills)+len(t.MCP) > 0 && !b.opts.IncludeNames {
-		t.Notes = append(t.Notes, "Skill and MCP server names are replaced by letters in this file.")
+		t.Subagents = fmt.Sprintf("Subagents used %s of tokens (%s) in %s.", statsfmt.Percent(sub.Share), statsfmt.TokenCount(sub.Tokens), plural(sub.Sessions, "run"))
 	}
 	return t
 }

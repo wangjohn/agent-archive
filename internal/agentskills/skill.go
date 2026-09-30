@@ -45,6 +45,17 @@ func (s Skill) Title() string {
 	return "the " + s.Name + " skill"
 }
 
+// TitleFor is Title of the skill called name; a name that is not in the
+// Registry (a file an earlier release wrote) is titled as a slash skill.
+func TitleFor(name string) string {
+	for _, s := range Registry {
+		if s.Name == name {
+			return s.Title()
+		}
+	}
+	return "/" + name
+}
+
 // Label is how status names the skill called name, in a row or a warning
 // ("The /handoff skill at ... is out of date"): "/handoff", or, for a skill
 // the person does not run by name, "agent-archive". A name that is not in

@@ -229,14 +229,14 @@ func TestStatusReportsAnOutdatedSkillUntilSetupRefreshesIt(t *testing.T) {
 	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
-	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup to refresh it.") {
+	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup --refresh to refresh it.") {
 		t.Fatalf("status does not warn:\n%s", &out)
 	}
 	out.Reset()
 	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
-	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md (out of date; run agent-archive setup)\n") {
+	if !strings.Contains(out.String(), "  /handoff:      ~/.claude/skills/handoff/SKILL.md (out of date; run agent-archive setup --refresh)\n") {
 		t.Fatalf("status --verbose does not mark the file:\n%s", &out)
 	}
 	old, _, err := config.Load(home)

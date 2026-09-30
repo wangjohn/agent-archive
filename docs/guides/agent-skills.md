@@ -95,7 +95,9 @@ line described for [`/handoff`](handoff.md#from-inside-an-agent-handoff): setup
 replaces and uninstall removes only a file with it, delete the line to keep an
 edited copy, and a file already at that path without it is left alone.
 `agent-archive status --verbose` lists the installed files, and `status` warns
-when one was written by an earlier release; `agent-archive setup` refreshes it.
+when one was written by an earlier release. Upgrading with the installer
+refreshes both skills for you ([install](../getting-started/install.md)); so does
+`agent-archive setup --refresh`, which changes nothing else.
 
 Agents read their skills when a session starts, so a session that is already
 open does not see a new or refreshed skill until you start another.

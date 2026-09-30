@@ -175,8 +175,11 @@ stays the same length however many projects you include.
   directory of this installation's own, or uninstall the other one.
 - **agent-archive can't run from where setup installed it** means the hooks
   or background collector run an `agent-archive` executable that has since
-  been moved, deleted, or made non-executable. Rerun `agent-archive setup`
-  from the binary's new location.
+  been moved, deleted, or made non-executable. Run
+  `agent-archive setup --refresh` from the binary's new location: it points
+  the hooks, the collector's plist, and the skills at it, asks nothing, and
+  changes no other setting. (A hooks row that says `hooks missing` is
+  repaired the same way.)
 - **The background collector can't load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
   LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
@@ -271,7 +274,8 @@ Code, Codex, or Cursor pull in a past session when you ask.
 2. **Check that it is installed.** `agent-archive status --verbose` says when
    agent skills are turned off (`agent-archive setup --skills` turns them
    on), lists the skill files setup wrote, and warns about one written by an
-   earlier release (run `agent-archive setup` to refresh it). If setup said `Left ... as it
+   earlier release (run `agent-archive setup --refresh`; the installer does it
+   when you upgrade). If setup said `Left ... as it
    is`, a file that is not setup's is at that path; move it aside and run
    setup again.
 3. **Ask for it plainly**, naming what you want: "pull in my Codex session

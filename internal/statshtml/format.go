@@ -109,26 +109,25 @@ func (f *costFlags) costText(currency string, usd *float64, approximate, partial
 
 // deltaText is a measure's change against the previous period as a glyph and
 // a percentage ("▲ 18%"), and the same in words for screen readers ("up 18
-// percent"). "new" stands for a previous period without any, and both are
-// empty when either side is unknown.
-func deltaText(m stats.Measure) (glyph, spoken string) {
-	if m.Value == nil || m.Previous == nil || !finite(*m.Value) || !finite(*m.Previous) {
-		return "", ""
+// percent"), with its direction ("up", "down" or "flat"). All three are empty
+// when there is no previous period to compare with (nothing in it, or a side
+// that is unknown): a change against nothing is not a change, so the page says
+// nothing rather than "new".
+func deltaText(m stats.Measure) (glyph, spoken, dir string) {
+	if m.Value == nil || m.Previous == nil || !finite(*m.Value) || !finite(*m.Previous) || *m.Previous <= 0 {
+		return "", "", ""
 	}
 	if m.ChangePct == nil || !finite(*m.ChangePct) {
-		if *m.Previous == 0 && *m.Value > 0 {
-			return "new", "new, nothing in the previous period"
-		}
-		return "", ""
+		return "", "", ""
 	}
 	p := math.Round(*m.ChangePct)
 	switch {
 	case p > 0:
-		return "▲ " + statsfmt.CommaInt(int64(p)) + "%", "up " + statsfmt.CommaInt(int64(p)) + " percent"
+		return "▲ " + statsfmt.CommaInt(int64(p)) + "%", "up " + statsfmt.CommaInt(int64(p)) + " percent", "up"
 	case p < 0:
-		return "▼ " + statsfmt.CommaInt(int64(-p)) + "%", "down " + statsfmt.CommaInt(int64(-p)) + " percent"
+		return "▼ " + statsfmt.CommaInt(int64(-p)) + "%", "down " + statsfmt.CommaInt(int64(-p)) + " percent", "down"
 	}
-	return "no change", "no change"
+	return "no change", "no change", "flat"
 }
 
 func measureCount(m stats.Measure) string {
@@ -152,17 +151,23 @@ func ordinalHeaviest(rank int) string {
 	return statsfmt.Ordinal(rank) + "-heaviest"
 }
 
-// driversText says what likely made the costliest session costly.
-func driversText(c *stats.CostliestSession) string {
+// driversText says what likely made the costliest session costly: the drivers
+// the engine named, in words, with the subagents' number and the cache-hit
+// rate where they are known.
+func driversText(drivers []string, subagents int, cacheHitRate *float64) string {
 	var parts []string
-	if slices.Contains(c.Drivers, stats.DriverLongContext) {
+	if slices.Contains(drivers, stats.DriverLongContext) {
 		parts = append(parts, "long context")
 	}
-	if slices.Contains(c.Drivers, stats.DriverSubagents) {
-		parts = append(parts, plural(c.Subagents, "subagent"))
+	if slices.Contains(drivers, stats.DriverSubagents) {
+		parts = append(parts, plural(subagents, "subagent"))
 	}
-	if slices.Contains(c.Drivers, stats.DriverLowCacheHit) && c.CacheHitRate != nil {
-		parts = append(parts, statsfmt.Percent(*c.CacheHitRate)+" cache hit")
+	if slices.Contains(drivers, stats.DriverLowCacheHit) {
+		if cacheHitRate != nil {
+			parts = append(parts, statsfmt.Percent(*cacheHitRate)+" cache hit")
+		} else {
+			parts = append(parts, "low cache hit")
+		}
 	}
 	return strings.Join(parts, ", ")
 }

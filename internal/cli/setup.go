@@ -107,9 +107,16 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
+	refresh := fs.Bool("refresh", false, "bring hooks, the collector's plist, and skills up to date, and nothing else")
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
+	}
+	if *refresh {
+		if other := refreshCompanions(fs); other != "" {
+			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
+		}
+		return runSetupRefresh(stdout, stderr, env, opts.verbose)
 	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
@@ -752,7 +759,7 @@ func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskill
 				installed = append(installed, displayPath(f.Path, userHome))
 				continue
 			}
-			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so %s is not installed there.\n", displayPath(f.Path, userHome), skill.Title())
+			terminal.Print(p.out, leftSkillLine(skill.Title(), f.Path, userHome))
 		}
 		if len(installed) > 0 {
 			what := skill.Title()
