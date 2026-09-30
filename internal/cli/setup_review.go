@@ -334,9 +334,13 @@ func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, ins
 // removes.
 const privacyDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md"
 
-// printReviewNotes prints the caveat that always applies, last and dim.
+// printReviewNotes prints the caveat that always applies, last and dim,
+// after the hint on changing what setup chose, when there is one.
 func printReviewNotes(p *prompter) {
 	terminal.Println(p.out, "")
+	if p.reviewHint != "" {
+		terminal.Println(p.out, p.style.dim(p.style.hang("  ", p.reviewHint)))
+	}
 	terminal.Println(p.out, p.style.dim(p.style.hang("  ", "Filtering is best effort; sensitive text may remain in archived sessions.")))
 	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your Mac:")+" "+p.style.cmd(privacyDocURL)))
 }

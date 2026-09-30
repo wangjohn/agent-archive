@@ -8,7 +8,7 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 \e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
 
-On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
@@ -43,6 +43,7 @@ Checking your storage connection…
     Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      \e[2m~/.claude/settings.json\e[0m
 
+\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
   \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 

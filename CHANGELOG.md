@@ -68,8 +68,11 @@ follow [Semantic Versioning](https://semver.org/).
 - A first `setup` run inside a Git project, with apps found, asks one
   question for the apps and that project ("Archive Codex and Claude Code
   sessions in ~/src/app?") instead of two; the review still lets you add
-  projects, drop apps, or change how long sessions are kept. Answer no to
-  choose them one at a time as before.
+  projects, drop apps, or change how long sessions are kept, and setup says
+  how many other projects your apps have sessions in. Answer no to choose
+  them one at a time as before. Setup no longer pre-selects a repository that
+  is your home folder, holds it, or is in the temporary folder: it asks for
+  the projects instead.
 - `setup` offers to import past sessions after it has said how to check that
   capture works, not before, and `setup` ends with the command for another
   Mac after that offer. `setup --yes` is unchanged.

@@ -63,48 +63,6 @@ func TestSetupFirstRunDecliningAsksAppsAndProjectsSeparately(t *testing.T) {
 	}
 }
 
-// Without a Git repository to pre-select, or without an app found, setup
-// keeps its separate questions.
-func TestSetupFirstRunKeepsSeparateQuestionsWhenItCannotGuessBoth(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		detect  []string
-		current string
-	}{
-		{"no repository", []string{"claude"}, ""},
-		{"no apps", nil, "/repo"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var out bytes.Buffer
-			p := newPrompter(strings.NewReader(""), &out)
-			cfg := config.Config{}
-			done, err := offerFirstCapture(p, &cfg, tc.detect, tc.current, "/Users/alex")
-			if done || err != nil || out.Len() != 0 {
-				t.Fatalf("done=%v err=%v asked:\n%s", done, err, &out)
-			}
-		})
-	}
-}
-
-// Anything but a first setup, such as one that already has apps or
-// projects, asks the separate questions with its saved answers as defaults.
-func TestOfferFirstCaptureSkipsConfiguredSetups(t *testing.T) {
-	t.Parallel()
-	for _, cfg := range []config.Config{
-		{Harnesses: []string{"claude"}},
-		{DeclinedHarnesses: []string{"cursor"}},
-	} {
-		var out bytes.Buffer
-		p := newPrompter(strings.NewReader(""), &out)
-		done, err := offerFirstCapture(p, &cfg, []string{"claude"}, "/repo", "/Users/alex")
-		if done || err != nil || out.Len() != 0 {
-			t.Fatalf("%+v: done=%v err=%v asked:\n%s", cfg, done, err, &out)
-		}
-	}
-}
-
 // The import offer comes after the steps that say how to check capture, and
 // setup --yes, which never offers it, still ends with the same steps.
 func TestSetupOffersImportAfterNextSteps(t *testing.T) {

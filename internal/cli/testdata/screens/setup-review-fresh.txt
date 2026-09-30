@@ -9,7 +9,7 @@ Step 1 of 3 · Choose what to capture
 
 Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n] y
 
-On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 Step 2 of 3 · Connect storage
 
@@ -44,6 +44,7 @@ Step 3 of 3 · Ready to start
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
   ! Codex needs one step    approve the hooks with /hooks after setup
 
+  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 

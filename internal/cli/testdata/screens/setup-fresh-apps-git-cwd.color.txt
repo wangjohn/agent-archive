@@ -10,7 +10,7 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 \e[1mArchive Codex, Claude Code, and Cursor sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
 
-On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
@@ -46,6 +46,7 @@ Checking your storage connection…
   \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json\e[0m
   \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
 
+\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
   \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 

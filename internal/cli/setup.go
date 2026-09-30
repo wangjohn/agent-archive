@@ -897,15 +897,9 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	// recent-projects list, already included.
 	current := ""
 	if len(cfg.Archive.Projects) == 0 {
-		dir, e := os.Getwd()
-		if env.WorkingDir != nil {
-			dir, e = env.WorkingDir()
-		}
-		if e == nil {
-			current = suggestedProject(dir)
-		}
+		current = currentProject(env, userHome)
 	}
-	if done, e := offerFirstCapture(p, cfg, detected, current, userHome); e != nil || done {
+	if done, e := offerFirstCapture(p, cfg, detected, current, userHome, known); e != nil || done {
 		return e
 	}
 	err := chooseHarnesses(p, detected, cfg)
@@ -938,14 +932,17 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 
 // offerFirstCapture is the first setup's one question for what to capture,
 // when it can guess both halves: the apps found on this Mac, and the Git
-// repository setup was run from. Yes takes both, with the default retention;
-// the review step's "Edit a setting" changes apps, projects, and retention,
-// and on no chooseCapture asks for each in turn. It reports whether the
-// answer settled the choice. Anything but a first setup, or one that cannot
-// guess both, asks the longer questions.
-func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, current, userHome string) (bool, error) {
-	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0 && len(cfg.Archive.Projects) == 0
-	if !first || len(detected) == 0 || current == "" {
+// repository setup was run from. Yes takes both; the review step's "Edit a
+// setting" changes apps, projects, and retention (which stays at its
+// default), and on no chooseCapture asks for each in turn. It reports
+// whether the answer settled the choice. Anything but a first setup, or one
+// that cannot guess both, asks the longer questions. current is the
+// repository setup was run from, or "" (see currentProject). known lists the
+// projects the apps' history mentions, so the answer can say how many others
+// there are.
+func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
+	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0
+	if !first || current == "" {
 		return false, nil
 	}
 	var apps []string
@@ -954,17 +951,68 @@ func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, curre
 			apps = append(apps, app)
 		}
 	}
+	if len(apps) == 0 {
+		return false, nil
+	}
 	yes, err := p.yesNo("Archive "+appList(apps)+" sessions in "+displayPath(current, userHome)+"?", true)
 	if err != nil || !yes {
 		return false, err
 	}
 	cfg.Harnesses = apps
 	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
-	if cfg.RetentionDays <= 0 {
-		cfg.RetentionDays = defaultRetentionDays
+	hint := "Edit a setting adds projects, drops apps, and changes how long sessions are kept."
+	if known != nil {
+		others := 0
+		for _, project := range foldInto(known(*cfg), current) {
+			if project.Root != current {
+				others++
+			}
+		}
+		if others > 0 {
+			hint = fmt.Sprintf("Your apps also have sessions in %s. Edit a setting adds them, drops apps, and changes how long sessions are kept.", countNoun(others, "other project"))
+		}
 	}
-	terminal.Println(p.out, "On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.")
+	terminal.Println(p.out, "On the review screen: "+hint)
+	p.reviewHint = hint
 	return true, nil
+}
+
+// currentProject is the Git repository setup was run from, which heads the
+// project list already included, or "" when there is none. A folder too
+// broad to archive on one Enter is no project: the home folder, a folder that
+// holds it, or the temporary folder or anything in it, which a dotfiles
+// checkout or a stray .git there can make a repository. Setup then asks for
+// the projects, and pre-selects none.
+func currentProject(env Env, userHome string) string {
+	dir, err := os.Getwd()
+	if env.WorkingDir != nil {
+		dir, err = env.WorkingDir()
+	}
+	if err != nil {
+		return ""
+	}
+	current := suggestedProject(dir)
+	if current == "" || broadFolder(current, userHome, env.tempDir()) {
+		return ""
+	}
+	return current
+}
+
+// broadFolder reports whether archiving dir on the strength of one Enter
+// would take in too much: the home folder, a folder that holds it, or the
+// temporary folder or anything in it. Setup then asks for the projects
+// instead. Each folder is compared with its symlinks resolved, as project
+// roots are saved.
+func broadFolder(dir, userHome, tempDir string) bool {
+	resolve := func(path string) string {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return resolved
+		}
+		return path
+	}
+	dir = resolve(dir)
+	userHome, tempDir = resolve(userHome), resolve(tempDir)
+	return local.PathWithin(userHome, dir) || local.PathWithin(dir, tempDir)
 }
 
 // foldInto merges the listed projects inside root, such as a repository

@@ -48,9 +48,12 @@ backfill`](../guides/backfill.md) afterwards.
 The first time, when you run setup inside a Git project and it finds apps,
 it asks one question for both: "Archive Codex and Claude Code sessions in
 ~/src/web-app?" Accept to continue: the apps and that project are chosen, and
-retention is the default 90 days. The review at the end still lets you add
-projects, drop apps, or change retention with "Edit a setting". Decline to
-answer the questions below instead.
+retention is the default 90 days. If your apps have sessions in other
+projects, setup says how many; the review at the end repeats that "Edit a
+setting" adds projects, drops apps, or changes retention. Decline to answer
+the questions below instead. A repository that is your home folder, holds it,
+or is in the temporary folder is never offered this way (and is not
+pre-selected below either): setup asks for the projects instead.
 
 Otherwise setup offers the apps it finds together: "Include Codex and Claude
 Code?" Accept to continue, or decline to choose apps individually. If no apps are
