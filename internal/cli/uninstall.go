@@ -273,6 +273,7 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 	// the purge: hooks and the LaunchAgent are already gone, so local
 	// files are still removed and the items left behind are named, since
 	// once config.json is gone nothing else records them.
+	folder := lookCredentialFolder(home)
 	undeleted, keychainErr := deleteCredentialRefs(env, refs)
 	leftovers, e := removeLocalState(home)
 	if e != nil {
@@ -301,8 +302,9 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 		// so they are printed here on purpose (see the PR A3 ledger
 		// entry). The recovery is uninstall-specific: there is no
 		// configuration left to sync or re-run setup against.
-		problem := undeletedCredentialsProblem(credentialGOOS, home, undeleted, keychainErr)
-		problems = append(problems, problem)
+		if problem := undeletedCredentialsProblem(credentialGOOS, home, undeleted, keychainErr, folder.afterPurge(home)); problem != "" {
+			problems = append(problems, problem)
+		}
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))

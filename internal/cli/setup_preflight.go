@@ -208,7 +208,7 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 		if ref == "" {
 			ref = keychainProbeRef
 		}
-		if _, err = kc.Load(context.Background(), ref); !errors.Is(err, credentials.ErrUnavailable) {
+		if _, err = credentials.LoadStored(context.Background(), kc, ref); !errors.Is(err, credentials.ErrUnavailable) {
 			err = nil
 		}
 	}

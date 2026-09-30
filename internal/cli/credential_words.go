@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -71,11 +72,54 @@ func unreadableDraftUninstallNote(goos, draftPath, problem string) string {
 	return fmt.Sprintf("The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.", draftPath, problem, credentials.KeychainService)
 }
 
+// credentialFolder is what uninstall knows about the credentials folder
+// (credentials.FileStoreDir) when it reports credentials it could not delete
+// one by one: whether the folder was a link before the purge (and to where),
+// and whether anything is still at its path after it.
+type credentialFolder struct {
+	// isLink is whether the folder was a symbolic link, and linkTarget where
+	// to.
+	isLink     bool
+	linkTarget string
+	// remains is whether anything is at the folder's path after the purge.
+	remains bool
+}
+
+// lookCredentialFolder reads the folder's link state; call it before the
+// purge, with dataDir the data directory.
+func lookCredentialFolder(dataDir string) credentialFolder {
+	dir := credentials.FileStoreDir(dataDir)
+	info, err := os.Lstat(dir)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return credentialFolder{}
+	}
+	target, _ := os.Readlink(dir)
+	return credentialFolder{isLink: true, linkTarget: target}
+}
+
+// afterPurge is f with whether the folder remains, read after the purge.
+func (f credentialFolder) afterPurge(dataDir string) credentialFolder {
+	_, err := os.Lstat(credentials.FileStoreDir(dataDir))
+	f.remains = err == nil
+	return f
+}
+
 // undeletedCredentialsProblem is uninstall's report of credentials it could
-// not delete, with how to delete them yourself.
-func undeletedCredentialsProblem(goos, dataDir string, undeleted []string, cause error) string {
+// not delete, with how to delete them yourself. It is "" when there is
+// nothing left to report: off macOS the credentials are files in the
+// credentials folder, which the purge removes whole, so credentials that
+// could not be deleted one by one are gone with it, unless the folder was a
+// link (the purge removes the link, never what it points to) or is still
+// there.
+func undeletedCredentialsProblem(goos, dataDir string, undeleted []string, cause error, folder credentialFolder) string {
 	if !credentials.UsesKeychain(goos) {
 		dir := credentials.FileStoreDir(dataDir)
+		switch {
+		case folder.isLink:
+			return fmt.Sprintf("%d stored credential(s) could not be deleted: %v. The credentials folder %s is a link to %s, which uninstall does not follow. To remove them yourself, delete the files in %s", len(undeleted), cause, dir, folder.linkTarget, folder.linkTarget)
+		case !folder.remains:
+			return ""
+		}
 		return fmt.Sprintf("%d stored credential(s) could not be deleted from the credentials folder %s: %v. To remove them yourself, delete the files in that folder", len(undeleted), dir, cause)
 	}
 	commands := make([]string, 0, len(undeleted))

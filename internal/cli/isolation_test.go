@@ -86,6 +86,7 @@ func isolateProcessForTesting() func() {
 	openCredentialStore = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real credential store: set Env.Credentials (newFakeKeychain)")
 	}
+	productionCredentialGOOS = credentialGOOS
 	credentialGOOS = "darwin"
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
@@ -144,6 +145,10 @@ func TestIsolationFailsClosed(t *testing.T) {
 // isolateProcessForTesting replaced, kept so a test can check how it is wired
 // (TestOpenCredentialStoreIsWiredToTheDataDirectory).
 var realOpenCredentialStore func() (credentials.CredentialStore, error)
+
+// productionCredentialGOOS is credentialGOOS as the program starts, before
+// isolateProcessForTesting pins it to "darwin" for the tests.
+var productionCredentialGOOS string
 
 // useCredentialGOOS names the credential store for another platform for one
 // test. The test must not be parallel: the variable is shared.

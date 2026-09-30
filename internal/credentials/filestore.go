@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // CredentialsDirName is the folder under the data directory that holds one
@@ -95,6 +96,8 @@ type FileStore struct {
 	// effective user. A test replaces it, since a file owned by another user
 	// cannot be made without root.
 	uid func() int
+	// now is the clock the stale temporary file sweep reads.
+	now func() time.Time
 	// tempCreated, when set, is called with the temporary file's path right
 	// after it is created, before anything is written to it. A test uses it
 	// to see the mode the file is created with.
@@ -108,7 +111,7 @@ func NewFileStore(dir string) (*FileStore, error) {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return nil, errors.New("credentials folder must be an absolute path")
 	}
-	return &FileStore{dir: filepath.Clean(dir), uid: os.Geteuid}, nil
+	return &FileStore{dir: filepath.Clean(dir), uid: os.Geteuid, now: time.Now}, nil
 }
 
 func (s *FileStore) path(reference string) string {
@@ -175,11 +178,12 @@ func (s *FileStore) Save(ctx context.Context, reference string, value R2Credenti
 	if err = s.ensureDir(); err != nil {
 		return err
 	}
+	s.sweepStaleTemps()
 	suffix := make([]byte, 16)
 	if _, err = rand.Read(suffix); err != nil {
 		return fmt.Errorf("save credential: %w", err)
 	}
-	tmpPath := filepath.Join(s.dir, ".tmp-"+hex.EncodeToString(suffix))
+	tmpPath := filepath.Join(s.dir, tempPrefix+hex.EncodeToString(suffix))
 	tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: inside the credentials folder, a validated name.
 	if err != nil {
 		return fmt.Errorf("save credential: %w", err)
@@ -218,6 +222,38 @@ func (s *FileStore) Save(ctx context.Context, reference string, value R2Credenti
 		_ = dir.Close()
 	}
 	return nil
+}
+
+// staleTempAge is how old a temporary file must be before a Save removes it.
+// A Save holds its temporary file for milliseconds, so an hour-old one was
+// left by a process that died between creating and renaming it.
+const staleTempAge = time.Hour
+
+// tempPrefix starts every temporary file's name; no reference can (a
+// reference starts with a letter or digit).
+const tempPrefix = ".tmp-"
+
+// sweepStaleTemps removes the temporary files a killed Save left behind: a
+// regular file (a link is not followed, and is left alone), named like a
+// temporary file, owned by this user, and older than staleTempAge. It never
+// fails a Save.
+func (s *FileStore) sweepStaleTemps() {
+	list, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	cutoff := s.now().Add(-staleTempAge)
+	for _, entry := range list {
+		if !strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		path := filepath.Join(s.dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || !ownedByUser(info, s.uid()) || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 }
 
 // ensureDir makes the folder if it is absent (mode 0700), and requires that
@@ -297,9 +333,23 @@ func (s *FileStore) Load(ctx context.Context, reference string) (R2Credentials, 
 
 // unreadable is an ErrCredentialFileUnreadable that carries the operating
 // system's error, which names a path and a reason and never a file's content.
+// A refusal for permissions (ErrInsecurePermissions) is already a full
+// message, so it is not prefixed again; it is still also an
+// ErrCredentialFileUnreadable.
 func (s *FileStore) unreadable(err error) error {
+	if errors.Is(err, ErrInsecurePermissions) {
+		return alsoUnreadable{err}
+	}
 	return fmt.Errorf("%w: %w", ErrCredentialFileUnreadable, err)
 }
+
+// alsoUnreadable is an error that keeps its own message and is also an
+// ErrCredentialFileUnreadable.
+type alsoUnreadable struct{ error }
+
+func (e alsoUnreadable) Is(target error) bool { return target == ErrCredentialFileUnreadable }
+
+func (e alsoUnreadable) Unwrap() error { return e.error }
 
 // Delete removes the file under reference; an absent file is not an error.
 // It does not follow a symbolic link, and refuses a folder that is not this

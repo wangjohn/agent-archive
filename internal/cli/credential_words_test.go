@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -58,8 +59,8 @@ func TestCredentialWordsOnBothPlatforms(t *testing.T) {
 			"fix locked":        credentialCheckFix(goos, true),
 			"staged note":       stagedCredentialLeftNote(goos, dataDir),
 			"unreadable draft":  unreadableDraftUninstallNote(goos, "/d/setup-draft.json", "bad"),
-			"undeleted":         undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, cause),
-			"undeleted locked":  undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, credentials.ErrKeychainLocked),
+			"undeleted":         undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, cause, credentialFolder{remains: true}),
+			"undeleted locked":  undeletedCredentialsProblem(goos, dataDir, []string{"r1", "r2"}, credentials.ErrKeychainLocked, credentialFolder{remains: true}),
 			"store name in use": "the " + credentials.StoreName(goos),
 		}
 		for name, wantText := range want {
@@ -212,32 +213,110 @@ func TestSetupAndUninstallKeepTheR2KeyInAFileOnLinux(t *testing.T) {
 	}
 }
 
-// A credentials folder uninstall cannot delete from is reported with the
-// file recovery, and the rest of the purge still happens.
-func TestUninstallPurgeReportsAnUndeletableCredentialFileOnLinux(t *testing.T) {
+// A credential uninstall cannot delete one by one is not a problem when the
+// purge removes the whole credentials folder in the same run: the file is
+// gone, and saying otherwise would send the user to delete what is not there.
+// The rest of the purge still happens.
+func TestUninstallPurgeDoesNotReportCredentialFilesThePurgeRemovesOnLinux(t *testing.T) {
 	useCredentialGOOS(t, "linux")
 	fake := newFakeKeychain()
 	home, _, env := installedFixture(t, fake, r2SetupInput(t.TempDir(), "linux-secret-value"))
+	store, err := credentials.NewFileStore(credentials.FileStoreDir(home))
+	must(t, err)
+	must(t, store.Save(context.Background(), "setup-abc", credentials.R2Credentials{AccessKeyID: "k", SecretAccessKey: "linux-secret-value"}))
 	env.Credentials = func() (credentials.CredentialStore, error) {
 		return &failingDeleteKeychain{fakeKeychain: fake, deleteErr: fmt.Errorf("%w: /d/x.json is owned by another user", credentials.ErrInsecurePermissions)}, nil
 	}
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("code=%d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "could not be deleted") {
+		t.Errorf("uninstall reports a credential the purge removed:\n%s\n%s", stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("local files were not removed: %v", err)
+	}
+}
+
+// A credentials folder that is a link is not followed: the purge removes the
+// link, the files it pointed to are still there, and uninstall says so.
+func TestUninstallPurgeReportsCredentialFilesBehindALinkOnLinux(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	home, _, env := installedFixture(t, newFakeKeychain(), r2SetupInput(t.TempDir(), "linux-secret-value"))
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	must(t, os.Mkdir(elsewhere, 0o700))
+	kept := filepath.Join(elsewhere, "setup-abc.json")
+	must(t, os.WriteFile(kept, []byte(`{}`), 0o600))
+	must(t, os.Symlink(elsewhere, credentials.FileStoreDir(home)))
+	// The real file store, which refuses a linked folder.
+	env.Credentials = func() (credentials.CredentialStore, error) {
+		return credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
+	}
+	cfg, _, _ := config.Load(home)
+	cfg.RetiredCredentialRefs = append(cfg.RetiredCredentialRefs, "setup-abc")
+	must(t, config.Save(home, cfg))
+
 	var stdout, stderr bytes.Buffer
 	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 1 {
 		t.Fatalf("code=%d\n%s\n%s", code, stdout.String(), stderr.String())
 	}
 	message := stderr.String()
-	for _, want := range []string{"1 stored credential(s) could not be deleted from the credentials folder " + credentials.FileStoreDir(home), "delete the files in that folder"} {
+	for _, want := range []string{"could not be deleted", "is a link to " + elsewhere, "delete the files in " + elsewhere} {
 		if !strings.Contains(message, want) {
 			t.Errorf("stderr must mention %q:\n%s", want, message)
 		}
 	}
-	for _, banned := range []string{"security delete-generic-password", "Keychain Access"} {
-		if strings.Contains(message, banned) {
-			t.Errorf("stderr names the Keychain's recovery on Linux (%q):\n%s", banned, message)
-		}
+	if strings.Contains(message, "security delete-generic-password") || strings.Contains(message, "Keychain") {
+		t.Errorf("stderr names the Keychain's recovery on Linux:\n%s", message)
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("uninstall followed the link and deleted %s: %v", kept, err)
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("local files were not removed: %v", err)
+	}
+}
+
+// The wording of a credential left behind depends on what the purge did to
+// the credentials folder.
+func TestUndeletedCredentialsProblemFollowsTheFolder(t *testing.T) {
+	cause := errors.New("cause")
+	const dataDir = "/data/agent-archive"
+	still := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{remains: true})
+	if want := "1 stored credential(s) could not be deleted from the credentials folder /data/agent-archive/credentials: cause. To remove them yourself, delete the files in that folder"; still != want {
+		t.Errorf("folder still there = %q", still)
+	}
+	if gone := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{}); gone != "" {
+		t.Errorf("folder removed with the purge = %q, want nothing to report", gone)
+	}
+	linked := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds"})
+	if !strings.Contains(linked, "is a link to /mnt/creds") || !strings.Contains(linked, "delete the files in /mnt/creds") {
+		t.Errorf("linked folder = %q", linked)
+	}
+	// The link is reported whether or not anything is left at its path.
+	if got := undeletedCredentialsProblem("linux", dataDir, []string{"r"}, cause, credentialFolder{isLink: true, linkTarget: "/mnt/creds", remains: true}); got != linked {
+		t.Errorf("linked folder that remains = %q", got)
+	}
+	// macOS is unaffected by the folder.
+	if got := undeletedCredentialsProblem("darwin", dataDir, []string{"r"}, cause, credentialFolder{}); !strings.Contains(got, "security delete-generic-password") {
+		t.Errorf("darwin = %q", got)
+	}
+
+	// lookCredentialFolder / afterPurge read the real folder.
+	base := t.TempDir()
+	if got := lookCredentialFolder(base); got.isLink || got.afterPurge(base).remains {
+		t.Errorf("no folder: %+v", got)
+	}
+	must(t, os.Mkdir(credentials.FileStoreDir(base), 0o700))
+	if got := lookCredentialFolder(base); got.isLink || !got.afterPurge(base).remains {
+		t.Errorf("real folder: %+v", got)
+	}
+	linkBase := t.TempDir()
+	target := t.TempDir()
+	must(t, os.Symlink(target, credentials.FileStoreDir(linkBase)))
+	if got := lookCredentialFolder(linkBase); !got.isLink || got.linkTarget != target {
+		t.Errorf("linked folder: %+v", got)
 	}
 }
 
@@ -317,5 +396,130 @@ func TestOpeningTheStoreForR2Failure(t *testing.T) {
 		if err == nil || err.Error() != want || !errors.Is(err, credentials.ErrUnavailable) {
 			t.Errorf("%s: %v, want %q", goos, err, want)
 		}
+	}
+}
+
+// The program's own credentialGOOS is the platform it runs on: the tests pin
+// it to "darwin", so a hard-coded value would otherwise go unseen.
+func TestCredentialGOOSIsTheRunningPlatform(t *testing.T) {
+	if productionCredentialGOOS != runtime.GOOS {
+		t.Fatalf("credentialGOOS starts as %q, want runtime.GOOS %q", productionCredentialGOOS, runtime.GOOS)
+	}
+}
+
+// linuxFixture is a Linux setup environment whose credential store is the real
+// one for Linux (the credentials file, with the environment as its fallback)
+// and whose environment is vars: what the shell setup runs in exports.
+func linuxFixture(t *testing.T, vars map[string]string) (env Env, home, project string) {
+	t.Helper()
+	useCredentialGOOS(t, "linux")
+	home, project = t.TempDir(), t.TempDir()
+	env = setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	env = withEnvironment(env, vars)
+	env.Credentials = func() (credentials.CredentialStore, error) {
+		return credentials.OpenDefault(credentials.OpenOptions{
+			GOOS:      "linux",
+			Dir:       func() (string, error) { return credentials.FileStoreDir(home), nil },
+			LookupEnv: func(key string) (string, bool) { v, ok := vars[key]; return v, ok },
+		})
+	}
+	return env, home, project
+}
+
+// collectorView is the store as the scheduled collector sees it: the
+// credentials file, and none of the interactive shell's variables.
+func collectorView(t *testing.T, home string) credentials.CredentialStore {
+	t.Helper()
+	store, err := credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: noEnv})
+	must(t, err)
+	return store
+}
+
+var r2URL = "https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket"
+
+// With the R2 variables exported and no credentials file, setup must not
+// count the environment as a stored key: it asks for the key and saves it to
+// the file, where the scheduled collector (which does not inherit the shell's
+// environment) finds it. Interactive setup does not offer to keep it.
+func TestInteractiveSetupOnLinuxDoesNotKeepAKeyThatIsOnlyInTheEnvironment(t *testing.T) {
+	vars := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}
+	env, home, project := linuxFixture(t, vars)
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", r2URL, "--project", project, "--apps", "claude")
+	cfg, _, _ := config.Load(home)
+	// setup --yes took the exported key and saved it to the file.
+	if got, err := collectorView(t, home).Load(context.Background(), cfg.Storage.R2CredentialRef); err != nil || got.AccessKeyID != "ENVKEY" || got.SecretAccessKey != "env-secret-value" {
+		t.Fatalf("the collector cannot read the key setup --yes was given: %+v %v", got, err)
+	}
+
+	// The file is lost; the shell still exports the variables.
+	must(t, os.Remove(filepath.Join(credentials.FileStoreDir(home), cfg.Storage.R2CredentialRef+".json")))
+	output := setupRun(t, env, "storage\nr2\n"+testR2Account+"\nmy-bucket\nACCESS2\nnew-private-value\ny\n", 0)
+	if strings.Contains(output, "Keep stored R2 credentials?") || !strings.Contains(output, "can't be read from the credentials file; enter them again.") {
+		t.Fatalf("setup counted the environment's key as stored:\n%s", output)
+	}
+	if strings.Contains(output, "Keychain") {
+		t.Errorf("Linux setup names the Keychain:\n%s", output)
+	}
+	current, _, _ := config.Load(home)
+	if got, err := collectorView(t, home).Load(context.Background(), current.Storage.R2CredentialRef); err != nil || got.AccessKeyID != "ACCESS2" || got.SecretAccessKey != "new-private-value" {
+		t.Fatalf("the typed key is not in the file the collector reads: %+v %v", got, err)
+	}
+}
+
+// setup --yes with the variables exported saves the key to the file store
+// (so the collector works afterwards), whether or not a configuration and a
+// missing file already exist; and a rerun with no key given, which would keep
+// the stored key, does not mistake the environment for it.
+func TestSetupYesOnLinuxSavesTheExportedKeyToTheFileAndDoesNotKeepOnlyTheEnvironment(t *testing.T) {
+	vars := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}
+	env, home, project := linuxFixture(t, vars)
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", r2URL, "--project", project, "--apps", "claude")
+	first, _, _ := config.Load(home)
+	oldPath := filepath.Join(credentials.FileStoreDir(home), first.Storage.R2CredentialRef+".json")
+	must(t, os.Remove(oldPath))
+
+	// A rerun that gives no key: it would keep the stored one, and there is none.
+	output := setupYes(t, env, "", 1, "--yes")
+	if !strings.Contains(output, "the stored R2 key can't be read from the credentials file; pass --r2-access-key-id") || strings.Contains(output, "Keychain") {
+		t.Fatalf("setup --yes kept a key that is only in the environment:\n%s", output)
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		t.Fatal("a refused run wrote the credentials file")
+	}
+
+	// With the storage flags it takes the exported key as a new one and saves it.
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", r2URL)
+	next, _, _ := config.Load(home)
+	if next.Storage.R2CredentialRef == "" || next.Storage.R2CredentialRef == first.Storage.R2CredentialRef {
+		t.Fatalf("setup --yes did not stage a new key: %q", next.Storage.R2CredentialRef)
+	}
+	if got, err := collectorView(t, home).Load(context.Background(), next.Storage.R2CredentialRef); err != nil || got.AccessKeyID != "ENVKEY" || got.SecretAccessKey != "env-secret-value" {
+		t.Fatalf("the collector cannot read the key setup --yes saved: %+v %v", got, err)
+	}
+	info, err := os.Stat(filepath.Join(credentials.FileStoreDir(home), next.Storage.R2CredentialRef+".json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials file: %v %v", info, err)
+	}
+}
+
+// setup's check that the credential store opens counts a key saved in the
+// file, not one in the environment.
+func TestPreflightCredentialProbeOnLinuxReadsOnlyWhatIsStored(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	vars := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}
+	home := t.TempDir()
+	reads := 0
+	store, err := credentials.OpenDefault(credentials.OpenOptions{GOOS: "linux", Dir: func() (string, error) { return credentials.FileStoreDir(home), nil }, LookupEnv: func(key string) (string, bool) {
+		reads++
+		v, ok := vars[key]
+		return v, ok
+	}})
+	must(t, err)
+	check := keychainCheck(credentialsOnly{func() (credentials.CredentialStore, error) { return store, nil }}, "setup-0123456789abcdef0123456789abcdef")
+	if !check.OK {
+		t.Fatalf("check: %+v", check)
+	}
+	if reads != 0 {
+		t.Errorf("the credential check read the environment %d times", reads)
 	}
 }

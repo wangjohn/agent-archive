@@ -426,7 +426,11 @@ which platforms are supported.
   file exists for the reference, agent-archive reads the R2 key from
   `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`
   (the variables `setup --yes` reads), which suits a container's
-  configuration or a service's `EnvironmentFile`. This is read only:
+  configuration or a service's `EnvironmentFile`. The fallback applies to a
+  process that has those variables: a scheduled collector does not inherit
+  an interactive shell's variables, so `setup` never counts an exported key
+  as stored; it saves the key to the credentials file, where the collector
+  finds it. The fallback is read only:
   agent-archive never writes or deletes an environment credential. A
   credentials file that exists but is refused for its permissions is an
   error; it is never skipped in favor of the environment.

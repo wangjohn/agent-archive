@@ -4,6 +4,11 @@ package credentials
 
 import "os"
 
+// The file store is not usable off Unix: there is no permission mode to test
+// (Go reports a synthetic one that always has group and world bits), so Load
+// and Save refuse with ErrInsecurePermissions and fail closed rather than
+// keep a secret nobody can vouch for. Nothing here builds a working store.
+//
 // ownedByUser is true where file ownership is not a Unix user ID.
 func ownedByUser(os.FileInfo, int) bool { return true }
 

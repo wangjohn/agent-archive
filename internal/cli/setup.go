@@ -488,7 +488,7 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 		if e != nil {
 			return false, e
 		}
-		if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
+		if _, e = credentials.LoadStored(context.Background(), kc, draft.Config.Storage.R2CredentialRef); e != nil {
 			draft.Step = 1
 			draft.Config.Storage.R2CredentialRef = ""
 			_ = save()
@@ -947,14 +947,16 @@ func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProjec
 	return out
 }
 
-// storedCredentialReadable reports whether the Keychain item ref can be
-// loaded now, without any Keychain prompt.
+// storedCredentialReadable reports whether the credential saved under ref
+// can be loaded now, without any Keychain prompt. It asks about what setup
+// saved, not about what could be loaded: a key in the environment is not
+// stored (credentials.LoadStored).
 func storedCredentialReadable(env Env, ref string) bool {
 	kc, err := env.credentialStore()
 	if err != nil {
 		return false
 	}
-	_, err = kc.Load(context.Background(), ref)
+	_, err = credentials.LoadStored(context.Background(), kc, ref)
 	return err == nil
 }
 

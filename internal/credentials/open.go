@@ -97,6 +97,28 @@ type envLoader interface {
 	Load(ctx context.Context, reference string) (R2Credentials, error)
 }
 
+// StoredLoader is implemented by a store whose Load can answer from somewhere
+// setup did not save to, so that "is a credential actually stored for this
+// reference?" is a different question from "can a key be loaded for it?".
+// LoadStored answers the first: it reads only what Save writes. Runtime
+// paths (the collector, hooks, sync, status) use Load, with its fallback;
+// setup and its checks use LoadStored, so they never offer to keep, or count
+// as stored, a key that a scheduled collector, which does not inherit an
+// interactive shell's environment, would not find.
+type StoredLoader interface {
+	LoadStored(ctx context.Context, reference string) (R2Credentials, error)
+}
+
+// LoadStored reads what was saved under reference and nothing else: the
+// store's LoadStored when it has one, otherwise its Load (the Keychain's Load
+// already reads only the Keychain).
+func LoadStored(ctx context.Context, store CredentialStore, reference string) (R2Credentials, error) {
+	if stored, ok := store.(StoredLoader); ok {
+		return stored.LoadStored(ctx, reference)
+	}
+	return store.Load(ctx, reference)
+}
+
 // fileThenEnvStore is OpenDefault's store off macOS.
 type fileThenEnvStore struct {
 	files *FileStore
@@ -123,4 +145,12 @@ func (s *fileThenEnvStore) Load(ctx context.Context, reference string) (R2Creden
 	return R2Credentials{}, err
 }
 
-var _ CredentialStore = (*fileThenEnvStore)(nil)
+// LoadStored reads the credentials file alone: never the environment.
+func (s *fileThenEnvStore) LoadStored(ctx context.Context, reference string) (R2Credentials, error) {
+	return s.files.Load(ctx, reference)
+}
+
+var (
+	_ CredentialStore = (*fileThenEnvStore)(nil)
+	_ StoredLoader    = (*fileThenEnvStore)(nil)
+)
