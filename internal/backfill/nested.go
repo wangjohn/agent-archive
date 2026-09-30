@@ -66,7 +66,14 @@ type nestedFolders struct {
 // Resolution never makes a folder above home a project (above_home), and
 // home itself is not looked in, so today only a folder added inside Library
 // or at /Volumes reaches another location; the list guards every root.
+//
+// TCC is macOS only: on any other operating system nothing is protected and
+// no folder is kept out unread (a ~/Documents on Linux is an ordinary
+// folder).
 func privacyProtectedFolders(env Environment) []string {
+	if !env.isMac() {
+		return nil
+	}
 	var out []string
 	for _, home := range uniquePaths(filepath.Clean(env.Home), env.resolved(env.Home)) {
 		for _, name := range []string{"Desktop", "Documents", "Downloads", "Library", filepath.Join("Library", "Mobile Documents"), filepath.Join("Library", "Containers"), filepath.Join("Library", "Group Containers")} {

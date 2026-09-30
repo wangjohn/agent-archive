@@ -12,6 +12,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"io"
 	"os"
@@ -178,9 +179,14 @@ type Env struct {
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
-	// means the macOS defaults plus $TMPDIR; tests set it because their
-	// files live in one.
+	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
+	// $TMPDIR; tests set it because their files live in one.
 	BackfillTempDirs []string
+	// BackfillGOOS is the operating system backfill and the collector look
+	// for apps of: the macOS-only backfill inputs and where Cursor keeps its
+	// data (Cursor's database included) depend on it. Empty means
+	// runtime.GOOS; tests set it so a Mac's layout is exercised on any OS.
+	BackfillGOOS string
 	// IsTerminal reports whether stdin or stdout is a terminal. backfill
 	// redraws its progress line only on one; whether a command may also ask
 	// questions there is Env.interactive, which the
@@ -320,7 +326,21 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	return cursorstore.StateDatabase(home)
+	return cursorstore.StateDatabaseFor(home, e.getenv, e.goos())
+}
+
+// getenv reads one variable of the Env's environment (LookupEnv; the process
+// environment unless a test injects one). backfillEnvironment and
+// cursorDatabase both read through it, so they can never disagree.
+func (e Env) getenv(key string) string {
+	v, _ := e.lookupEnv(key)
+	return v
+}
+
+// goos is the operating system whose app locations backfill and the
+// collector look for: BackfillGOOS, else the real one.
+func (e Env) goos() string {
+	return cmp.Or(e.BackfillGOOS, runtime.GOOS)
 }
 
 func (e Env) detectHarnesses(userHome string) []string {
