@@ -73,8 +73,11 @@ type Options struct {
 	// GeneratedAt is stamped in the footer; the zero time leaves the stamp
 	// out. The renderer never reads the clock.
 	GeneratedAt time.Time
-	// IncludeProjectNames shows real project names. By default each project
-	// is a stand-in ("project A"), so the page can be shared.
+	// IncludeProjectNames shows the real names of projects, skills and MCP
+	// servers, which can identify a client or an internal tool. By default
+	// each is a stand-in ("project A", "skill A", "MCP server A"), so the page
+	// can be shared. Model names are shown either way: they name a vendor's
+	// model, not the user's work.
 	IncludeProjectNames bool
 	// Filters are named in the heading.
 	Filters Filters
@@ -85,7 +88,12 @@ type Options struct {
 
 // Render returns the page for s.
 func Render(s stats.Stats, opts Options) ([]byte, error) {
-	b := builder{s: s, opts: opts, names: newNamer(opts.IncludeProjectNames)}
+	b := builder{
+		s: s, opts: opts,
+		names:   newNamer(opts.IncludeProjectNames, "project"),
+		skills:  newNamer(opts.IncludeProjectNames, "skill"),
+		servers: newNamer(opts.IncludeProjectNames, "MCP server"),
+	}
 	p := b.page()
 	var out bytes.Buffer
 	if err := pageTemplate.Execute(&out, p); err != nil {
@@ -96,10 +104,14 @@ func Render(s stats.Stats, opts Options) ([]byte, error) {
 
 // builder turns stats into the page's view model.
 type builder struct {
-	s     stats.Stats
-	opts  Options
-	names *namer
-	cost  costFlags
+	s    stats.Stats
+	opts Options
+	// names, skills and servers show the archive's project, skill and MCP
+	// server names, or stand-ins for them.
+	names   *namer
+	skills  *namer
+	servers *namer
+	cost    costFlags
 }
 
 func (b *builder) page() page {
@@ -117,7 +129,7 @@ func (b *builder) page() page {
 		p.Empty = b.opts.EmptyMessage
 		if p.Empty == "" {
 			p.Empty = fmt.Sprintf("No archived sessions in the last %d days (%s to %s). Try a longer window, for example agent-archive stats --days 90 --html.",
-				s.Window.Days, s.Window.FirstDay, s.Window.LastDay)
+				s.Window.Days, plain(s.Window.FirstDay), plain(s.Window.LastDay))
 		}
 		b.footer(&p)
 		return p
@@ -149,12 +161,12 @@ func (b *builder) header(p *page, window string) {
 		sessions += fmt.Sprintf(" (%s with token data)", commaInt(int64(s.Coverage.SessionsWithTokens)))
 	}
 	p.Subtitle = strings.Join([]string{
-		window, s.Window.FirstDay + " to " + s.Window.LastDay, agents, sessions,
+		window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents, sessions,
 	}, " · ")
 	f := b.opts.Filters
 	var parts []string
 	if f.Harness != "" {
-		parts = append(parts, "agent "+clean(f.Harness))
+		parts = append(parts, "harness "+clean(f.Harness))
 	}
 	if f.Model != "" {
 		parts = append(parts, "model "+clean(f.Model))
@@ -178,7 +190,7 @@ func (b *builder) overview() ([]card, string) {
 		cost = b.cost.costText(b.s.Prices.Currency, o.Cost.Value, o.Cost.Approximate, o.Cost.Partial, false)
 	}
 	activeDays := 0
-	if o.ActiveDays.Value != nil {
+	if o.ActiveDays.Value != nil && finite(*o.ActiveDays.Value) {
 		activeDays = int(*o.ActiveDays.Value + 0.5)
 	}
 	streak := ""
@@ -303,8 +315,13 @@ func (b *builder) groups() *barTable {
 	if g == nil || len(g.Rows) == 0 {
 		return nil
 	}
-	title := "By " + string(g.By)
-	heading := strings.ToUpper(string(g.By[:1])) + string(g.By[1:])
+	// By is one of the engine's few groupings; it is cleaned like any text.
+	by := clean(string(g.By))
+	title := "By " + by
+	heading := "Group"
+	if runes := []rune(by); len(runes) > 0 {
+		heading = strings.ToUpper(string(runes[:1])) + string(runes[1:])
+	}
 	if g.By == stats.GroupWeek {
 		title += " (weeks start Monday)"
 	}
@@ -422,7 +439,7 @@ func (b *builder) footer(p *page) {
 	p.Footer.Lines = lines
 	p.Footer.Privacy = "This page holds counts and names only: no prompts, transcript text, file paths or session IDs."
 	if !b.opts.IncludeProjectNames {
-		p.Footer.Privacy += " Project names are replaced by letters; run with --include-project-names to show them."
+		p.Footer.Privacy += " Project, skill and MCP server names are replaced by letters; run with --include-project-names to show them."
 	}
 	if !b.opts.GeneratedAt.IsZero() {
 		p.Footer.Generated = "Generated " + b.opts.GeneratedAt.Format("2006-01-02 15:04 MST") + " by agent-archive stats --html."

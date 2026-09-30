@@ -167,33 +167,43 @@ func letters(i int) string {
 	return string(b)
 }
 
-// namer decides how a project is named on the page. Unless real names were
-// asked for, each distinct project gets a stand-in ("project A") in the order
-// the page first names them, so one project has one label throughout the
-// file and nothing in it can be traced to a client or a repository.
+// namer decides how a name that identifies the user's own work is shown: a
+// project, a skill or an MCP server. Unless real names were asked for, each
+// distinct name gets a stand-in ("project A", "skill A") in the order the page
+// first names it, so one name has one label throughout the file and nothing in
+// it can be traced to a client, a repository or an internal tool. Each kind
+// of name has its own namer, so the letters of one kind never mix with those
+// of another.
 type namer struct {
 	reveal bool
+	noun   string
 	labels map[string]string
 }
 
-func newNamer(reveal bool) *namer {
-	return &namer{reveal: reveal, labels: map[string]string{}}
+func newNamer(reveal bool, noun string) *namer {
+	return &namer{reveal: reveal, noun: noun, labels: map[string]string{}}
 }
 
-// project is the label shown for a project name.
-func (n *namer) project(name string) string {
-	if name == "" {
-		return "(no project)"
-	}
+// name is the label shown for a name read from the archive.
+func (n *namer) name(name string) string {
 	if n.reveal {
 		return clean(name)
 	}
 	if label, ok := n.labels[name]; ok {
 		return label
 	}
-	label := "project " + letters(len(n.labels))
+	label := n.noun + " " + letters(len(n.labels))
 	n.labels[name] = label
 	return label
+}
+
+// project is the label shown for a project name; sessions with none are
+// "(no project)", which names nothing.
+func (n *namer) project(name string) string {
+	if name == "" {
+		return "(no project)"
+	}
+	return n.name(name)
 }
 
 // joinSentences joins non-empty sentences with a space.

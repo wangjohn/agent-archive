@@ -216,6 +216,10 @@ type arc struct {
 // label at the middle of the arc when the arc is wide enough to hold one. A
 // segment with no share is not drawn.
 func arcGeometry(share, start, circ float64) arc {
+	if !finite(share) || !finite(start) || share <= 0 {
+		return arc{}
+	}
+	share = math.Min(share, 1)
 	length := share * circ
 	if length <= 0 {
 		return arc{}
@@ -246,7 +250,7 @@ func (b *builder) tokens() *tokenSection {
 	parts := []struct {
 		label string
 		seg   stats.Segment
-	}{{"Cache read", c.CacheRead}, {"Cache write", c.CacheWrite}, {"Fresh input", c.FreshInput}, {"Output", c.Output}}
+	}{{"Cache read", c.CacheRead}, {"Cache write", c.CacheWrite}, {"Input", c.FreshInput}, {"Output", c.Output}}
 	circ := 2 * math.Pi * donutRadius
 	start := 0.0
 	for i, part := range parts {
@@ -269,11 +273,11 @@ func (b *builder) tokens() *tokenSection {
 		}
 	}
 	for _, sk := range b.s.Skills {
-		t.Skills = append(t.Skills, nameCount{Name: clean(sk.Name), Count: plural(sk.Sessions, "session")})
+		t.Skills = append(t.Skills, nameCount{Name: b.skills.name(sk.Name), Count: plural(sk.Sessions, "session")})
 	}
 	if m := b.s.MCP; m != nil && len(m.Servers) > 0 {
 		for _, srv := range m.Servers {
-			t.MCP = append(t.MCP, nameCount{Name: clean(srv.Name), Count: callCount(srv.Calls)})
+			t.MCP = append(t.MCP, nameCount{Name: b.servers.name(srv.Name), Count: callCount(srv.Calls)})
 		}
 	}
 	switch {
@@ -286,6 +290,9 @@ func (b *builder) tokens() *tokenSection {
 	}
 	if b.s.MCP != nil {
 		t.Notes = append(t.Notes, "MCP: "+plain(b.s.MCP.Scope))
+	}
+	if len(t.Skills)+len(t.MCP) > 0 && !b.opts.IncludeProjectNames {
+		t.Notes = append(t.Notes, "Skill and MCP server names are replaced by letters in this file.")
 	}
 	return t
 }

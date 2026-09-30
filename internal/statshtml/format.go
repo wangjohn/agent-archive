@@ -22,6 +22,12 @@ const (
 // name the page shows; longer names are cut with an ellipsis.
 const nameLimit = 40
 
+// finite is whether v is a number a page can show: neither NaN nor infinite.
+// The engine never returns one (its JSON could not carry it), but the page
+// draws whatever it is given, and "NaN%" or a negative length is never
+// acceptable in it.
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+
 // plain is text read from the archive that is shown whole: cleaned as clean
 // does but not shortened (a price table's version, a time zone name, a note).
 func plain(text string) string { return archive.DisplayLine(text) }
@@ -85,7 +91,10 @@ func tokenCount(n int64) string {
 func money(currency string, amount float64, precise bool) string {
 	symbol := "$"
 	if currency != "" && currency != "USD" {
-		symbol = plain(currency) + " "
+		symbol = clean(currency) + " "
+	}
+	if math.IsNaN(amount) {
+		return "n/a"
 	}
 	if amount >= maxShownMoney {
 		return symbol + ">999B"
@@ -101,6 +110,9 @@ func money(currency string, amount float64, precise bool) string {
 // percent is a share (0 to 1) as a whole percentage, "<1%" for a nonzero
 // share under half a percent.
 func percent(share float64) string {
+	if !finite(share) {
+		return "n/a"
+	}
 	if share > 0 && share < 0.005 {
 		return "<1%"
 	}
@@ -109,6 +121,9 @@ func percent(share float64) string {
 
 // ratePercent is a rate (0 to 1) with one decimal under ten percent.
 func ratePercent(rate float64) string {
+	if !finite(rate) {
+		return "n/a"
+	}
 	if rate > 0 && rate < 0.1 {
 		return strconv.FormatFloat(rate*100, 'f', 1, 64) + "%"
 	}
@@ -142,12 +157,18 @@ func ordinal(n int) string {
 // pct is a share (0 to 1) as an SVG length in percent, clamped to the range
 // and rounded to two decimals so the page is byte-stable.
 func pct(share float64) string {
+	if !finite(share) {
+		share = 0
+	}
 	share = math.Max(0, math.Min(1, share))
 	return strconv.FormatFloat(math.Round(share*10000)/100, 'f', -1, 64) + "%"
 }
 
 // num is a coordinate rounded to two decimals, as short as it can be.
 func num(v float64) string {
+	if !finite(v) {
+		return "0"
+	}
 	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
 }
 
@@ -196,10 +217,10 @@ func (f *costFlags) costText(currency string, usd *float64, approximate, partial
 // percent"). "new" stands for a previous period without any, and both are
 // empty when either side is unknown.
 func deltaText(m stats.Measure) (glyph, spoken string) {
-	if m.Value == nil || m.Previous == nil {
+	if m.Value == nil || m.Previous == nil || !finite(*m.Value) || !finite(*m.Previous) {
 		return "", ""
 	}
-	if m.ChangePct == nil {
+	if m.ChangePct == nil || !finite(*m.ChangePct) {
 		if *m.Previous == 0 && *m.Value > 0 {
 			return "new", "new, nothing in the previous period"
 		}
@@ -216,14 +237,14 @@ func deltaText(m stats.Measure) (glyph, spoken string) {
 }
 
 func measureCount(m stats.Measure) string {
-	if m.Value == nil {
+	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
 	return commaInt(int64(math.Round(*m.Value)))
 }
 
 func measureTokens(m stats.Measure) string {
-	if m.Value == nil {
+	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
 	return tokenCount(int64(math.Round(*m.Value)))

@@ -191,7 +191,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <header class="head">
 <h1>agent-archive stats</h1>
 <p class="sub">Last 30 days · 2026-08-31 to 2026-09-29 · 3 agents · 22 sessions (19 with token data)</p>
-<p class="sub">Filtered to agent claude, hook-captured sessions.</p>
+<p class="sub">Filtered to harness claude, hook-captured sessions.</p>
 </header>
 <section class="card" aria-labelledby="h-daily">
 <h2 id="h-daily">Tokens by day</h2>
@@ -355,7 +355,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <section class="card" aria-labelledby="h-tokens">
 <h2 id="h-tokens">What used your tokens</h2>
 <div class="donut-wrap">
-<svg class="donut" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Token composition. Cache read: 71M, 81% of tokens. Cache write: 7.4M, 8% of tokens. Fresh input: 5.9M, 7% of tokens. Output: 3.9M, 4% of tokens. ">
+<svg class="donut" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Token composition. Cache read: 71M, 81% of tokens. Cache write: 7.4M, 8% of tokens. Input: 5.9M, 7% of tokens. Output: 3.9M, 4% of tokens. ">
 <defs>
 <pattern id="hatch1" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#ffffff" /><line x1="0" y1="0" x2="0" y2="6" stroke="#000000" stroke-width="3" /></pattern>
 <pattern id="hatch2" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="8" height="8" fill="#ffffff" /><line x1="0" y1="0" x2="0" y2="8" stroke="#000000" stroke-width="2" /></pattern>
@@ -365,7 +365,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <g transform="rotate(-90 100 100)">
 <circle class="ring seg1" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="341 86.26" stroke-dashoffset="-1.5"><title>Cache read: 71M, 81% of tokens</title></circle>
 <circle class="ring seg2" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="32.88 394.38" stroke-dashoffset="-345.5"><title>Cache write: 7.4M, 8% of tokens</title></circle>
-<circle class="ring seg3" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="25.62 401.64" stroke-dashoffset="-381.38"><title>Fresh input: 5.9M, 7% of tokens</title></circle>
+<circle class="ring seg3" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="25.62 401.64" stroke-dashoffset="-381.38"><title>Input: 5.9M, 7% of tokens</title></circle>
 <circle class="ring seg4" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="15.76 411.49" stroke-dashoffset="-409.99"><title>Output: 3.9M, 4% of tokens</title></circle>
 </g>
 <text class="seg-label" x="139.08" y="155.65" text-anchor="middle" dominant-baseline="central">81%</text>
@@ -378,7 +378,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <tbody>
 <tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg1" width="14" height="14" rx="3" /></svg>Cache read</th><td class="num">81%</td><td class="num">71M</td></tr>
 <tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg2" width="14" height="14" rx="3" /></svg>Cache write</th><td class="num">8%</td><td class="num">7.4M</td></tr>
-<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg3" width="14" height="14" rx="3" /></svg>Fresh input</th><td class="num">7%</td><td class="num">5.9M</td></tr>
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg3" width="14" height="14" rx="3" /></svg>Input</th><td class="num">7%</td><td class="num">5.9M</td></tr>
 <tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg4" width="14" height="14" rx="3" /></svg>Output</th><td class="num">4%</td><td class="num">3.9M</td></tr>
 </tbody>
 </table>

@@ -89,7 +89,7 @@ func TestProjectLabelsAreConsistentAcrossSections(t *testing.T) {
 	t.Parallel()
 	s := computeFixture(t, fixtureSessions(), 30, stats.GroupProject)
 	out := string(render(t, s, Options{}))
-	names := newNamer(false)
+	names := newNamer(false, "project")
 	first := names.project(s.Projects[0].Name)
 	if first != "project A" {
 		t.Fatalf("the top project is %q, want project A", first)
@@ -141,20 +141,7 @@ func TestIncludeProjectNamesShowsThem(t *testing.T) {
 // or to end a line, comes out as inert text.
 func TestHostileNamesAreInertText(t *testing.T) {
 	t.Parallel()
-	payloads := []string{
-		`</script><script>alert(1)</script>`,
-		`"><img src=x onerror=alert(1)>`,
-		`'><svg onload=alert(1)>`,
-		"line one\xe2\x80\xa8line two\xe2\x80\xa9end",
-		"esc\x1b[31mred\x00nul\x07bell\x7f",
-		"\xe2\x80\xaeevil\xe2\x80\xac",
-		`</style><style>*{display:none}</style>`,
-		`</title></head><body>`,
-		`&lt;b&gt;&amp;#60;`,
-		"bad utf8 \xff\xfe",
-		`javascript:alert(1)`,
-	}
-	for i, payload := range payloads {
+	for i, payload := range hostilePayloads {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			t.Parallel()
 			s := computeFixture(t, hostileSessions(payload), 30, stats.GroupProject)
@@ -354,7 +341,7 @@ func TestDonutSegmentsAddUp(t *testing.T) {
 			t.Errorf("segment %s + %s = %g, want the circumference 427.26", m[1], m[2], total)
 		}
 	}
-	for _, label := range []string{"Cache read", "Cache write", "Fresh input", "Output"} {
+	for _, label := range []string{"Cache read", "Cache write", "Input", "Output"} {
 		if !strings.Contains(out, ">"+label+"</th>") && !strings.Contains(out, "</svg>"+label+"</th>") {
 			t.Errorf("the legend lacks %q", label)
 		}
