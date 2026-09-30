@@ -173,12 +173,13 @@ func TestHandoffTitleAmbiguousOnATerminalOpensThePickerOnTheMatches(t *testing.T
 	}
 }
 
-// A single match on a terminal is taken without asking.
-func TestHandoffTitleSingleMatchOnATerminalDoesNotPrompt(t *testing.T) {
+// A single match on a terminal is taken without a picker; the one question
+// left is where to continue, as for any handoff.
+func TestHandoffTitleSingleMatchOnATerminalDoesNotPick(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	out, errOut, code := runPicker(t, f.env, "", "not uploaded")
-	if code != 0 || !strings.Contains(out, "Not uploaded yet") || strings.Contains(out, "Enter number") {
+	out, errOut, code := runPicker(t, f.env, "p\n", "not uploaded")
+	if code != 0 || !strings.Contains(out, "Continue in:") || !strings.Contains(out, "Not uploaded yet") || strings.Contains(out, "Enter number") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

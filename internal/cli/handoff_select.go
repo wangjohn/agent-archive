@@ -16,11 +16,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// cursorAgentEnv is set by Cursor's agent for the commands it runs. Cursor
-// exposes no session ID, so --to falls back to the newest Cursor session for
-// the working directory.
-const cursorAgentEnv = "CURSOR_AGENT"
-
 // notUploadedHint marks a picker row for a session the archive does not have
 // yet. It is drawn where list draws the first skill: dim, after the title.
 const notUploadedHint = " · not yet uploaded"
@@ -144,7 +139,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	row, selected, err := pickBrowseRow(newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
+	row, selected, err := pickBrowseRow(env, newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -86,7 +88,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 	}
 	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
 		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
-		"A Keychain item it staged, if any, stays in the Keychain (service "+credentials.KeychainService+").")
+		stagedCredentialLeftNote(credentialGOOS, home))
 	move, err := p.yesNo("Move it aside and continue?", true)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -121,8 +123,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	// Every step asks something, so without a terminal setup would stop at
 	// its first question with nothing but an end-of-input error.
-	if !opts.yes && !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help).")
+	if !opts.yes && !env.interactive(stdin) {
+		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help)."+env.overrideHint(stdin))
 		return 1
 	}
 	// Every hook and the LaunchAgent run this path, so one that is about to
@@ -449,9 +451,9 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		// The storage questions asked for a failed region again.
 		draft.FailedRegion = ""
 		if saveSecret {
-			keychain, e := env.keychain()
+			keychain, e := env.credentialStore()
 			if e != nil {
-				return false, fmt.Errorf("open Keychain: %w", e)
+				return false, openCredentialStoreError(credentialGOOS, e)
 			}
 			id, e := local.ID()
 			if e != nil {
@@ -484,11 +486,11 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 
 func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
 	if draft.Config.Storage.Provider == credentials.ProviderR2 {
-		kc, e := env.keychain()
+		kc, e := env.credentialStore()
 		if e != nil {
 			return false, e
 		}
-		if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
+		if _, e = credentials.LoadStored(context.Background(), kc, draft.Config.Storage.R2CredentialRef); e != nil {
 			draft.Step = 1
 			draft.Config.Storage.R2CredentialRef = ""
 			_ = save()
@@ -635,12 +637,29 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
+	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
 	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
 	return nil
+}
+
+// printAgentCommands says in one line where setup installed the /handoff
+// command, and names each path it left alone because it is not setup's.
+func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
+	var installed []string
+	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
+		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+			installed = append(installed, displayPath(f.Path, userHome))
+			continue
+		}
+		terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n", displayPath(f.Path, userHome))
+	}
+	if len(installed) > 0 {
+		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))
+	}
 }
 
 // verifyStorage checks that setup can write, read, and delete in the
@@ -947,14 +966,16 @@ func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProjec
 	return out
 }
 
-// storedCredentialReadable reports whether the Keychain item ref can be
-// loaded now, without any Keychain prompt.
+// storedCredentialReadable reports whether the credential saved under ref
+// can be loaded now, without any Keychain prompt. It asks about what setup
+// saved, not about what could be loaded: a key in the environment is not
+// stored (credentials.LoadStored).
 func storedCredentialReadable(env Env, ref string) bool {
-	kc, err := env.keychain()
+	kc, err := env.credentialStore()
 	if err != nil {
 		return false
 	}
-	_, err = kc.Load(context.Background(), ref)
+	_, err = credentials.LoadStored(context.Background(), kc, ref)
 	return err == nil
 }
 
@@ -1012,7 +1033,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 					return cfg, secret, false, err
 				}
 			} else {
-				terminal.Println(p.out, "The stored R2 credentials can't be read from the Keychain; enter them again.")
+				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialGOOS)+"; enter them again.")
 			}
 		}
 		if !reuse {

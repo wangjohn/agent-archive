@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -135,25 +136,39 @@ func captureCapabilityProfile(name string) captureCapabilities {
 }
 
 func discoverApplications(userHome string) map[string]applicationDiscovery {
+	return discoverApplicationsFor(userHome, runtime.GOOS)
+}
+
+// discoverApplicationsFor is discoverApplications for goos, which only tests
+// pass anything but the real one for. The app bundles under /Applications
+// and ~/Applications, and the Claude desktop app's folder, are macOS
+// locations: elsewhere they are not looked at, and Cursor, which is found
+// only through its macOS bundle, is reported neither installed nor absent.
+func discoverApplicationsFor(userHome, goos string) map[string]applicationDiscovery {
 	return map[string]applicationDiscovery{
-		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome)),
-		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome)),
-		"cursor": discoverCursorVersion(userHome),
+		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome, goos)),
+		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome, goos)),
+		"cursor": discoverCursorVersion(userHome, goos),
 	}
 }
 
 // codexVersionCandidates lists where a Codex CLI may be, standalone installs
-// first. The ChatGPT desktop app bundles its own copy, which may be the only
-// one on a machine that never installed the CLI.
-func codexVersionCandidates(userHome string) [][]string {
+// first. On macOS the ChatGPT desktop app bundles its own copy, which may be
+// the only one on a machine that never installed the CLI. Elsewhere only
+// PATH is searched.
+func codexVersionCandidates(userHome, goos string) [][]string {
+	paths := []string{"codex"}
+	if goos == "darwin" {
+		paths = []string{
+			"/Applications/Codex.app/Contents/Resources/codex",
+			filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
+			"codex",
+			"/Applications/ChatGPT.app/Contents/Resources/codex",
+			filepath.Join(userHome, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
+		}
+	}
 	var candidates [][]string
-	for _, path := range []string{
-		"/Applications/Codex.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
-		"codex",
-		"/Applications/ChatGPT.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
-	} {
+	for _, path := range paths {
 		candidates = append(candidates, []string{path, "--version"})
 	}
 	return candidates
@@ -167,14 +182,17 @@ func codexVersionCandidates(userHome string) [][]string {
 // to an older bundle (when the newest one does not answer) or differ from a
 // CLI installed off PATH that the hooks actually run. That affects only
 // whether status labels the installed version verified or unverified. The
-// same holds for the Codex copy inside ChatGPT.app.
-func claudeVersionCandidates(userHome string) [][]string {
+// same holds for the Codex copy inside ChatGPT.app. The desktop app's
+// copies exist only on macOS.
+func claudeVersionCandidates(userHome, goos string) [][]string {
 	paths := []string{
 		"claude",
 		filepath.Join(userHome, ".local", "bin", "claude"),
 		filepath.Join(userHome, ".claude", "local", "claude"),
 	}
-	paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
+	if goos == "darwin" {
+		paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
+	}
 	candidates := make([][]string, len(paths))
 	for i, path := range paths {
 		candidates[i] = []string{path, "--version"}
@@ -269,7 +287,16 @@ func discoverCommandVersion(name string, candidates [][]string) applicationDisco
 	return applicationDiscovery{VersionState: "absent"}
 }
 
-func discoverCursorVersion(userHome string) applicationDiscovery {
+// discoverCursorVersion reads Cursor's version from its macOS app bundle.
+// Off macOS there is no bundle to read, and this release has no other way to
+// tell whether Cursor is installed or which version it is, so it claims
+// neither: the discovery is not installed but its state is "unknown", not
+// "absent" (installedVersionSupportDetail then reports "unknown", and setup's
+// review says "version not detected" rather than "not found").
+func discoverCursorVersion(userHome, goos string) applicationDiscovery {
+	if goos != "darwin" {
+		return applicationDiscovery{VersionState: "unknown"}
+	}
 	for _, bundle := range []string{"/Applications/Cursor.app", filepath.Join(userHome, "Applications", "Cursor.app")} {
 		if info, err := os.Stat(bundle); err != nil || !info.IsDir() {
 			continue

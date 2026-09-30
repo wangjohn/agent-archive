@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +76,75 @@ func FuzzFilterJSONL(f *testing.F) {
 			}
 		}
 		renderFuzzedHandoff(t, adapter, filtered)
+		checkFuzzedMetadata(t, adapter, filtered)
 	})
+}
+
+// checkFuzzedMetadata derives the metadata of a filtered transcript and
+// checks the token accounting: every count and every per-model count is a
+// whole number from 0 to maxTokenCount, at most MaxMCPCalls servers are
+// listed, and, unless a count saturated, the per-model counts add up to the
+// session's.
+func checkFuzzedMetadata(t *testing.T, adapter Adapter, filtered FilteredTranscript) {
+	t.Helper()
+	reg := registration()
+	reg.Harness = Harness{Name: adapter.Name()}
+	bundle, err := NewSourceBundle(reg, adapter, filtered, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), nil)
+	if err != nil {
+		return
+	}
+	metadata, err := BuildMetadata(bundle, "machine", time.Unix(1, 0), time.Unix(3, 0), SourceReference{Key: "k", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
+	if err != nil {
+		return
+	}
+	saturated := false
+	check := func(label string, counts ...*int) {
+		for _, count := range counts {
+			if count == nil {
+				continue
+			}
+			if *count < 0 || *count > maxTokenCount {
+				t.Fatalf("%s = %d, outside 0..2^53", label, *count)
+			}
+			saturated = saturated || *count == maxTokenCount
+		}
+	}
+	for _, field := range tokenFieldsOf(metadata.Counts) {
+		check("counts."+field.name, field.total)
+		for _, entry := range metadata.ModelTokens {
+			check("model_tokens."+field.name, field.model(entry))
+		}
+	}
+	check("counts.tool_errors", metadata.Counts.ToolErrors)
+	if len(metadata.MCPCalls) > MaxMCPCalls {
+		t.Fatalf("%d MCP servers listed", len(metadata.MCPCalls))
+	}
+	if !saturated {
+		assertModelTokensSum(t, "fuzz", metadata)
+	}
+	checkGitActivityShape(t, metadata)
+}
+
+// checkGitActivityShape fails when an event breaks the published shape: the
+// list is capped, and every field matches its schema pattern, so no free
+// text from a result can reach the metadata through it.
+func checkGitActivityShape(t *testing.T, metadata Metadata) {
+	t.Helper()
+	if len(metadata.GitActivity) > MaxGitActivity {
+		t.Fatalf("%d git events listed", len(metadata.GitActivity))
+	}
+	repository := regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	for _, event := range metadata.GitActivity {
+		switch {
+		case event.SHA != "" && !shaPattern.MatchString(event.SHA),
+			event.Branch != "" && validBranch(event.Branch) != event.Branch,
+			event.Repository != "" && !repository.MatchString(event.Repository),
+			event.PRNumber < 0 || event.PRNumber > maxPRNumber,
+			event.URL != "" && !strings.HasPrefix(event.URL, "https://"),
+			strings.ContainsAny(event.URL, " \t\n\"<>"):
+			t.Fatalf("git event out of shape: %+v", event)
+		}
+	}
 }
 
 // renderFuzzedHandoff builds and renders the handoff of a filtered

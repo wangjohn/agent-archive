@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -33,8 +34,8 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if !*yes && !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking.")
+	if !*yes && !env.interactive(stdin) {
+		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking."+env.overrideHint(stdin))
 		return 1
 	}
 	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
@@ -112,12 +113,13 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 	}
 	in := env.installation(home, userHome)
-	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), in.owner(), installedApps(cfg, found))
+	hookFiles := env.installedHookFiles(userHome, cfg)
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found))
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(env.installedHookFiles(userHome, cfg), allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
@@ -140,6 +142,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 		return err
 	}
+	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
 	for _, plist := range plists {
 		if kept[plist] {
 			continue
@@ -259,7 +262,9 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 	if problem != "" {
 		// It is deleted with the rest; only the Keychain items it may
 		// name are out of reach.
-		terminal.Printf(out, "The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.\n", draftPath(home), problem, credentials.KeychainService)
+		if note := unreadableDraftUninstallNote(credentialGOOS, draftPath(home), problem); note != "" {
+			terminal.Println(out, note)
+		}
 	}
 	if draft.CredentialRef != "" {
 		refs[draft.CredentialRef] = true
@@ -271,6 +276,7 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 	// the purge: hooks and the LaunchAgent are already gone, so local
 	// files are still removed and the items left behind are named, since
 	// once config.json is gone nothing else records them.
+	folder := lookCredentialFolder(home)
 	undeleted, keychainErr := deleteCredentialRefs(env, refs)
 	leftovers, e := removeLocalState(home)
 	if e != nil {
@@ -299,16 +305,9 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 		// so they are printed here on purpose (see the PR A3 ledger
 		// entry). The recovery is uninstall-specific: there is no
 		// configuration left to sync or re-run setup against.
-		commands := make([]string, 0, len(undeleted))
-		for _, ref := range undeleted {
-			commands = append(commands, fmt.Sprintf("security delete-generic-password -s %s -a %s", credentials.KeychainService, ref))
+		if problem := undeletedCredentialsProblem(credentialGOOS, home, undeleted, keychainErr, folder.afterPurge(home)); problem != "" {
+			problems = append(problems, problem)
 		}
-		problem := fmt.Sprintf("%d stored credential(s) could not be deleted from Keychain service %q: %v", len(undeleted), credentials.KeychainService, keychainErr)
-		if errors.Is(keychainErr, credentials.ErrKeychainLocked) {
-			problem += ". Unlock the login Keychain (log in, or open Keychain Access)"
-		}
-		problem += fmt.Sprintf(". To remove them yourself, run: %s; or delete those items in Keychain Access", strings.Join(commands, " && "))
-		problems = append(problems, problem)
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
@@ -390,6 +389,24 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 	return changes, skipped, nil
 }
 
+// planUninstallFiles is planUninstallHooks for the hook files setup
+// installed into (files) and their legacy paths, followed by removing the
+// /handoff command files setup wrote. A file at one of their paths that is
+// not setup's stays, with a line in skipped.
+func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
+	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
+		return nil, nil, err
+	}
+	removals, kept, err := agentcommands.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, path := range kept {
+		skipped = append(skipped, fmt.Sprintf("Kept %s: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).", displayPath(path, userHome)))
+	}
+	return append(changes, removals...), skipped, nil
+}
+
 // deleteCredentialRefs deletes every referenced Keychain item it can. It
 // returns the references it could not delete, sorted, with the first error;
 // an item that is already absent counts as deleted.
@@ -402,7 +419,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 		sorted = append(sorted, ref)
 	}
 	sort.Strings(sorted)
-	kc, err := env.keychain()
+	kc, err := env.credentialStore()
 	if err != nil {
 		return sorted, err
 	}
@@ -494,7 +511,8 @@ func checkRemovableHome(home, userHome string) error {
 // backfill's import batches (imports/), local.Lock's lock file and its
 // record, the collector's advisory files, the LaunchAgent's log files,
 // `list`'s disposable metadata cache (reader.OpenMetadataCache), and the
-// untrimmed handoffs `handoff` saves. Keep it in sync with those packages;
+// untrimmed handoffs `handoff` saves, and the credentials folder a build
+// without a Keychain keeps R2 keys in. Keep it in sync with those packages;
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
@@ -503,6 +521,8 @@ var localStateEntries = []string{
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans",
+	// The credential files kept where there is no Keychain (Linux).
+	credentials.CredentialsDirName,
 }
 
 // removeLocalState deletes agent-archive's own entries under home (see

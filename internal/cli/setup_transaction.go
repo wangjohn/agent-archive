@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -31,7 +32,7 @@ func discardDraft(home string, draft setupDraft, active config.Config, env Env) 
 		if ref == active.Storage.R2CredentialRef {
 			continue
 		}
-		kc, err := env.keychain()
+		kc, err := env.credentialStore()
 		if err != nil {
 			return err
 		}
@@ -224,8 +225,17 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	return setupjournal.Commit(home, journal, env.launchd())
+	err = setupjournal.Commit(home, journal, env.launchd())
+	// A command file created and rolled back, or removed, leaves the
+	// directories written for it; they go while empty.
+	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
+	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
+	return err
 }
+
+// claudeConfigDir is Claude Code's configuration directory, which holds its
+// hook file (files) and its skills.
+func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["claude"]) }
 
 // mergeCommittedSetupState carries operational ownership from the committed
 // configuration, never from a resumable draft. It does no I/O.
@@ -344,6 +354,13 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 			changes = append(changes, removal)
 		}
 	}
+	// The in-agent /handoff command, for the apps chosen. Only a file setup
+	// wrote is replaced or removed (see agentcommands.PlanInstall).
+	commands, _, err := agentcommands.PlanInstall(userHome, claudeConfigDir(files), next.Harnesses, executable, env.installation(home, userHome).commandDataHome(), claudeConfigDir(previousFiles))
+	if err != nil {
+		return setupjournal.Journal{}, err
+	}
+	changes = append(changes, commands...)
 	plistPath := env.installation(home, userHome).collectorPlist()
 	// The collector gets the AWS files and PATH this storage was just
 	// verified with; launchd would otherwise start it with none of them.

@@ -277,7 +277,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
 		format.NarrowHint = "Narrow with more of the title, or --harness, or name a session: agent-archive handoff SESSION_ID."
 		shown := matches[:min(len(matches), handoffCandidateLimit)]
-		picked, selected, err := pickBrowseRow(newPrompter(r.stdin, r.stdout), r.stdout, formatHandoffRows(shown, format), len(matches), len(shown) < len(matches), format, "hand off")
+		picked, selected, err := pickBrowseRow(r.env, newPrompter(r.stdin, r.stdout), r.stdout, formatHandoffRows(shown, format), len(matches), len(shown) < len(matches), format, "hand off")
 		if err != nil {
 			terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
 			return 1, true

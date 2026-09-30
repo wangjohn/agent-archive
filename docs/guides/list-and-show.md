@@ -9,8 +9,8 @@ a session.
 # title (first filtered prompt preview), relative time, harness, project,
 # and short ID. Metadata only, never full transcript text. On an interactive
 # terminal, pick a numbered row to see that session's summary (see below).
-# Otherwise the table is paged through $PAGER (or less); use --no-pager to
-# print directly.
+# Otherwise the table is paged through $PAGER (or less; see Scrolling below);
+# use --no-pager to print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
@@ -45,6 +45,8 @@ agent-archive show SESSION_ID --json         # the metadata sidecar, for scripts
 agent-archive show SESSION_ID --transcript          # prompts, replies, tool calls
 agent-archive show SESSION_ID --transcript --full   # also trimmed tool results
 agent-archive show SESSION_ID --transcript --json   # the normalized view as JSON
+agent-archive show SESSION_ID --transcript --max-bytes 40000  # a smaller limit
+agent-archive show SESSION_ID --transcript --max-bytes 0      # no limit
 ```
 
 A summary looks like this:
@@ -61,6 +63,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
             1 compaction · 14 files edited
   Tools     Bash 42 · Edit 18 · Read 12 · Grep 9 ·
             mcp__github__create_pull_request 1
+  Git       2 commits · 1 push · PR #155 opened · PR #155 merged
   Skills    code-review, simplify
   Subagents 2 linked (1 available, 1 expired)
 
@@ -95,14 +98,41 @@ When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a
 session's summary replace each other instead of piling up:
 
-- Enter a row number or short SESSION_ID to see that session's summary.
+- The browser reads each key as you press it; there is no need to press
+  Enter after a command.
+- Type a row number or short SESSION_ID and press Enter to see that
+  session's summary. What you type shows at the prompt; Backspace edits it
+  and Esc clears it. Row numbers are those of the whole list, so any listed
+  number or short ID works wherever the list is scrolled (in the list
+  grouped by project, the numbers on screen need not be consecutive).
+- A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
+  row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
+  the top and bottom. A status line below it says where you are (`Top`, a
+  percentage, `Bottom`, or `All` when the whole list fits), for example
+  `Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit`. A
+  project scrolled into keeps its heading at the top, marked
+  `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
 - In the summary, `t` opens its transcript through the pager (quit the pager
-  to come back), Enter or `b` returns to the list, and `q` quits. `less`
-  keeps even a one-screen transcript open until you press `q`; after another
-  pager, press Enter to return to the summary.
-- `q` (or an empty answer at the list, or Ctrl-D) quits from anywhere. The
-  last summary you viewed is printed to the normal screen as the browser
-  closes, so its ID stays in your scrollback.
+  to come back), `b`, Enter, or Backspace return to the list, and `q`
+  quits. `less` keeps even a one-screen transcript open until you press
+  `q`; after another pager, press Enter to return to the summary.
+- A summary taller than the window scrolls the same way, with a line such
+  as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
+  summary through the pager, as `t` does the transcript.
+- `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
+  anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
+  to the normal screen as the browser closes, so its ID stays in your
+  scrollback.
+- Wherever else a session is picked from a list (the handoff picker, bare
+  `show --json`, and a `show` query that matches more than one session),
+  you type an answer and press Enter. A list taller than the window is
+  shown a page at a time there, with a line such as
+  `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p` move
+  between pages, and a project whose sessions started on the previous page
+  is headed again, marked `(continued)`. The browser reads lines the same
+  way when its input is not a terminal; there, a summary taller than the
+  window is cut with `… N more lines`, and without a pager `m` prints the
+  lines left out.
 
 Bare `show --transcript` is a usage error: pick a session with `show` and
 press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker
@@ -110,6 +140,16 @@ and prints the chosen sidecar.
 
 On an interactive terminal, bare `agent-archive` (no command) opens the
 same session browser as `list` when capture is already set up.
+
+None of this happens when a coding agent runs the command, even if its shell
+is a pseudo-terminal. With `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` in the environment, or `AGENT_ARCHIVE_NONINTERACTIVE=1`,
+`list` prints its table without a pager or browser, bare `show` asks for a
+SESSION_ID, and a `show` title that matches several sessions prints the
+candidates on stderr and exits 1, exactly as when piped.
+`AGENT_ARCHIVE_NONINTERACTIVE=0` brings the browser back; see
+[configuration](../reference/configuration.md#environment-variables) and
+[troubleshooting](troubleshooting.md#no-picker-or-prompt-in-an-agents-terminal).
 
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
@@ -133,6 +173,15 @@ counts are stored, never file paths. Sessions published by an older version
 gain them when the collector next refreshes their metadata. See
 [JSON output](../reference/json-output.md#show).
 
+From parser `0.14.0` metadata also counts reasoning tokens and tool errors,
+splits token counts by model, and counts MCP calls by server; these are for
+scripts and are not shown by `show` yet.
+
+From parser `0.15.0` metadata records the commits, pushes, and pull
+requests the session created or merged, when its own tool calls confirmed
+them; the `Git` row counts commits and pushes and names each pull request.
+See [JSON output](../reference/json-output.md#show).
+
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
 checksum and identity against the metadata, and prints each prompt, the
@@ -146,8 +195,9 @@ each stretch of the agent's replies and tool calls starts with the app's
 name (`Claude Code ›`), so you can tell who is speaking without color. Edit
 bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
-lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
-paged like `list`; `--no-pager` prints it directly. `--transcript --json`
+lines; it does not combine with `--json`, which has every retained result. On a terminal the summary and
+the transcript are paged like `list` (see [Scrolling](#scrolling));
+`--no-pager` prints them directly. `--transcript --json`
 prints the sidecar and then the normalized view (turns, tool calls, tool
 results, and hook-reported final messages) as JSON. `--normalized`, its
 former name, still works and prints a deprecation note on stderr. If the
@@ -155,7 +205,86 @@ same session ID was published under more than one harness, pass `--harness`
 to pick one. The object layout is in
 [bucket layout](../reference/bucket-layout.md).
 
+### Size
+
+`show SESSION_ID --transcript` prints at most 120,000 bytes (about 30k
+tokens), as `handoff` does, so a script or an agent that runs it on a long
+session gets an answer that fits. `--max-bytes N` changes the limit and `0`
+removes it; it applies to `--full` and to `--json` too, and to a terminal
+as much as to a pipe. The session browser's `t` key is not limited.
+
+Over the limit, the text form trims the oldest exchanges first, and only as
+far as needed, in this order: tool results and command output (with
+`--full`) are dropped, runs of tool calls collapse to counts by tool
+(`▸ 14 tool calls: Bash ×9, Read ×5`), agent messages are shortened to 300
+bytes, and long prompts and long shell and slash commands you typed are cut
+to 2,000. The last three exchanges (up to their last twenty steps) are kept
+whole through those steps. If that is still too much, long final responses a
+hook reported are cut to 2,000 bytes, the oldest of those are dropped (the
+newest is kept), and the oldest exchanges are dropped (the newest is always
+kept). When the newest exchange alone is too much, its long agent messages
+are cut to 2,000 bytes, oldest first, and then its oldest steps go. What was
+cut says so where it was cut (`…(shortened)`, `…(truncated)`), and the output
+ends with what was omitted, as a log of the steps in the order they ran
+(exchanges are counted from the session's first, so those it names may be
+among the ones dropped), and where to read all of it.
+
+`--json` output stays valid JSON: two documents, the sidecar and then the
+normalized view, whose size together is limited. The sidecar is never
+trimmed. In the normalized view the steps are: drop `tool_results` entries
+(sizes only; a linked result's size is also on its call), drop `hook_finals`
+entries (statuses only), drop each tool call's `input`, cut the `text` of turns other than the person's prompts to
+300 bytes, cut prompts to 2,000, and finally drop the oldest turns, tool
+calls, and tool results. Each goes to the oldest entries first and only as
+far as needed. A cut text has `text_truncated: true`, and a `trimmed` object
+at the end of the normalized view records the limit, what was omitted, and
+where the full output is. `trimmed` is absent when nothing was trimmed.
+
+When anything is trimmed, the untrimmed output is saved in the data
+directory's `handoffs/` folder as `SESSION_ID.transcript.txt`
+(`.transcript-full.txt` with `--full`, `.transcript.json` with `--json`),
+mode 0600, replaced by the next run that trims the same session the same
+way, removed after 7 days and by `uninstall --delete-local-data`. A limit too small for even the newest
+step, the header, or the sidecar alone, prints a warning on stderr and as much
+as it can. Nothing here prompts, and without a terminal nothing is paged.
+
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.
+
+## Scrolling
+
+On a terminal, anything longer than a screen goes through a pager: the
+`list` table outside the browser, `show SESSION_ID`'s summary, a transcript,
+`status`, and `purge plan`. Piped or redirected output, and `--json`, are
+never paged; `--no-pager` prints directly on a terminal too.
+
+With no pager set, or with the pager set to a bare `less` (as oh-my-zsh
+does), Agent Archive runs `less` its own way: it quits at once when the text
+fits on one screen and otherwise shows the keys on its last line:
+
+```text
+lines 1-48 of 1210 - arrows/space scroll, / search, q quit
+```
+
+- The mouse wheel, arrow keys, space and `b` (page down and up), and `g` and
+  `G` (top and bottom) scroll; `/` searches, `n` finds the next match; `q`
+  quits. From the session browser, `q` goes back to the summary.
+- With `less` 551 or later (macOS ships a newer one), the wheel scrolls the
+  text, three lines at a time, and the text stays on the screen after `q`.
+  Because `less` then reads the mouse, hold Option while dragging to select
+  text in iTerm2 (Shift in most other terminals; in Terminal, turn off View
+  > Allow Mouse Reporting).
+- `less` 530 to 550 shows the text on the terminal's alternate screen,
+  where the terminal turns the wheel into arrow keys, and clears it on `q`.
+- An older `less` keeps the text on the normal screen, where the wheel may
+  scroll the terminal instead. A `less` that doesn't report its version
+  (BusyBox's) runs as `less -FR`, without key hints.
+
+To use another pager, set `AGENT_ARCHIVE_PAGER` (or `PAGER`), for example
+`AGENT_ARCHIVE_PAGER='less -R'`. It runs as given, without the key hints or
+mouse options, with two additions as git makes them: `LESS=FRX` when `LESS`
+is not set, and `LV=-c` when `LV` is not set. From the session browser, a
+plain `less` command also gets `-+F`, so a short transcript waits for `q`.
+Set either variable to `cat`, or to nothing, to never page.
 
 ## Model and setting keys
 

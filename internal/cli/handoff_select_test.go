@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // addSession registers a session through the hook path, writes its
@@ -73,7 +73,10 @@ func (f handoffFixture) unregister(t *testing.T, id string) {
 // both registered and archived. A newer session with no prompt is hidden.
 type pickerFixture struct {
 	handoffFixture
-	notUploaded, archiveOnly, both, noPrompt string
+	notUploaded string
+	archiveOnly string
+	both        string
+	noPrompt    string
 }
 
 func newPickerFixture(t *testing.T) pickerFixture {
@@ -95,6 +98,10 @@ func runPicker(t *testing.T, env Env, answer string, args ...string) (string, st
 	stdin := strings.NewReader(answer)
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	if env.RunPager == nil {
+		var pager string
+		env.RunPager = copyPager(&pager)
+	}
 	code := Run(append([]string{"handoff"}, args...), stdin, &out, &errOut, env)
 	return out.String(), errOut.String(), code
 }
@@ -104,7 +111,7 @@ func runPicker(t *testing.T, env Env, answer string, args ...string) (string, st
 func pickerLine(t *testing.T, out, id string) string {
 	t.Helper()
 	var found []string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(line, id[:minShortSessionID]) {
 			found = append(found, line)
 		}
@@ -126,7 +133,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 		t.Fatalf("a session with no prompt is listed:\n%s", out)
 	}
 	newest, archived, oldest := pickerLine(t, out, f.notUploaded), pickerLine(t, out, f.archiveOnly), pickerLine(t, out, f.both)
-	if !(strings.Index(out, newest) < strings.Index(out, archived) && strings.Index(out, archived) < strings.Index(out, oldest)) {
+	if strings.Index(out, newest) >= strings.Index(out, archived) || strings.Index(out, archived) >= strings.Index(out, oldest) {
 		t.Fatalf("not ordered by activity:\n%s", out)
 	}
 	if !strings.Contains(newest, "Not uploaded yet · not yet uploaded") || !strings.HasPrefix(newest, "1 ") {
@@ -147,7 +154,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 func TestHandoffPickerHandsOffASessionNotYetUploaded(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	out, errOut, code := runPicker(t, f.env, "1\n")
+	out, errOut, code := runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "source: local") || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
@@ -195,7 +202,7 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 	if strings.Contains(out, f.archiveOnly[:minShortSessionID]) || strings.Contains(out, "not yet uploaded") {
 		t.Fatalf("offline picker:\n%s", out)
 	}
-	out, errOut, code = runPicker(t, f.env, "1\n")
+	out, errOut, code = runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("offline handoff: code=%d stderr=%s", code, errOut)
 	}
@@ -214,18 +221,23 @@ func recordLaunch(t *testing.T, env *Env) *string {
 	t.Helper()
 	document := new(string)
 	env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	env.LaunchHandoff = func(_, _, prompt string, _ io.Reader, _, _ io.Writer) error {
-		const prefix = "Read the complete handoff document at "
-		path, err := strconv.Unquote(strings.SplitN(strings.TrimPrefix(prompt, prefix), ", then continue", 2)[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(path)
+	env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		data, err := os.ReadFile(spec.HandoffFile)
 		if err != nil {
 			t.Fatal(err)
 		}
 		*document = string(data)
 		return nil
+	}
+	// Off a terminal, as when an agent runs it, the agent opens in a new
+	// window.
+	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		data, err := os.ReadFile(filepath.Join(spec.ScriptDir, launchHandoffName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		*document = string(data)
+		return "a new tmux window", nil
 	}
 	return document
 }
@@ -238,13 +250,18 @@ func agentEnv(values map[string]string) func(string) (string, bool) {
 }
 
 // Run by an agent, --to with no selector hands off that agent's session,
-// even when another session is newer.
+// even when another session is newer, and whether or not the agent's shell is
+// a terminal: taking the caller's own session asks nothing, so it works while
+// the agent variable has switched prompts off.
 func TestHandoffToUsesTheCallingSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	claude := f.addSession(t, "claude", "claude-native", "A Claude task", f.env.now().Add(-5*time.Hour))
 	for _, tc := range []struct {
-		variable, native, want, prompt string
+		variable string
+		native   string
+		want     string
+		prompt   string
 	}{
 		{"CLAUDE_CODE_SESSION_ID", "claude-native", claude, "A Claude task"},
 		{"CODEX_THREAD_ID", "native-1", f.both, "Fix the flaky widget test."},
@@ -256,6 +273,11 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 		if code != 0 || !strings.Contains(errOut, "runs in, "+tc.want) || !strings.Contains(*document, tc.prompt) {
 			t.Fatalf("%s: code=%d stderr=%s\n%s", tc.variable, code, errOut, *document)
 		}
+		*document = ""
+		out, errOut, code := runPicker(t, env, "q\n", "--to", "cursor")
+		if code != 0 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, "runs in, "+tc.want) || !strings.Contains(*document, tc.prompt) {
+			t.Fatalf("%s on a terminal: code=%d stderr=%s\n%s", tc.variable, code, errOut, out)
+		}
 	}
 }
 
@@ -264,7 +286,7 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 func TestHandoffToIgnoresASessionVariableOfAnotherHarness(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched")
 		return nil
 	}
@@ -283,7 +305,7 @@ func TestHandoffToInCursorUsesLatestCursorSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	f.env.LookupEnv = agentEnv(map[string]string{"CURSOR_AGENT": "1"})
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched without a Cursor session")
 		return nil
 	}
@@ -294,6 +316,14 @@ func TestHandoffToInCursorUsesLatestCursorSession(t *testing.T) {
 	// --harness naming another agent overrides the fallback.
 	if _, errOut, code := runHandoff(t, f.env, "--to", "claude", "--harness", "codex"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	// On a terminal it is the same: CURSOR_AGENT switches prompts off, so
+	// neither case falls back to the picker.
+	if out, errOut, code := runPicker(t, f.env, "1\n", "--to", "claude"); code != 1 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, "(harness cursor)") {
+		t.Fatalf("on a terminal: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if out, errOut, code := runPicker(t, f.env, "1\n", "--to", "claude", "--harness", "codex"); code != 2 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("--harness codex on a terminal: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 
@@ -309,6 +339,25 @@ func TestHandoffToWithoutSelectorPicksOnATerminal(t *testing.T) {
 	out, errOut, code = runHandoff(t, f.env, "--to", "claude")
 	if code != 2 || out != "" || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
 		t.Fatalf("off a terminal: code=%d stderr=%s", code, errOut)
+	}
+	// An agent whose session is not registered here gets no picker either,
+	// even on a terminal: its variable switches prompts off.
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "unregistered"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 2 || strings.Contains(out, "to hand off") || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("in an agent: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	// The switch alone does the same, and set to 0 it brings the picker back
+	// even with the agent's variable set.
+	f.env.LookupEnv = agentEnv(map[string]string{envNonInteractive: "1"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 2 || strings.Contains(out, "to hand off") || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("switch on: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "unregistered", envNonInteractive: "0"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 0 || !strings.Contains(out, "to hand off") || *document == "" {
+		t.Fatalf("switch off: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 
@@ -360,7 +409,7 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
 		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
 	}
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched a subagent")
 		return nil
 	}

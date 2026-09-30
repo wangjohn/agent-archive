@@ -9,7 +9,10 @@ go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
 go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...     # only the exceptions listed in test.yml
+GOBIN=/tmp/deadcode go install golang.org/x/tools/cmd/deadcode@v0.50.0   # the Linux pass needs a built binary:
+GOOS=linux CGO_ENABLED=0 /tmp/deadcode/deadcode ./...    # also excepts credentials.errorForOSStatus
 python3 scripts/test_release_signing.py
+python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
@@ -108,10 +111,46 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/stats` (the statistics engine) is a pure function of the metadata,
+  time, time zone and price table it is passed, so its tests build synthetic
+  `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
+  `TestStatsReadsNoClockOrEnvironment` keep it that way: it imports only
+  `archive`'s types and reads no clock, file or environment. Its default
+  prices are `internal/stats/prices.json`, dated and versioned; update the
+  file (and its `as_of` and `version`) from the pages in its `sources` when
+  list prices change.
+- `internal/statshtml` (the `stats --html` page) is a pure function of the
+  `stats.Stats` it is passed, so its tests compute stats from synthetic
+  metadata and need no isolation. Every page a test renders goes through
+  `checkPage`: strict XML parsing, an allowlist of elements, no script, event
+  handler, link or other request, unique ids, and a stylesheet that fetches
+  nothing. `TestHostileTextIsInertInEveryField` sets every text field of the
+  stats, in turn, to names built to break out of markup;
+  `TestSpoiledNumbersNeverBreakTheGeometry` does the same with numbers (NaN,
+  infinities, extremes); `TestOnlyTheseStatsTextsReachThePage` pins which
+  stats texts may reach the page at all (a new one is a privacy decision);
+  and `TestPaletteContrast` checks the colors' WCAG contrast in both themes
+  from the stylesheet itself. `TestStatsPageAgreesWithTheTerminalAndJSON`
+  (in `internal/cli`, which may import both) runs the screen, `--json` and
+  `--html` over the same archives and compares every table, card and
+  sentence, because the two lay their numbers out separately (they share
+  `internal/statsfmt`, whose one table pins every formatter, and whose
+  `TestFormattersImportBoundary` keeps it pure). The page goldens are in
+  `internal/statshtml/testdata/` (`go test ./internal/statshtml -update`);
+  look at a changed page in a browser, light and dark and at phone width,
+  before accepting a diff.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
   `TestKeychainRoundTrip` (`AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP=1`).
+  The file store and the environment store (what `OpenDefault` picks
+  off macOS) have no build tag, so their tests run on macOS and Ubuntu alike;
+  they write only under `t.TempDir()`, take the platform, the folder, the
+  environment and the Keychain constructor as arguments, and never open a
+  real Keychain. In `internal/cli`, `credentialGOOS` is `"darwin"` in every
+  test (the fake store stands for the Keychain, so its wording is pinned on
+  every runner); a test of the other platform's wording calls
+  `useCredentialGOOS` and must not be parallel.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
@@ -138,7 +177,7 @@ export AGENT_ARCHIVE_HOME="$scratch/data"   # a data directory of its own
 export HOME="$scratch/home"                 # app configs and LaunchAgents live here
 export PATH="$scratch/stub:$PATH"           # agent-archive runs `launchctl` from PATH
 # Variables that would point setup back at your real configuration:
-unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
+unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE XDG_CONFIG_HOME
 ```
 
 - `AGENT_ARCHIVE_HOME` gives the sandbox its own data directory and its own
@@ -175,7 +214,8 @@ LaunchAgent runs) are not part of the user interface and may change.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
+  (`testdata/handoff/`), the `stats` screens at 60, 80 and 120 columns and
+  without a terminal (`internal/cli/testdata/stats/`), backfill plans (`internal/cli/testdata/backfill/`,
   `internal/backfill/testdata/`) and the [CLI reference](../../docs/reference/cli.md)
   have goldens of their own.
 - One flag rewrites every golden file:
@@ -274,7 +314,7 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzRedactSensitive` | any string | redacting twice changes nothing; valid UTF-8 stays valid |
 | `FuzzRedactCredentialTemplates` | a secret in each credential shape | the secret never survives |
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
-| `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character |
+| `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -24,9 +25,49 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// StateDatabase is where Cursor keeps its chats under home.
+// AppSupportDir is Cursor's per-user application-data folder, the parent of
+// its User folder, for home. goos and getenv are the operating system and
+// environment lookup to answer for; production callers pass runtime.GOOS and
+// os.Getenv (StateDatabase does), and only tests pass anything else, so both
+// layouts are tested on any OS.
+//
+//   - darwin: <home>/Library/Application Support/Cursor.
+//   - Anything else, Linux above all: Cursor is a VS Code fork and keeps its
+//     data where VS Code does, under the XDG config home:
+//     $XDG_CONFIG_HOME/Cursor when that is set to an absolute path, else
+//     <home>/.config/Cursor. The XDG Base Directory specification says a
+//     relative $XDG_CONFIG_HOME is invalid and must be ignored, as is an
+//     empty one. Windows keeps its data under %APPDATA%, which this does not
+//     model: agent-archive does not run there.
+//
+// Only the exact string "darwin" selects the macOS layout: an empty or
+// unknown goos gets the Linux one, so a caller that means the real system
+// must pass runtime.GOOS (StateDatabase and Env.goos do); it is not defaulted
+// here.
+//
+// The Linux layout is the VS Code convention and has not been confirmed on a
+// real Cursor install.
+func AppSupportDir(home string, getenv func(string) string, goos string) string {
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "Cursor")
+	}
+	if getenv != nil {
+		if dir := getenv("XDG_CONFIG_HOME"); dir != "" && filepath.IsAbs(dir) {
+			return filepath.Join(dir, "Cursor")
+		}
+	}
+	return filepath.Join(home, ".config", "Cursor")
+}
+
+// StateDatabase is where Cursor keeps its chats under home on this machine.
 func StateDatabase(home string) string {
-	return filepath.Join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb")
+	return StateDatabaseFor(home, os.Getenv, runtime.GOOS)
+}
+
+// StateDatabaseFor is StateDatabase for the operating system and
+// environment given (see AppSupportDir).
+func StateDatabaseFor(home string, getenv func(string) string, goos string) string {
+	return filepath.Join(AppSupportDir(home, getenv, goos), "User", "globalStorage", "state.vscdb")
 }
 
 // Reason says why Cursor's database was not checked.

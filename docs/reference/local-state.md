@@ -8,8 +8,13 @@ uploaded is built from it and described in [bucket layout](bucket-layout.md).
 Files are private to your account and written atomically (temporary file,
 fsync, rename, directory fsync).
 
-R2 credentials are not here: they are in the macOS Keychain under the service
-`agent-archive`. S3 credentials stay in your AWS profile.
+On macOS, R2 credentials are not here: they are in the Keychain under the
+service `agent-archive`. In a build for another platform (Linux), which has
+no Keychain, they are in `credentials/<reference>.json` in this directory,
+each file mode 0600 in a folder mode 0700 that agent-archive refuses to read
+if it is open to other users (see
+[where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
+S3 credentials stay in your AWS profile.
 
 ## Who owns what
 
@@ -93,7 +98,7 @@ and left in place.
 | `collector.log`, `collector-error.log` | cli | The background collector's output. The error log is trimmed in place to its most recent part once it grows past a limit. |
 | `collector-lock.json` | cli | Which command holds `collector.lock`, its process ID, and since when; `status` uses it to report stuck collection. |
 | `cache/` | reader | A disposable cache of metadata sidecars for `list`. Safe to delete. |
-| `handoffs/` | cli | Untrimmed handoffs saved when output was trimmed; removed after 7 days. |
+| `handoffs/` | cli | Untrimmed handoffs, and untrimmed `show --transcript` output (`*.transcript.txt`, `*.transcript.json`), saved when output was trimmed, and the copies `handoff --to` launches agents with (one `launch-*/` folder each); removed after 7 days. |
 | `collector.lock`, `hooks.lock`, `setup.lock` | local | File locks coordinating processes. |
 
 ## What uninstall removes
