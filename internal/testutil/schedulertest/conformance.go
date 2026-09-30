@@ -54,6 +54,17 @@ type Backend struct {
 	// Golden checks got, the bytes of one definition, against the recorded
 	// output of this backend, for the definition name.
 	Golden func(t *testing.T, name string, got []byte)
+	// Home, when set, is the user home the suite works under in place of a
+	// temporary folder, for a backend whose manager reads definitions from the
+	// real user's own home (a real systemd user manager searches
+	// ~/.config/systemd/user and nowhere else). Its jobs are the suite's
+	// specimens', so the backend's New must say how it cleans them up.
+	Home func(t *testing.T) string
+	// Skip names sections of the suite, as RunConformance runs them
+	// ("UnreadableAndAbsentDefinitions"), that this backend cannot run, and
+	// why: a real manager cannot be put in the state a fake is (a loaded job
+	// whose definition is damaged on disk).
+	Skip map[string]string
 	// Earlier writes, under site, the definition of a job an earlier release
 	// of the tool left for inst's data directory under another name than the
 	// installation's own, and returns its ref. A backend with no such history
@@ -102,20 +113,28 @@ func specimens(home string) []specimen {
 // with.
 func RunConformance(t *testing.T, b Backend) {
 	t.Helper()
-	t.Run("StateMatrix", func(t *testing.T) { stateMatrix(t, b) })
-	t.Run("UnloadRefusesWhatItDoesNotOwn", func(t *testing.T) { unloadRefuses(t, b) })
-	t.Run("UnloadIsIdempotent", func(t *testing.T) { unloadIdempotent(t, b) })
-	t.Run("LoadStartsTheDefinedJob", func(t *testing.T) { loadStarts(t, b) })
-	t.Run("ChangesAreNotCancelled", func(t *testing.T) { changesNotCancelled(t, b) })
-	t.Run("PlanIsPure", func(t *testing.T) { planPure(t, b) })
-	t.Run("PlanOutput", func(t *testing.T) { planOutput(t, b) })
-	t.Run("RefIdentifiesTheInstallation", func(t *testing.T) { refIdentifies(t, b) })
-	t.Run("PlanInspectRoundTrip", func(t *testing.T) { planInspectRoundTrip(t, b) })
-	t.Run("RefreshRoundTrip", func(t *testing.T) { refreshRoundTrip(t, b) })
-	t.Run("NoCredentialValuesInADefinition", func(t *testing.T) { noCredentials(t, b) })
-	t.Run("UnreadableAndAbsentDefinitions", func(t *testing.T) { unreadableDefinitions(t, b) })
-	t.Run("InstalledListsTheInstallationsJobs", func(t *testing.T) { installedJobs(t, b) })
-	t.Run("LocateIsTheInverseOfPlan", func(t *testing.T) { locateInverse(t, b) })
+	section := func(name string, run func(*testing.T, Backend)) {
+		t.Run(name, func(t *testing.T) {
+			if why, skip := b.Skip[name]; skip {
+				t.Skip(why)
+			}
+			run(t, b)
+		})
+	}
+	section("StateMatrix", stateMatrix)
+	section("UnloadRefusesWhatItDoesNotOwn", unloadRefuses)
+	section("UnloadIsIdempotent", unloadIdempotent)
+	section("LoadStartsTheDefinedJob", loadStarts)
+	section("ChangesAreNotCancelled", changesNotCancelled)
+	section("PlanIsPure", planPure)
+	section("PlanOutput", planOutput)
+	section("RefIdentifiesTheInstallation", refIdentifies)
+	section("PlanInspectRoundTrip", planInspectRoundTrip)
+	section("RefreshRoundTrip", refreshRoundTrip)
+	section("NoCredentialValuesInADefinition", noCredentials)
+	section("UnreadableAndAbsentDefinitions", unreadableDefinitions)
+	section("InstalledListsTheInstallationsJobs", installedJobs)
+	section("LocateIsTheInverseOfPlan", locateInverse)
 }
 
 // fresh is a scheduler and its manager over a user home the suite may write
@@ -124,6 +143,9 @@ func fresh(t *testing.T, b Backend) (scheduler.Scheduler, Manager, scheduler.Sit
 	t.Helper()
 	s, m := b.New(t)
 	site := scheduler.Site{UserHome: t.TempDir()}
+	if b.Home != nil {
+		site = scheduler.Site{UserHome: b.Home(t)}
+	}
 	if sited, ok := m.(Sited); ok {
 		sited.UseSite(site)
 	}

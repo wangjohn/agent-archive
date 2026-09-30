@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PR 2 (filter 13) in review, the rest not started. Where this plan and the
-code differ once packages merge, the code is the reference and differences go
-under Deviations.
+PR 1 merged, PR 2 (filter 13) in review, the rest not started. Where this
+plan and the code differ once packages merge, the code is the reference and
+differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
