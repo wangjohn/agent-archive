@@ -537,6 +537,14 @@ type Counts struct {
 	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 	ReasoningTokens  *int `json:"reasoning_tokens,omitempty"`
+	// Commits, Pushes, PRsCreated, and PRsMerged count the git and pull
+	// request work the session's own tool calls confirmed (see
+	// Metadata.GitActivity), uncapped. They are known from parser 0.15.0
+	// wherever tool_calls is.
+	Commits    *int `json:"commits,omitempty"`
+	Pushes     *int `json:"pushes,omitempty"`
+	PRsCreated *int `json:"prs_created,omitempty"`
+	PRsMerged  *int `json:"prs_merged,omitempty"`
 }
 
 // UnknownModel is the ModelTokens.Model of token accounting no model name
@@ -659,7 +667,12 @@ type Metadata struct {
 	// an mcp__<server>__<tool> name), by count descending and then name
 	// ascending, at most MaxMCPCalls of them. Omitted when no MCP call was
 	// observed or the counts are unknown.
-	MCPCalls        []ToolUsage              `json:"mcp_calls,omitempty"`
+	MCPCalls []ToolUsage `json:"mcp_calls,omitempty"`
+	// GitActivity lists, in transcript order, the commits, pushes, and pull
+	// requests created or merged that the session's tool calls confirmed,
+	// at most MaxGitActivity of them (the counts are exact). Omitted when
+	// none was observed or the counts are unknown.
+	GitActivity     []GitEvent               `json:"git_activity,omitempty"`
 	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
 	SourceBundle    SourceReference          `json:"source_bundle"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`
