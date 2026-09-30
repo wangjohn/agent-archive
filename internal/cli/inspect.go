@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -380,6 +380,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
 	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
 	noPager := fs.Bool("no-pager", false, "print a transcript directly; do not page through $PAGER")
+	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "with --transcript, the output limit in bytes; 0 means no limit")
 	jsonOut := fs.Bool("json", false, "print the metadata sidecar as JSON (with --transcript, also the normalized view)")
 	// Flags may follow SESSION_ID too (`show SESSION_ID --transcript`).
 	sessionID, ok := fs.parseWithArgument(args)
@@ -397,6 +398,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
+	}
+	if code := checkShowMaxBytes(fs, *maxBytes, *transcript); code != 0 {
+		return code
 	}
 	if *full && *jsonOut {
 		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
@@ -480,8 +484,22 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 
 	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
-		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager,
+		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
+}
+
+// checkShowMaxBytes reports a --max-bytes that is negative, or given
+// without --transcript, as a usage error (exit code 2); otherwise it is 0.
+func checkShowMaxBytes(fs *commandFlags, maxBytes int, transcript bool) int {
+	if maxBytes < 0 {
+		return fs.usageError("--max-bytes must be 0 or more")
+	}
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "max-bytes" })
+	if given && !transcript {
+		return fs.usageError("--max-bytes needs --transcript")
+	}
+	return 0
 }
 
 // sessionTranscriptOptions are the show flags that shape a transcript.
@@ -491,6 +509,7 @@ type sessionTranscriptOptions struct {
 	json       bool
 	normalized bool
 	noPager    bool
+	maxBytes   int
 }
 
 // printSessionTranscript downloads and verifies the session's source bundle
@@ -507,6 +526,13 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		terminal.Printf(stderr, "agent-archive: show: %s\n", describeBundleError(err, sessionID, flag))
 		return 1
 	}
+	home, err := env.readHome()
+	if err != nil {
+		stopShow()
+		terminal.Printf(stderr, "agent-archive: show: resolve home: %v\n", err)
+		return 1
+	}
+	pruneHandoffs(home, env.now())
 	if opts.json {
 		normalizedView, err := archive.ParseNormalized(bundle)
 		stopShow()
@@ -514,10 +540,24 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 			terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 			return 1
 		}
-		if code := printJSON(stdout, stderr, view); code != 0 {
-			return code
+		turns := make([]normalizedTurn, len(normalizedView.Turns))
+		for i, turn := range normalizedView.Turns {
+			turns[i] = normalizedTurn{NormalizedTurn: turn}
 		}
-		return printJSON(stdout, stderr, normalizedOutput{Turns: normalizedView.Turns, ToolCalls: normalizedView.ToolCalls, ToolResults: normalizedView.ToolResults, HookFinals: normalizedView.HookFinals})
+		normalized := normalizedOutput{Turns: turns, ToolCalls: normalizedView.ToolCalls, ToolResults: normalizedView.ToolResults, HookFinals: normalizedView.HookFinals}
+		if opts.maxBytes > 0 {
+			if normalized, err = fitNormalizedToLimit(view, normalized, bundle, opts.maxBytes, home, stderr); err != nil {
+				terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+				return 1
+			}
+		}
+		data, err := normalizedDocuments(view, normalized)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		terminal.Print(stdout, string(data))
+		return 0
 	}
 	t, err := buildTranscript(bundle)
 	stopShow()
@@ -525,8 +565,12 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
+	render := transcriptOptions{summaryOptions: opts.summary, Full: opts.full}
+	if opts.maxBytes > 0 {
+		t, render = fitTranscriptToLimit(view, t, bundle, render, opts.maxBytes, home, stderr)
+	}
 	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		renderTranscript(w, view, t, transcriptOptions{summaryOptions: opts.summary, Full: opts.full})
+		renderTranscript(w, view, t, render)
 		return nil
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
@@ -557,11 +601,14 @@ func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata 
 // result it was linked to (record index, error flag, and retained output
 // size). tool_results lists the results themselves, including any the parser
 // could not safely link to a call.
+//
+// Trimmed appears only when --max-bytes trimmed the view (see fitNormalized).
 type normalizedOutput struct {
-	Turns       []archive.NormalizedTurn          `json:"turns"`
+	Turns       []normalizedTurn                  `json:"turns"`
 	ToolCalls   []archive.NormalizedToolCall      `json:"tool_calls"`
 	ToolResults []archive.NormalizedToolResult    `json:"tool_results"`
 	HookFinals  []archive.HookFinalReconciliation `json:"hook_finals"`
+	Trimmed     *trimmedOutput                    `json:"trimmed,omitempty"`
 }
 
 // locateMetadataKey resolves an archive session ID to its metadata sidecar
@@ -598,12 +645,12 @@ func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, 
 // metadata, so the text goes through archive.DisplayJSON: a C1 control or
 // bidi override is printed as a \u escape, never raw to the terminal.
 func printJSON(stdout, stderr io.Writer, value any) int {
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := jsonDocument(value)
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: encode output: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: %v\n", err)
 		return 1
 	}
-	terminal.Println(stdout, string(archive.DisplayJSON(data)))
+	terminal.Print(stdout, string(data))
 	return 0
 }
 

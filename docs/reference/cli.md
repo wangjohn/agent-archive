@@ -288,6 +288,10 @@ its transcript, Enter or b to go back, or q to quit.
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
                         command output (trimmed)
+  --max-bytes N         With --transcript, the output limit, default 120000
+                        (about 30k tokens); 0 for no limit. When trimmed, the
+                        full version is saved in the data directory for 7 days
+                        and its path is named at the end
   --json                Print JSON: the metadata sidecar, which an imported
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
@@ -303,6 +307,7 @@ Example: agent-archive show SESSION_ID --transcript
 | `--full` | no value | — |
 | `--harness` | a value | — |
 | `--json` | no value | — |
+| `--max-bytes` | a value | `120000` |
 | `--no-pager` | no value | — |
 | `--normalized` | no value | — |
 | `--transcript` | no value | — |
