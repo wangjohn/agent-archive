@@ -103,6 +103,11 @@ daily chart answers a hover with that day's numbers, and the chart has a "Show
 as a table" view (sessions, spend and tokens per day) for screen readers and
 keyboards; every other number is in a table or a sentence.
 
+The by-project list holds the five projects with the most tokens, dearest
+first. Cost does not always follow tokens (cache reads are cheap, output is
+not), so the page says how many more projects there are and that they are not
+necessarily cheaper; `--by project` lists them all.
+
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
   only; change that when you share it) and says so on stderr. The page is
   written to a temporary file next to it and moved into place, so a failure
@@ -129,10 +134,13 @@ keyboards; every other number is in a table or a sentence.
   by-model table, the favorite model and the footer's note on unpriced
   models alike (and it is drawn in a neutral color, so the color of a bar
   says nothing about a hidden model). A model your own `--prices` file adds
-  is not listed either. The project of the costliest session in "Heads up" is
+  is not listed either, and neither is the version of your own `--prices`
+  file (the footer says only that the file was used). A `--model` filter
+  written with a path or a vendor prefix (`acme/claude-opus-5`) is shown as
+  the model's family, not as typed. The project of the costliest session in "Heads up" is
   a stand-in like any other. The same name has the same letter throughout the
   page, but the letters follow the order the page first names them (the
-  dearest project is "project A") and are not stable between runs. `--include-names` shows the real names of all four, for a page only
+  dearest project listed is "project A") and are not stable between runs. `--include-names` shows the real names of all four, for a page only
   you read. The terminal view and `--json` are not affected: they print to you.
 - **Same rules as the terminal.** Unknown is not zero (Cursor's tokens read
   unknown, and a window with no token data says so instead of drawing an empty

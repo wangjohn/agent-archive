@@ -220,8 +220,9 @@ ul.alerts li::before {
   body { font-size: 11pt; }
   main { max-width: none; padding: 0; }
   .card { border-color: #999999; }
-  svg.daily .bar { fill: #000000; }
-  svg.daily .bar.unknown { fill: #888888; }
+  svg.daily .bar { fill: #555555; }
+  svg.daily .bar.peak { fill: #000000; }
+  svg.daily .bar.unknown { fill: #999999; }
   .fill-project, .fill-opus, .fill-fable, .fill-sonnet, .fill-haiku, .fill-gpt, .fill-other { fill: #000000; }
   .fill-agent-claude { fill: url(#hatch1); }
   .fill-agent-cursor { fill: url(#hatch2); }
@@ -404,7 +405,7 @@ ul.alerts li::before {
 </tbody>
 </table>
 </div>
-<p class="note barnote">Bars show estimated cost, each against the dearest project.</p>
+<p class="note barnote">Bars show estimated cost, each against the dearest project listed.</p>
 <p class="note">Project names are replaced by letters in this file.</p>
 </section>
 <section class="card" aria-labelledby="h-models">

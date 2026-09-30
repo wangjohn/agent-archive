@@ -323,8 +323,10 @@ func (b *builder) modelRow(r stats.ModelRow, bar float64) barRow {
 	return barRow{Label: label, Class: class, Pct: pct(bar), Cells: []string{cost, statsfmt.Percent(share)}}
 }
 
-// projects is where the spend went by project, dearest first (the engine keeps
-// the top projects by tokens; a project it could not price goes last).
+// projects is where the spend went by project, dearest first among those the
+// engine kept (it keeps the top projects by tokens, so the page says how many
+// more there are and that they may cost more; a project it could not price
+// goes last).
 func (b *builder) projects() *barTable {
 	rows := slices.Clone(b.s.Projects)
 	if len(rows) == 0 {
@@ -360,9 +362,12 @@ func (b *builder) projects() *barTable {
 			Cells: []string{cost, statsfmt.CommaInt(int64(r.Sessions))},
 		})
 	}
-	t.BarNote = "Bars show estimated cost, each against the dearest project."
+	t.BarNote = "Bars show estimated cost, each against the dearest project listed."
 	if more := b.s.TotalProjects - len(rows); more > 0 {
-		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects", more))
+		// The engine keeps the projects with the most tokens, and cost does
+		// not always follow tokens (cache reads are cheap, output is not): a
+		// project it left out may cost more than one it kept.
+		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects with fewer tokens (not necessarily less spend)", more))
 	}
 	if !b.opts.IncludeNames {
 		t.Notes = append(t.Notes, "Project names are replaced by letters in this file.")
@@ -611,7 +616,13 @@ func (b *builder) footer(p *page) {
 		))
 	}
 	cost := "Cost is an estimate at list price, not a bill."
-	if s.Prices.Version != "" {
+	switch {
+	case s.Prices.Overridden && !b.opts.IncludeNames:
+		// The version and date are text from the person's own price file,
+		// which can name a client or a contract; the built-in table's are
+		// public. A shareable page says only that the file was used.
+		cost += " Prices are from your own price file (its version is left out; --include-names shows it)."
+	case s.Prices.Version != "":
 		cost += fmt.Sprintf(" Prices %s, as of %s", plain(s.Prices.Version), plain(s.Prices.AsOf))
 		if s.Prices.Overridden {
 			cost += ", with your own price file applied"

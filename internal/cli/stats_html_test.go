@@ -197,8 +197,14 @@ func TestStatsHTMLNamesTheOverriddenPrices(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	out := mustRunStats(t, env, 0, "--html", "--prices", goldenPrices)
+	out := mustRunStats(t, env, 0, "--html", "--include-names", "--prices", goldenPrices)
 	if !strings.Contains(out, "Prices golden-1, as of 2026-09-29, with your own price file applied.") {
 		t.Errorf("the footer does not name the prices:\n%s", out[max(strings.Index(out, `<footer`), 0):])
+	}
+	// The version is text from the person's own file: a shareable page says
+	// that the file was used, not what it calls itself.
+	shareable := mustRunStats(t, env, 0, "--html", "--prices", goldenPrices)
+	if strings.Contains(shareable, "golden-1") || !strings.Contains(shareable, "Prices are from your own price file") {
+		t.Errorf("the shareable footer names the person's price file version:\n%s", shareable[max(strings.Index(shareable, `<footer`), 0):])
 	}
 }

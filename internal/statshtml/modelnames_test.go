@@ -183,6 +183,44 @@ func TestModelFilterIsRedactedLikeTheTable(t *testing.T) {
 	}
 }
 
+// The engine finds a listed model behind a path or a cloud vendor's prefix, and
+// what it drops can name a client: the heading names the family, never the
+// text as typed.
+func TestModelFilterWithAPrefixIsNotEchoed(t *testing.T) {
+	t.Parallel()
+	s := modelStats(t, modelSessions(), "", stats.GroupNone)
+	for _, filter := range []string{"zqcorp-client/claude-opus-5", "zqcorp-prod.anthropic.claude-opus-5-v1:0", "ZQCORP/GPT-5"} {
+		page := string(render(t, s, Options{Filters: Filters{Model: filter}}))
+		if leaked := leakedMarkers(page); len(leaked) > 0 {
+			t.Errorf("filter %q: the page names %q", filter, leaked)
+		}
+		if !strings.Contains(page, "Filtered to model opus.") && !strings.Contains(page, "Filtered to model gpt-5.") {
+			t.Errorf("filter %q: the heading does not name the model's family", filter)
+		}
+	}
+}
+
+// A price file of the person's own names itself: its version can name a client
+// or a contract, so a shareable page says that the file was used, not what it
+// is called; the built-in table's version is public.
+func TestOwnPriceFileVersionIsNotOnAShareablePage(t *testing.T) {
+	t.Parallel()
+	s := modelStats(t, modelSessions(), "", stats.GroupNone)
+	s.Prices.Version = "zqcorp-contract-7"
+	s.Prices.Overridden = true
+	if page := string(render(t, s, Options{})); leakedMarkers(page) != nil || !strings.Contains(page, "Prices are from your own price file") {
+		t.Errorf("the shareable footer names the price file: %q", leakedMarkers(page))
+	}
+	if page := string(render(t, s, Options{IncludeNames: true})); !strings.Contains(page, "Prices zqcorp-contract-7, as of 2026-09-29, with your own price file applied.") {
+		t.Error("--include-names does not show the price file's version")
+	}
+	s.Prices.Overridden = false
+	s.Prices.Version = "2026-09.3"
+	if page := string(render(t, s, Options{})); !strings.Contains(page, "Prices 2026-09.3, as of 2026-09-29.") {
+		t.Error("the built-in table's version is not shown")
+	}
+}
+
 // When only unlisted models were used, the favorite model is the one with the
 // most tokens, and it is a stand-in too.
 func TestFavoriteModelByTokensIsRedacted(t *testing.T) {

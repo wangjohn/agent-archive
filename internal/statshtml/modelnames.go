@@ -124,12 +124,28 @@ func (m *modelNamer) label(label string) string {
 	return m.stand.name(label)
 }
 
+// carriesOwnText is whether a model id that the built-in table lists once it is
+// normalized has text of its own in front of the listed part. The engine
+// looks a model up after dropping a path ("acme-client/claude-opus-5") or a
+// cloud vendor's prefix ("acme-prod.anthropic.claude-opus-5"), and whatever
+// was dropped can name a client, so such an id is never echoed as typed.
+func carriesOwnText(id string) bool {
+	lower := strings.ToLower(id)
+	return strings.Contains(lower, "/") || strings.Contains(lower, "anthropic.")
+}
+
 // id is the text shown for a model id the caller named (the --model filter):
 // the id itself when the built-in table lists it, else the stand-in of the row
 // it belongs to, so it reads the same as in the table, else a stand-in of its
 // own.
 func (m *modelNamer) id(id string) string {
-	if _, ok := publicModels().Family(id); ok || m.reveal {
+	if m.reveal {
+		return clean(id)
+	}
+	if family, ok := publicModels().Family(id); ok {
+		if carriesOwnText(id) {
+			return family
+		}
 		return clean(id)
 	}
 	if row, ok := m.ids[stats.NormalizeModel(id)]; ok {
