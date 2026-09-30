@@ -127,12 +127,15 @@ untrimmed output. See [list and show](../guides/list-and-show.md#size).
   "window": { "days": 30, "timezone": "America/Los_Angeles", "first_day": "2026-08-31", "last_day": "2026-09-29", "...": "from, to, previous_from, previous_to" },
   "prices": { "version": "2026-09.2", "as_of": "2026-09-29", "currency": "USD", "...": "sources, notes, overridden" },
   "coverage": { "sessions": 412, "sessions_with_tokens": 371, "unknown_tokens_by_agent": { "cursor": 41 }, "...": "" },
-  "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000 } ],
+  "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000, "cost": { "usd": 41.2, "partial": false, "unpriced_tokens": 0, "approximate": false } } ],
   "peak": { "date": "2026-09-17", "tokens": 4900000 },
-  "overview": { "sessions": { "value": 412, "previous": 349, "change_pct": 18.05 }, "...": "prompts, tokens, cost, active_days, streaks" },
+  "peak_spend": { "date": "2026-09-27", "usd": 2910.4 },
+  "overview": { "sessions": { "value": 412, "previous": 349, "change_pct": 18.05 }, "cache_share": 0.97, "...": "prompts, tokens, cost, active_days, streaks" },
   "agents": [], "models": [], "projects": [], "total_projects": 12,
-  "composition": {}, "subagents": {}, "skills": [], "mcp": {},
+  "composition": {}, "subagents": {},
+  "skills": [], "display_skills": [], "total_skills": 9, "total_display_skills": 8, "mcp": {},
   "highlights": {},
+  "heads_up": [ { "kind": "subagent_share", "share": 0.77, "tokens": 7700000000, "runs": 497 } ],
   "groups": { "by": "project", "rows": [] }
 }
 ```
@@ -182,6 +185,40 @@ at the top level. Read the rules below before using a number:
 - **Skills** are counted in sessions that used them, not calls. **MCP**
   servers are counted in calls, and `mcp.scope` says which agents that
   covers (Claude Code and Cursor; Codex MCP calls are not recorded).
+- **Spend by day.** Each `daily` entry has a `cost` in the same shape as
+  every other cost, priced as the overall cost is from that day's sessions
+  and placed the way tokens are (a subagent's cost is on its parent's day).
+  A day without sessions costs a known `0`; a day whose sessions record no
+  tokens (Cursor), or whose tokens are all of models the price table lacks,
+  has `usd: null`, and `partial` with `unpriced_tokens` says the second.
+  The days' `usd` add up to `overview.cost.value`. `peak_spend` is the day
+  with the highest priced cost (the earliest on a tie), left out when no day
+  cost more than zero; `peak` is still the day with the most tokens.
+- **`overview.cache_share`** is the part of all tokens that were cache reads
+  (0 to 1), or `null` when no session reports token counts or none reports
+  cache counts; when it is present it equals `composition.cache_read.share`.
+- **Top lists.** `projects`, `skills` and `mcp.servers` keep the top few rows
+  (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
+  there are. `models` lists every model family. `display_skills` is `skills`
+  for showing to a person: a plugin prefix is stripped from each name
+  (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
+  that then share a name are one row, counted in the sessions that used any
+  of them (a session that used both counts once); `total_display_skills` is
+  its length before the cut. `skills` keeps the names as recorded.
+- **`heads_up`** is what deserves a second look, at most three notes in
+  priority order, `[]` when nothing does. Each note is data only, with a
+  `kind` that says which fields it has; the words are the reader's:
+
+  | `kind` | Applies when | Fields |
+  | --- | --- | --- |
+  | `subagent_share` | subagents used 25% or more of the window's tokens | `share` (0 to 1), `tokens`, `runs` (subagent runs rolled into their parents, which are not sessions of their own) |
+  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project`, `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`) |
+  | `unmetered_sessions` | any session reports no token counts | `sessions`, `by_agent` (`harness`, `label`, `sessions`; most sessions first) |
+  | `low_cache_hit` | the window's cache-hit rate is under 60%, over at least 50,000 input-side tokens | `hit_rate`, `input_tokens` |
+
+  When more than three apply, the first three in this order are kept. The
+  session behind `costliest_session` is `highlights.costliest_session`, which
+  holds its ID.
 - **`highlights.tool_errors`** is the share of tool results the app flagged
   as errors (this includes calls the user rejected or interrupted), over the
   `sessions` that record it; there is no per-tool breakdown.
