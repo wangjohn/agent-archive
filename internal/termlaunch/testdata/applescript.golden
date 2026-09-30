@@ -1,0 +1,33 @@
+on run argv
+set cmd to quoted form of (item 1 of argv)
+tell application "iTerm2"
+if current window is missing value then
+create window with default profile command cmd
+else
+tell current window to create tab with default profile command cmd
+end if
+activate
+end tell
+end run
+
+on run argv
+tell application "Ghostty"
+activate
+set cfg to new surface configuration
+set initial working directory of cfg to (item 2 of argv)
+set command of cfg to quoted form of (item 1 of argv)
+if (count of windows) is 0 then
+new window with configuration cfg
+else
+new tab in front window with configuration cfg
+end if
+end tell
+end run
+
+on run argv
+tell application "Terminal"
+do script (quoted form of (item 1 of argv))
+activate
+end tell
+end run
+
