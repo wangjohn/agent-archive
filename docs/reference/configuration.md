@@ -48,6 +48,7 @@ consistent with each other.
 | `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session. |
 | `NO_COLOR` | Disables colored output. |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
+| `AGENT_ARCHIVE_HOME` (in `install.sh`) | The installer looks for `config.json` here (or in the default directory) to decide whether to run `agent-archive setup --refresh` after installing; see [the install guide](../getting-started/install.md). |
 
 Nothing else from your shell reaches the background collector. An S3 profile
 that works only with other variables set, such as another helper's settings

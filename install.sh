@@ -12,7 +12,8 @@
 # is already set up (a config.json in the data directory) it then runs
 # `agent-archive setup --refresh`, which asks nothing and changes only the
 # hooks, the background collector's plist, and the skill files, so they name
-# the new binary; if that fails, the install still succeeds.
+# the new binary; if that fails, or this runs as root, the install still
+# succeeds.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -136,6 +137,14 @@ existing_installation() {
 # installed either way, so it says why and how to try again.
 refresh_installation() {
   say ""
+  # Under sudo, HOME can still be the person's, and the refresh would leave
+  # root-owned files in their app settings and LaunchAgents, which their apps
+  # then cannot read or change. The installer never needs sudo.
+  if [ "$(id -u)" = 0 ]; then
+    say "Not bringing your existing setup up to date: this is running as root, and the refresh would leave"
+    say "root-owned files in your home directory. As yourself, without sudo, run: ${target} setup --refresh"
+    return 0
+  fi
   if output="$("$target" setup --refresh </dev/null 2>&1)"; then
     say "Bringing your existing setup up to date (agent-archive setup --refresh):"
     printf '%s\n' "$output" | sed 's/^/  /'

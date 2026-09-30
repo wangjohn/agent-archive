@@ -337,7 +337,11 @@ it renames the package.
   hooks go where setup recorded them (`hook_files`), not where this shell's
   `CLAUDE_CONFIG_DIR` points. It shares setup's skill planning
   (`planAgentSkills`), its journal, and its collector, hooks, and setup
-  locks, so a failure rolls back. Ownership is unchanged. Only files whose
+  locks, so a failure rolls back. Ownership is unchanged. It waits up to ten
+  seconds for a collector pass (the collector starts one every minute)
+  before refusing, and absorbs SIGINT, SIGTERM, and SIGHUP from the moment
+  the journal is written until it is gone, so an interrupted installer
+  never leaves a transaction to recover. Only files whose
   content would change are written, so a current installation writes and
   asks nothing.
 - The journal gained `FilesOnly` (`files_only`): a transaction of files
@@ -360,7 +364,9 @@ it renames the package.
   installation is found, runs `setup --refresh` and prints
   its one-line result. A refresh failure prints the reason and the manual
   command but does not fail the install; a fresh install runs nothing.
-  `AGENT_ARCHIVE_HOME` is honored.
+  `AGENT_ARCHIVE_HOME` is honored. As root (`sudo`, which can keep `HOME`)
+  it skips the refresh and says to run it as the person, since it would
+  leave root-owned files in their app settings.
 - `status`'s out-of-date skill line, its "capture has stopped" warning, and
   the next step for missing hooks say `setup --refresh`.
 - Tests: refresh replaces a stale skill and leaves a foreign one; refresh

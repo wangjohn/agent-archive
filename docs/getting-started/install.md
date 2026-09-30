@@ -33,8 +33,10 @@ the app hooks, the background collector's plist, and the
 new binary, and changes nothing else: it asks nothing, needs no terminal, and
 leaves your storage, credentials, projects, and retention alone. If it
 cannot (for example, an interrupted setup needs recovery), the installer
-says why and how to run it yourself, and the install still succeeds. A fresh
-install runs nothing. To pin both the installer script and
+says why and how to run it yourself, and the install still succeeds. Run
+under `sudo` (which the installer never needs), it skips the refresh, since it
+would leave root-owned files in your home directory, and says to run it as
+yourself. A fresh install runs nothing. To pin both the installer script and
 the published release, or to choose a directory, use this `v0.1.1` example:
 
 ```sh

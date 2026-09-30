@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -18,6 +19,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
+
+// refreshCollectorWait is how long setup --refresh waits for a collector pass
+// that is running: the background collector starts one every minute, and one
+// that is uploading holds collector.lock for seconds, so an upgrade that
+// landed then would otherwise fail through no fault of the person's. Longer
+// than this, something is wrong with the pass, and refresh says to retry.
+const refreshCollectorWait = 10 * time.Second
 
 // refreshRefusalError is why setup --refresh changed nothing: it ran before
 // anything was written, so the message ends by saying so.
@@ -130,7 +138,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 		return plan, userHome, refuse("another setup is running (%v); retry when it finishes", err)
 	}
 	defer release()
-	unlock, err := lockCollector(home, "setup --refresh", env.now())
+	unlock, err := lockCollectorWait(home, "setup --refresh", env.now(), env.refreshCollectorWait())
 	if err != nil {
 		return plan, userHome, refuse("%s holds the collector lock; retry when it finishes", lockHolder(home))
 	}
@@ -151,6 +159,12 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if plan.empty() {
 		return plan, userHome, nil
 	}
+	// From here files change, and a job may be stopped, until the journal is
+	// gone: a Ctrl-C, a closed terminal, or a SIGTERM in that time would leave
+	// the transaction to be recovered by hand and capture stopped meanwhile.
+	// Registering for the signals absorbs them until Commit returns.
+	_, stopSignals := env.interrupts()
+	defer stopSignals()
 	err = setupjournal.Commit(home, plan.journal, env.launchd())
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))

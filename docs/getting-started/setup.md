@@ -257,13 +257,18 @@ runs it for you when it finds a set-up Mac.
   It refuses a temporary build (`go run`) or a file that cannot run.
 - Skills follow the same rules as in setup: a stale file of setup's is
   replaced, a file that is not setup's is left and named, and with
-  `--no-skills` saved none are installed.
+  `--no-skills` saved none are installed. It writes what setup would, so a
+  skill or hook file you deleted by hand is written again (to keep the
+  skills off, use `--no-skills`; to stop capture, use `agent-archive
+  uninstall` or `pause`, not deleting the hooks).
 - It changes the LaunchAgent's job only when the plist itself changes (a
   moved binary) for a job that is loaded: that job is stopped and started
   again so it runs the new plist. A job that is not loaded stays that way,
   and an unchanged plist leaves launchd alone.
 - All of it is one transaction with setup's journal, so a failure puts every
-  file back.
+  file back, and a Ctrl-C or closed terminal while it writes does not stop
+  it halfway. It waits up to ten seconds for a background collection pass
+  that is running, then refuses and asks you to retry.
 - It refuses, changing nothing and exiting 1 with one line on standard
   error, when setup never finished, an interrupted setup needs recovery, the
   archive was uninstalled, another installation's hooks are in a hook file

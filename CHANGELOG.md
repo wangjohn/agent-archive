@@ -24,7 +24,10 @@ follow [Semantic Versioning](https://semver.org/).
   after uninstall, or when another installation's hooks are in the way. It
   also repairs hooks left pointing at a binary that moved. `install.sh` runs it
   when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
-  skills; if it fails, the install still succeeds and says how to run it.
+  skills; if it fails, or the installer runs as root (which would leave
+  root-owned files in your home directory), the install still succeeds and
+  says how to run it. It waits up to ten seconds for a running collection
+  pass, and finishes once it starts writing even if you press Ctrl-C.
   `status` names it where it reports out-of-date skills, hooks that are
   missing, or a moved binary.
 - `agent-archive setup --no-skills` (also with `--yes`) installs no agent

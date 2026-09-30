@@ -191,6 +191,10 @@ type Env struct {
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
 	Interrupts func() (signals <-chan os.Signal, stop func())
+	// RefreshCollectorWait is how long setup --refresh waits for a running
+	// collector pass to finish before it refuses. Defaults to
+	// refreshCollectorWait; tests shorten it.
+	RefreshCollectorWait func() time.Duration
 }
 
 func (e Env) isTerminal(stream any) bool {
@@ -208,6 +212,13 @@ func (e Env) interrupts() (<-chan os.Signal, func()) {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	return signals, func() { signal.Stop(signals) }
+}
+
+func (e Env) refreshCollectorWait() time.Duration {
+	if e.RefreshCollectorWait != nil {
+		return e.RefreshCollectorWait()
+	}
+	return refreshCollectorWait
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {

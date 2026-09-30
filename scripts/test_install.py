@@ -237,6 +237,21 @@ class InstallRefreshTest(InstallScriptBase):
         env = {'SETUP_LOG': str(self.setup_log), 'FAKE_REFRESH_OUTPUT': 'nothing to refresh', **env}
         return self.run_install(extra_env=env)
 
+    def test_as_root_it_does_not_refresh(self):
+        # `sudo sh install.sh` can keep HOME: a refresh would leave root-owned
+        # files in the person's app settings, so it says how to run it instead.
+        self.configure(self.default_data)
+        shim = self.root / 'root-shim'
+        shim.mkdir()
+        write_executable(shim / 'id', '#!/bin/sh\necho 0\n')
+        result = self.run_install(extra_env={'SETUP_LOG': str(self.setup_log), 'FAKE_REFRESH_OUTPUT': 'x'},
+                                  path_dirs=[shim])
+        target = self.home / '.local' / 'bin' / 'agent-archive'
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.setup_log.exists())
+        self.assertIn('running as root', result.stdout)
+        self.assertIn(f'As yourself, without sudo, run: {target} setup --refresh', result.stdout)
+
     def test_a_fresh_install_runs_nothing(self):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)

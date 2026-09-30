@@ -581,6 +581,7 @@ func TestRefreshRefusesWhileALockIsHeld(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, "loaded")
+			f.env.RefreshCollectorWait = func() time.Duration { return 10 * time.Millisecond }
 			unlock, err := tc.lock(f.home)
 			must(t, err)
 			defer unlock()
@@ -593,6 +594,77 @@ func TestRefreshRefusesWhileALockIsHeld(t *testing.T) {
 				t.Errorf("a refused refresh changed %v", changed)
 			}
 		})
+	}
+}
+
+// A collector pass that is running when the installer upgrades (the
+// background collector starts one every minute) is waited for, not a reason
+// to fail: the refresh goes through once the pass releases its lock.
+func TestRefreshWaitsForARunningCollectorPass(t *testing.T) {
+	t.Parallel()
+	f := newRefreshFixture(t, "loaded")
+	f.env.RefreshCollectorWait = func() time.Duration { return time.Minute }
+	unlock, err := lockCollector(f.home, "collect", time.Now())
+	must(t, err)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		unlock()
+	}()
+	if code, stdout, stderr := refreshRun(t, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	f.wantRunning(t, f.newExe)
+}
+
+// Once files are changing, a signal (Ctrl-C, a closed terminal, SIGTERM)
+// must not stop the refresh halfway, leaving a journal to recover and
+// capture stopped: the signals are absorbed from before the journal is
+// written until it is gone, and only then. A refresh with nothing to change
+// never registers for them.
+func TestRefreshAbsorbsSignalsWhileItChangesFiles(t *testing.T) {
+	t.Parallel()
+	f := newRefreshFixture(t, "loaded")
+	var mu sync.Mutex
+	active, registrations := false, 0
+	f.env.Interrupts = func() (<-chan os.Signal, func()) {
+		mu.Lock()
+		defer mu.Unlock()
+		active = true
+		registrations++
+		return make(chan os.Signal), func() {
+			mu.Lock()
+			defer mu.Unlock()
+			active = false
+		}
+	}
+	var duringLoad, duringUnload bool
+	load, unload := f.env.LoadLaunchAgent, f.env.UnloadLaunchAgent
+	f.env.LoadLaunchAgent = func(plist string) error {
+		mu.Lock()
+		duringLoad = active
+		mu.Unlock()
+		return load(plist)
+	}
+	f.env.UnloadLaunchAgent = func(plist string) error {
+		mu.Lock()
+		duringUnload = active
+		mu.Unlock()
+		return unload(plist)
+	}
+	if code, stdout, stderr := refreshRun(t, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	mu.Lock()
+	if !duringLoad || !duringUnload || registrations != 1 || active {
+		t.Errorf("signals absorbed while the job was stopped: %t, started: %t; registered %d times; still registered: %t", duringUnload, duringLoad, registrations, active)
+	}
+	registrations = 0
+	mu.Unlock()
+	code, stdout, _ := refreshRun(t, f.env)
+	mu.Lock()
+	defer mu.Unlock()
+	if code != 0 || stdout != "nothing to refresh\n" || registrations != 0 {
+		t.Errorf("a refresh with nothing to do: exit %d, %q, registered %d times", code, stdout, registrations)
 	}
 }
 
