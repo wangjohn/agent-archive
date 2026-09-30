@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +28,8 @@ import (
 // wantCollectorLabel is the launchd label of the collector of a data
 // directory, derived here rather than asked of the code under test: the
 // default installation's is com.agent-archive.collector, and any other's adds
-// a dot and the first 12 hex digits of the SHA-256 of the directory with its
-// symlinks resolved.
+// a dot and the first 12 hex digits of the SHA-256 of the directory spelled
+// canonically (see canonical).
 func wantCollectorLabel(t *testing.T, dataHome string, isDefault bool) string {
 	t.Helper()
 	if isDefault {
@@ -42,12 +43,27 @@ func labelHash(path string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// canonical is path with its symlinks resolved (t.TempDir is under a symlink
-// on macOS).
+// canonical is path as the program spells a directory it derives a label or
+// a message from: its symlinks resolved (t.TempDir is under a symlink on
+// macOS), and each name as its folder lists it, which on a case-insensitive
+// volume can differ from how the path was typed. The paths these tests build
+// are under the package's own $TMPDIR (isolation_test.go), typed as listed,
+// so resolving the symlinks is enough; that is checked here, so a temporary
+// folder spelled another way (an inherited $TMPDIR in another case) fails as
+// such rather than as a wrong label.
 func canonical(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
 	must(t, err)
+	for dir := resolved; filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
+		entries, err := os.ReadDir(filepath.Dir(dir))
+		if err != nil {
+			continue // an unlistable folder keeps the name as typed
+		}
+		if !slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == filepath.Base(dir) }) {
+			t.Fatalf("%s is not spelled as its folder lists it; these tests need a temporary folder that is", resolved)
+		}
+	}
 	return resolved
 }
 
