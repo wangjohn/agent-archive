@@ -93,6 +93,28 @@ printf 'Building %s for darwin/%s...\n' "$repo_root" "$arch"
     -ldflags '-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=dev' \
     -o "$binary" ./cmd/agent-archive
 )
+
+# Sign with a stable identity, so a Keychain "Always Allow" survives rebuilds.
+# The Go linker signs ad hoc, and an ad hoc binary is identified to the
+# Keychain by its hash alone: every rebuild is a new program and is asked
+# again. A certificate identity plus a fixed identifier is not. The
+# identifier is the one a release binary carries (its download name), so a
+# Keychain item that already trusts the release trusts these builds too.
+# AGENT_ARCHIVE_SIGN_IDENTITY picks an identity by name or SHA-1 hash;
+# "-" keeps the ad hoc signature.
+identity="${AGENT_ARCHIVE_SIGN_IDENTITY-}"
+if [[ -z "$identity" ]]; then
+  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  identity="$(sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) "Developer ID Application: .*/\1/p' <<<"$identities" | head -n 1)"
+  [[ -n "$identity" ]] || identity="$(sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) ".*/\1/p' <<<"$identities" | head -n 1)"
+fi
+if [[ -z "$identity" || "$identity" == - ]]; then
+  printf 'Note: no code signing identity found, so this build is signed ad hoc and macOS\n' >&2
+  printf 'asks again for Keychain access after every rebuild. See docs/getting-started/install.md.\n' >&2
+elif ! codesign --force --sign "$identity" --identifier "agent-archive-darwin-$arch" "$binary"; then
+  fail "could not sign the build with identity $identity (set AGENT_ARCHIVE_SIGN_IDENTITY=- to skip signing)"
+fi
+
 version="$("$binary" --version)" || fail 'the new binary failed its version check'
 [[ "$version" == dev-* ]] || fail "expected a dev version, got: $version"
 

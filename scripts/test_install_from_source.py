@@ -35,8 +35,24 @@ class InstallFromSourceTest(unittest.TestCase):
             'cat > "$2" <<\'EOF\'\n#!/bin/sh\necho dev-test-commit\nEOF\n'
             'chmod +x "$2"\n',
         )
+        # The real security and codesign would read this Mac's Keychain.
+        self.codesign_log = self.root / "codesign.log"
+        self.identities("     0 valid identities found\n")
+        executable(self.shims / "codesign",
+                   f'#!/bin/sh\necho "$@" >> "{self.codesign_log}"\n')
         self.env = dict(os.environ, HOME=str(self.home),
                         PATH=f"{self.shims}:/usr/bin:/bin")
+
+    def identities(self, listing):
+        executable(self.shims / "security",
+                   '#!/bin/sh\n'
+                   '[ "$*" = "find-identity -v -p codesigning" ] || exit 2\n'
+                   f"cat <<'EOF'\n{listing}EOF\n")
+
+    def codesign_calls(self):
+        if not self.codesign_log.exists():
+            return []
+        return self.codesign_log.read_text().splitlines()
 
     def run_script(self, *args, env=None):
         return subprocess.run(["bash", str(SCRIPT), *args], env=env or self.env,
@@ -87,6 +103,52 @@ class InstallFromSourceTest(unittest.TestCase):
         result = self.run_script("--destination", str(target))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not a regular file", result.stderr)
+
+    def test_unsigned_without_identity_warns(self):
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("signed ad hoc", result.stderr)
+        self.assertEqual(self.codesign_calls(), [])
+
+    def test_signs_with_developer_id_and_release_identifier(self):
+        self.identities(
+            '  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (XYZ)"\n'
+            '  2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n'
+            '     2 valid identities found\n')
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("ad hoc", result.stderr)
+        [call] = self.codesign_calls()
+        self.assertIn("--sign BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", call)
+        self.assertIn("--identifier agent-archive-darwin-amd64", call)
+
+    def test_falls_back_to_any_valid_identity(self):
+        self.identities('  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (XYZ)"\n'
+                        '     1 valid identities found\n')
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [call] = self.codesign_calls()
+        self.assertIn("--sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", call)
+
+    def test_identity_override_and_opt_out(self):
+        self.identities('  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n')
+        result = self.run_script(env=dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="My Cert"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--sign My Cert", self.codesign_calls()[0])
+        result = self.run_script(env=dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="-"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.codesign_calls()), 1)
+
+    def test_signing_failure_keeps_existing_binary(self):
+        target = self.root / "bin" / "agent-archive"
+        target.parent.mkdir()
+        executable(target, "#!/bin/sh\necho old\n")
+        self.identities('  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n')
+        executable(self.shims / "codesign", "#!/bin/sh\nexit 1\n")
+        result = self.run_script("--destination", str(target))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AGENT_ARCHIVE_SIGN_IDENTITY=-", result.stderr)
+        self.assertEqual(subprocess.check_output([target], text=True), "old\n")
 
 
 if __name__ == "__main__":
