@@ -79,7 +79,8 @@ or if you prefer to do it by hand, follow the manual steps below.
 
 Then run `agent-archive setup`, choose `r2`, and paste the Account ID (then
 the bucket name) or the bucket's URL (which names both), and the two keys.
-The secret is kept in the macOS Keychain.
+The secret is kept in the macOS Keychain (on a build without a Keychain, in a
+private credentials file: [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
 
 ## Amazon S3
 

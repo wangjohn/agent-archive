@@ -9,6 +9,7 @@
             1 compaction · 14 files edited
   [2mTools    [0m Bash 42 · Edit 18 · Read 12 · Grep 9 ·
             mcp__github__create_pull_request 1
+  [2mGit      [0m 2 commits · 1 push · PR #155 opened · PR #155 merged
   [2mSkills   [0m code-review, simplify
   [2mSubagents[0m 2 linked (1 available, 1 expired)
   [2mImported [0m Sep 29, 12:30 by backfill

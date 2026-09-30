@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<meta name="robots" content="noindex" />
+<meta name="referrer" content="no-referrer" />
+<meta http-equiv="Content-Security-Policy" content="{{.CSP}}" />
+<title>{{.Title}}</title>
+<style>/*STYLESHEET*/</style>
+</head>
+<body>
+<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+<defs>
+<pattern id="hatch1" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#ffffff" /><line x1="0" y1="0" x2="0" y2="6" stroke="#000000" stroke-width="3" /></pattern>
+<pattern id="hatch2" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(135)"><rect width="8" height="8" fill="#ffffff" /><line x1="0" y1="0" x2="0" y2="8" stroke="#000000" stroke-width="2" /></pattern>
+<pattern id="hatch3" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(90)"><rect width="5" height="5" fill="#ffffff" /><line x1="0" y1="0" x2="0" y2="5" stroke="#000000" stroke-width="1" /></pattern>
+<pattern id="hatch4" width="7" height="7" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#ffffff" /><circle cx="3.5" cy="3.5" r="1.6" fill="#000000" /></pattern>
+</defs>
+</svg>
+<main>
+<header class="head">
+<h1>agent-archive stats</h1>
+<p class="sub">{{range $i, $part := .Subtitle}}{{if $i}} · {{end}}<span class="nb">{{$part}}</span>{{end}}</p>
+{{- if .Filters}}
+<p class="sub">{{.Filters}}</p>
+{{- end}}
+</header>
+{{- if .Empty}}
+<section class="card" aria-labelledby="h-empty">
+<h2 id="h-empty">Nothing to show yet</h2>
+<p class="lead">{{.Empty}}</p>
+</section>
+{{- else}}
+<section class="card hero" aria-labelledby="h-headline">
+<h2 id="h-headline" class="sr">Headline numbers</h2>
+<div class="stats">
+{{- range .Hero}}
+<div class="stat">
+<div class="label">{{.Label}}</div>
+<div class="value">{{.Value}}</div>
+{{- if .Delta}}
+<div class="delta {{.DeltaDir}}"><span aria-hidden="true">{{.Delta}}</span><span class="sr">{{.DeltaSpoken}}</span> <span class="vs">{{.DeltaVs}}</span></div>
+{{- end}}
+{{- range .Lines}}
+<div class="note">{{.}}</div>
+{{- end}}
+</div>
+{{- end}}
+</div>
+</section>
+{{- with .AgentBar}}
+<section class="card" aria-labelledby="h-agentbar">
+<h2 id="h-agentbar">Agents</h2>
+<svg class="stack" width="100%" height="28" role="img" aria-label="{{.Summary}}">
+{{- range .Segments}}
+<rect class="fill-{{.Class}}" x="{{.X}}" width="{{.W}}" y="0" height="28" rx="4"><title>{{.Title}}</title></rect>
+{{- end}}
+</svg>
+<ul class="key">
+{{- range .Legend}}
+<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-{{.Class}}" width="14" height="14" rx="3" /></svg>{{.Label}} <span class="pct">{{.Share}}</span></li>
+{{- end}}
+<li class="of">of sessions</li>
+</ul>
+</section>
+{{- end}}
+{{- with .Daily}}
+<section class="card" aria-labelledby="h-daily">
+<h2 id="h-daily">Daily spend</h2>
+<div class="chart" style="max-width:{{.MaxWidth}}px">
+<svg class="daily" width="100%" height="{{.Height}}" role="img" aria-label="{{.Summary}}">
+<line class="grid" x1="0" x2="100%" y1="{{.PlotTop}}" y2="{{.PlotTop}}" />
+<line class="axis" x1="0" x2="100%" y1="{{.Baseline}}" y2="{{.Baseline}}" />
+{{- range .Bars}}
+<g class="slot"><title>{{.Title}}</title><rect class="hit" x="{{.SlotX}}%" width="{{.SlotW}}%" y="0" height="{{$.Daily.Height}}" /><rect class="bar {{.Class}}" x="{{.X}}%" width="{{.W}}%" y="{{.Y}}" height="{{.H}}" rx="2" /></g>
+{{- end}}
+{{- with .PeakLabel}}
+<text class="peak-label" x="{{.X}}%" y="{{.Y}}" text-anchor="{{.Anchor}}">{{.Text}}</text>
+{{- end}}
+{{- range .XLabels}}
+<text class="tick" x="{{.X}}" y="{{.Y}}" text-anchor="{{.Anchor}}">{{.Text}}</text>
+{{- end}}
+</svg>
+</div>
+<p class="note">{{.Caption}}</p>
+<details class="data">
+<summary>Show as a table</summary>
+<table>
+<thead><tr><th scope="col">Day</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">{{.SpendHead}}</th><th scope="col" class="num">{{.TokensHead}}</th></tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr><th scope="row">{{.Label}}</th><td class="num">{{.Sessions}}</td><td class="num">{{.Spend}}</td><td class="num">{{.Tokens}}</td></tr>
+{{- end}}
+</tbody>
+</table>
+</details>
+</section>
+{{- else}}
+{{- if $.NoSpend}}
+<section class="card" aria-labelledby="h-daily">
+<h2 id="h-daily">Daily spend</h2>
+<p class="lead">{{$.NoSpend}}</p>
+</section>
+{{- end}}
+{{- end}}
+{{- if or .Projects .Models}}
+<h2 class="divider" id="h-where">Where it went</h2>
+<div class="two">
+{{- with .Projects}}{{template "bartable" .}}{{end}}
+{{- with .Models}}{{template "bartable" .}}{{end}}
+</div>
+{{- end}}
+{{- with .MostUsed}}
+<section class="card" aria-labelledby="h-most">
+<h2 id="h-most">Most used</h2>
+{{- if .Skills}}
+<div class="row">
+<div class="row-label">Skills</div>
+<ul class="chips">
+{{- range .Skills}}
+<li><span class="chip-name">{{.Name}}</span> <span class="chip-count">{{.Count}}</span></li>
+{{- end}}
+</ul>
+</div>
+{{- end}}
+{{- if .MCP}}
+<div class="row">
+<div class="row-label">MCP</div>
+<ul class="chips">
+{{- range .MCP}}
+<li><span class="chip-name">{{.Name}}</span> <span class="chip-count">{{.Count}}</span></li>
+{{- end}}
+</ul>
+</div>
+{{- end}}
+{{- range .Notes}}
+<p class="note">{{.}}</p>
+{{- end}}
+</section>
+{{- end}}
+{{- if .HeadsUp}}
+<section class="card" aria-labelledby="h-heads">
+<h2 id="h-heads">Heads up</h2>
+<ul class="alerts">
+{{- range .HeadsUp}}
+<li>{{.}}</li>
+{{- end}}
+</ul>
+</section>
+{{- end}}
+<h2 class="divider" id="h-detail">Details</h2>
+{{- with .Agents}}{{template "bartable" .}}{{end}}
+{{- with .Tokens}}
+<section class="card" aria-labelledby="h-tokens">
+<h3 id="h-tokens">What used your tokens</h3>
+<div class="donut-wrap">
+<svg class="donut" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Token composition. {{range .Segments}}{{.Speak}}. {{end}}">
+<g transform="rotate(-90 100 100)">
+{{- range .Segments}}{{if .Dash}}
+<circle class="ring {{.Class}}" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="{{.Dash}}" stroke-dashoffset="{{.Offset}}"><title>{{.Speak}}</title></circle>
+{{- end}}{{end}}
+</g>
+{{- range .Segments}}{{if .HasText}}
+<text class="seg-label" x="{{.TextX}}" y="{{.TextY}}" text-anchor="middle" dominant-baseline="central">{{.Text}}</text>
+{{- end}}{{end}}
+<text class="donut-total" x="100" y="96" text-anchor="middle">{{.Total}}</text>
+<text class="donut-unit" x="100" y="116" text-anchor="middle">tokens</text>
+</svg>
+<table class="legend">
+<thead><tr><th scope="col">Type</th><th scope="col" class="num">Share</th><th scope="col" class="num">Tokens</th></tr></thead>
+<tbody>
+{{- range .Segments}}
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill {{.Class}}" width="14" height="14" rx="3" /></svg>{{.Label}}</th><td class="num">{{.Share}}</td><td class="num">{{.Tokens}}</td></tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{- if .Reasoning}}
+<p class="note">{{.Reasoning}}</p>
+{{- end}}
+{{- if .Subagents}}
+<p class="note">{{.Subagents}}</p>
+{{- end}}
+</section>
+{{- end}}
+{{- if .Facts}}
+<section class="card" aria-labelledby="h-facts">
+<h3 id="h-facts">At a glance</h3>
+<dl class="facts">
+{{- range .Facts}}
+<div><dt>{{.Label}}</dt><dd>{{.Text}}</dd></div>
+{{- end}}
+</dl>
+</section>
+{{- end}}
+{{- with .Groups}}{{template "bartable" .}}{{end}}
+{{- end}}
+<footer class="foot">
+{{- range .Footer.Lines}}
+<p>{{.}}</p>
+{{- end}}
+<p>{{.Footer.Privacy}}</p>
+{{- if .Footer.Generated}}
+<p>{{.Footer.Generated}}</p>
+{{- end}}
+</footer>
+</main>
+</body>
+</html>
+{{- define "bartable"}}
+{{- if .}}
+<section class="card" aria-labelledby="h-{{.ID}}">
+<h3 id="h-{{.ID}}">{{.Title}}</h3>
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-{{.ID}}">
+<table class="rows">
+<thead><tr><th scope="col">{{.Heading}}</th>{{if .HasBars}}<th scope="col" class="barcol"><span class="sr">Bar</span></th>{{end}}{{range .Cols}}<th scope="col" class="num">{{.}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr><th scope="row">{{.Label}}</th>{{if $.HasBars}}<td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-{{.Class}}" width="{{.Pct}}" height="10" rx="4" /></svg></td>{{end}}{{range .Cells}}<td class="num">{{.}}</td>{{end}}</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{- if .BarNote}}
+<p class="note barnote">{{.BarNote}}</p>
+{{- end}}
+{{- range .Notes}}
+<p class="note">{{.}}</p>
+{{- end}}
+</section>
+{{- end}}
+{{- end}}

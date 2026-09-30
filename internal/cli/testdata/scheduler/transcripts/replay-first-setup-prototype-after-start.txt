@@ -1,0 +1,9 @@
+# first-setup-prototype journal replayed by setup, crashed after start
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=present com.agent-skills.skill-runs-upload=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=present com.agent-skills.skill-runs-upload=absent own=present
+bootout gui/UID/com.agent-archive.collector  |  journal=present com.agent-skills.skill-runs-upload=absent own=present
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=present com.agent-skills.skill-runs-upload=present own=absent
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-skills.skill-runs-upload.plist  |  journal=present com.agent-skills.skill-runs-upload=present own=absent
+print gui/UID/com.agent-archive.collector  |  journal=absent com.agent-skills.skill-runs-upload=present own=absent
+# exit 1, end: journal=absent com.agent-skills.skill-runs-upload=present own=absent

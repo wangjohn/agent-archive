@@ -18,15 +18,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/platform"
+
 	// modernc.org/sqlite is a pure-Go SQLite, so builds and tests need no
 	// cgo (spec, "Phase 2: Cursor database chats", decision 4).
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// StateDatabase is where Cursor keeps its chats under home.
+// StateDatabase is where Cursor keeps its chats under home on this machine:
+// platform.Locations.CursorStateDB for the running system and environment, ""
+// when this system is not one the program knows (Cursor's data is not looked
+// for there, and Read of "" is ErrNoDatabase).
 func StateDatabase(home string) string {
-	return filepath.Join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb")
+	return platform.NewLocations(platform.Current(), home, os.Getenv, platform.LocationDeps{}).CursorStateDB
 }
 
 // Reason says why Cursor's database was not checked.
@@ -169,8 +174,16 @@ type source struct {
 // is read as closed (it has nothing to replay), and the check afterwards
 // requires the -wal to be still empty and still the only side file.
 //
+// An empty link is a system with no known location for the database
+// (platform.Locations.CursorStateDB): ErrNoDatabase, as if Cursor were not
+// installed.
+//
 // No error names the path: a path error is kept only for Unwrap.
 func resolve(link string) (source, error) {
+	if link == "" {
+		// No location: Cursor's data is not looked for on this system.
+		return source{}, ErrNoDatabase
+	}
 	path, err := filepath.EvalSymlinks(link)
 	if errors.Is(err, os.ErrNotExist) {
 		return source{}, ErrNoDatabase

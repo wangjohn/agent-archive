@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -86,7 +88,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 	}
 	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
 		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
-		"A Keychain item it staged, if any, stays in the Keychain (service "+credentials.KeychainService+").")
+		stagedCredentialLeftNote(credentialOS, home))
 	move, err := p.yesNo("Move it aside and continue?", true)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -105,9 +107,19 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
+	refresh := fs.Bool("refresh", false, "bring hooks, the collector's plist, and skills up to date, and nothing else")
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
+	}
+	if *refresh {
+		if other := refreshCompanions(fs); other != "" {
+			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
+		}
+		return runSetupRefresh(stdout, stderr, env, opts.verbose)
+	}
+	if opts.noSkills && opts.skills {
+		return fs.usageError("--no-skills and --skills contradict each other; give one")
 	}
 	if *abandon {
 		if err := abandonRecovery(stdout, env); err != nil {
@@ -121,8 +133,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	// Every step asks something, so without a terminal setup would stop at
 	// its first question with nothing but an end-of-input error.
-	if !opts.yes && !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help).")
+	if !opts.yes && !env.interactive(stdin) {
+		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help)."+env.overrideHint(stdin))
 		return 1
 	}
 	// Every hook and the LaunchAgent run this path, so one that is about to
@@ -152,7 +164,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env, opts.verbose); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice()); err != nil {
 		// The checks above already name each blocker, marked ✗, so the exit
 		// only says what to do. setup --yes names them again on standard
 		// error, which is what a script reads.
@@ -179,8 +191,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 }
 
 // setup is interactive setup. verbose prints a failed storage check's own
-// error under its diagnosis.
-func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error {
+// error under its diagnosis; skills is --no-skills or --skills, which no
+// question follows.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -253,8 +266,13 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		return err
 	}
 	if done {
+		if skills != skillsUnchanged {
+			terminal.Println(p.out, "The agent skills were not changed: setup made no change this run. To change only the skills, run "+p.style.cmd("agent-archive setup --yes "+skills.flag())+".")
+		}
 		return nil
 	}
+	// The committed setting and this run's flag decide, never a saved draft's.
+	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
 	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
 }
 
@@ -473,9 +491,9 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 // the draft before the Keychain is written, so a crash between them is
 // recoverable. cfg gets the reference.
 func stageStorageSecret(draft *setupDraft, save func() error, env Env, cfg *credentials.Config, secret credentials.R2Credentials) error {
-	keychain, err := env.keychain()
+	keychain, err := env.credentialStore()
 	if err != nil {
-		return fmt.Errorf("open Keychain: %w", err)
+		return openCredentialStoreError(credentialOS, err)
 	}
 	id, err := local.ID()
 	if err != nil {
@@ -496,11 +514,11 @@ func stageStorageSecret(draft *setupDraft, save func() error, env Env, cfg *cred
 
 func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
 	if draft.Config.Storage.Provider == credentials.ProviderR2 {
-		kc, e := env.keychain()
+		kc, e := env.credentialStore()
 		if e != nil {
 			return false, e
 		}
-		if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
+		if _, e = credentials.LoadStored(context.Background(), kc, draft.Config.Storage.R2CredentialRef); e != nil {
 			draft.Step = 1
 			draft.Config.Storage.R2CredentialRef = ""
 			_ = save()
@@ -614,10 +632,11 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 
 	draft.Config.RetiredCredentialRefs = retiredStagedRefs(draft.Config.RetiredCredentialRefs, draft.StagedRefs, draft.Config.Storage.R2CredentialRef)
 	// Re-read under the machine lock in applySetup; it rejects concurrent config changes.
+	skills := planSkillOptOut(env, home, userHome, exe, existing, draft.Config)
 	if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 		return false, err
 	}
-	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
+	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true, skills: skills})
 }
 
 // setupFinish is what finishSetup needs beyond the committed
@@ -627,6 +646,9 @@ type setupFinish struct {
 	env         Env
 	userHome    string
 	offerImport bool
+	// skills is what setup removed and left alone of the agent skills, when
+	// they are turned off.
+	skills skillOptOut
 }
 
 // finishSetup follows a committed setup: it records the apps' versions,
@@ -648,6 +670,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
 	// working, so it is a choice about history and not a step of setup. A
@@ -659,8 +682,116 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	return nil
 }
 
+// printAgentSkills says in one line per skill (/handoff, and any other in
+// agentskills.Registry) where setup installed it, and names each path it
+// left alone because it is not setup's; then one line on how to opt out of
+// them. With the skills turned off (opt-out) it says instead what it
+// removed and left alone, and how to turn them on.
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut) {
+	if cfg.NoSkills {
+		printSkillOptOut(p, agentskills.Registry, optOut, userHome)
+		return
+	}
+	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
+	if printSkillFiles(p, agentskills.Registry, files, userHome) {
+		terminal.Println(p.out, "To remove the agent skills and keep them off, run "+p.style.cmd("agent-archive setup --no-skills")+".")
+	}
+}
+
+// skillOptOut is what setup does to the agent skills while they are turned
+// off: the skill files of setup's it removes, and the other files at their
+// paths that it leaves alone.
+type skillOptOut struct {
+	removed []string
+	kept    []string
+}
+
+// planSkillOptOut is the skillOptOut of applying cfg over old, planned
+// before setup applies it (afterwards the removed files are gone, and
+// nothing could tell them from files that were never there). It is empty
+// unless the skills are off. A failure to plan is left to the setup
+// transaction, which plans the same removals and reports it.
+func planSkillOptOut(env Env, home, userHome, executable string, old, cfg config.Config) skillOptOut {
+	if !cfg.NoSkills {
+		return skillOptOut{}
+	}
+	files, previousFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, old)
+	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome())
+	if err != nil {
+		return skillOptOut{}
+	}
+	var out skillOptOut
+	for _, change := range changes {
+		out.removed = append(out.removed, change.Path)
+	}
+	out.kept = kept
+	return out
+}
+
+// printSkillOptOut reports opt-out's removals and the files it left, each
+// under its skill, then that the skills are off and how to turn them on.
+func printSkillOptOut(p *prompter, skills []agentskills.Skill, optOut skillOptOut, userHome string) {
+	for _, skill := range skills {
+		if removed := displayPaths(skillPaths(optOut.removed, skill.Name), userHome); len(removed) > 0 {
+			terminal.Printf(p.out, "Removed /%s: %s\n", skill.Name, strings.Join(removed, ", "))
+		}
+		for _, path := range skillPaths(optOut.kept, skill.Name) {
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so setup does not remove it.\n", displayPath(path, userHome))
+		}
+	}
+	terminal.Println(p.out, "Agent skills are turned off. To install them, run "+p.style.cmd("agent-archive setup --skills")+".")
+}
+
+// skillPaths is those of paths that are the file of the skill named name.
+func skillPaths(paths []string, name string) []string {
+	var out []string
+	for _, path := range paths {
+		if filepath.Base(filepath.Dir(path)) == name {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// displayPaths is displayPath of each of paths.
+func displayPaths(paths []string, userHome string) []string {
+	out := make([]string, len(paths))
+	for i, path := range paths {
+		out[i] = displayPath(path, userHome)
+	}
+	return out
+}
+
+// printSkillFiles is printAgentSkills for the files of skills, each one
+// reported under its own skill. It reports whether it named any installed.
+func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskills.File, userHome string) (installedAny bool) {
+	for _, skill := range skills {
+		var installed []string
+		for _, f := range files {
+			if f.Skill != skill.Name {
+				continue
+			}
+			if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+				installed = append(installed, displayPath(f.Path, userHome))
+				continue
+			}
+			terminal.Print(p.out, leftSkillLine(skill.Title(), f.Path, userHome))
+		}
+		if len(installed) > 0 {
+			what := skill.Title()
+			if skill.Summary != "" {
+				what += ", which " + skill.Summary
+			}
+			terminal.Printf(p.out, "Installed %s: %s\n", what, strings.Join(installed, ", "))
+			installedAny = true
+		}
+	}
+	return installedAny
+}
+
 // verifyStorage checks that the credentials are accepted, then that setup can
-// write, read, and delete in the configured bucket, and records the bucket's privacy evidence and the check
+// write, read, and delete in the configured bucket, and records the bucket's
+// privacy evidence and the check
 // time in cfg. connectErr is a failure to build a client at all; accessErr
 // is a failed check, which new settings may fix.
 func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
@@ -1091,14 +1222,16 @@ func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProjec
 	return out
 }
 
-// storedCredentialReadable reports whether the Keychain item ref can be
-// loaded now, without any Keychain prompt.
+// storedCredentialReadable reports whether the credential saved under ref
+// can be loaded now, without any Keychain prompt. It asks about what setup
+// saved, not about what could be loaded: a key in the environment is not
+// stored (credentials.LoadStored).
 func storedCredentialReadable(env Env, ref string) bool {
-	kc, err := env.keychain()
+	kc, err := env.credentialStore()
 	if err != nil {
 		return false
 	}
-	_, err = kc.Load(context.Background(), ref)
+	_, err = credentials.LoadStored(context.Background(), kc, ref)
 	return err == nil
 }
 
@@ -1173,7 +1306,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 					return cfg, secret, false, err
 				}
 			} else {
-				terminal.Println(p.out, "The stored R2 credentials can't be read from the Keychain; enter them again.")
+				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialOS)+"; enter them again.")
 			}
 		}
 		if !reuse {

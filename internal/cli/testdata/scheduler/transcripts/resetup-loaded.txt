@@ -1,0 +1,8 @@
+# setup again from another executable, job loaded
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=old
+print gui/UID/com.agent-archive.collector  |  journal=absent own=old
+print gui/UID/com.agent-archive.collector  |  journal=present own=old
+bootout gui/UID/com.agent-archive.collector  |  journal=present own=old
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=new
+# exit 0, end: journal=absent own=new

@@ -310,14 +310,19 @@ const (
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
-	ArchiveSessionID      string    `json:"archive_session_id"`
-	NativeSessionID       string    `json:"native_session_id"`
-	ProjectID             string    `json:"project_id"`
-	ProjectRoot           string    `json:"project_root"`
-	Harness               Harness   `json:"harness"`
-	TranscriptPath        string    `json:"transcript_path"`
-	SessionStartedAt      time.Time `json:"session_started_at"`
-	RegisteredAt          time.Time `json:"registered_at"`
+	ArchiveSessionID string    `json:"archive_session_id"`
+	NativeSessionID  string    `json:"native_session_id"`
+	ProjectID        string    `json:"project_id"`
+	ProjectRoot      string    `json:"project_root"`
+	Harness          Harness   `json:"harness"`
+	TranscriptPath   string    `json:"transcript_path"`
+	SessionStartedAt time.Time `json:"session_started_at"`
+	RegisteredAt     time.Time `json:"registered_at"`
+	// RepoKey is RepoKey of the project's origin remote when the session
+	// registered: a hash, never the URL. Empty when there was no portable
+	// origin, or on older registrations; the collector then derives it from
+	// ProjectRoot when it publishes.
+	RepoKey               string    `json:"repo_key,omitempty"`
 	ParentSessionID       string    `json:"parent_session_id,omitempty"`
 	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
 	SubagentID            string    `json:"subagent_id,omitempty"`
@@ -528,8 +533,8 @@ type Counts struct {
 	ToolErrors *int `json:"tool_errors,omitempty"`
 	// The token counts keep each harness's own meaning. Claude Code's
 	// InputTokens excludes what was read from or written to the prompt cache;
-	// Codex's InputTokens includes its cached input, which CacheReadTokens
-	// repeats. ReasoningTokens (from parser 0.14.0: Claude Code's
+	// Codex's InputTokens includes its cached input and its cache-write input,
+	// which CacheReadTokens and CacheWriteTokens repeat. ReasoningTokens (from parser 0.14.0: Claude Code's
 	// output_tokens_details.thinking_tokens, Codex's reasoning_output_tokens)
 	// is the part of OutputTokens spent on reasoning, not an addition to it.
 	InputTokens      *int `json:"input_tokens,omitempty"`
@@ -537,6 +542,14 @@ type Counts struct {
 	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 	ReasoningTokens  *int `json:"reasoning_tokens,omitempty"`
+	// Commits, Pushes, PRsCreated, and PRsMerged count the git and pull
+	// request work the session's own tool calls confirmed (see
+	// Metadata.GitActivity), uncapped. They are known from parser 0.15.0
+	// wherever tool_calls is.
+	Commits    *int `json:"commits,omitempty"`
+	Pushes     *int `json:"pushes,omitempty"`
+	PRsCreated *int `json:"prs_created,omitempty"`
+	PRsMerged  *int `json:"prs_merged,omitempty"`
 }
 
 // UnknownModel is the ModelTokens.Model of token accounting no model name
@@ -626,8 +639,13 @@ type Metadata struct {
 	// ProjectName is the basename of the session's project root at publish
 	// time, so list can label the project without local config. Omitted when
 	// unknown.
-	ProjectName string    `json:"project_name,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
+	ProjectName string `json:"project_name,omitempty"`
+	// RepoKey identifies the git repository the session ran in, independent
+	// of where it is checked out: a hash of the normalized origin URL (see
+	// RepoKey), never the URL. Omitted when the project had no portable
+	// origin remote.
+	RepoKey   string    `json:"repo_key,omitempty"`
+	StartedAt time.Time `json:"started_at"`
 	// EndedAt is the latest timestamp any retained record of the session
 	// carries, never earlier than StartedAt. Omitted when no record carries
 	// a timestamp (a Cursor transcript) or the source could not be parsed.
@@ -659,7 +677,12 @@ type Metadata struct {
 	// an mcp__<server>__<tool> name), by count descending and then name
 	// ascending, at most MaxMCPCalls of them. Omitted when no MCP call was
 	// observed or the counts are unknown.
-	MCPCalls        []ToolUsage              `json:"mcp_calls,omitempty"`
+	MCPCalls []ToolUsage `json:"mcp_calls,omitempty"`
+	// GitActivity lists, in transcript order, the commits, pushes, and pull
+	// requests created or merged that the session's tool calls confirmed,
+	// at most MaxGitActivity of them (the counts are exact). Omitted when
+	// none was observed or the counts are unknown.
+	GitActivity     []GitEvent               `json:"git_activity,omitempty"`
 	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
 	SourceBundle    SourceReference          `json:"source_bundle"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`

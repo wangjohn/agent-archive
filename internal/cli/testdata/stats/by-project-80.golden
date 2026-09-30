@@ -1,0 +1,9 @@
+agent-archive stats · projects · last 14 days · 3 agents
+
+PROJECTS (3)                         sessions  tokens  est. cost  share
+proj-api       ████████████████████         2     33M        $73    68%
+agent-archive  █████████                    5     20M        $32    30%
+dotfiles       █                            3    2.1M     $2.27+     2%
+
+Estimated at list price, not a bill. + leaves out models with no price.
+--view overview

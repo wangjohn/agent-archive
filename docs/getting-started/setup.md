@@ -30,7 +30,9 @@ for each check: a ✓, or a ✗ with the problem and how to fix it.
 - **Background job.** `launchctl` must say whether the collector's job is
   already loaded.
 - **Keychain.** When your saved settings or an unfinished setup store in
-  R2, the macOS Keychain, where the R2 key is kept, must open.
+  R2, the macOS Keychain, where the R2 key is kept, must open. (A build
+  without a Keychain checks the credentials file instead:
+  [where credentials are kept](../security/privacy.md#where-credentials-are-kept).)
 
 A ✗ stops setup before it asks anything: nothing is changed, and an
 unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
@@ -103,7 +105,8 @@ already have a profile with credentials, and R2 otherwise.
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
   account and the bucket, so the bucket isn't asked for. Any other S3 API
   endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
-  on a terminal and stored in the macOS Keychain.
+  on a terminal and stored in the macOS Keychain (or, on a build without one,
+  in a private credentials file).
 - **S3:** choose an existing AWS profile, then the bucket. Setup offers
   the profiles in your AWS settings. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
@@ -261,10 +264,57 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
+- `--no-skills` installs no [agent skills](#what-setup-changes-on-your-mac)
+  (such as `/handoff`) and removes the ones setup wrote earlier; a file that
+  is not setup's is left alone and named. It works with or without `--yes`
+  (without it, setup on a finished installation first asks what to change,
+  so `agent-archive setup --yes --no-skills` changes only this). It is saved
+  (`no_skills` in the [configuration](../reference/configuration.md)), and
+  later setup runs keep the skills off. `--skills` turns them back on and
+  installs them. Giving both is an error.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
 
 [CLI reference](../reference/cli.md#agent-archive-setup) lists every flag.
+
+## Refreshing after an upgrade
+
+The hooks, the background collector's plist, and the skill files name the
+`agent-archive` binary and its flags, so a new binary needs them rewritten.
+`agent-archive setup --refresh` does that, and nothing else: it asks
+nothing, needs no terminal, and never touches storage, credentials,
+projects, retention, or your saved answers. It prints `nothing to refresh`
+(exit 0) when all is current, or one line saying what it refreshed
+(`--verbose` lists the files). [The installer](install.md#install-with-the-script)
+runs it for you when it finds a set-up Mac.
+
+- It uses the saved settings and the hook files setup recorded, and the
+  executable you run it from. If the recorded executable differs (it moved,
+  or was deleted, the case `status` calls "capture has stopped"), it points
+  the hooks, the plist, and the skills at the running one and records it.
+  It refuses a temporary build (`go run`) or a file that cannot run.
+- Skills follow the same rules as in setup: a stale file of setup's is
+  replaced, a file that is not setup's is left and named, and with
+  `--no-skills` saved none are installed. It writes what setup would, so a
+  skill or hook file you deleted by hand is written again (to keep the
+  skills off, use `--no-skills`; to stop capture, use `agent-archive
+  uninstall` or `pause`, not deleting the hooks).
+- It changes the LaunchAgent's job only when the plist itself changes (a
+  moved binary) for a job that is loaded: that job is stopped and started
+  again so it runs the new plist. A job that is not loaded stays that way,
+  and an unchanged plist leaves launchd alone.
+- All of it is one transaction with setup's journal, so a failure puts every
+  file back, and a Ctrl-C or closed terminal while it writes does not stop
+  it halfway. It waits up to ten seconds for a background collection pass
+  that is running, then refuses and asks you to retry.
+- It refuses, changing nothing and exiting 1 with one line on standard
+  error, when setup never finished, an interrupted setup needs recovery, the
+  archive was uninstalled, another installation's hooks are in a hook file
+  it would write, another installation owns the background job, another
+  setup is running, or it runs as root (`sudo`) in a home directory that
+  belongs to another user, where it would leave root-owned files. Run it as
+  yourself. Any other flag except `--verbose` is a usage error
+  (exit 2).
 
 ## What setup changes on your Mac
 
@@ -298,16 +348,36 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   Run setup again after moving your AWS files or the helper; `status` warns
   when they no longer match
   ([configuration](../reference/configuration.md#environment-variables)).
+- **Agent skill files**, one folder per skill under each app's skills
+  directory: `/handoff` is written to `$CLAUDE_CONFIG_DIR/skills/handoff/SKILL.md`
+  (`~/.claude/skills/…` by default) for Claude Code and to
+  `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor
+  ([handoff](../guides/handoff.md#from-inside-an-agent-handoff)), and
+  `agent-archive`, which lets the agent find and pull in a past session, to
+  `skills/agent-archive/SKILL.md` in the same two places
+  ([agent skills](../guides/agent-skills.md)). Each file
+  carries a marker line: setup replaces, `status` lists, and uninstall
+  removes only a file with it (naming this installation's data directory),
+  and leaves any other file at that path alone, saying so. After you upgrade
+  `agent-archive`, `status` warns about a skill file written by an earlier
+  release; [`agent-archive setup --refresh`](#refreshing-after-an-upgrade)
+  refreshes it (the installer runs that). Setup installs them without
+  asking and says how to opt out: `agent-archive setup --no-skills` removes
+  the files it wrote and keeps them off in later runs (`status` says they are
+  turned off), and `agent-archive setup --skills` turns them on again.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
   see [local state](../reference/local-state.md)), private to your account.
   It holds registrations, frozen uploads, and caches; transcripts are read in
   place, not copied, except a Cursor database copy that exists only while a
   read of it is in progress.
-- **A Keychain item** (service `agent-archive`) for R2 credentials. S3
+- **A Keychain item** (service `agent-archive`) for R2 credentials (on a
+  build without a Keychain, a credentials file in the data directory). S3
   credentials stay in your AWS profile.
 
-`agent-archive uninstall` removes the hooks and the LaunchAgent;
-`--delete-local-data` also removes the local state and the Keychain item.
+`agent-archive uninstall` removes the hooks, the skill files, and the
+LaunchAgent;
+`--delete-local-data` also removes the local state and the Keychain item
+(or credentials file).
 Neither touches the bucket ([uninstall](uninstall.md)).
 
 Only the account's own default installation, in `~/.local/share/agent-archive`
@@ -342,6 +412,15 @@ After "Configuration saved.", setup says, with one line per app, what to do next
   common reason nothing is captured.
 - **Claude Code:** nothing to approve; start a new session.
 - **Cursor:** nothing to approve; start a new Agent chat.
+
+Setup's closing lines also name the agent skills it installed (`/handoff` and
+`agent-archive`) and the opt-out, `--no-skills`. Unlike Codex's hooks, a skill
+needs no approval; Claude Code and Codex notice it in a session that is
+already open (Claude Code needs `/reload-skills` when it had no
+`~/.claude/skills` folder at start), and Cursor may need a new chat. Then ask an agent in words, such
+as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.md)).
+Claude Code asks before it first uses the skill and before the commands it
+runs.
 
 Sessions already open are not captured: capture needs a provable fresh
 start, so only a new session in an included project counts. In Codex and

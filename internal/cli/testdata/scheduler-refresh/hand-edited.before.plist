@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@OLD_EXE@</string>
+		<string>_collect</string>
+		<string>--verbose</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>AWS_PROFILE</key>
+		<string>work</string>
+		<key>AGENT_ARCHIVE_HOME</key>
+		<string>@DATA_HOME@</string>
+	</dict>
+	<key>KeepAlive</key>
+	<false/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>

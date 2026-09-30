@@ -97,6 +97,10 @@ $ agent-archive status --json
       "waiting_for_transcript_sessions": 0
     }
   ],
+  "agent_skills": [
+    "/Users/alex/.agents/skills/handoff/SKILL.md",
+    "/Users/alex/.agents/skills/agent-archive/SKILL.md"
+  ],
   "collector": {
     "pending_count": 0
   },

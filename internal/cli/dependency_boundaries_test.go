@@ -23,9 +23,9 @@ func (p preflightProbe) installation(home, userHome string) installation {
 	return installation{home: home, userHome: userHome, accountHome: userHome}
 }
 
-func (p preflightProbe) jobState(string) string { return p.job }
+func (p preflightProbe) jobState(string, string) string { return p.job }
 
-func (p preflightProbe) keychain() (credentials.CredentialStore, error) {
+func (p preflightProbe) credentialStore() (credentials.CredentialStore, error) {
 	return p.open()
 }
 

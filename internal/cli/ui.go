@@ -68,6 +68,48 @@ func styleFor(out io.Writer) textStyle {
 	return terminalStyle(os.Getenv, width)
 }
 
+// terminalSize is the size of the terminal out writes to: ok is false when
+// out (unwrapped from a lockedWriter) is not a terminal or its size cannot
+// be read.
+func (e Env) terminalSize(out io.Writer) (width, height int, ok bool) {
+	if e.TerminalSize != nil {
+		return e.TerminalSize(out)
+	}
+	file, isFile := underlyingWriter(out).(*os.File)
+	if !isFile || !term.IsTerminal(int(file.Fd())) {
+		return 0, 0, false
+	}
+	width, height, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+// displayLines is how many terminal rows text takes when printed on a
+// terminal width columns wide: each line takes at least one row, and a
+// line wider than the terminal wraps onto more. Color codes take no room.
+// A width of 0 or less means lines never wrap.
+func displayLines(text string, width int) int {
+	if text == "" {
+		return 0
+	}
+	n := 0
+	for line := range strings.SplitSeq(strings.TrimSuffix(text, "\n"), "\n") {
+		n += lineRows(line, width)
+	}
+	return n
+}
+
+// lineRows is how many terminal rows one line takes, as displayLines.
+func lineRows(line string, width int) int {
+	w := visibleWidth(line)
+	if width <= 0 || w <= width {
+		return 1
+	}
+	return (w + width - 1) / width
+}
+
 // terminalStyle is the style for a terminal width columns wide, given the
 // process environment. A dumb terminal gets neither color nor redrawing.
 func terminalStyle(getenv func(string) string, width int) textStyle {
@@ -167,12 +209,16 @@ var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 var ansiReset = regexp.MustCompile("^\x1b\\[0*m$")
 
 // visibleWidth is the number of columns text takes on a terminal: wide
-// characters such as CJK take two, combining marks none, and color codes
-// none.
+// characters such as CJK take two, combining marks none, a narrow character
+// that a variation selector turns into an emoji (a heart, then U+FE0F) two,
+// and color codes none.
 func visibleWidth(text string) int {
 	n := 0
-	for _, r := range ansiEscape.ReplaceAllString(text, "") {
-		n += runeWidth(r)
+	text = ansiEscape.ReplaceAllString(text, "")
+	for text != "" {
+		r, size := utf8.DecodeRuneInString(text)
+		n += runeWidthBefore(r, text[size:])
+		text = text[size:]
 	}
 	return n
 }
@@ -185,6 +231,28 @@ func runeWidth(r rune) int {
 		return 2
 	}
 	return 1
+}
+
+// emojiSelector is the variation selector that asks for a character's emoji
+// form, U+FE0F ("VS16").
+const emojiSelector = '️'
+
+// runeWidthBefore is the columns r takes when rest is the text after it: as
+// runeWidth says, except that a narrow, non-ASCII character followed by
+// emojiSelector is drawn as a two-column emoji (❤️, ✔️, 🖥️), which runeWidth
+// alone would count as one. The selector itself takes none. ASCII is left
+// alone: "1" and U+FE0F is not something a terminal draws wide.
+//
+// Terminals do not agree about these; the ones that draw them narrow show a
+// line up to a column shorter than counted, where the reverse would wrap it.
+func runeWidthBefore(r rune, rest string) int {
+	w := runeWidth(r)
+	if w == 1 && r > unicode.MaxASCII {
+		if next, _ := utf8.DecodeRuneInString(rest); next == emojiSelector {
+			return 2
+		}
+	}
+	return w
 }
 
 // truncateVisible cuts text to at most limit columns. Color codes are kept
@@ -206,11 +274,12 @@ func truncateVisible(text string, limit int) string {
 			continue
 		}
 		r, size := utf8.DecodeRuneInString(text)
-		if column+runeWidth(r) > limit {
+		w := runeWidthBefore(r, text[size:])
+		if column+w > limit {
 			break
 		}
 		b.WriteString(text[:size])
-		column += runeWidth(r)
+		column += w
 		text = text[size:]
 	}
 	if colored {
@@ -239,14 +308,17 @@ func (s textStyle) spin(out io.Writer, label string) *spinner {
 }
 
 func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *spinner {
+	return s.spinLabelEvery(out, func() string { return label }, every)
+}
+
+// spinLabelEvery is spinEvery for a label that changes while it runs (a
+// count of what is done): label is asked for on every frame, from the
+// spinner's goroutine, and must be safe for that. A frame that is shorter
+// than the last is padded so nothing of the last is left behind.
+func (s textStyle) spinLabelEvery(out io.Writer, label func() string, every time.Duration) *spinner {
 	sp := &spinner{}
 	if !s.live {
 		return sp
-	}
-	// A label wider than the terminal would wrap, and "\r" could not take
-	// the spinner's line back.
-	if s.width > 2 {
-		label = truncateVisible(label, s.width-3)
 	}
 	sp.done = make(chan struct{})
 	sp.finished = make(chan struct{})
@@ -254,8 +326,17 @@ func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *
 		defer close(sp.finished)
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
+		lastWidth := 0
 		for frame := 0; ; frame++ {
-			terminal.Printf(out, "\r%s %s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), label)
+			text := label()
+			// A label wider than the terminal would wrap, and "\r" could not
+			// take the spinner's line back.
+			if s.width > 2 {
+				text = truncateVisible(text, s.width-3)
+			}
+			width := visibleWidth(text)
+			terminal.Printf(out, "\r%s %s%s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), text, strings.Repeat(" ", max(lastWidth-width, 0)))
+			lastWidth = width
 			select {
 			case <-sp.done:
 				terminal.Print(out, "\r\x1b[K")

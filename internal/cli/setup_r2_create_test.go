@@ -82,7 +82,7 @@ func newGuidedR2Fixture(t *testing.T) *guidedR2Fixture {
 	f.inWebApp(t)
 	g := &guidedR2Fixture{screenFixture: f, cf: cloudflaretest.New(t, bootstrapCanary), keychain: newFakeKeychain()}
 	g.setEnv(nil)
-	f.env.Keychain = func() (credentials.CredentialStore, error) { return g.keychain, nil }
+	f.env.Credentials = func() (credentials.CredentialStore, error) { return g.keychain, nil }
 	f.env.Pause = func(time.Duration) { g.pauses++ }
 	f.env.Cloudflare = func(token string) cloudflare.API {
 		api := &trackedAPI{createToken: g.createToken, deleteToken: g.deleteToken, API: cloudflare.New(token, cloudflare.Options{
@@ -978,10 +978,10 @@ func TestGuidedR2RevokesTheTokenWhenStagingFails(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(g *guidedR2Fixture){
 		"Keychain save fails": func(g *guidedR2Fixture) {
-			g.env.Keychain = func() (credentials.CredentialStore, error) { return saveFailsKeychain{g.keychain}, nil }
+			g.env.Credentials = func() (credentials.CredentialStore, error) { return saveFailsKeychain{g.keychain}, nil }
 		},
 		"Keychain unavailable": func(g *guidedR2Fixture) {
-			g.env.Keychain = func() (credentials.CredentialStore, error) { return nil, errors.New("no keychain here") }
+			g.env.Credentials = func() (credentials.CredentialStore, error) { return nil, errors.New("no keychain here") }
 		},
 	}
 	for name, arrange := range cases {
@@ -1013,7 +1013,7 @@ func TestGuidedR2RevokesTheTokenWhenStagingFails(t *testing.T) {
 func TestGuidedR2FailedRollbackNamesTheToken(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	g.env.Keychain = func() (credentials.CredentialStore, error) { return saveFailsKeychain{g.keychain}, nil }
+	g.env.Credentials = func() (credentials.CredentialStore, error) { return saveFailsKeychain{g.keychain}, nil }
 	g.cf.Fail(cloudflaretest.RouteDeleteToken, cloudflaretest.Failure{Status: http.StatusForbidden})
 	out := g.run(t, g.happy(), 1)
 	name := g.cf.Tokens()[0].Name
@@ -1346,7 +1346,7 @@ func TestStageStorageSecretJournalsBeforeTheKeychain(t *testing.T) {
 	var journaled []string
 	keychain := &hookKeychain{fakeKeychain: newFakeKeychain()}
 	env := testEnv(t, t.TempDir(), time.Now())
-	env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+	env.Credentials = func() (credentials.CredentialStore, error) { return keychain, nil }
 	draft := &setupDraft{Version: draftFormat}
 	save := func() error {
 		order = append(order, "save")
@@ -1384,7 +1384,7 @@ func TestStageStorageSecretFailures(t *testing.T) {
 		t.Parallel()
 		keychain := &hookKeychain{fakeKeychain: newFakeKeychain(), onSave: func(string) { t.Error("the Keychain was written after the journal failed") }}
 		env := testEnv(t, t.TempDir(), time.Now())
-		env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+		env.Credentials = func() (credentials.CredentialStore, error) { return keychain, nil }
 		cfg := credentials.Config{Provider: credentials.ProviderR2}
 		err := stageStorageSecret(&setupDraft{}, func() error { return errors.New("disk full") }, env, &cfg, secret)
 		if err == nil || !strings.Contains(err.Error(), "disk full") {
@@ -1394,7 +1394,7 @@ func TestStageStorageSecretFailures(t *testing.T) {
 	t.Run("Keychain fails", func(t *testing.T) {
 		t.Parallel()
 		env := testEnv(t, t.TempDir(), time.Now())
-		env.Keychain = func() (credentials.CredentialStore, error) { return saveFailsKeychain{newFakeKeychain()}, nil }
+		env.Credentials = func() (credentials.CredentialStore, error) { return saveFailsKeychain{newFakeKeychain()}, nil }
 		cfg := credentials.Config{Provider: credentials.ProviderR2}
 		draft := &setupDraft{}
 		err := stageStorageSecret(draft, func() error { return nil }, env, &cfg, secret)
@@ -1405,7 +1405,7 @@ func TestStageStorageSecretFailures(t *testing.T) {
 	t.Run("Keychain unavailable", func(t *testing.T) {
 		t.Parallel()
 		env := testEnv(t, t.TempDir(), time.Now())
-		env.Keychain = func() (credentials.CredentialStore, error) { return nil, errors.New("none") }
+		env.Credentials = func() (credentials.CredentialStore, error) { return nil, errors.New("none") }
 		cfg := credentials.Config{Provider: credentials.ProviderR2}
 		if err := stageStorageSecret(&setupDraft{}, func() error { return nil }, env, &cfg, secret); err == nil || !strings.Contains(err.Error(), "open Keychain") {
 			t.Fatalf("error %v", err)

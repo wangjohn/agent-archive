@@ -1,0 +1,2 @@
+# exit 1
+Setup incomplete: launchd's com.agent-archive.collector job was loaded from a plist other than @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own

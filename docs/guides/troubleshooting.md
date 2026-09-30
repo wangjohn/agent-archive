@@ -175,8 +175,11 @@ stays the same length however many projects you include.
   directory of this installation's own, or uninstall the other one.
 - **agent-archive can't run from where setup installed it** means the hooks
   or background collector run an `agent-archive` executable that has since
-  been moved, deleted, or made non-executable. Rerun `agent-archive setup`
-  from the binary's new location.
+  been moved, deleted, or made non-executable. Run
+  `agent-archive setup --refresh` from the binary's new location: it points
+  the hooks, the collector's plist, and the skills at it, asks nothing, and
+  changes no other setting. (A hooks row that says `hooks missing` is
+  repaired the same way.)
 - **The background collector can't load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
   LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
@@ -245,6 +248,54 @@ Check that setup includes **Codex** and the project where the session runs (`age
 ## No Cursor session
 
 Check that setup includes **Cursor** and the project where the Agent chat runs (`agent-archive status --verbose` shows both). Start a **new Agent chat** in that project and send its first prompt; continuing an older chat does not establish a fresh start, and `/clear` is not the Cursor path. Run `agent-archive sync` and check the Cursor Capture row. If it shows local capture but no verified archive, use the Storage and read-back details under [reading status](#reading-status). If no session was seen, check the hook state and capture diagnostics in `status --verbose`. A chat with transcripts disabled can register but has no transcript to upload; see [session eligibility](../reference/session-eligibility.md#cursor).
+
+## No picker or prompt in an agent's terminal
+
+If `list` prints a table instead of opening the browser, bare `show` or
+`handoff` says to name a session, or `setup`, `uninstall`, `backfill`, or `purge apply`
+refuses with "Prompts are off because ...", agent-archive believes a coding
+agent is running it: `AGENT_ARCHIVE_NONINTERACTIVE` is set, or
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is (a terminal
+opened from inside an agent can inherit them). Nothing was changed. Check
+with `env | grep -E 'AGENT_ARCHIVE_NONINTERACTIVE|CLAUDE_CODE_SESSION_ID|CODEX_THREAD_ID|CURSOR_AGENT'`.
+To be asked anyway, run the command as
+`AGENT_ARCHIVE_NONINTERACTIVE=0 agent-archive ...`, or `unset` the variable.
+`--yes` skips a confirmation without it. `agent-archive: AGENT_ARCHIVE_NONINTERACTIVE="..."
+is not a valid setting` means the value is not one of 1/true/yes/on or
+0/false/no/off; fix or unset it.
+
+## My agent does not use the skill
+
+The `agent-archive` skill ([agent skills](agent-skills.md)) is what lets Claude
+Code, Codex, or Cursor pull in a past session when you ask.
+
+1. **Start a new session.** Claude Code and Codex pick up a new skill in a
+   running session (restart the app if it does not appear; Claude Code needs
+   `/reload-skills`, or a new session, when it had no `~/.claude/skills`
+   folder when the session started), but Cursor's
+   documentation does not say it does, so start a new chat there. Codex reads
+   `~/.agents/skills`, and Claude Code `~/.claude/skills`
+   (`$CLAUDE_CONFIG_DIR/skills` when set).
+2. **Check that it is installed.** `agent-archive status --verbose` says when
+   agent skills are turned off (`agent-archive setup --skills` turns them
+   on), lists the skill files setup wrote, and warns about one written by an
+   earlier release (run `agent-archive setup --refresh`; the installer does it
+   when you upgrade). If setup said `Left ... as it
+   is`, a file that is not setup's is at that path; move it aside and run
+   setup again.
+3. **Ask for it plainly**, naming what you want: "pull in my Codex session
+   about the login bug". You can also name the skill: `/agent-archive` in
+   Claude Code, `$agent-archive` in Codex (or pick it from `/skills`), and in
+   Cursor "use the agent-archive skill".
+4. **Expect a question the first time.** Claude Code asks before it uses the
+   skill (a `Skill(agent-archive)` permission rule allows it for good) and
+   before running `handoff`, `list`, or `show`, and Codex and Cursor apply
+   their own approvals; the skill deliberately does not pre-approve them
+   ([permissions](agent-skills.md#permissions)). Where nothing can ask, as in
+   `claude -p`, the agent is refused instead and should say so; allow the command in that agent's settings, or run it yourself.
+5. **A sandbox may block it.** If the agent says the network or the Keychain
+   was blocked, a session on this Mac is still found by its title; allow the
+   command, or run it yourself in a terminal.
 
 ## An interrupted setup
 

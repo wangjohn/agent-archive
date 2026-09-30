@@ -21,6 +21,149 @@ follow [Semantic Versioning](https://semver.org/).
   `setup --yes`. It has not yet been run against every kind of Cloudflare
   account, which is why it is behind the switch. See [creating a
   bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
+- **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
+  a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
+  overview, detail, projects, models and agents views, `w` cycles the window
+  (7, 30, 90 days) instantly from what was already read, the arrows, `j` `k`,
+  PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
+  `h` saves the redacted page as HTML (it asks for a file name and never
+  replaces a file) and `q` or Ctrl-C quit, leaving the terminal as it
+  was. The bar names the window `w` moves to next. It opens only when
+  standard input and output are terminals (not a dumb one) and
+  `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,
+  `--by`, `--no-pager`, `--json` or `--html`; those print as before. See the
+  [stats guide](docs/guides/stats.md#the-interactive-screen).
+- `agent-archive stats --json` carries more of what the screen is built from:
+  each day's estimated cost (`daily[].cost`, adding up to the overview's) and
+  the dearest day (`peak_spend`), the share of tokens that were cache reads
+  (`overview.cache_share`), up to three prioritized `heads_up` notes as data
+  (subagents using a quarter or more of the tokens, one session costing a
+  tenth or more of the spend when the window has more than one session,
+  sessions without token data, a low cache-hit rate), and `display_skills`, which lists a plugin's skill once under its
+  bare name, with `total_skills`, `total_display_skills` and
+  `mcp.total_servers` counting every row. Existing fields and the page are
+  unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
+- **Handoff without copying.** Continuing a session in another coding agent
+  is one step: inside Claude Code, `/handoff codex` opens Codex in a new
+  terminal tab or window with the session as its context (in Codex, ask for
+  `$handoff`); on a terminal, `agent-archive handoff` picks a session, asks
+  where to continue, and starts the agent there. See the
+  [handoff guide](docs/guides/handoff.md).
+- Metadata may include, from parser `0.15.0`, `git_activity`: the commits,
+  pushes, and pull requests created or merged that the session's own tool
+  calls confirmed (`git` and `gh` commands, and GitHub MCP tools), each with
+  its time and, when known, the commit SHA, branch, `owner/repo`, pull
+  request number, and a URL. Only work whose result shows it succeeded is
+  recorded, never a failed, rejected, or dry-run attempt. `counts.commits`,
+  `counts.pushes`, `counts.prs_created`, and `counts.prs_merged` count it,
+  and `show` has a `Git` row. Commit messages and pull request text are not
+  kept. Existing sessions gain the fields on the next metadata refresh;
+  nothing is re-uploaded but the metadata.
+- Setup installs the `handoff` skill for Claude Code
+  (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/handoff/SKILL.md`). It runs
+  `agent-archive handoff --to <agent>`, defaulting to another agent than the
+  one you are in. Setup leaves a file it did not write, uninstall removes
+  only its own, and `status --json` lists them in `agent_skills`. After an
+  upgrade, `status` warns about a skill file an earlier release wrote and lists
+  it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
+- `agent-archive setup --refresh` brings the app hooks, the background
+  collector's plist, and the skill files up to date for the saved settings and
+  the binary you run it from, and changes nothing else. It asks nothing and
+  needs no terminal, prints `nothing to refresh` or what it refreshed, and
+  refuses (exit 1) before setup has finished, while a setup needs recovery,
+  after uninstall, or when another installation's hooks are in the way. It
+  also repairs hooks left pointing at a binary that moved. `install.sh` runs it
+  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  skills; if it fails, or the installer runs as root (which would leave
+  root-owned files in your home directory), the install still succeeds and
+  says how to run it. It waits up to ten seconds for a running collection
+  pass, and finishes once it starts writing even if you press Ctrl-C. Run as
+  root in another user's home directory, it refuses, changing nothing.
+  `status` names it where it reports out-of-date skills, hooks that are
+  missing, or a moved binary.
+- `agent-archive setup --no-skills` (also with `--yes`) installs no agent
+  skills and removes the ones setup wrote; a file that is not setup's is left
+  alone and named. It is saved, so later setup runs keep the skills off, and
+  `agent-archive setup --skills` turns them back on. `status` says when they
+  are turned off (`agent_skills_disabled` in `--json`). Setup now says in one
+  line how to opt out.
+- Setup also installs an `agent-archive` skill for Claude Code
+  (`~/.claude/skills/agent-archive/SKILL.md`) and for Codex and Cursor
+  (`~/.agents/skills/agent-archive/SKILL.md`), so you can ask an agent to
+  "pull in the auth session from Codex". The agent runs
+  `agent-archive handoff "auth" --harness codex` (a bounded, filtered handoff
+  prompt, found by title on this Mac first, then in the archive), asks you
+  which when several sessions match, and can browse with `list`, `show`,
+  and `show --transcript`. It is told never to run `setup`,
+  `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
+  `--max-bytes 0`, and to treat what it reads as data, not instructions. In
+  Claude Code the skill names only `agent-archive status` as pre-approved (in
+  a `claude -p` check on 2.1.283 that did not apply when the agent chose the
+  skill itself, so `status` may ask too); the rest asks once,
+  since no permission rule can allow `handoff` without allowing
+  `handoff --to`, and Claude Code also asks before first using the skill (a
+  `Skill(agent-archive)` rule allows it). Where a sandbox blocks the network,
+  a session on this Mac is still found by title. What an agent can read
+  through the skill is in
+  [privacy](docs/security/privacy.md#what-an-agent-can-read-through-the-skill).
+  See [agent skills](docs/guides/agent-skills.md).
+  Claude Code only `agent-archive status` runs without asking; the rest asks
+  once, since no permission rule can allow `handoff` without allowing
+  `handoff --to`. See [agent skills](docs/guides/agent-skills.md).
+- Sessions in a git repository now carry a `repo_key` in their metadata: a
+  hash of the repository's `origin` address (credentials, scheme, port, and
+  `.git` removed, so SSH and HTTPS clones of one repository agree), which
+  identifies the repository wherever it is checked out. Only the hash is
+  stored, never the address; the
+  [privacy page](docs/security/privacy.md) explains what a hash of a known
+  address does and does not hide. Parser version is now `0.16.0`, so existing
+  sessions gain the field on the next metadata refresh, on the Mac that
+  captured them and only while the repository is still there. Nothing uses it
+  yet: a later release matches `handoff` to a session by repository rather
+  than checkout path.
+- On a build without a Keychain (Linux), an R2 key is kept in a file with mode
+  0600 in a `credentials` folder (mode 0700) of the data directory, and
+  agent-archive refuses to read it, or save into the folder, when it is open
+  to other users, is a symbolic link, or is not yours, naming the `chmod` that
+  fixes it. Where no such file exists, `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
+  `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` are read as a read-only fallback. On
+  macOS nothing changes: the key stays in the Keychain. An S3 profile keeps
+  no secret of its own and is the better choice where you can use one. See
+  [privacy](docs/security/privacy.md#where-credentials-are-kept).
+- `agent-archive stats` shows how you use your coding agents over the last 30
+  days (`--days`, or `--since` for a start day): tokens by day, sessions,
+  prompts, estimated cost and active days with their change from the
+  previous period, agents, cost by model, top projects, what used your
+  tokens (cache reads and writes, input, output, subagents, skills, MCP),
+  and highlights. `--by day|week|month|project` breaks the window down,
+  `--json` prints a versioned document (`schema_version` 1), `--prices FILE`
+  puts your own model prices on top of the built-in table, and `--harness`,
+  `--model`, `--imported` and `--hook-captured` filter as `list` does. It
+  reads metadata only and prints no prompts or paths. Cost is an estimate at
+  list price from a dated price table, unpriced models are left out and
+  flagged, and what an agent does not record (Cursor's tokens) reads
+  "unknown", never zero. See [stats](docs/guides/stats.md).
+- `agent-archive stats --html` writes the same numbers as one self-contained
+  web page shaped like the terminal's default view: spend, sessions and
+  tokens (with the cache share) at the top, the agents as one bar, a chart of
+  daily spend with its dearest day (days that could not be priced are marked,
+  not drawn as zero), where the spend went by project and by model in the
+  agents', model families' and projects' colors, the skills and MCP servers
+  used most, up to three "heads up" notes, and, under a divider, the agents'
+  table, a donut of what used your tokens, facts (days active, busiest day,
+  tool errors, month rank) and the scope, coverage and price-table notes. The
+  change from the previous period is shown only when there was a previous
+  period, and subagents are counted as runs, not sessions. It is a single file with
+  inline styles and SVG, no script and no request to anything else; it
+  follows your light or dark setting, prints, and reads on a phone. Give
+  `--output FILE` to save it (mode 0600; an existing file is kept unless
+  `--force`; the file is written in one step, never half), or redirect
+  standard output. It holds counts and names only, never prompts, paths or
+  session IDs, and names each project, skill and MCP server, and each model
+  the built-in price table does not list (a fine-tune id, a custom deployment), "project A",
+  "skill A", "MCP server A", "model A" and so on unless you pass
+  `--include-names`, so the page can be shared. See [stats](docs/guides/stats.md#share-it-as-a-web-page).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known
   for Codex), `model_tokens` (token counts split by model, so a session that
@@ -28,9 +171,48 @@ follow [Semantic Versioning](https://semver.org/).
   counted by server). Codex's `cache_write_input_tokens` now fills
   `counts.cache_write_tokens`. Existing sessions gain the new fields on the
   next metadata refresh; nothing is re-uploaded but the metadata.
-- `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record in a private temporary file. The receiving agent is
-  told how to inspect the archived or current local record with Agent Archive.
+- `AGENT_ARCHIVE_NONINTERACTIVE=1` stops agent-archive from asking anything:
+  no session picker or browser, no pager, no confirmation prompt (`purge
+  apply` needs `--yes`), even on a terminal. It is on by itself when `CLAUDE_CODE_SESSION_ID`,
+  `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set, so a coding agent whose shell is
+  a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
+  turns it off, and a refusal caused by it says so.
+- On a terminal, `handoff` asks where to continue once the session is
+  chosen: an installed agent (default: `handoff.default_to` in `config.json`,
+  else another agent than the session's), print (paged when long), copy to
+  the clipboard, or write to a file. Pipes, `--output`, `--format json`, and
+  `--no-preamble` print as before, so `codex "$(agent-archive handoff
+  --latest)"` still works, and so does a run inside an agent, where
+  `handoff` never asks anything.
+- `handoff --to claude|codex|cursor` starts that agent without asking, with
+  the filtered session record, local or archived. With no session named, run
+  inside Claude Code, Codex, or Cursor, it hands off that agent's own
+  session; otherwise a terminal gets the picker. The agent reads the record
+  from a private file kept 7 days in the data directory's `handoffs/`, so a
+  resumed session can read it again (before setup, in a temporary folder the
+  system clears), and is told how to get more context with Agent Archive.
+  Claude Code gets only that file's folder with `--add-dir`; Codex and
+  Cursor get the checkout with `--cd` and `--workspace`. Cursor's `agent`
+  CLI is tried before `cursor-agent`. The launched agent does not inherit
+  the calling agent's session variables.
+- On a terminal the agent runs there. Without one, or inside an agent (or
+  with `AGENT_ARCHIVE_NONINTERACTIVE=1`) even when its shell is a
+  pseudo-terminal, it opens in a new tmux window, iTerm2 or Ghostty tab, or
+  Terminal window, and `handoff` returns; `--here` and `--new-window` choose
+  explicitly. Where no window can be opened it prints the command to run
+  instead.
+- Arguments after `--` go to the launched agent, and `config.json` may set
+  per-agent arguments (`handoff.args`) and a default destination per source
+  harness (`handoff.default_to`).
+- `handoff --worktree` starts the agent in a new git worktree beside the
+  checkout, on a new branch (`handoff/<id>`, or `--branch NAME`), with your
+  uncommitted changes (staged ones arrive unstaged) and untracked, not
+  ignored, files carried over. Your checkout and stash list are left as
+  they were. On a terminal `--to` may be left out: the agent chosen at the
+  prompt starts in the worktree, and printing, copying, or writing the
+  handoff creates none. Without `--worktree`, handing off a session active
+  in the last 2 minutes in the same checkout asks on a terminal whether to
+  continue there, cancel, or use a worktree, and warns otherwise.
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a
@@ -40,15 +222,35 @@ follow [Semantic Versioning](https://semver.org/).
   Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
   and the agent's part of each exchange starts with the app's name
   (`Claude Code ›`).
+- `show --transcript` prints at most 120,000 bytes (about 30k tokens), like
+  `handoff`, so a script or an agent that runs it on a long session is not
+  flooded. `--max-bytes N` changes the limit and `0` removes it; it applies
+  to `--full` and `--json` too. Over the limit, the oldest tool output, tool
+  calls, agent text, and prompts are trimmed first, the newest exchanges are
+  kept, and the untrimmed output is saved in the data directory's
+  `handoffs/` for 7 days, its path named at the end (`trimmed` in `--json`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window. The browser reads keys as you press them, without Enter: the
+  mouse wheel, the arrows, PgUp and PgDn (or space, `n`, `p`), and Home and
+  End scroll the list and a long summary at once, with a status line saying
+  where you are (Top, a percentage, Bottom) and, in the summary, how many
+  lines are above and below. Type a row number or short ID and press Enter
+  to open it; in the summary, `t`, `m` (the whole summary in the pager),
+  `b`, and `q` act on their own key, and Enter or Backspace go back
+  to the list. The wheel's arrows are no longer echoed into the prompt as
+  `^[[A`. The other pickers still read a line and show a list taller than
+  the terminal a page at a time (`n` and `p` move; any row number or short
+  ID still works).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). They arrive with parser `0.13.0`; this release ships `0.14.0`,
+  paths). They arrive with parser `0.13.0`; this release ships `0.16.0`,
   so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
@@ -61,9 +263,93 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
+- `install.sh` and `scripts/install-from-source.sh` now recognise Linux release
+  assets (x86_64 and aarch64): the installer selects
+  `agent-archive-linux-<arch>`, skips the macOS-only Developer ID check for
+  it, and on every OS refuses to install unless the download matches its
+  entry in `SHA256SUMS`, which must be exactly one well-formed lowercase
+  SHA-256 line; an empty download also stops the install. The macOS Developer
+  ID check is unchanged. Other changes you can see on macOS: `sha256sum` is
+  preferred over `shasum` when both are present; an unset or empty `HOME` now
+  fails with a clear message when no install directory can be chosen
+  otherwise; `AGENT_ARCHIVE_VERSION` must look like a release tag (`latest`
+  is refused; leave it unset); a relative `AGENT_ARCHIVE_INSTALL_DIR` is
+  resolved to an absolute path; the installer refuses to install over a
+  directory named `agent-archive` (it used to move the file into it); it
+  stages the new binary with `mktemp` and removes it on failure; it prints
+  `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
+  reports a missing `curl` ("curl is required") and a failed temporary
+  file or directory creation with their own messages. Linux is not yet a
+  supported platform.
+
+- `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
+  terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
+  `show`'s `--no-pager` now covers the summary too. Piped output is
+  unchanged.
 
 ### Changed
 
+- `agent-archive stats` has a new default screen: a short summary with the
+  headline numbers (estimated spend, sessions, tokens, with the change from the
+  previous period only when there was one, and how much of the tokens were
+  cache reads), one bar for which agents did the work, a three-row chart of
+  each day's spend, where it went by project and model (two columns from 80
+  terminal columns, stacked from 60), the skills and MCP servers used most,
+  and up to three heads-up notes, in the terminal's 16 colors (`NO_COLOR` and
+  pipes are plain; bars have no shaded track). The rest moved behind
+  `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
+  the tool error rate, the token breakdown, the agents table and the notes on
+  what the numbers rest on. `--view projects`, `models` and `agents` list every
+  project, model family and agent. `--by project` is now `--view projects`, and
+  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  terminals down to 40 columns. `--json` and `--html` are unchanged.
+
+- **`stats --json` and `--html` rank projects by spend, not tokens.** The
+  `projects` list (and the `groups.rows` of `--by project`) used to be ordered
+  by tokens and cut to the top five, which cache reads dominate, so a project
+  that cost more could be missing from the top five while a cheaper one with
+  more cache reads was in. It is now ordered by estimated cost, highest first
+  (a project with no priced cost after every one that has it, ties by tokens,
+  sessions, then name) and cut after that; the terminal screens already
+  ranked this way. The order of the JSON list changes and so does which five
+  it keeps; the fields and `schema_version` (1) do not. A partly priced
+  project is ranked on the spend it has, so its real cost may be higher than
+  its place says, and a project with no priced cost is after every priced one;
+  `overview.cost` (`partial`, `unpriced_tokens`) and `models` still say when
+  tokens were left out. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+
+- `handoff` takes a title as well as a session ID: `handoff "fix the auth
+  bug" --harness codex`. It matches as `show` does (a title substring or a
+  short session ID; a full ID wins), in this Mac's sessions first, with no
+  network, then in the archive. Only the title (the first prompt) is
+  matched, never the rest of the conversation; a session on this Mac has its
+  title read from its transcript file, which stays on the Mac. Several
+  matches (the newest 20 are shown) open the picker on them on a terminal;
+  without one they are listed on stderr with exit code 1 instead of
+  guessing. Run from inside a Claude Code or Codex session, a title never
+  matches that session itself (as `--latest` skips it).
+  `handoff` no longer rejects an argument that is not shaped like a session
+  ID up front; one that matches nothing says so and points to `list`.
+- The `handoff` picker also lists this Mac's sessions, including ones not
+  yet uploaded (marked so), newest activity first, and still works when the
+  archive cannot be read. Sessions with no prompt yet are left out.
+- The default pager scrolls on the mouse wheel and names its keys. With no
+  `AGENT_ARCHIVE_PAGER` or `PAGER` set, or one set to a bare `less`, `less`
+  551 or later runs with `--mouse` (hold Option while dragging to select
+  text in iTerm2), and `less` 530 to 550 runs on the alternate screen, where
+  the wheel scrolls it too. The prompt reads, for example, "lines 1-48 of
+  1210 - arrows/space scroll, / search, q quit" ("q back" from the
+  session browser). Any other pager you set runs as given, with `LESS=FRX`
+  and `LV=-c` added when those are unset, as git does.
+- Ctrl-C while a pager shows `list`, `show`, `status`, or `purge plan` now
+  goes to the pager (in `less`, it cancels a search) instead of ending
+  agent-archive and leaving the pager on the terminal.
+- Off macOS, Cursor's data folder is looked for where VS Code keeps its own,
+  `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
+  backfill inputs (Claude and Codex desktop app folders, the privacy-protected
+  folders, the `/Applications` probes) are skipped. On macOS nothing changes.
+  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or
@@ -107,6 +393,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The `agent-archive` skill no longer claims the session you are in is
+  never matched, and `uninstall --help` names both skills.** The skill said
+  the calling session is always skipped, but only Claude Code is known to
+  expose a session ID to skip, so it now says "skipped where your agent
+  reports it". `uninstall --help` listed only the
+  `/handoff` skill; it now names the `agent-archive` skill too. A skill file
+  installed by an earlier build shows as out of date until `setup --refresh`.
 - A Claude Code subagent resumed after it stopped (continued with
   SendMessage) no longer fails `sync` with "subagent transcript has
   incomplete native timestamp provenance" while it runs. Its archive keeps
@@ -146,6 +439,19 @@ follow [Semantic Versioning](https://semver.org/).
   problems as information rather than ✗ rows, when there is nothing to do
   (a subagent that could not be captured, sessions over the transcript
   size limit).
+- Recovering an interrupted setup, or rolling back a failed one, no longer
+  gets stuck when another installation has taken over this installation's
+  background collector label (an older release under a sandboxed `HOME`, or
+  an older binary for another data directory). Setup used to try to start the
+  collector over the other installation's job, which launchd refuses, and
+  reported "launchctl could not restart the background collector" on every
+  rerun until `--abandon-recovery`. It now puts the files back, leaves the
+  other installation's job running, and finishes; `setup` then explains that
+  the job belongs to another installation (uninstall that one, or set
+  `AGENT_ARCHIVE_HOME`). The same holds for a job setup had retired (the
+  prototype's upload job, or a collector under an earlier label) whose label
+  another installation now runs: recovery used to stop there, leaving the
+  jobs after it stopped, and now puts its plist back and finishes.
 
 ### Changed
 

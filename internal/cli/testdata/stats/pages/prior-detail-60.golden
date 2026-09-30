@@ -1,0 +1,66 @@
+agent-archive stats · detail · last 30 days · 3 agents
+
+OVERVIEW     last 30d  prior 30d     change
+Est. spend    ~$3,989    ~$3,380      ▲ 18%
+Sessions           93        121      ▼ 23%
+Prompts           673        673  no change
+Tokens            10B       8.5B      ▲ 18%
+Active days   3 of 30    5 of 30      ▼ 40%
+97% of tokens were served from cache.
+
+AGENTS         sessions  share   tokens  est. cost
+● Claude Code        84    90%     9.9B     $3,940
+● Cursor              8     9%  unknown        n/a
+● Codex               1     1%     100M        $49
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHAT USED YOUR TOKENS
+████████████████████████ █ █ █
+● Cache read    97%  9.7B
+● Cache write    2%  200M
+● Fresh input   <1%  30M
+● Output         1%  70M
+Subagents  77% of tokens (7.7B) in 497 runs
+
+HIGHLIGHTS
+Streak          none now (best 1 day)
+Busiest day     Sep 27 (70 sessions)
+Favorite model  opus
+This month      the heaviest of the last 6 months, by tokens
+                so far
+Tool errors     5.0% of 4,200 tool results flagged as
+                errors, 70 sessions measured (13 do not
+                record them)
+Costliest       ~$564 · styleprofile · long context, 38
+                subagents
+
+SKILLS AND MCP
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide
+        2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor
+        only)
+Skills count the sessions that used each one; MCP counts
+calls.
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38
+  subagents
+● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+NOTES
+Scope: this archive only.
+83 of 93 sessions report token counts.
+Sessions with no token data are left out of token and cost
+totals (Claude Code: 2, Cursor: 8).
+Prices 2026-09-29, as of 2026-09-29.
+~ marks an estimate at list price.
+MCP: Claude Code and Cursor only; Codex MCP calls are not
+recorded.
+
+Estimated at list price, not a bill.   --view overview

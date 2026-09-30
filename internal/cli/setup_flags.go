@@ -38,7 +38,53 @@ type setupOptions struct {
 	yes                  bool
 	verbose              bool
 	skillEvidence        string
+	noSkills             bool
+	skills               bool
 	storageFlagsSupplied bool
+}
+
+// skillsChoice is what the person asked of the agent skills on this run:
+// nothing (keep what the saved configuration says), --no-skills, or
+// --skills.
+type skillsChoice int
+
+const (
+	skillsUnchanged skillsChoice = iota
+	skillsOff
+	skillsOn
+)
+
+// skillsChoice is the choice the flags make; setup refuses both before it
+// gets here.
+func (o setupOptions) skillsChoice() skillsChoice {
+	switch {
+	case o.noSkills:
+		return skillsOff
+	case o.skills:
+		return skillsOn
+	}
+	return skillsUnchanged
+}
+
+// flag is the flag that made c.
+func (c skillsChoice) flag() string {
+	if c == skillsOff {
+		return "--no-skills"
+	}
+	return "--skills"
+}
+
+// noSkills is Config.NoSkills after this run: the choice when one was made,
+// else what the saved configuration has.
+func (c skillsChoice) noSkills(saved bool) bool {
+	switch c {
+	case skillsOff:
+		return true
+	case skillsOn:
+		return false
+	case skillsUnchanged:
+	}
+	return saved
 }
 
 // projectList is a repeatable --project.
@@ -63,6 +109,8 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
+	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
+	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -178,7 +226,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 			return discard(err)
 		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
-		return fmt.Errorf("the stored R2 key can't be read from the Keychain; pass --r2-access-key-id and the secret (see agent-archive setup --help)")
+		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
 	}
 
 	accessErr := runStorageCheck(p, &cfg, env)
@@ -196,13 +244,14 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return discard(err)
 	}
 	warnCollectorEnvironment(p, cfg.Storage, userHome, env)
+	skills := planSkillOptOut(env, home, userHome, exe, existing, cfg)
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		if len(draft.StagedRefs) > 0 {
 			return fmt.Errorf("%w; the new R2 key is kept with the unfinished setup: run agent-archive setup to finish or discard it", err)
 		}
 		return err
 	}
-	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome})
+	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, skills: skills})
 }
 
 // reviewWithoutQuestions is setup --yes's review: a reconfiguration's
@@ -240,6 +289,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if opts.skillEvidence != "" {
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
 	}
+	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
 	if !config.ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}
@@ -266,7 +316,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 // Keychain is asked. A terminal is asked for it only after the preflight
 // checks, so it returns nothing then.
 func scriptR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env) (string, error) {
-	if secret.AccessKeyID == "" || (env.isTerminal(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
+	if secret.AccessKeyID == "" || (env.interactive(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
 		return "", nil
 	}
 	return readR2Secret(p, stdin, env)
@@ -302,9 +352,9 @@ func answersError(errs []error) error {
 // which it sets in cfg. The reference is written to draft's file first, so
 // a run stopped in between leaves a setup that can be discarded.
 func stageR2Key(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
-	keychain, err := env.keychain()
+	keychain, err := env.credentialStore()
 	if err != nil {
-		return fmt.Errorf("open Keychain: %w", err)
+		return openCredentialStoreError(credentialOS, err)
 	}
 	id, err := local.ID()
 	if err != nil {
@@ -525,8 +575,13 @@ func readR2Secret(p *prompter, stdin io.Reader, env Env) (string, error) {
 	if value := lookupEnvTrimmed(env, envR2SecretAccessKey); value != "" {
 		return value, nil
 	}
+	// A terminal that interaction is switched off for is never read from: a
+	// run inside an agent would wait there for a key nobody will type.
+	if reason, blocked := env.blockedByNonInteractive(stdin); blocked {
+		return "", fmt.Errorf("the R2 secret access key is needed: set %s (standard input is a terminal, which is not read because %s; %s=0 allows it)", envR2SecretAccessKey, reason, envNonInteractive)
+	}
 	label := ""
-	if env.isTerminal(stdin) {
+	if env.interactive(stdin) {
 		label = "Secret access key (hidden): "
 	}
 	value, err := p.secret(label)

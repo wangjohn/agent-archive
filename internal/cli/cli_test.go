@@ -12,8 +12,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // noEnv is an empty process environment.
@@ -37,23 +39,18 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Guided bucket creation waits for Cloudflare between checks; a
 		// test does not.
 		Pause: func(time.Duration) {},
+		// Tests model a Mac (its app folders and Cursor's Library data
+		// folder), whatever system runs them.
+		OS: platform.Darwin,
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
 		// Everything below would otherwise reach this Mac itself. Reads get
 		// a harmless answer; anything that would change the Mac fails the
 		// test. A test that needs one sets it (setupTestEnv sets them all).
-		JobState: func(string) string { return "missing" },
-		LoadLaunchAgent: func(plist string) error {
-			t.Errorf("unexpected LaunchAgent load of %s: set Env.LoadLaunchAgent", plist)
-			return errors.New("no launchd in this test")
-		},
-		UnloadLaunchAgent: func(plist string) error {
-			t.Errorf("unexpected LaunchAgent unload of %s: set Env.UnloadLaunchAgent", plist)
-			return errors.New("no launchd in this test")
-		},
-		Keychain: func() (credentials.CredentialStore, error) {
-			return nil, errors.New("no Keychain in this test: set Env.Keychain")
+		Scheduler: noLaunchd(t),
+		Credentials: func() (credentials.CredentialStore, error) {
+			return nil, errors.New("no credential store in this test: set Env.Credentials")
 		},
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")
@@ -63,8 +60,22 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
 		Interrupts:           noInterrupts,
+		// A less new enough for --mouse, as macOS ships; the tests of the
+		// other defaults set their own.
+		LessVersion: func(string) (int, bool) { return testLessVersion, true },
+		OpenTerminal: func(spec termlaunch.Spec) (string, error) {
+			t.Errorf("unexpected new terminal for %q: set Env.OpenTerminal", spec.Argv)
+			return "", errors.New("no terminal in this test")
+		},
+		Clipboard: func([]byte) error {
+			t.Error("unexpected clipboard write: set Env.Clipboard")
+			return errors.New("no clipboard in this test")
+		},
 	}
 }
+
+// testLessVersion is the less version testEnv reports.
+const testLessVersion = 668
 
 // noInterrupts is Env.Interrupts for tests that do not send signals. The
 // default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while

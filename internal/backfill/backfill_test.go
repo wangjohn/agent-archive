@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // fixedNow is the planning clock in every test.
@@ -86,7 +87,10 @@ func (tr *tree) worktree(repoRel, rel, name string) string {
 
 func (tr *tree) env() Environment {
 	return Environment{
-		Home:     tr.home,
+		Home: tr.home,
+		// These tests model a Mac (Library folders, Documents/Codex, TCC);
+		// linux_test.go covers the other branch.
+		OS:       platform.Darwin,
 		TempDirs: []string{tr.path("tmp")},
 		Now:      func() time.Time { return fixedNow },
 		// Birth times are whatever the test run's clock says; pin them.

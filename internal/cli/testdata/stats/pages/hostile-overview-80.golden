@@ -1,0 +1,35 @@
+agent-archive stats · last 30 days · 3 agents
+
+  ~$3,989                   93 sessions               10B tokens
+  at list price             673 prompts               97% served from cache
+
+AGENTS  ███████████████████████████████████████████ ████ █
+        ● 日本語のとても長いプロジ 90%   ● proj[31mRED]0;title 9%
+        ● [2J[Hgone 1%   of sessions
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHERE IT WENT
+By project                                By model
+proj[31mRED]0;tit…  ██████████  $1,862    proj[31mRED]0;tit…  ██████████  $3,270
+[2J[Hgone           ████          $751    [2J[Hgone           █             $386
+abcdefghi           ███           $586    abcdefghi           █             $320
+zero​width‍﻿join       ██            $427    + 2 more
++ 6 more
+
+MOST USED
+Skills  proj[31mRED]0;title 10 · 日本語のとても長いプロジ 4 · docs 3 ·
+        cursor-guide 2 sessions
+MCP     [2J[Hgone 41 · linear 12 calls (abcdefghi)
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long context, 38
+  subagents
+● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, abcdefghi 2)
+
+Estimated at list price, not a bill.   --detail for more · --by project · --html

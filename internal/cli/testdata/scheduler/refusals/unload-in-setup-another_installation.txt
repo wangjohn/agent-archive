@@ -1,0 +1,2 @@
+# exit 1
+Setup incomplete: previous installation restored: stop previous collector: launchd's com.agent-archive.collector job was not loaded from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist; it belongs to another installation and was left running

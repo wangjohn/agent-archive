@@ -3,13 +3,17 @@ package cursorstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // TestSweepSkipsASnapshotInUse: a Reader's copy is never swept while the
@@ -102,41 +106,45 @@ func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
 	}
 }
 
-// TestUserTempDir: macOS uses the per-user temporary directory the system
-// reports, whatever $TMPDIR says, so a collector started by launchd without
-// TMPDIR, a hook run with it, and a shell with a custom one share one
-// snapshot root; $TMPDIR only when the system can't say, and elsewhere.
-func TestUserTempDir(t *testing.T) {
-	env := func(tmp string) func(string) string {
-		return func(key string) string {
-			if key == "TMPDIR" {
-				return tmp
-			}
-			return ""
-		}
-	}
-	perUser := func() string { return "/var/folders/xy/abc/T" }
-	for _, tc := range []struct {
-		name   string
-		tmpdir string
-		goos   string
-		darwin func() string
-		want   string
-	}{
-		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
-		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, os.TempDir()},
-		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
-	} {
-		if got := userTempDir(env(tc.tmpdir), tc.goos, tc.darwin); got != tc.want {
-			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
-		}
-	}
-	if runtime.GOOS == "darwin" {
-		if dir := darwinUserTempDir(); !filepath.IsAbs(dir) {
+// TestSnapshotRootIsTheSystemsPerUserTempDir: the snapshot root is
+// platform.Locations.SnapshotRoot wired to this package's getconf and this
+// process's environment (the choice itself, on both systems, is tested in
+// internal/platform). On macOS it is under the per-user temporary directory
+// the system reports, whatever $TMPDIR says, so a collector started by launchd
+// without TMPDIR and a shell with a custom one share one root.
+func TestSnapshotRootIsTheSystemsPerUserTempDir(t *testing.T) {
+	name := platform.SnapshotDirName(os.Getuid())
+	mine := t.TempDir()
+	t.Setenv("TMPDIR", mine)
+	switch runtime.GOOS {
+	case "darwin":
+		dir := darwinUserTempDir()
+		if !filepath.IsAbs(dir) {
 			t.Fatalf("DARWIN_USER_TEMP_DIR = %q", dir)
 		}
+		if got, want := snapshotRootPath(), filepath.Join(dir, name); got != want {
+			t.Errorf("on macOS the root is %q, want %q", got, want)
+		}
+	case "linux":
+		if got, want := snapshotRootPath(), filepath.Join(mine, name); got != want {
+			t.Errorf("on Linux the root is %q, want %q", got, want)
+		}
+	}
+	// The real system's own process environment is what is read.
+	if got, want := snapshotRootPath(), snapshotLocations(platform.Current(), os.Getenv).SnapshotRoot(); got != want {
+		t.Errorf("snapshotRootPath = %q, want %q", got, want)
+	}
+}
+
+// A system the program does not know has no snapshot directory: no path, and
+// SnapshotRoot fails closed instead of using a shared temporary directory.
+func TestUnknownSystemHasNoSnapshotRoot(t *testing.T) {
+	t.Parallel()
+	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }).SnapshotRoot(); got != "" {
+		t.Errorf("the snapshot root on an unknown system is %q, want none", got)
+	}
+	if root, err := preparedSnapshotRoot(""); !errors.Is(err, errSnapshotUnsupportedSystem) || root != "" {
+		t.Errorf("preparedSnapshotRoot(\"\") = %q, %v; want errSnapshotUnsupportedSystem", root, err)
 	}
 }
 
@@ -190,5 +198,67 @@ func TestRemoveOwnSnapshotsRemovesThisProcessCopies(t *testing.T) {
 	// Closing the Reader afterwards is harmless.
 	if err := leaked.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSnapshotsArePrivateUnderAnyUmask: a copy of every Cursor chat goes in
+// a directory others can neither list nor open, whatever the process's
+// umask. It matters most on Linux, where the per-user temporary directory
+// is the shared, world-listable /tmp and a container or service may run
+// with umask 0. The root and the snapshot directory are 0700, the copy and
+// its lock file 0600 (a umask only removes bits).
+func TestSnapshotsArePrivateUnderAnyUmask(t *testing.T) {
+	for _, umask := range []int{0o000, 0o022, 0o077} {
+		t.Run(fmt.Sprintf("umask %03o", umask), func(t *testing.T) {
+			root := useTempSnapshots(t)
+			path := StateDatabase(t.TempDir())
+			startWriter(t, path).put(chatRows())
+			old := syscall.Umask(umask)
+			t.Cleanup(func() { syscall.Umask(old) })
+			checked := false
+			hooks := readerHooks{afterSnapshot: func(copyPath string) {
+				checked = true
+				dir := filepath.Dir(copyPath)
+				for p, want := range map[string]fs.FileMode{
+					root:                                 0o700,
+					dir:                                  0o700,
+					copyPath:                             0o600,
+					filepath.Join(dir, snapshotLockName): 0o600,
+				} {
+					info, err := os.Stat(p)
+					if err != nil {
+						t.Errorf("%s: %v", p, err)
+						continue
+					}
+					if info.Mode().Perm() != want {
+						t.Errorf("%s mode %v, want %v", p, info.Mode().Perm(), want)
+					}
+				}
+			}}
+			if _, _, err := readComposerWith(context.Background(), path, "c", hooks); err != nil {
+				t.Fatal(err)
+			}
+			if !checked {
+				t.Fatal("no snapshot was taken, so no mode was checked")
+			}
+		})
+	}
+}
+
+// TestSnapshotRootIsRejectedWhenNotPrivate: a root others could list or
+// open, such as one made under a shared /tmp with a permissive umask by
+// something else, is refused rather than used.
+func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
+	for _, mode := range []fs.FileMode{0o755, 0o750, 0o701, 0o777} {
+		root := useTempSnapshots(t)
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(root, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := SnapshotRoot(); !errors.Is(err, errSnapshotRootNotPrivate) {
+			t.Errorf("mode %v: err %v, want errSnapshotRootNotPrivate", mode, err)
+		}
 	}
 }

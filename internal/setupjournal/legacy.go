@@ -144,9 +144,14 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd)
 		switch state {
 		case "unknown":
 			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
-		case JobAnotherInstallation:
-			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("launchd runs the %s's label from another plist now, so it cannot be restarted from %s", name, job.Change.Path)}
-		case "loaded", "running":
+		case JobAnotherInstallation, "loaded", "running":
+			// Running already; or launchd runs the label from another
+			// installation's plist now, a job that is not this one's and
+			// that launchd refuses to bootstrap over, so the plist is back
+			// and that job is left alone, as Restore leaves the collector's.
+			// Stopping recovery there would only keep the record until
+			// --abandon-recovery, with the jobs after this one not put
+			// back; setup, run again, plans from what launchd runs then.
 		default:
 			if err := launchd.Load(job.Change.Path); err != nil {
 				return launchctlBlocked(home, "restart the "+name, err)

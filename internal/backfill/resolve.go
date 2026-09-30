@@ -46,7 +46,7 @@ func newResolver(env Environment, cfg config.Config, filters Filters) *resolver 
 	var workspaces []workspaceFolder
 	resolvedHome := env.resolved(env.Home)
 	lookInDocuments := documentsInUse(env, resolvedHome, cfg)
-	for _, folder := range workspaceFolders(env.Home) {
+	for _, folder := range workspaceFolders(env) {
 		if !lookInDocuments && local.PathWithin(folder, filepath.Join(env.Home, "Documents")) {
 			// Resolving a folder in ~/Documents looks inside Documents, which
 			// makes macOS ask a terminal without access for it. Unless
@@ -203,12 +203,18 @@ func documentsInUse(env Environment, resolvedHome string, cfg config.Config) boo
 
 // workspaceFolders are the folders desktop apps start chats in, under home:
 // Claude desktop's scratch chats and Codex desktop's dated workspaces
-// (<date>/<name>).
-func workspaceFolders(home string) []string {
-	return []string{
-		filepath.Join(home, "Library", "Application Support", "Claude", "scratch-workspaces"),
-		filepath.Join(home, "Documents", "Codex"),
+// (<date>/<name>), platform.Locations' ClaudeDesktopScratch and
+// CodexDocuments. Both are Mac desktop-app locations; on any other operating
+// system there are none, and those paths are not consulted.
+func workspaceFolders(env Environment) []string {
+	loc := env.locations()
+	var out []string
+	for _, folder := range []string{loc.ClaudeDesktopScratch, loc.CodexDocuments} {
+		if folder != "" {
+			out = append(out, folder)
+		}
 	}
+	return out
 }
 
 func (r *resolver) isWorkspaceFolder(resolved string) bool {
@@ -432,15 +438,22 @@ func newCursorMatcher(env Environment, candidates []string) *cursorMatcher {
 	return m
 }
 
-// cursorWorkspaceStorage is Cursor's folder of per-workspace state.
+// cursorWorkspaceStorage is Cursor's folder of per-workspace state:
+// User/workspaceStorage in its data folder (platform.Locations), "" where
+// the environment's operating system has no known place for it.
 func cursorWorkspaceStorage(env Environment) string {
-	return filepath.Join(env.Home, "Library", "Application Support", "Cursor", "User", "workspaceStorage")
+	return env.locations().CursorWorkspaceStorage
 }
 
 // cursorWorkspaceFolders reads the folder of each
-// ~/Library/Application Support/Cursor/User/workspaceStorage/*/workspace.json.
+// <Cursor data folder>/User/workspaceStorage/*/workspace.json
+// (~/Library/Application Support/Cursor on macOS, ~/.config/Cursor on
+// Linux).
 func cursorWorkspaceFolders(env Environment) []string {
 	storage := cursorWorkspaceStorage(env)
+	if storage == "" {
+		return nil
+	}
 	entries, err := readDirIfExists(env, storage)
 	if err != nil {
 		return nil
