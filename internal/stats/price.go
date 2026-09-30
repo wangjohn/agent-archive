@@ -59,6 +59,17 @@ type ModelPrice struct {
 	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
 }
 
+// MaxPricePerMTok is the largest price per million tokens a table may carry.
+// It is far above any real price in any currency (a million-dollar-a-token
+// model does not exist), and low enough that no sum of costs over int64 token
+// counts can reach +Inf, which JSON cannot carry.
+const MaxPricePerMTok = 1e9
+
+// validPrice reports whether a price is a finite number in [0, MaxPricePerMTok].
+func validPrice(price float64) bool {
+	return price >= 0 && price <= MaxPricePerMTok && !math.IsNaN(price)
+}
+
 // priceFile is the wire form of a table: every price is a pointer so a file
 // that leaves one out is an error, not a silently free token type.
 type priceFile struct {
@@ -92,8 +103,8 @@ func DefaultPriceTable() PriceTable {
 // ParsePriceTable reads a price table from its JSON form (the format of the
 // built-in table). It rejects a table with no version or no models, a date
 // that is not YYYY-MM-DD, an empty or repeated model id, and any of the four
-// prices missing, negative, or not finite. Unknown fields are an error, so a
-// misspelled price name does not turn into a free token type.
+// prices missing, negative, or above MaxPricePerMTok. Unknown fields are an
+// error, so a misspelled price name does not turn into a free token type.
 func ParsePriceTable(data []byte) (PriceTable, error) {
 	var file priceFile
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -141,8 +152,8 @@ func ParsePriceTable(data []byte) (PriceTable, error) {
 			if price.value == nil {
 				return PriceTable{}, fmt.Errorf("price table model %q is missing %q (use 0 for a token type that costs nothing)", id, price.name)
 			}
-			if *price.value < 0 || math.IsNaN(*price.value) || math.IsInf(*price.value, 0) {
-				return PriceTable{}, fmt.Errorf("price table model %q has an invalid %q", id, price.name)
+			if !validPrice(*price.value) {
+				return PriceTable{}, fmt.Errorf("price table model %q has an invalid %q (it must be between 0 and %g)", id, price.name, MaxPricePerMTok)
 			}
 		}
 		family := strings.TrimSpace(entry.Family)
@@ -198,17 +209,32 @@ func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
 var (
 	contextSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
 	dateSuffix    = regexp.MustCompile(`([-@]\d{8}|-\d{4}-\d{2}-\d{2})$`)
+	// vendorPrefix is Amazon Bedrock's "anthropic." vendor prefix and its
+	// cross-region inference prefix ("us.anthropic.", "global.anthropic.").
+	vendorPrefix = regexp.MustCompile(`^(?:[a-z0-9-]+\.)?anthropic\.`)
+	// platformVersion is Bedrock's "-v1:0" model version suffix (it always has the colon, unlike a name such as "deepseek-v3").
+	platformVersion = regexp.MustCompile(`-v\d+:\d+$`)
 )
 
 // NormalizeModel is the form of a model id the price table is keyed by:
 // trimmed, lower case, without a bracketed suffix such as Claude Code's
 // "[1m]" context marker and without a trailing date ("-20251001",
-// "@20251001", or OpenAI's "-2025-08-07"). It does not map aliases: a bare
-// "opus" stays "opus", which no table prices, because it does not say which
-// version answered.
+// "@20251001", or OpenAI's "-2025-08-07"). It also unwraps the ways a cloud
+// platform names the same model: a path ("anthropic/claude-opus-5-5") and
+// Amazon Bedrock's vendor, region and version parts
+// ("us.anthropic.claude-opus-5-5-20251001-v1:0"). Those name the same model,
+// so they are priced at its list price; a platform that bills differently
+// (regional endpoints add 10%) is not reflected. It does not map aliases: a
+// bare "opus" stays "opus", which no table prices, because it does not say
+// which version answered.
 func NormalizeModel(id string) string {
 	id = strings.ToLower(strings.TrimSpace(id))
+	if slash := strings.LastIndex(id, "/"); slash >= 0 {
+		id = id[slash+1:]
+	}
+	id = vendorPrefix.ReplaceAllString(id, "")
 	id = contextSuffix.ReplaceAllString(id, "")
+	id = platformVersion.ReplaceAllString(id, "")
 	id = dateSuffix.ReplaceAllString(id, "")
 	return strings.TrimSpace(id)
 }
@@ -217,10 +243,16 @@ func NormalizeModel(id string) string {
 // Compute makes.
 type priceIndex map[string]ModelPrice
 
+// index keys the table's entries by normalized id. An entry with an invalid
+// price (a table built by hand rather than by ParsePriceTable) is left out, so
+// its model is unpriced and flagged instead of costing NaN or +Inf.
 func (t PriceTable) index() priceIndex {
 	index := priceIndex{}
 	for _, entry := range t.Models {
-		index[NormalizeModel(entry.ID)] = entry
+		if validPrice(entry.InputPerMTok) && validPrice(entry.OutputPerMTok) &&
+			validPrice(entry.CacheReadPerMTok) && validPrice(entry.CacheWritePerMTok) {
+			index[NormalizeModel(entry.ID)] = entry
+		}
 	}
 	return index
 }

@@ -61,6 +61,80 @@ func TestModelTokensAreBoundedAndStillSum(t *testing.T) {
 	}
 }
 
+// Models with equal tokens are kept by name, lowest first, whatever order the
+// map yields them in.
+func TestModelTokensFoldKeepsTiedModelsByName(t *testing.T) {
+	t.Parallel()
+	var totals tokenTotals
+	const models = MaxModelTokens + 8
+	for i := range models {
+		totals.observe(map[string]any{"input_tokens": 5.0}, "m"+strconv.Itoa(i), fmt.Sprintf("t%02d", models-1-i))
+	}
+	total, split := totals.usage()
+	assertModelTokensSum(t, "ties", Metadata{Counts: Counts{InputTokens: total.Input}, ModelTokens: split})
+	want := map[string]bool{OtherModels: true}
+	for i := range MaxModelTokens - 1 {
+		want[fmt.Sprintf("t%02d", i)] = true
+	}
+	for _, entry := range split {
+		if !want[entry.Model] {
+			t.Errorf("kept %q, want the %d lowest names", entry.Model, MaxModelTokens-1)
+		}
+		delete(want, entry.Model)
+	}
+	if len(want) > 0 {
+		t.Errorf("missing %v", want)
+	}
+}
+
+// What counts toward a model staying is every token it used except
+// reasoning, which is already in its output. A field none of the folded models
+// reported stays unknown on the entry they are added into, and one any of them
+// reported is carried over.
+func TestModelTokensFoldWeighsEveryFieldAndKeepsUnknownFieldsNil(t *testing.T) {
+	t.Parallel()
+	var totals tokenTotals
+	add := func(model string, usage map[string]any) {
+		totals.observe(usage, "msg-"+model, model)
+	}
+	for i := range MaxModelTokens - 1 {
+		add(fmt.Sprintf("filler-%02d", i), map[string]any{"input_tokens": 100.0})
+	}
+	add("cache-read", map[string]any{"cache_read_input_tokens": 1000.0})
+	add("output", map[string]any{"output_tokens": 1000.0})
+	add("cache-write", map[string]any{"cache_creation_input_tokens": 1000.0})
+	add("reasoning", map[string]any{"output_tokens": 1.0, "output_tokens_details": map[string]any{"thinking_tokens": 1000.0}})
+	add("tiny-write", map[string]any{"cache_creation_input_tokens": 1.0})
+	total, split := totals.usage()
+	assertModelTokensSum(t, "weights", Metadata{Counts: Counts{
+		InputTokens: total.Input, OutputTokens: total.Output, CacheReadTokens: total.CacheRead,
+		CacheWriteTokens: total.CacheWrite, ReasoningTokens: total.Reasoning,
+	}, ModelTokens: split})
+	kept := map[string]ModelTokens{}
+	for _, entry := range split {
+		kept[entry.Model] = entry
+	}
+	for _, name := range []string{"cache-read", "output", "cache-write"} {
+		if _, ok := kept[name]; !ok {
+			t.Errorf("%s has 1000 tokens and was folded away", name)
+		}
+	}
+	if _, ok := kept["reasoning"]; ok {
+		t.Error("reasoning tokens counted twice toward staying: the model has one output token")
+	}
+	other := kept[OtherModels]
+	// Folded: the last three fillers by name, "reasoning", and "tiny-write".
+	if other.InputTokens == nil || *other.InputTokens != 300 ||
+		other.OutputTokens == nil || *other.OutputTokens != 1 ||
+		other.ReasoningTokens == nil || *other.ReasoningTokens != 1000 ||
+		other.CacheWriteTokens == nil || *other.CacheWriteTokens != 1 {
+		t.Errorf("other = %s", asJSON(other))
+	}
+	if other.CacheReadTokens != nil {
+		t.Errorf("no folded model reported cache reads, but other has %d", *other.CacheReadTokens)
+	}
+}
+
 // A model already named "other" is one of the folded-into entry, not a
 // second entry with the same name.
 func TestModelTokensFoldIntoAModelNamedOther(t *testing.T) {
@@ -162,6 +236,49 @@ func TestMetadataSchemaBoundsModelTokensAndMCPCalls(t *testing.T) {
 		mutate(&m)
 		if validate(m) == nil {
 			t.Errorf("%s: schema accepted it", name)
+		}
+	}
+}
+
+// The many-models fixtures name 43 distinct models (40 numbered ones, a real
+// "other", a real "unknown", and two 130-character names that differ only
+// past the cut) on one harness each, Codex's through per-turn switching.
+// Whatever the harness, the split stays within the cap, has no repeated name,
+// keeps a real "other" as the one entry the overflow is added to, and sums to
+// the session's counts.
+func TestManyModelsFixturesAreBoundedAndSum(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		harness string
+		file    string
+	}{
+		{"claude", "claude-many-models.jsonl"}, {"codex", "codex-many-models.jsonl"},
+	} {
+		_, metadata := parsedFixture(t, fixture.harness, fixture.file)
+		label := fixture.file
+		assertModelTokensSum(t, label, metadata)
+		if len(metadata.ModelTokens) != MaxModelTokens-1 {
+			t.Errorf("%s: %d entries, want the %d models with the most tokens (the real %q among them, taking the overflow): %s",
+				label, len(metadata.ModelTokens), MaxModelTokens-1, OtherModels, asJSON(metadata.ModelTokens))
+		}
+		byName := map[string]ModelTokens{}
+		for _, entry := range metadata.ModelTokens {
+			byName[entry.Model] = entry
+			if n := utf8.RuneCountInString(entry.Model); n > maxModelNameRunes {
+				t.Errorf("%s: model of %d runes", label, n)
+			}
+		}
+		for _, name := range []string{OtherModels, UnknownModel, "claude-model-039"} {
+			if _, ok := byName[name]; !ok {
+				t.Errorf("%s: %q is missing", label, name)
+			}
+		}
+		if _, ok := byName["claude-model-000"]; ok {
+			t.Errorf("%s: the smallest model was kept", label)
+		}
+		cut := strings.Repeat("é", maxModelNameRunes-1) + "…"
+		if _, ok := byName[cut]; !ok {
+			t.Errorf("%s: the two long names were not merged under their cut form", label)
 		}
 	}
 }

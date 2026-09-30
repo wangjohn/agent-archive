@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,7 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 			byID[m.SessionID] = m
 		}
 	}
+	roots := newRootResolver(byID)
 	units := map[*archive.Metadata]*unit{}
 	var ordered []*unit
 	get := func(root *archive.Metadata) *unit {
@@ -78,7 +80,7 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 		return u
 	}
 	for _, m := range metas {
-		root := resolveRoot(m, byID)
+		root := roots.resolve(m)
 		u := get(root)
 		if m != root {
 			u.children = append(u.children, m)
@@ -87,14 +89,31 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 	for _, u := range ordered {
 		u.finish(loc, prices)
 	}
-	sort.SliceStable(ordered, func(i, j int) bool {
-		a, b := ordered[i].root, ordered[j].root
-		if !a.CapturedAt.Equal(b.CapturedAt) {
-			return a.CapturedAt.Before(b.CapturedAt)
-		}
-		return a.SessionID < b.SessionID
-	})
+	sort.SliceStable(ordered, func(i, j int) bool { return metadataBefore(ordered[i].root, ordered[j].root) })
 	return ordered
+}
+
+// metadataBefore orders metadata by captured_at, then session id, then (only
+// for records equal in both, such as sessions with no id) by their JSON, so
+// the order of the input never changes a float sum or a tie.
+func metadataBefore(a, b *archive.Metadata) bool {
+	if !a.CapturedAt.Equal(b.CapturedAt) {
+		return a.CapturedAt.Before(b.CapturedAt)
+	}
+	if a.SessionID != b.SessionID {
+		return a.SessionID < b.SessionID
+	}
+	return metadataKey(a) < metadataKey(b)
+}
+
+// metadataKey is a record's JSON, the last tie-break between records that are
+// otherwise the same session at the same time.
+func metadataKey(m *archive.Metadata) string {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // dedupe drops repeated session ids, keeping the metadata derived last, and
@@ -106,7 +125,10 @@ func dedupe(sessions []archive.Metadata) []*archive.Metadata {
 		m := &sessions[i]
 		if m.SessionID != "" {
 			if at, seen := index[m.SessionID]; seen {
-				if m.MetadataDerivedAt.After(kept[at].MetadataDerivedAt) {
+				// Derived at the same instant: keep the one whose JSON sorts
+				// last, so the order of the input does not pick.
+				if derived := kept[at].MetadataDerivedAt; m.MetadataDerivedAt.After(derived) ||
+					(m.MetadataDerivedAt.Equal(derived) && metadataKey(m) > metadataKey(kept[at])) {
 					kept[at] = m
 				}
 				continue
@@ -115,34 +137,67 @@ func dedupe(sessions []archive.Metadata) []*archive.Metadata {
 		}
 		kept = append(kept, m)
 	}
-	sort.SliceStable(kept, func(i, j int) bool {
-		if !kept[i].CapturedAt.Equal(kept[j].CapturedAt) {
-			return kept[i].CapturedAt.Before(kept[j].CapturedAt)
-		}
-		return kept[i].SessionID < kept[j].SessionID
-	})
+	sort.SliceStable(kept, func(i, j int) bool { return metadataBefore(kept[i], kept[j]) })
 	return kept
 }
 
-// resolveRoot follows parent_session_id up to the topmost session present in
-// the input: one that names no parent, or whose parent is missing (an orphan
-// subagent, which then counts as a session of its own). A chain that loops
-// makes the session its own root, so no session is ever counted twice.
-func resolveRoot(m *archive.Metadata, byID map[string]*archive.Metadata) *archive.Metadata {
-	seen := map[*archive.Metadata]bool{m: true}
-	current := m
-	for current.ParentSessionID != "" {
-		parent, ok := byID[current.ParentSessionID]
-		if !ok {
-			return current
+// rootResolver finds each session's root: the topmost session present in the
+// input, following parent_session_id. A session that names no parent, or whose
+// parent is missing (an orphan subagent), is its own root, and so is every
+// session whose chain loops, so no session is ever counted twice. It remembers
+// the answer for every session on a path it walked, so a chain of any depth
+// costs one walk in total, not one per session.
+type rootResolver struct {
+	byID map[string]*archive.Metadata
+	done map[*archive.Metadata]rootAnswer
+}
+
+// rootAnswer is a session's root; looped is set when its chain never ends.
+type rootAnswer struct {
+	root   *archive.Metadata
+	looped bool
+}
+
+func newRootResolver(byID map[string]*archive.Metadata) *rootResolver {
+	return &rootResolver{byID: byID, done: map[*archive.Metadata]rootAnswer{}}
+}
+
+func (r *rootResolver) resolve(m *archive.Metadata) *archive.Metadata {
+	if answer, ok := r.done[m]; ok {
+		return answer.root
+	}
+	var path []*archive.Metadata
+	var onPath map[*archive.Metadata]bool
+	var answer rootAnswer
+	for current := m; ; {
+		if known, ok := r.done[current]; ok {
+			answer = known
+			break
 		}
-		if seen[parent] {
-			return m
+		path = append(path, current)
+		parent, ok := r.byID[current.ParentSessionID]
+		if current.ParentSessionID == "" || !ok {
+			answer = rootAnswer{root: current}
+			break
 		}
-		seen[parent] = true
+		if onPath == nil {
+			onPath = map[*archive.Metadata]bool{}
+		}
+		onPath[current] = true
+		if onPath[parent] || parent == current {
+			answer = rootAnswer{looped: true}
+			break
+		}
 		current = parent
 	}
-	return current
+	for _, member := range path {
+		if answer.looped {
+			r.done[member] = rootAnswer{root: member, looped: true}
+		} else {
+			r.done[member] = answer
+		}
+	}
+	return r.done[m].root
 }
 
 func (u *unit) members() []*archive.Metadata {
