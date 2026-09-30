@@ -9,7 +9,10 @@ go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
 go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...     # only the exceptions listed in test.yml
+GOBIN=/tmp/deadcode go install golang.org/x/tools/cmd/deadcode@v0.50.0   # the Linux pass needs a built binary:
+GOOS=linux CGO_ENABLED=0 /tmp/deadcode/deadcode ./...    # also excepts credentials.errorForOSStatus
 python3 scripts/test_release_signing.py
+python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs

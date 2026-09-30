@@ -78,7 +78,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		return showLookup{}, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Style: styleFor(stdout), GroupByProject: true}
-	row, ok, err := pickBrowseSession(newPrompter(stdin, stdout), stdout, matches, len(matches), false, format, "show")
+	row, ok, err := pickBrowseSession(env, newPrompter(stdin, stdout), stdout, matches, len(matches), false, format, "show")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1

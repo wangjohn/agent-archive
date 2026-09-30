@@ -12,37 +12,27 @@ import (
 // is set and more than one project appears, rows are printed under project
 // headings (indices stay global for the interactive picker).
 func printSessionTable(w io.Writer, rows []listRow, opts listFormatOptions) error {
-	if opts.GroupByProject && distinctProjects(rows) > 1 {
-		return printSessionTableGrouped(w, rows, opts)
-	}
-	return printSessionTableFlat(w, rows, opts)
+	return printSessionGroups(w, sessionTableGroups(rows, opts), opts)
 }
 
-func distinctProjects(rows []listRow) int {
-	seen := map[string]bool{}
-	for _, r := range rows {
-		seen[projectGroupKey(r)] = true
-	}
-	return len(seen)
+// sessionTableGroup is the rows under one project heading of the human list
+// table. The flat table is a single group without a heading.
+type sessionTableGroup struct {
+	// label is the project's heading, styled; empty for the flat table.
+	label string
+	// count is how many rows the whole group has.
+	count int
+	rows  []listRow
+	// continued marks a group whose earlier rows are on a previous page.
+	continued bool
 }
 
-func projectGroupKey(row listRow) string {
-	if row.ProjectID != "" {
-		return "id:" + row.ProjectID
+// sessionTableGroups arranges rows as printSessionTable prints them. Their
+// rows, taken in order, are the table's rows from top to bottom.
+func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGroup {
+	if !opts.GroupByProject || distinctProjects(rows) <= 1 {
+		return []sessionTableGroup{{count: len(rows), rows: rows}}
 	}
-	return "name:" + row.Project
-}
-
-func printSessionTableFlat(w io.Writer, rows []listRow, opts listFormatOptions) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	printSessionHeader(tw, opts)
-	for _, r := range rows {
-		printSessionRow(tw, r, opts)
-	}
-	return tw.Flush()
-}
-
-func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOptions) error {
 	order := make([]listRow, 0)
 	seen := map[string]bool{}
 	labelGroups := map[string]int{}
@@ -59,10 +49,8 @@ func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOption
 		projectIDs[i] = group.ProjectID
 	}
 	shortIDs := uniqueShortIDs(projectIDs)
+	groups := make([]sessionTableGroup, 0, len(order))
 	for i, group := range order {
-		if i > 0 {
-			terminal.Println(w)
-		}
 		label := group.Project
 		if label == "-" {
 			label = "unknown project"
@@ -74,23 +62,37 @@ func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOption
 				label += " [unidentified]"
 			}
 		}
-		heading := label
 		if opts.Style.color {
-			heading = opts.Style.bold(label)
+			label = opts.Style.bold(label)
 		}
-		count := 0
+		var members []listRow
 		for _, r := range rows {
 			if projectGroupKey(r) == projectGroupKey(group) {
-				count++
+				members = append(members, r)
 			}
 		}
-		terminal.Printf(w, "%s (%d)\n", heading, count)
+		groups = append(groups, sessionTableGroup{label: label, count: len(members), rows: members})
+	}
+	return groups
+}
+
+// printSessionGroups writes groups as the human list table: each group's
+// heading, when it has one, then its column header and rows.
+func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
+	for i, group := range groups {
+		if group.label != "" {
+			if i > 0 {
+				terminal.Println(w)
+			}
+			if group.continued {
+				terminal.Printf(w, "%s (continued)\n", group.label)
+			} else {
+				terminal.Printf(w, "%s (%d)\n", group.label, group.count)
+			}
+		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		printSessionHeader(tw, opts)
-		for _, r := range rows {
-			if projectGroupKey(r) != projectGroupKey(group) {
-				continue
-			}
+		for _, r := range group.rows {
 			printSessionRow(tw, r, opts)
 		}
 		if err := tw.Flush(); err != nil {
@@ -98,6 +100,21 @@ func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOption
 		}
 	}
 	return nil
+}
+
+func distinctProjects(rows []listRow) int {
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[projectGroupKey(r)] = true
+	}
+	return len(seen)
+}
+
+func projectGroupKey(row listRow) string {
+	if row.ProjectID != "" {
+		return "id:" + row.ProjectID
+	}
+	return "name:" + row.Project
 }
 
 func printSessionHeader(tw *tabwriter.Writer, opts listFormatOptions) {

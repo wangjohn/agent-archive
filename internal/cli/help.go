@@ -134,7 +134,8 @@ Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Piped or --json output is
+transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
+wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
 never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
 is inside coding agents (see the configuration reference). On a terminal
 without interactive stdin, text is paged through $PAGER unless --no-pager.
@@ -296,15 +297,20 @@ first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Launch local claude, codex, or cursor with the handoff
-                        in a private temporary file; requires the target CLI
-                        installed on this Mac. With no selector, hands off
-                        the Claude Code, Codex, or Cursor session it runs in,
-                        or picks one on a terminal
+  --to NAME             Launch local claude, codex, or cursor with the handoff.
+                        The agent reads a copy kept in the data directory for
+                        7 days (before setup, in a private temporary folder);
+                        needs the agent's CLI (claude, codex, or agent) on
+                        PATH. With no selector, hands off the Claude Code,
+                        Codex, or Cursor session it runs in, or picks one on
+                        a terminal
+  -- ARGS               Everything after -- goes to the launched agent, after
+                        any arguments set in config.json's handoff.args
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
+Example: agent-archive handoff SESSION_ID --to claude -- --model opus
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history

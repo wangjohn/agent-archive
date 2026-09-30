@@ -247,3 +247,38 @@ func TestHeadsUpIsAnEmptyListInTheJSON(t *testing.T) {
 		t.Fatalf("JSON = %s", data)
 	}
 }
+
+// A note is aggregate data: it shares nothing with the session highlight it
+// is drawn from (a renderer that edits a note must not edit the highlight),
+// and carries no session id or other text of a session but its project name.
+func TestHeadsUpCarriesNoSessionIdentityAndSharesNothing(t *testing.T) {
+	t.Parallel()
+	at := day(time.September, 20, 10)
+	sessions := []archive.Metadata{
+		meta("sess-SECRET-1", "claude", at, project("styleprofile"), messages(2), compactions(1), million(2)),
+		meta("sess-SECRET-2", "claude", at, parentOf("sess-SECRET-1"), million(2)),
+		meta("sess-SECRET-3", "cursor", at),
+	}
+	got := Compute(sessions, flatOptions())
+	costly := findNote(t, got.HeadsUp, NoteCostliestSession)
+	if len(costly.Drivers) == 0 || got.Highlights.CostliestSession == nil || costly.Cost == nil || costly.Cost.USD == nil {
+		t.Fatalf("costliest note = %+v, want drivers and a cost", costly)
+	}
+	data := mustJSON(t, got.HeadsUp)
+	for _, private := range []string{"SECRET", "session_id"} {
+		if strings.Contains(data, private) {
+			t.Errorf("heads_up carries %q: %s", private, data)
+		}
+	}
+	if !strings.Contains(data, "styleprofile") {
+		t.Errorf("heads_up = %s, want the project name", data)
+	}
+	costly.Drivers[0] = "changed"
+	*costly.Cost.USD = -1
+	if drivers := got.Highlights.CostliestSession.Drivers; drivers[0] == "changed" {
+		t.Errorf("the note's drivers are the highlight's own slice")
+	}
+	if usd := got.Highlights.CostliestSession.Cost.USD; usd == nil || *usd < 0 {
+		t.Errorf("the note's cost is the highlight's own number")
+	}
+}
