@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("uninstall", stderr)
 	purge := fs.Bool("delete-local-data", false, "also delete owned local files and stored credentials")
+	skipScheduler := fs.Bool("skip-scheduler", false, "go on when the background scheduler cannot be reached, without verifying the job stopped")
 	yes := fs.Bool("yes", false, "skip the confirmations")
 	if !fs.parseFlagsOnly(args) {
 		return 2
@@ -39,14 +41,14 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking."+env.overrideHint(stdin))
 		return 1
 	}
-	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
+	if err := uninstall(*purge, *yes, *skipScheduler, stdin, stdout, env); err != nil {
 		terminal.Printf(stderr, "Uninstall incomplete: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
+func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, env Env) error {
 	// Resolved without creating it: the data directory of a stale
 	// installation (a test one whose temporary folder is gone) may no
 	// longer exist, and uninstalling it must not bring it back.
@@ -125,7 +127,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
-	remove, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env)
+	remove, unverified, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env, skipScheduler)
 	if err != nil {
 		return err
 	}
@@ -164,6 +166,11 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); release() }); err != nil {
 			return err
 		}
+	}
+	if len(unverified) > 0 {
+		printUnverifiedJobs(out, unverified)
+		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
+		return nil
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
@@ -224,30 +231,132 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 	return refs
 }
 
+// unverifiedJob is a background job uninstall went on without verifying it
+// stopped, because the scheduler could not be reached (--skip-scheduler).
+type unverifiedJob struct {
+	ref scheduler.Ref
+	// words are the nouns of the scheduler that could not be reached, kept here
+	// because the summary is printed after a purge has deleted the
+	// configuration that names the scheduler.
+	words scheduler.Words
+	// why is what stopped the scheduler from answering or stopping the job.
+	why string
+	// manual is the command that stops the job by hand, "" when the
+	// scheduler names none.
+	manual string
+}
+
 // stopCollectors stops the background collectors the jobs ref name, and
 // returns the files of their definitions to remove once the rest of uninstall
 // is done. A job the scheduler runs from another installation's definition
 // stays, and so do its files: removing them would leave this installation with
 // nothing to reinstall from.
-func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env) (remove []string, err error) {
+//
+// A job the scheduler cannot be asked about refuses uninstall, with the
+// scheduler's own next step and the command that stops the job by hand; with
+// skipScheduler it goes on: the stop is tried, the definition's files are
+// removed all the same, and the job is returned unverified, for the summary to
+// say it was not verified stopped.
+func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env, skipScheduler bool) (remove []string, unverified []unverifiedJob, err error) {
 	words := env.scheduler().Words()
 	for _, ref := range refs {
 		status := env.jobStatus(userHome, ref)
 		if status.State == scheduler.Unknown {
-			return nil, fmt.Errorf("cannot determine background job state; restore access to %s and retry", words.Tool)
+			problem := problemOf(status)
+			if !skipScheduler {
+				return nil, nil, errors.New(uninstallUnknownMessage(words, problem))
+			}
+			// The scheduler said it cannot tell; asking it to stop the job
+			// is the attempt, and whether it worked is the answer. One it
+			// answers the second time is another installation's is left.
+			err := env.unloadJob(userHome, ref)
+			if notOwned(err) {
+				leftAnotherInstallation(out, words, ref, status)
+				continue
+			}
+			if err != nil {
+				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: cmp.Or(problem.Reason, words.Tool+" did not say whether the job is loaded"), manual: problem.Manual})
+			}
+			remove = append(remove, status.Paths...)
+			continue
 		}
 		if status.State == scheduler.AnotherInstallation {
-			terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+			leftAnotherInstallation(out, words, ref, status)
 			continue
 		}
 		if jobActive(status.State) {
 			if err = env.unloadJob(userHome, ref); err != nil {
-				return nil, fmt.Errorf("stop collector: %w", err)
+				if !skipScheduler {
+					return nil, nil, fmt.Errorf("stop collector: %w", err)
+				}
+				if notOwned(err) {
+					leftAnotherInstallation(out, words, ref, status)
+					continue
+				}
+				unverified = append(unverified, failedStop(ref, words, err))
 			}
 		}
 		remove = append(remove, status.Paths...)
 	}
-	return remove, nil
+	return remove, unverified, nil
+}
+
+// failedStop is the loaded job ref names, whose stop failed with err, as
+// uninstall --skip-scheduler reports it. A manager that could no longer be
+// asked about the job when the stop came (Unload's *IndeterminateError) says
+// what is wrong and the command that stops the job by hand, as for a job it
+// could not describe in the first place.
+func failedStop(ref scheduler.Ref, words scheduler.Words, err error) unverifiedJob {
+	job := unverifiedJob{ref: ref, words: words, why: err.Error()}
+	var indeterminate *scheduler.IndeterminateError
+	if errors.As(err, &indeterminate) {
+		job.why = cmp.Or(indeterminate.Problem.Reason, job.why)
+		job.manual = indeterminate.Problem.Manual
+	}
+	return job
+}
+
+// leftAnotherInstallation says that the job ref names was left running, with
+// its definition, because the scheduler runs it from another installation's.
+func leftAnotherInstallation(out io.Writer, words scheduler.Words, ref scheduler.Ref, status scheduler.Status) {
+	terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+}
+
+// notOwned reports whether err is the scheduler's refusal to stop a job it
+// runs from another installation's definition.
+func notOwned(err error) bool {
+	var notOwned *scheduler.NotOwnedError
+	return errors.As(err, &notOwned)
+}
+
+// uninstallUnknownMessage says that uninstall stops because the scheduler
+// cannot say whether the job is loaded. An adapter that says what is wrong has
+// it said, with its next step, the command that stops the job by hand, and the
+// way to go on without the scheduler; otherwise it is the words it always was.
+func uninstallUnknownMessage(words scheduler.Words, problem scheduler.Problem) string {
+	if problem.Reason == "" {
+		return fmt.Sprintf("cannot determine background job state; restore access to %s and retry", words.Tool)
+	}
+	message := fmt.Sprintf("cannot determine background job state: %s. %s.", problem.Reason, problem.Fix)
+	if problem.Manual != "" {
+		message += fmt.Sprintf(" To stop the job by hand, run this from a session that can reach %s: %s.", words.Manager, problem.Manual)
+	}
+	return message + " To uninstall anyway, without verifying the job stopped, run agent-archive uninstall --skip-scheduler."
+}
+
+// printUnverifiedJobs says which background jobs uninstall went on without
+// verifying stopped, why, and the command that stops each by hand: deleting a
+// definition under a job that is still loaded leaves it running.
+func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
+	for _, job := range jobs {
+		words := job.words
+		terminal.Printf(out, "Not verified stopped: %s's %s job may still be running, because %s.\n", words.Manager, job.ref, job.why)
+		if job.manual != "" {
+			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
+		} else {
+			terminal.Printf(out, "To stop it, use %s from a session that can reach %s.\n", words.Tool, words.Manager)
+		}
+	}
 }
 
 // purgeLocalData runs once hooks and the LaunchAgent are gone. It deletes

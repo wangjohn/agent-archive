@@ -128,6 +128,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
+	// Setup picks the scheduler (this system's own) and records it; every
+	// other command addresses the one recorded.
+	env = env.choosingBackend()
 	if opts.given() && !opts.yes {
 		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
@@ -273,7 +276,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
-	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	err = runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	// However setup ended, a bucket it created and did not keep is not left
+	// without a word.
+	noteUnusedCreatedBuckets(p, home)
+	return err
 }
 
 func runSetupDraft(p *prompter, draft setupDraft, home, userHome, exe string, env Env, existing config.Config, installed bool, reviewed, discoveries map[string]applicationDiscovery, discoveredAt time.Time, errOut io.Writer, known func(config.Config) []backfill.KnownProject, verbose bool) error {
@@ -1232,9 +1239,10 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
-// Part 2). Until then the menu offers only existing buckets.
-func guidedStorageOptions() []option { return nil }
+// (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
+func guidedStorageOptions() []option {
+	return []option{{storageChoiceS3New, storageLabelS3New}}
+}
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
@@ -1249,10 +1257,15 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
 		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
+		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create an Amazon S3 bucket for you.")
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	createS3 := choice == storageChoiceS3New
+	if createS3 {
+		choice = credentials.ProviderS3
 	}
 	if cfg.Provider != choice {
 		cfg = credentials.Config{Provider: choice}
@@ -1295,7 +1308,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 				}
 			}
 		}
-	} else if err = promptS3Location(p, &cfg, env, failedRegion); err != nil {
+	} else if err = promptS3Bucket(p, &cfg, env, failedRegion, createS3); err != nil {
 		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)

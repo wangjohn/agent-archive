@@ -55,7 +55,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.12.0"
+const adapterVersion = "0.13.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -655,20 +655,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
 			continue
 		}
-		observed := parseNativeTimestamp(raw)
-		if result.FirstEventAt.IsZero() {
-			result.FirstEventAt = observed
-		}
-		if observed.IsZero() {
-			if recordCarriesConversation(raw) {
-				result.NativeStartComplete = false
-			}
-		} else if result.NativeStartAt.IsZero() || observed.Before(result.NativeStartAt) {
-			result.NativeStartAt = observed
-		}
-		if !observed.IsZero() && (result.NativeEndAt.IsZero() || observed.After(result.NativeEndAt)) {
-			result.NativeEndAt = observed
-		}
+		result.noteRecordTime(raw)
 		result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
 		result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
 		kind, _ := raw["type"].(string)
@@ -681,6 +668,19 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			result.Records = append(result.Records, encoded)
 			result.Boundary.RetainedRecords++
 			result.Boundary.RetainedBytes += len(encoded)
+			continue
+		}
+		if format == "claude-jsonl" && isClaudeLabelType(kind) {
+			recognized++
+			encoded, err := filterClaudeLabel(raw, lineNo, addGap, omittedKeys.add)
+			if err != nil {
+				return FilteredTranscript{}, err
+			}
+			if encoded != nil {
+				result.Records = append(result.Records, encoded)
+				result.Boundary.RetainedRecords++
+				result.Boundary.RetainedBytes += len(encoded)
+			}
 			continue
 		}
 		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
@@ -722,6 +722,26 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+// noteRecordTime folds one native record's timestamp into the transcript's
+// first event, native start and end, and marks the start incomplete when a
+// record that carries conversation has none.
+func (t *FilteredTranscript) noteRecordTime(raw map[string]any) {
+	observed := parseNativeTimestamp(raw)
+	if t.FirstEventAt.IsZero() {
+		t.FirstEventAt = observed
+	}
+	if observed.IsZero() {
+		if recordCarriesConversation(raw) {
+			t.NativeStartComplete = false
+		}
+	} else if t.NativeStartAt.IsZero() || observed.Before(t.NativeStartAt) {
+		t.NativeStartAt = observed
+	}
+	if !observed.IsZero() && (t.NativeEndAt.IsZero() || observed.After(t.NativeEndAt)) {
+		t.NativeEndAt = observed
+	}
 }
 
 // isCompactBoundary reports whether a Claude Code record is the marker it

@@ -62,7 +62,7 @@ In scope: how the archive is listed and read for `handoff`, `list`, `show` and
 
 Out of scope: which sessions the picker shows and how they are labelled.
 That includes hiding subagents, native titles, repo scoping, filtering, and
-the search matcher. That work is the session-finding plan (`dev/specs/session-finding.md`, in progress).
+the search matcher. That work is the [session-finding plan](../specs/session-finding.md).
 Phase 4 below lists what it needs from the listing.
 
 ## Phase 1: parallel range listing
@@ -195,7 +195,7 @@ be 4–5. The spec must decide:
    deletion. Handoff re-reads the chosen session before using it. The spec
    must say what each command verifies before it shows a row.
 
-What the session-finding plan needs from phase 4:
+What the [session-finding plan](../specs/session-finding.md) needs from phase 4:
 
 - **(a) Subagent count per parent,** from the parent's `LinkedSessions`, with
   no scan of subagent hints.
