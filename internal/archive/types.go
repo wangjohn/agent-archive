@@ -546,12 +546,28 @@ type Counts struct {
 // counted at all.)
 const UnknownModel = "unknown"
 
+// MaxModelTokens is the most entries Metadata.ModelTokens holds, and
+// OtherModels is the ModelTokens.Model that the models beyond it are added
+// together under, so the split still sums to the session's counts. The schema's
+// model_tokens maxItems matches MaxModelTokens. A session names a handful of
+// models, so only a hostile transcript reaches it.
+const (
+	MaxModelTokens = 32
+	OtherModels    = "other"
+)
+
+// maxModelNameRunes is the longest ModelTokens.Model, ellipsis included; the
+// schema's maxLength matches it.
+const maxModelNameRunes = 128
+
 // ModelTokens is the token accounting attributed to one model, with the
 // meaning Counts gives each field. Model is the model id a ModelSummary
 // carries (gen_ai.request.model, or gen_ai.response.model when a record names
-// only that), or UnknownModel when a record carrying usage names no model. A
-// field is nil when no record of the model reported it. Below 2^53 tokens,
-// each Counts token field is the sum of that field over Metadata.ModelTokens.
+// only that), cut to maxModelNameRunes, or UnknownModel when a record
+// carrying usage names no model. Beyond MaxModelTokens models the
+// least-used are added together under OtherModels. A field is nil when no
+// record of the model reported it. Below 2^53 tokens, each Counts token field
+// is the sum of that field over Metadata.ModelTokens.
 type ModelTokens struct {
 	Model            string `json:"model"`
 	InputTokens      *int   `json:"input_tokens,omitempty"`

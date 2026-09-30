@@ -228,8 +228,9 @@
       }
     },
     "model_tokens": {
-      "description": "From parser 0.14.0: the session's token counts split by model, sorted by model id. Each entry uses the field meanings of counts. A record whose usage names no model is counted under the model 'unknown'. For Claude Code the model is the one named on the response message; for Codex, the model of the latest turn_context before the token record, so a model switched mid-session splits the counts at the switch. Streamed duplicates of one Claude Code message count once, as in counts. Below 2^53 tokens each token field of counts is the sum of that field over model_tokens, and both are absent when the harness exposed no token accounting (Cursor's unmetered zeros are not accounting).",
+      "description": "From parser 0.14.0: the session's token counts split by model, sorted by model id. Each entry uses the field meanings of counts. A record whose usage names no model is counted under the model 'unknown'. A model id longer than 128 characters is cut to that, and at most 32 entries are kept: beyond that, the models with the fewest tokens are added together under the model 'other', so the sums hold. For Claude Code the model is the one named on the response message; for Codex, the model of the latest turn_context before the token record, so a model switched mid-session splits the counts at the switch. Streamed duplicates of one Claude Code message count once, as in counts. Below 2^53 tokens each token field of counts is the sum of that field over model_tokens, and both are absent when the harness exposed no token accounting (Cursor's unmetered zeros are not accounting).",
       "type": "array",
+      "maxItems": 32,
       "items": {
         "$ref": "#/$defs/model_tokens"
       }
@@ -467,7 +468,8 @@
       "properties": {
         "model": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "input_tokens": {
           "type": "integer",
