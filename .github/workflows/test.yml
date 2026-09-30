@@ -151,10 +151,11 @@ jobs:
       # internal/backfill/birthtime_other.go,
       # internal/cursorstore/owner_other.go) are what ships on Linux, and the
       # macOS run never sees them; nor will it see future Linux-only files.
-      # The Linux run reports three functions the macOS run does not, because
-      # only the macOS Keychain code calls them: credentials.EncodeSecret,
-      # DecodeSecret, and errorForOSStatus. They have their own exceptions
-      # below; remove each when a Linux caller appears. deadcode is built once
+      # The Linux run reports one function the macOS run does not, because
+      # only the macOS Keychain code calls it: credentials.errorForOSStatus
+      # (EncodeSecret and DecodeSecret gained a Linux caller with the file
+      # store). It has its own exception below; remove it when a Linux caller
+      # appears. deadcode is built once
       # and run as a binary, since `go run` would try to execute a tool
       # cross-built for GOOS=linux.
       # Listed exceptions: the test helper packages, a cgo probe (test files
@@ -166,7 +167,7 @@ jobs:
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
           shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
-          linux_only='|^internal/credentials/credentials\.go:[0-9]+:[0-9]+: unreachable func: (EncodeSecret|DecodeSecret)$|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
+          linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
           check() {
