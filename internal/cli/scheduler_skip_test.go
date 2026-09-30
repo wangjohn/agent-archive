@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler/systemd"
 )
 
 // uninstall runs uninstall --yes with args and returns the exit code and
@@ -160,6 +162,45 @@ func TestLinuxUninstallSkippingTheSchedulerStillStopsAJobItCanReach(t *testing.T
 	}
 	if changes := l.manager.changing(); len(changes) == 0 || changes[0] != "systemctl --user disable --now "+l.ref()+".timer" {
 		t.Errorf("uninstall changed the manager by %q, want it to stop the job", changes)
+	}
+}
+
+// A manager that described the job as loaded and could not be reached when the
+// stop came (the bus went away in between) is reported as one that could not be
+// reached from the start: what is wrong, and the command that stops the job by
+// hand, not only the refusal's words and a pointer to systemctl, which would
+// leave the person to guess a `disable` that fails once the unit files are gone.
+func TestLinuxUninstallSkippingTheSchedulerWhenTheBusGoesAwayBeforeTheStop(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.setup()
+	shows := 0
+	l.env.Scheduler = systemd.Scheduler{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 1 && args[1] == "show" {
+			shows++
+			if shows > 1 {
+				l.manager.noBus = true
+			}
+		}
+		return l.manager.run(ctx, name, args...)
+	}}
+	code, output := l.uninstall("--skip-scheduler")
+	if code != 0 {
+		t.Fatalf("uninstall --skip-scheduler: exit %d\n%s", code, output)
+	}
+	for _, want := range []string{
+		"Not verified stopped: systemd's " + l.ref() + " job may still be running, because the systemd user manager cannot be reached (this session has no user bus).",
+		"To stop it, run this from a session that can reach systemd: " + l.manualStop(),
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, output)
+		}
+	}
+	timer, service := l.units()
+	for _, path := range []string{timer, service} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s is left after uninstall --skip-scheduler (%v)", path, err)
+		}
 	}
 }
 

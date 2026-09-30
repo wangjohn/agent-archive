@@ -293,12 +293,27 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 					leftAnotherInstallation(out, words, ref, status)
 					continue
 				}
-				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: err.Error()})
+				unverified = append(unverified, failedStop(ref, words, err))
 			}
 		}
 		remove = append(remove, status.Paths...)
 	}
 	return remove, unverified, nil
+}
+
+// failedStop is the loaded job ref names, whose stop failed with err, as
+// uninstall --skip-scheduler reports it. A manager that could no longer be
+// asked about the job when the stop came (Unload's *IndeterminateError) says
+// what is wrong and the command that stops the job by hand, as for a job it
+// could not describe in the first place.
+func failedStop(ref scheduler.Ref, words scheduler.Words, err error) unverifiedJob {
+	job := unverifiedJob{ref: ref, words: words, why: err.Error()}
+	var indeterminate *scheduler.IndeterminateError
+	if errors.As(err, &indeterminate) {
+		job.why = cmp.Or(indeterminate.Problem.Reason, job.why)
+		job.manual = indeterminate.Problem.Manual
+	}
+	return job
 }
 
 // leftAnotherInstallation says that the job ref names was left running, with
