@@ -224,7 +224,7 @@ func (b *builder) hero() []heroStat {
 	}
 	var prompts []string
 	if o.Prompts.Value != nil && finite(*o.Prompts.Value) {
-		prompts = []string{plural(int(math.Round(*o.Prompts.Value)), "prompt")}
+		prompts = []string{plural(int(statsfmt.RoundInt(*o.Prompts.Value)), "prompt")}
 	}
 	var cache []string
 	switch {

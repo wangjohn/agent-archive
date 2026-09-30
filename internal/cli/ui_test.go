@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -365,6 +366,57 @@ func TestVisibleWidthCountsWideCharactersAsTwoColumns(t *testing.T) {
 	}
 	if got, want := hangingIndent("- ", "项目项目 项目项目", 11), "- 项目项目\n  项目项目"; got != want {
 		t.Errorf("wrapping wide text = %q, want %q", got, want)
+	}
+}
+
+// A narrow character that U+FE0F turns into an emoji is drawn two columns
+// wide, so the width, a cut and a wrap all count it as two; the selector is
+// never cut off from its character; and nothing panics on broken UTF-8.
+func TestVisibleWidthCountsEmojiSelectorsAsTwoColumns(t *testing.T) {
+	t.Parallel()
+	heart, desk := "❤️", "\U0001F5A5️"
+	for _, c := range []struct {
+		name string
+		text string
+		want int
+	}{
+		{"a heart, plain", "❤", 1},
+		{"a heart, as an emoji", heart, 2},
+		{"in a word", "a" + heart + "b", 4},
+		{"a desktop, as an emoji", desk, 2},
+		{"an emoji that is wide already", "\U0001F600️", 2},
+		{"a CJK character", "项️", 2},
+		{"colored", "\x1b[31m" + heart + "\x1b[0m", 2},
+		{"ASCII is left alone", "1️", 1},
+		{"a selector with nothing before it", "️", 0},
+		{"a combining mark between", "❤́️", 1},
+		{"the text form", "❤︎", 1},
+		{"broken UTF-8", "\xff" + heart + "\xff", 4},
+	} {
+		if got := visibleWidth(c.text); got != c.want {
+			t.Errorf("%s: visibleWidth(%q) = %d, want %d", c.name, c.text, got, c.want)
+		}
+	}
+	for _, c := range []struct {
+		text  string
+		limit int
+		want  string
+	}{
+		{heart + heart, 3, heart},
+		{heart + heart, 4, heart + heart},
+		{"a" + heart, 2, "a"},
+		{"a" + heart, 3, "a" + heart},
+		{heart, 1, ""},
+	} {
+		if got := truncateVisible(c.text, c.limit); got != c.want {
+			t.Errorf("truncateVisible(%q, %d) = %q, want %q", c.text, c.limit, got, c.want)
+		}
+	}
+	if got, want := splitColumns(heart+heart+heart, 4), []string{heart + heart, heart}; !slices.Equal(got, want) {
+		t.Errorf("splitColumns = %q, want %q", got, want)
+	}
+	if got := splitColumns("\xff"+heart+"\xff"+strings.Repeat("x", 10), 5); len(got) < 2 {
+		t.Errorf("splitColumns of broken text = %q", got)
 	}
 }
 
