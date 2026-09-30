@@ -229,6 +229,14 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
+- `--no-skills` installs no [agent skills](#what-setup-changes-on-your-mac)
+  (such as `/handoff`) and removes the ones setup wrote earlier; a file that
+  is not setup's is left alone and named. It works with or without `--yes`
+  (without it, setup on a finished installation first asks what to change,
+  so `agent-archive setup --yes --no-skills` changes only this). It is saved
+  (`no_skills` in the [configuration](../reference/configuration.md)), and
+  later setup runs keep the skills off. `--skills` turns them back on and
+  installs them. Giving both is an error.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
 
@@ -266,6 +274,19 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   Run setup again after moving your AWS files or the helper; `status` warns
   when they no longer match
   ([configuration](../reference/configuration.md#environment-variables)).
+- **Agent skill files**, one folder per skill under each app's skills
+  directory: `/handoff` is written to `$CLAUDE_CONFIG_DIR/skills/handoff/SKILL.md`
+  (`~/.claude/skills/…` by default) for Claude Code and to
+  `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor
+  ([handoff](../guides/handoff.md#from-inside-an-agent-handoff)). Each file
+  carries a marker line: setup replaces, `status` lists, and uninstall
+  removes only a file with it (naming this installation's data directory),
+  and leaves any other file at that path alone, saying so. After you upgrade
+  `agent-archive`, `status` warns about a skill file written by an earlier
+  release; `agent-archive setup` refreshes it. Setup installs them without
+  asking and says how to opt out: `agent-archive setup --no-skills` removes
+  the files it wrote and keeps them off in later runs (`status` says they are
+  turned off), and `agent-archive setup --skills` turns them on again.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
   see [local state](../reference/local-state.md)), private to your account.
   It holds registrations, frozen uploads, and caches; transcripts are read in
@@ -275,7 +296,8 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   build without a Keychain, a credentials file in the data directory). S3
   credentials stay in your AWS profile.
 
-`agent-archive uninstall` removes the hooks and the LaunchAgent;
+`agent-archive uninstall` removes the hooks, the skill files, and the
+LaunchAgent;
 `--delete-local-data` also removes the local state and the Keychain item
 (or credentials file).
 Neither touches the bucket ([uninstall](uninstall.md)).

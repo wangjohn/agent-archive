@@ -368,8 +368,12 @@ func TestStatsDailySpendChart(t *testing.T) {
 		},
 	}
 	lines := p(80, s).dailySpend()
-	if len(lines) != 5 {
-		t.Fatalf("the chart is %d lines, want a heading, three rows and the axis:\n%s", len(lines), strings.Join(lines, "\n"))
+	// A heading, three rows and the axis, and a caption for the dot.
+	if len(lines) != 6 {
+		t.Fatalf("the chart is %d lines, want a heading, three rows, the axis and a caption:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	if lines[5] != "· spend unknown" {
+		t.Errorf("caption: %q", lines[5])
 	}
 	if !strings.HasPrefix(lines[0], "DAILY SPEND") || !strings.HasSuffix(lines[0], "peak ~$100 · Sep 2") {
 		t.Errorf("heading: %q", lines[0])
@@ -647,7 +651,7 @@ func TestStatsListScreens(t *testing.T) {
 	}
 	unpriced := s
 	unpriced.Models = append(append([]stats.ModelRow(nil), s.Models...), stats.ModelRow{Label: "mystery-1", Sessions: 1, Tokens: 5000})
-	if out := strings.Join(pageLines(pageModels, unpriced, 100, false, false), "\n"); !strings.Contains(out, "unpriced") || !strings.Contains(out, "mystery-1") || !strings.Contains(out, "Unpriced: the price table does not list (mystery-1)") {
+	if out := strings.Join(pageLines(pageModels, unpriced, 100, false, false), "\n"); !strings.Contains(out, "unpriced") || !strings.Contains(out, "mystery-1") || !strings.Contains(out, "Unpriced: the price table does not list mystery-1, so its tokens") {
 		t.Errorf("an unpriced model is not flagged:\n%s", out)
 	}
 	agents := strings.Join(pageLines(pageAgents, s, 100, false, false), "\n")

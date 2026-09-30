@@ -279,7 +279,7 @@ func (p *statsPrinter) grouped() []string {
 	if g == nil || len(g.Rows) == 0 {
 		return nil
 	}
-	title := "BY " + strings.ToUpper(string(g.By))
+	title := "BY " + strings.ToUpper(clean(string(g.By)))
 	rows := g.Rows
 	more := 0
 	if len(rows) > statsMaxGroupRows {
@@ -383,20 +383,27 @@ func (p *statsPrinter) unknownTokenText() string {
 	return "Sessions with no token data are left out of token and cost totals (" + strings.Join(parts, ", ") + ")."
 }
 
-// unpricedModels lists, in parentheses, the models the window used that the
-// price table does not list.
-func (p *statsPrinter) unpricedModels() string {
+// unpricedNames lists the models the window used that the price table does not
+// list, the first few of them, and how many of those names there are.
+func (p *statsPrinter) unpricedNames() (string, int) {
 	var names []string
 	for _, r := range p.s.Models {
 		if !r.Priced || r.Cost.USD == nil {
 			names = append(names, truncateVisible(clean(r.Label), statsNameLimit))
 		}
 	}
-	if len(names) == 0 {
-		return ""
-	}
-	if len(names) > 3 {
+	total := len(names)
+	if total > 3 {
 		names = append(names[:3], p.g.ellipsis)
 	}
-	return " (" + strings.Join(names, ", ") + ")"
+	return strings.Join(names, ", "), total
+}
+
+// unpricedModels is unpricedNames in parentheses, or nothing when every model
+// is priced.
+func (p *statsPrinter) unpricedModels() string {
+	if names, total := p.unpricedNames(); total > 0 {
+		return " (" + names + ")"
+	}
+	return ""
 }

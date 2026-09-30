@@ -20,6 +20,12 @@ import "strings"
 //	labels        dim; emphasis bold
 //	key bar       keys bold, labels dim, the active view in reverse video
 //
+// Yellow carries three meanings (Claude Code, a heads-up bullet and a rise in
+// spend, and the haiku and cache-write colors on other screens). They are far
+// apart on a screen and each has a label or a glyph beside it. Only marks are
+// yellow (a bullet, a bar, an arrow with its figure), never a sentence or an
+// amount, because yellow text is hard to read on a light background.
+//
 // Dim (SGR 2) rather than bright black is the grey: bright black is the
 // background itself in some popular themes (Solarized), and the rest of the
 // command line already uses dim for secondary text.
@@ -37,7 +43,7 @@ const (
 	roleProject
 	// roleSpendChart is the daily spend chart's bars.
 	roleSpendChart
-	// roleHeadsUp is a heads-up note's bullet, and the peak's amount.
+	// roleHeadsUp is a heads-up note's bullet.
 	roleHeadsUp
 	// roleDeltaUp is a rise in spend: amber, never red.
 	roleDeltaUp

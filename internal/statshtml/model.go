@@ -17,28 +17,61 @@ type page struct {
 	// no sessions.
 	Empty string
 
-	Daily      *dailyChart
-	NoTokens   string // said instead of the chart when no session reports tokens
-	Cards      []card
-	CardsVs    string
-	Agents     *barTable
-	Models     *barTable
-	Projects   *barTable
-	Tokens     *tokenSection
-	Highlights []highlight
-	Groups     *barTable
-	Footer     footer
+	// The default view: the headline trio, the agents, daily spend, where it
+	// went, what was used most and what deserves a second look.
+	Hero     []heroStat
+	AgentBar *agentBar
+	Daily    *dailyChart
+	NoSpend  string // said instead of the chart when no day has a priced cost
+	Projects *barTable
+	Models   *barTable
+	MostUsed *mostUsed
+	HeadsUp  []string
+
+	// The detail, below the default view.
+	Agents *barTable
+	Tokens *tokenSection
+	Facts  []highlight
+	Groups *barTable
+	Footer footer
 }
 
-// card is one overview number.
-type card struct {
+// heroStat is one of the three headline numbers.
+type heroStat struct {
 	Label string
 	Value string
 	// Delta is the change against the previous period as shown ("▲ 18%");
-	// DeltaSpoken the same for screen readers.
+	// DeltaSpoken the same for screen readers, DeltaDir whether it is "up",
+	// "down" or "flat", and DeltaVs what it compares with. All are empty when
+	// there is no previous period to compare with.
 	Delta       string
 	DeltaSpoken string
-	Note        string
+	DeltaDir    string
+	DeltaVs     string
+	// Lines are the grey lines under the number.
+	Lines []string
+}
+
+// agentBar is the agents' share of sessions as one stacked bar and its legend.
+type agentBar struct {
+	Summary  string
+	Segments []agentSegment
+	Legend   []agentLegend
+}
+
+// agentSegment is one agent's part of the stacked bar; X and W are SVG lengths.
+type agentSegment struct {
+	Class string
+	X     string
+	W     string
+	Title string
+}
+
+// agentLegend is an agent's legend entry: a swatch, its name and its share.
+type agentLegend struct {
+	Class string
+	Label string
+	Share string
 }
 
 // barTable is a table whose rows may carry a bar: agents, models, projects
@@ -56,14 +89,23 @@ type barTable struct {
 	Notes   []string
 }
 
-// barRow is a row of a barTable. Pct is the bar's length as an SVG length.
+// barRow is a row of a barTable. Pct is the bar's length as an SVG length and
+// Class the color class of its bar.
 type barRow struct {
 	Label string
+	Class string
 	Pct   string
 	Cells []string
 }
 
-// dailyChart is the tokens-by-day bar chart, drawn in an SVG whose width is
+// mostUsed is the skills and MCP servers used most.
+type mostUsed struct {
+	Skills []nameCount
+	MCP    []nameCount
+	Notes  []string
+}
+
+// dailyChart is the spend-by-day bar chart, drawn in an SVG whose width is
 // the page's and whose heights are in pixels, so its text never scales.
 type dailyChart struct {
 	Height    int
@@ -71,13 +113,16 @@ type dailyChart struct {
 	PlotTop   int
 	AxisY     int
 	MaxWidth  int
-	Peak      string // the direct label of the peak bar
 	PeakLabel *chartLabel
 	Bars      []dayBar
 	XLabels   []chartLabel
 	Caption   string
 	Summary   string // the chart's text alternative
-	Rows      []dayRow
+	// SpendHead and TokensHead head the table's columns: a bar of several days
+	// shows its busiest day's numbers, and its table says so.
+	SpendHead  string
+	TokensHead string
+	Rows       []dayRow
 }
 
 // chartLabel is a text label at x (an SVG length) and y (pixels).
@@ -105,19 +150,17 @@ type dayBar struct {
 type dayRow struct {
 	Label    string
 	Sessions string
+	Spend    string
 	Tokens   string
 }
 
 // tokenSection is what the tokens were spent on: a donut, its legend, and
-// the rows that appear when there is something to say.
+// the sentences that appear when there is something to say.
 type tokenSection struct {
 	Total     string
 	Segments  []segment
 	Reasoning string
-	Subagents *subagentRow
-	Skills    []nameCount
-	MCP       []nameCount
-	Notes     []string
+	Subagents string
 }
 
 // segment is one part of the donut, with its legend entry.
@@ -134,11 +177,6 @@ type segment struct {
 	TextY   string
 	HasText bool
 	Speak   string
-}
-
-type subagentRow struct {
-	Text string
-	Pct  string
 }
 
 type nameCount struct {

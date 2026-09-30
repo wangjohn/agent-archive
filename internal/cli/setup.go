@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -111,6 +111,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
+	if opts.noSkills && opts.skills {
+		return fs.usageError("--no-skills and --skills contradict each other; give one")
+	}
 	if *abandon {
 		if err := abandonRecovery(stdout, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: setup: %v\n", err)
@@ -154,7 +157,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env, opts.verbose); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice()); err != nil {
 		// The checks above already name each blocker, marked ✗, so the exit
 		// only says what to do. setup --yes names them again on standard
 		// error, which is what a script reads.
@@ -181,8 +184,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 }
 
 // setup is interactive setup. verbose prints a failed storage check's own
-// error under its diagnosis.
-func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error {
+// error under its diagnosis; skills is --no-skills or --skills, which no
+// question follows.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -255,8 +259,13 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		return err
 	}
 	if done {
+		if skills != skillsUnchanged {
+			terminal.Println(p.out, "The agent skills were not changed: setup made no change this run. To change only the skills, run "+p.style.cmd("agent-archive setup --yes "+skills.flag())+".")
+		}
 		return nil
 	}
+	// The committed setting and this run's flag decide, never a saved draft's.
+	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
 	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
 }
 
@@ -603,10 +612,11 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 
 	draft.Config.RetiredCredentialRefs = retiredStagedRefs(draft.Config.RetiredCredentialRefs, draft.StagedRefs, draft.Config.Storage.R2CredentialRef)
 	// Re-read under the machine lock in applySetup; it rejects concurrent config changes.
+	skills := planSkillOptOut(env, home, userHome, exe, existing, draft.Config)
 	if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 		return false, err
 	}
-	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
+	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true, skills: skills})
 }
 
 // setupFinish is what finishSetup needs beyond the committed
@@ -616,6 +626,9 @@ type setupFinish struct {
 	env         Env
 	userHome    string
 	offerImport bool
+	// skills is what setup removed and left alone of the agent skills, when
+	// they are turned off.
+	skills skillOptOut
 }
 
 // finishSetup follows a committed setup: it records the apps' versions,
@@ -637,7 +650,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
@@ -646,20 +659,111 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	return nil
 }
 
-// printAgentCommands says in one line where setup installed the /handoff
-// command, and names each path it left alone because it is not setup's.
-func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
-	var installed []string
-	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
-		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
-			installed = append(installed, displayPath(f.Path, userHome))
-			continue
+// printAgentSkills says in one line per skill (/handoff, and any other in
+// agentskills.Registry) where setup installed it, and names each path it
+// left alone because it is not setup's; then one line on how to opt out of
+// them. With the skills turned off (opt-out) it says instead what it
+// removed and left alone, and how to turn them on.
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut) {
+	if cfg.NoSkills {
+		printSkillOptOut(p, agentskills.Registry, optOut, userHome)
+		return
+	}
+	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
+	if printSkillFiles(p, agentskills.Registry, files, userHome) {
+		terminal.Println(p.out, "To remove the agent skills and keep them off, run "+p.style.cmd("agent-archive setup --no-skills")+".")
+	}
+}
+
+// skillOptOut is what setup does to the agent skills while they are turned
+// off: the skill files of setup's it removes, and the other files at their
+// paths that it leaves alone.
+type skillOptOut struct {
+	removed []string
+	kept    []string
+}
+
+// planSkillOptOut is the skillOptOut of applying cfg over old, planned
+// before setup applies it (afterwards the removed files are gone, and
+// nothing could tell them from files that were never there). It is empty
+// unless the skills are off. A failure to plan is left to the setup
+// transaction, which plans the same removals and reports it.
+func planSkillOptOut(env Env, home, userHome, executable string, old, cfg config.Config) skillOptOut {
+	if !cfg.NoSkills {
+		return skillOptOut{}
+	}
+	files, previousFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, old)
+	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome())
+	if err != nil {
+		return skillOptOut{}
+	}
+	var out skillOptOut
+	for _, change := range changes {
+		out.removed = append(out.removed, change.Path)
+	}
+	out.kept = kept
+	return out
+}
+
+// printSkillOptOut reports opt-out's removals and the files it left, each
+// under its skill, then that the skills are off and how to turn them on.
+func printSkillOptOut(p *prompter, skills []agentskills.Skill, optOut skillOptOut, userHome string) {
+	for _, skill := range skills {
+		if removed := displayPaths(skillPaths(optOut.removed, skill.Name), userHome); len(removed) > 0 {
+			terminal.Printf(p.out, "Removed /%s: %s\n", skill.Name, strings.Join(removed, ", "))
 		}
-		terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n", displayPath(f.Path, userHome))
+		for _, path := range skillPaths(optOut.kept, skill.Name) {
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so setup does not remove it.\n", displayPath(path, userHome))
+		}
 	}
-	if len(installed) > 0 {
-		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))
+	terminal.Println(p.out, "Agent skills are turned off. To install them, run "+p.style.cmd("agent-archive setup --skills")+".")
+}
+
+// skillPaths is those of paths that are the file of the skill named name.
+func skillPaths(paths []string, name string) []string {
+	var out []string
+	for _, path := range paths {
+		if filepath.Base(filepath.Dir(path)) == name {
+			out = append(out, path)
+		}
 	}
+	return out
+}
+
+// displayPaths is displayPath of each of paths.
+func displayPaths(paths []string, userHome string) []string {
+	out := make([]string, len(paths))
+	for i, path := range paths {
+		out[i] = displayPath(path, userHome)
+	}
+	return out
+}
+
+// printSkillFiles is printAgentSkills for the files of skills, each one
+// reported under its own skill. It reports whether it named any installed.
+func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskills.File, userHome string) (installedAny bool) {
+	for _, skill := range skills {
+		var installed []string
+		for _, f := range files {
+			if f.Skill != skill.Name {
+				continue
+			}
+			if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+				installed = append(installed, displayPath(f.Path, userHome))
+				continue
+			}
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(f.Path, userHome), skill.Name)
+		}
+		if len(installed) > 0 {
+			what := "/" + skill.Name
+			if skill.Summary != "" {
+				what += ", which " + skill.Summary
+			}
+			terminal.Printf(p.out, "Installed %s: %s\n", what, strings.Join(installed, ", "))
+			installedAny = true
+		}
+	}
+	return installedAny
 }
 
 // verifyStorage checks that setup can write, read, and delete in the

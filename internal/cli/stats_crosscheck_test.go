@@ -13,16 +13,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/statshtml"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-// The web page and `--json` are laid out by separate code (the page shares only
-// the number formatters in internal/statsfmt, because internal/statshtml may
-// not import internal/cli). These tests run both over the same archive and
-// compare what each says. The terminal screens are checked against the JSON in
-// stats_pages_check_test.go.
+// `--json` and `--html` are laid out by separate code (they share only the
+// number formatters in internal/statsfmt, because internal/statshtml may not
+// import internal/cli). This test runs both over the same archive and compares
+// what the page says, section by section, with the document's numbers, so the
+// page cannot drift from them (stats_html_crosscheck_test.go has the checks).
 
 // crossScenario is an archive for the cross-check and the flags to run it with.
 type crossScenario struct {
@@ -101,7 +100,7 @@ func crossScenarios() []crossScenario {
 	return scenarios
 }
 
-func TestStatsPageAgreesWithJSON(t *testing.T) {
+func TestStatsPageAgreesWithTheJSON(t *testing.T) {
 	t.Parallel()
 	for _, sc := range crossScenarios() {
 		t.Run(sc.name, func(t *testing.T) {
@@ -135,8 +134,9 @@ func TestStatsPageAgreesWithJSON(t *testing.T) {
 				t.Errorf("the page drawn from the --json document differs from the page the command wrote:\n%s", firstDifference(string(again), page))
 			}
 
-			html := parsePage(t, page)
-			checkDaily(t, html, doc)
+			// The page is compared with the document's numbers, not with the
+			// terminal's text, which is laid out on its own terms.
+			checkPageAgainstJSON(t, parsePage(t, page), doc)
 		})
 	}
 }
@@ -245,78 +245,6 @@ func (n *node) byClass(name, class string) []*node {
 	return n.find(func(m *node) bool { return m.name == name && hasClass(m, class) })
 }
 
-// section is the page's <section> whose heading starts with title.
-func (n *node) section(title string) *node {
-	for _, s := range n.find(func(m *node) bool { return m.name == "section" }) {
-		for _, h := range s.find(func(m *node) bool { return m.name == "h2" }) {
-			if strings.HasPrefix(h.visible(), title) {
-				return s
-			}
-		}
-	}
-	return nil
-}
-
 var spaces = regexp.MustCompile(`\s+`)
 
 func squash(s string) string { return strings.TrimSpace(spaces.ReplaceAllString(s, " ")) }
-
-// checkDaily compares the chart's table with the daily series in the JSON.
-func checkDaily(t *testing.T, page *node, doc statsDocument) {
-	t.Helper()
-	sec := page.section("Tokens by day")
-	if sec == nil {
-		t.Error("the page has no daily chart section")
-		return
-	}
-	if doc.Coverage.SessionsWithTokens == 0 {
-		if !strings.Contains(sec.visible(), "No session in this window reports token counts") || len(sec.byClass("table", "")) > 0 {
-			t.Errorf("a window without token data draws a chart: %q", sec.visible())
-		}
-		return
-	}
-	var rows [][]string
-	for _, tr := range sec.find(func(m *node) bool { return m.name == "tr" }) {
-		if len(tr.children) > 0 && tr.children[0].attrs["scope"] == "row" {
-			var cells []string
-			for _, c := range tr.children {
-				cells = append(cells, c.visible())
-			}
-			rows = append(rows, cells)
-		}
-	}
-	if len(doc.Daily) > 120 {
-		return // runs of days; the budget test covers them
-	}
-	if len(rows) != len(doc.Daily) {
-		t.Fatalf("the chart table has %d rows for %d days", len(rows), len(doc.Daily))
-	}
-	var peak int64
-	for i, d := range doc.Daily {
-		when, _ := time.Parse("2006-01-02", d.Date)
-		label := when.Format("Jan 2")
-		if doc.Window.Days > 300 {
-			label = when.Format("Jan 2 2006")
-		}
-		tokens := "0"
-		switch {
-		case d.Tokens == nil && d.Sessions > 0:
-			tokens = "unknown"
-		case d.Tokens != nil:
-			tokens = statsfmt.TokenCount(*d.Tokens)
-			peak = max(peak, *d.Tokens)
-		}
-		want := []string{label, statsfmt.CommaInt(int64(d.Sessions)), tokens}
-		if strings.Join(rows[i], "|") != strings.Join(want, "|") {
-			t.Errorf("day %s: chart table %q, JSON says %q", d.Date, rows[i], want)
-		}
-	}
-	if doc.Peak != nil {
-		if doc.Peak.Tokens != peak {
-			t.Errorf("JSON peak %d is not the busiest day's %d", doc.Peak.Tokens, peak)
-		}
-		if peak > 0 && !strings.Contains(squash(sec.byClass("text", "peak-label")[0].visible()), "Peak "+statsfmt.TokenCount(peak)) {
-			t.Errorf("the chart's peak label does not say %s", statsfmt.TokenCount(peak))
-		}
-	}
-}

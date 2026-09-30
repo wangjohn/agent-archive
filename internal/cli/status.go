@@ -18,7 +18,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -184,11 +184,17 @@ type statusView struct {
 	SkillEvidence            string                 `json:"skill_evidence,omitempty"`
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
-	// AgentCommands lists the in-agent command files (the /handoff skill)
-	// setup installed that are there now.
-	AgentCommands      []string             `json:"agent_commands,omitempty"`
-	Collector          state.Status         `json:"collector"`
-	CaptureDiagnostics []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
+	// AgentSkills lists the agent skill files (the /handoff skill, and any
+	// other in agentskills.Registry) setup installed that are there now;
+	// AgentSkillsOutOfDate is those an upgrade has outdated, which setup
+	// refreshes.
+	// AgentSkillsDisabled is set when the person opted out of the skills
+	// (setup --no-skills), which setup then neither installs nor refreshes.
+	AgentSkills          []string             `json:"agent_skills,omitempty"`
+	AgentSkillsOutOfDate []string             `json:"agent_skills_out_of_date,omitempty"`
+	AgentSkillsDisabled  bool                 `json:"agent_skills_disabled,omitempty"`
+	Collector            state.Status         `json:"collector"`
+	CaptureDiagnostics   []capture.Diagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -408,6 +414,7 @@ func readSetupProgress(view *statusView, home string) {
 func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
 	view.configured = true
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
+	view.AgentSkillsDisabled = cfg.NoSkills
 	view.Background = "unknown"
 	view.Storage = storageLabel(cfg.Storage)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
@@ -450,7 +457,21 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	}
 	view.Paused = cfg.Paused
 	if userHome, err := env.userHomeDir(); err == nil {
-		view.AgentCommands = agentcommands.Installed(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome())
+		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
+		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
+		if cfg.NoSkills {
+			// Setup removes a file of its own here rather than refreshing it,
+			// so it is left over (a restored backup, an interrupted removal),
+			// not out of date.
+			for _, path := range view.AgentSkills {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
+			}
+		} else {
+			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			for _, path := range view.AgentSkillsOutOfDate {
+				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup to refresh it.", skillLabel(path), path))
+			}
+		}
 	}
 	for _, p := range cfg.Archive.Projects {
 		if p.Included {
@@ -1429,6 +1450,9 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
+	if view.AgentSkillsDisabled {
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
+	}
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("Imported (all destinations): %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -2287,6 +2311,10 @@ var recordedErrorCode = regexp.MustCompile(`(?:^|api error |: )([A-Z][A-Za-z]+):
 // reads the chain of operation errors.
 var recordedOperationService = regexp.MustCompile(`operation error ([^:]+): `)
 
+// skillLabel is the slash name of the skill whose file is at path
+// (".../skills/handoff/SKILL.md" is "/handoff").
+func skillLabel(path string) string { return "/" + filepath.Base(filepath.Dir(path)) }
+
 // printStatusDetails writes the Details section of status --verbose: every
 // line the text status printed before it was redesigned, with its codes,
 // exact times, full paths and raw errors.
@@ -2323,8 +2351,15 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, app := range view.Apps {
 		printAppDetails(out, app)
 	}
-	for _, command := range view.AgentCommands {
-		terminal.Printf(out, "  /handoff:      %s\n", displayPath(command, view.userHome))
+	if view.AgentSkillsDisabled {
+		terminal.Println(out, "  Agent skills:  turned off (agent-archive setup --skills turns them on)")
+	}
+	for _, path := range view.AgentSkills {
+		line := displayPath(path, view.userHome)
+		if slices.Contains(view.AgentSkillsOutOfDate, path) {
+			line += " (out of date; run agent-archive setup)"
+		}
+		terminal.Printf(out, "  %-14s %s\n", skillLabel(path)+":", line)
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))

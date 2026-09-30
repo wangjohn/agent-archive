@@ -10,8 +10,8 @@ Active days   3 of 30
 
 AGENTS                      sessions  share   tokens  est. cost  cache hit
 ● 日本語のとても長いプロジ        84    90%     9.9B     $3,940        97%
-● Cursor                           8     9%  unknown        n/a        n/a
-● Codex                            1     1%     100M        $49        90%
+● proj[31mRED]0;title              8     9%  unknown        n/a        n/a
+● [2J[Hgone                        1     1%     100M        $49        90%
 
 DAILY SPEND                           peak ~$2,910 · Sep 27
                                                       █
@@ -46,13 +46,13 @@ HEADS UP
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long context, 38
   subagents
-● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, Claude Code 2)
+● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, abcdefghi 2)
 
 NOTES
 Scope: this archive only.
 83 of 93 sessions report token counts.
 Sessions with no token data are left out of token and cost totals
-(日本語のとても長いプロジ: 2, Cursor: 8).
+(日本語のとても長いプロジ: 2, proj[31mRED]0;title: 8).
 Prices proj[31mRED]0;title, as of 2026-09-29.
 ~ marks an estimate at list price.
 MCP: abcdefghi

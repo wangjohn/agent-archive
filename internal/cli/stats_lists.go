@@ -127,8 +127,12 @@ func (p *statsPrinter) modelsTable() []string {
 		{head: "share", cells: shares, drop: true},
 	})
 	lines = append(lines, p.listMore(len(shown), len(models))...)
-	if names := p.unpricedModels(); names != "" {
-		lines = append(lines, p.dimAll(p.wrap("Unpriced: the price table does not list"+names+", so its tokens are left out of spend."))...)
+	if names, total := p.unpricedNames(); total > 0 {
+		whose := "its"
+		if total > 1 {
+			whose = "their"
+		}
+		lines = append(lines, p.dimAll(p.wrap("Unpriced: the price table does not list "+names+", so "+whose+" tokens are left out of spend."))...)
 	}
 	return lines
 }
