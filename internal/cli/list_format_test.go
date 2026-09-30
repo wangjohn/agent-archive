@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -56,6 +57,26 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 	}
 	if r.Model != "claude-opus-5" || r.SkillHint != " · code-review" || r.Origin != "imported" {
 		t.Fatalf("row=%+v", r)
+	}
+}
+
+// A row shows the name the person's agent gave the session, else the first
+// prompt's preview, else the short ID.
+func TestFormatSessionRowsShowTheDisplayTitle(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+	rows := formatSessionRows([]archive.Metadata{
+		{SessionID: "aaaaaaaa0123456789abcdef01234567", Name: "Named in the agent", Title: "First prompt", CapturedAt: now},
+		{SessionID: "bbbbbbbb0123456789abcdef01234567", Title: "First prompt only", CapturedAt: now},
+		{SessionID: "cccccccc0123456789abcdef01234567", Name: "Name only", CapturedAt: now},
+		{SessionID: "dddddddd0123456789abcdef01234567", CapturedAt: now},
+	}, listFormatOptions{Now: now})
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Title)
+	}
+	if want := []string{"Named in the agent", "First prompt only", "Name only", "dddddddd"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("titles = %q, want %q", got, want)
 	}
 }
 

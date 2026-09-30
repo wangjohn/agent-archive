@@ -7,10 +7,10 @@ records the filter version that produced it (`filter_version`).
 
 ## Source filter version 13
 
-Adapter version 0.13.0 goes with it; the parser is unchanged (it reads none
-of what is newly kept until parser 0.17.0). What is newly kept is the name a
-session was given and the pull request it is linked to, in the three places
-below. Nothing else that was dropped is kept.
+Adapter version 0.13.0 goes with it. Parser 0.17.0 is the first to read what
+is newly kept: it derives `name` and `pull_requests` from it. What is newly
+kept is the name a session was given and the pull request it is linked to, in
+the three places below. Nothing else that was dropped is kept.
 
 - **Claude Code's `custom-title` record.** `type`, `customTitle`, and, when
   they are strings, `sessionId` and `timestamp`. `customTitle` is the name in

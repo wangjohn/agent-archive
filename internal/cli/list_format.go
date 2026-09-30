@@ -82,8 +82,8 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			}
 		}
 		title := shorts[i]
-		if strings.TrimSpace(m.Title) != "" {
-			title = archive.DisplayLine(m.Title)
+		if display := archive.DisplayTitle(m); strings.TrimSpace(display) != "" {
+			title = archive.DisplayLine(display)
 		}
 		rows[i] = listRow{
 			Index:      i + 1,

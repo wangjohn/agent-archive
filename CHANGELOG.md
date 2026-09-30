@@ -300,11 +300,28 @@ follow [Semantic Versioning](https://semver.org/).
   redaction as your prompts; the link is kept
   only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
   that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
-  `last-prompt` records are still dropped. `list`, `show`, and `handoff` do
-  not show the new fields yet. The next sync re-reads and republishes each
-  session whose transcript is still on the Mac, so it can carry them. See the
+  `last-prompt` records are still dropped. The next sync re-reads and
+  republishes each session whose transcript is still on the Mac, so it can
+  carry them; `list`, `show`, and the handoff picker show them as described
+  below. See the
   [filter changelog](dev/specs/privacy-filter-changelog.md) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **Rows and `show` now show the name you gave the session in your agent, its
+  branch, and its linked pull requests.** A row in `list`, the handoff picker,
+  and the browser shows the session's name (the one in Claude Code's sidebar,
+  set from your prompt or by `/rename`, or a Cursor chat's name) where it
+  showed a preview of your first prompt, and still shows the preview for a
+  session with no name. `show`'s summary uses the name as its heading, with
+  the first prompt as a `Prompt` row, and gains `Branch` and `PRs` rows (the
+  last git branch the session recorded, and the pull requests it was linked
+  to). Metadata from parser `0.17.0` carries them as the optional `name`,
+  `branch`, and `pull_requests` fields (see
+  [JSON output](docs/reference/json-output.md#show)), so the collector
+  refreshes every published session's metadata once, from what is already
+  archived; a session gets its name only if it was published by filter 13, which
+  the next sync does for sessions whose transcript is still on the Mac. The
+  handoff picker's rows for sessions not yet uploaded are cut to 72
+  characters like published ones, not by display width.
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were

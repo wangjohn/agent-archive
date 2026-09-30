@@ -241,7 +241,7 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 	if err != nil {
 		return archive.Metadata{}, false
 	}
-	title, ok := firstPrompt(bundle)
+	labels, ok := archive.SessionLabels(bundle)
 	if !ok {
 		return archive.Metadata{}, false
 	}
@@ -250,7 +250,8 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 		project = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
 	return archive.Metadata{SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID,
-		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Title: title, Origin: reg.Origin}, true
+		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Name: labels.Name, Title: labels.Title, Branch: labels.Branch,
+		PullRequests: labels.PullRequests, Origin: reg.Origin}, true
 }
 
 // formatHandoffRows is formatSessionRows with each row's time taken from its
