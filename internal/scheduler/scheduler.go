@@ -144,8 +144,18 @@ type Problem struct {
 	// Expected is the definition this installation expects the job to be
 	// loaded from.
 	Expected string
+	// Reason is what is wrong, as a clause the commands put in their own
+	// sentence ("the user manager cannot be reached"), for an adapter that can
+	// say more than that the manager did not answer. Empty when it cannot, and
+	// the commands' own words stand.
+	Reason string
 	// Fix is the adapter's next step, as a sentence without its full stop.
 	Fix string
+	// Manual is the command that stops the job by hand, from a session that can
+	// reach the manager, for a job the manager cannot be asked about here:
+	// uninstall prints it when it goes on without verifying the job stopped.
+	// Empty when there is none.
+	Manual string
 }
 
 // Words is the small set of nouns a scheduler goes by, for the messages that
@@ -159,6 +169,8 @@ type Words struct {
 	Definition string
 	// Tool is the command that drives it: "launchctl".
 	Tool string
+	// Name is what a job is called to its manager: "label".
+	Name string
 }
 
 // Status is everything a scheduler can say about one job. Program, Env and

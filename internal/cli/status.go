@@ -181,10 +181,15 @@ type statusView struct {
 	StorageAccessConfirmedBy storageAccessConfirmer `json:"storage_access_confirmed_by,omitempty"`
 	Privacy                  string                 `json:"privacy"`
 	Background               string                 `json:"background"`
-	Paused                   bool                   `json:"paused"`
-	SkillEvidence            string                 `json:"skill_evidence,omitempty"`
-	Projects                 []string               `json:"projects"`
-	Apps                     []appStatus            `json:"applications"`
+	// BackgroundWarnings are what the background job does, but not robustly
+	// (systemd: lingering is off, so it stops at logout; a drop-in overrides
+	// its unit), one sentence each. Absent when there are none, which is
+	// always so on macOS.
+	BackgroundWarnings []string    `json:"background_warnings,omitempty"`
+	Paused             bool        `json:"paused"`
+	SkillEvidence      string      `json:"skill_evidence,omitempty"`
+	Projects           []string    `json:"projects"`
+	Apps               []appStatus `json:"applications"`
 	// AgentSkills lists the agent skill files (the /handoff skill, and any
 	// other in agentskills.Registry) setup installed that are there now;
 	// AgentSkillsOutOfDate is those an upgrade has outdated, which setup
@@ -217,6 +222,10 @@ type statusView struct {
 	// userHome is the home folder readStatus resolved, for the text status
 	// to show paths under it as ~; empty before setup.
 	userHome string
+	// backgroundTool is the command that drives the background scheduler,
+	// which the row for a job that cannot be checked names; empty until
+	// readBackground asks the scheduler.
+	backgroundTool string
 	// lastErrorProblem is the problem chooseNextStep derived from the last
 	// pass's errors, and lastErrorByIssue whether it came from the kinds of
 	// the failed sessions (issueHeadline). While problem is still it, the
@@ -944,6 +953,10 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 	ref, words := installedRef(in, userHome, env), in.sched().Words()
 	job := env.jobStatus(userHome, ref)
 	view.Background = string(job.State)
+	for _, note := range job.Degraded {
+		view.BackgroundWarnings = append(view.BackgroundWarnings, sentence(note))
+	}
+	view.backgroundTool = words.Tool
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the definition actually runs.
 	backgroundProgram, backgroundProblem := "", ""
@@ -1133,8 +1146,8 @@ func chooseInstallationStep(view *statusView, background statusBackground) {
 		view.Next = "Run agent-archive setup to restore the background collector."
 		if view.Background == string(scheduler.AnotherInstallation) {
 			// setup refuses to replace that job, so it is not the way out.
-			view.problem = "Another installation's collector has this installation's label"
-			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's %s label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", background.words.Manager, background.ref)
+			view.problem = "Another installation's collector has this installation's " + background.words.Name
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's %s %s (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", background.words.Manager, background.words.Name, background.ref)
 		}
 	}
 }
@@ -2089,7 +2102,7 @@ func (sc statusScreen) backgroundRow(view statusView) statusRow {
 	case view.Background == string(scheduler.AnotherInstallation):
 		return statusRow{mark: s.warnMark(), cells: []string{"Background collector belongs to another installation"}}
 	case view.Background == "unknown":
-		return statusRow{mark: s.warnMark(), cells: []string{"Background collector state unknown"}, detail: "launchctl couldn't say"}
+		return statusRow{mark: s.warnMark(), cells: []string{"Background collector state unknown"}, detail: view.backgroundTool + " couldn't say"}
 	case !jobActive(scheduler.JobState(view.Background)):
 		return statusRow{mark: s.warnMark(), cells: []string{"Background collector isn't running"}}
 	case view.Paused:
@@ -2119,6 +2132,9 @@ func (sc statusScreen) noteRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{text}})
 	}
 	for _, warning := range view.Warnings {
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{sc.tilde(warning)}})
+	}
+	for _, warning := range view.BackgroundWarnings {
 		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{sc.tilde(warning)}})
 	}
 	return rows
