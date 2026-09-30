@@ -1,0 +1,9 @@
+# setup in another directory, its collector loaded under the default label
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector.@HASH@  |  journal=absent own=absent earlier:default-label=present
+print gui/UID/com.agent-archive.collector.@HASH@  |  journal=absent own=absent earlier:default-label=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent earlier:default-label=present
+print gui/UID/com.agent-archive.collector  |  journal=present own=present earlier:default-label=present
+bootout gui/UID/com.agent-archive.collector  |  journal=present own=present earlier:default-label=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.@HASH@.plist  |  journal=present own=present earlier:default-label=absent
+# exit 0, end: journal=absent own=present earlier:default-label=absent
