@@ -93,12 +93,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, st
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	scope, err := scopeFor(env, opts.project, opts.allProjects)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-		return 1, true
-	}
-	r := handoffQueryResolver{opts: opts, query: query, scope: scope, skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
+	r := handoffQueryResolver{opts: opts, query: query, skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -162,6 +157,12 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			opts.sessionID, opts.harness = r.query, harness
 			return 0, false
 		}
+	}
+	// Only a title needs the scope, and looking it up can run git.
+	var err error
+	if r.scope, err = scopeFor(r.env, opts.project, opts.allProjects); err != nil {
+		terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
+		return 1, true
 	}
 	scanned := false
 	var local []handoffPickerRow

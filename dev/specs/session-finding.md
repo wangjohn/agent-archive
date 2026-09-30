@@ -672,9 +672,10 @@ guide. Live check on the owner's Mac:
   with `--json`, keeps the index fast path. The index spec's scoped window
   will replace this.
 - PR 4: a scope exists only inside a project: a directory with a repository
-  key, or inside a configured project root. Elsewhere there is no scope
-  (every session), which also means a directory with neither has none to fall
-  back from. A scope made from a worktree's directory is named after the
+  key, or inside a configured project root. Elsewhere the working directory
+  has no scope (every session). A directory named with `--project` is always
+  the scope, so one in no project holds nothing and falls back with the
+  heading saying so. A scope made from a worktree's directory is named after the
   project its sessions have, not the directory (`sessionScope.relabeled`).
 - PR 4: `listScope.label` is the scope's name even when it is turned off
   (`all_projects` says so); `outside_matches` counts the sessions outside the

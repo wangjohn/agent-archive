@@ -47,7 +47,8 @@ type sessionScope struct {
 // project_name and the configured project labels, case-insensitively and
 // exactly). The directory's repository key is looked up once. A directory in
 // no project (no origin remote, and inside no configured project) has no
-// scope: Label is empty and every session is in it. allProjects keeps the
+// scope (Label is empty and every session is in it), unless it was named with
+// --project. allProjects keeps the
 // scope's label and key but sets All, so a browser can still offer to narrow
 // to it. The key comes from git under gitremote.Timeout, and is "" when git
 // cannot answer in time. project and allProjects together are the caller's usage error.
@@ -78,7 +79,9 @@ func scopeFor(env scopeDependencies, project string, allProjects bool) (sessionS
 	}
 	key := env.repoKeyResolver()(dir)
 	root, configured := configuredRoot(cfg, dir)
-	if key == "" && !configured {
+	// Only the working directory can be outside every project: a directory
+	// named with --project is the scope, and may simply hold nothing.
+	if key == "" && !configured && project == "" {
 		return sessionScope{All: true}, nil
 	}
 	label := filepath.Base(dir)

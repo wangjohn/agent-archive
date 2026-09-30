@@ -460,3 +460,22 @@ func TestKeyBrowserFallsBackWhenTheScopeIsEmpty(t *testing.T) {
 		}
 	}
 }
+
+// A directory named with --project is the scope even when it is in no
+// project: it holds nothing, and the listing says so and shows everything.
+func TestListProjectDirectoryInNoProjectFallsBack(t *testing.T) {
+	t.Parallel()
+	a := newScopedArchive(t)
+	a.standard(t)
+	notes := filepath.Join(t.TempDir(), "notes")
+	if err := os.MkdirAll(notes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := a.runList(t, "--project", notes)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if heading, _, _ := strings.Cut(out, "\n"); heading != "Nothing in notes · showing all projects · 4 sessions · codex" {
+		t.Fatalf("heading %q", heading)
+	}
+}
