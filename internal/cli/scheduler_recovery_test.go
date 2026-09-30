@@ -195,6 +195,45 @@ func TestRecoveryBlockedTexts(t *testing.T) {
 	golden.Check(t, filepath.Join("testdata", "scheduler", "recovery", "blocked-texts.txt"), []byte(got.String()))
 }
 
+// A setup interrupted after it stopped this installation's collector, while
+// another installation has since loaded the same label from its own plist:
+// recovery puts every file and retired job back, leaves the other
+// installation's job alone (launchd would refuse a bootstrap over it, which
+// once left the record stuck behind a message that blamed launchctl), removes
+// the record, and setup, having recovered, refuses to install over the other
+// installation, saying how to go on.
+func TestRecoveryLeavesAnotherInstallationsCollectorAlone(t *testing.T) {
+	r := newSchedRun(t, true)
+	journal := r.interrupted("resetup-earlier-labels", beforeStart)
+	if !journal.WasLoaded {
+		t.Fatal("the fixture's collector was not loaded, so there is nothing to restart")
+	}
+	r.answers[plistLabel(journal.Plist)] = []launchdAnswer{answerAnotherInstallation}
+	code, out := r.setup()
+	if r.journalPending() {
+		t.Fatalf("the record is stuck: exit %d\n%s", code, out)
+	}
+	if code != 1 || !strings.Contains(out, "belongs to another installation") || !strings.Contains(out, "AGENT_ARCHIVE_HOME") || strings.Contains(out, "launchctl could not") {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	for _, c := range journal.Changes {
+		data, err := os.ReadFile(c.Path)
+		if found := err == nil; found != c.Existed || (found && !bytes.Equal(data, c.Before)) {
+			t.Errorf("%s is not as setup found it (%v)", c.Path, err)
+		}
+	}
+	for _, job := range journal.retired() {
+		if data, err := os.ReadFile(job.Change.Path); err != nil || !bytes.Equal(data, job.Change.Before) || r.running(job.Change.Path) != job.WasLoaded {
+			t.Errorf("%s was not put back (%v)", job.Change.Path, err)
+		}
+	}
+	for _, call := range r.lines {
+		if strings.HasPrefix(call, "bootout ") && strings.Contains(call, plistLabel(journal.Plist)) || strings.HasPrefix(call, "bootstrap ") && strings.Contains(call, journal.Plist) {
+			t.Errorf("asked launchctl to change the other installation's collector: %s", call)
+		}
+	}
+}
+
 // Any other command tells the user about the record and both ways out.
 func TestCommandsRefuseWhileSetupIsInterrupted(t *testing.T) {
 	r := newSchedRun(t, true)

@@ -272,6 +272,30 @@ func TestCommitRollsBackAFailureAtEachStep(t *testing.T) {
 	}
 }
 
+// Commit's stop of the previous collector is refused because another
+// installation runs the label by then: the rollback puts the files back
+// without starting this installation's job over the other's, so it completes
+// (no journal left, no launchctl blame) and the error names the other
+// installation.
+func TestCommitRollbackLeavesAnotherInstallationsCollectorAlone(t *testing.T) {
+	t.Parallel()
+	f := newTxFixture(t)
+	elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
+	f.sim.loaded[simLabel(f.own)] = elsewhere
+	f.loaded[simLabel(f.own)] = elsewhere
+	err := Commit(f.home, f.journal, f.sim)
+	var blocked *RecoveryBlockedError
+	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "previous installation restored") || !strings.Contains(err.Error(), "belongs to another installation") || strings.Contains(err.Error(), "launchctl") {
+		t.Fatalf("err = %v", err)
+	}
+	f.requireAsFound(t)
+	for _, call := range f.sim.calls {
+		if call != "unload "+f.own {
+			t.Errorf("asked launchd for more than the refused stop: %s", call)
+		}
+	}
+}
+
 // A rollback that launchd stops halfway keeps the journal and says how to
 // get out; recovery once launchd works puts everything back.
 func TestCommitReportsAnIncompleteRollback(t *testing.T) {
@@ -352,8 +376,11 @@ func TestRestoreRefusesBeforeTouchingAnything(t *testing.T) {
 }
 
 // A label another installation now runs is never stopped or replaced by
-// recovery: the collector's own label (so it is not stopped), or a retired
-// job's (so it is not restarted, and recovery stops, naming it).
+// recovery. The collector's own label: the files go back, the job is left to
+// the other installation, and the journal is removed, since nothing more can
+// be done for it (a bootstrap over it fails, and used to leave the journal
+// stuck behind a message that blamed launchctl). A retired job's label: it is
+// not restarted, and recovery stops, naming it.
 func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 	t.Parallel()
 	t.Run("the collector's label", func(t *testing.T) {
@@ -362,13 +389,15 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 		f.crash(t, true)
 		elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
 		f.sim.loaded[simLabel(f.own)] = elsewhere
-		err := Recover(f.home, f.sim, noLock)
-		var blocked *RecoveryBlockedError
-		if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "restart the background collector") {
-			t.Fatalf("err = %v", err)
+		if err := Recover(f.home, f.sim, noLock); err != nil {
+			t.Fatal(err)
 		}
-		if f.sim.loaded[simLabel(f.own)] != elsewhere || slices.Contains(f.sim.calls, "unload "+f.own) {
-			t.Fatalf("another installation's collector was touched: %v %v", f.sim.loaded, f.sim.calls)
+		f.loaded[simLabel(f.own)] = elsewhere
+		f.requireAsFound(t)
+		for _, call := range f.sim.calls {
+			if strings.HasSuffix(call, f.own) {
+				t.Errorf("asked launchd to %s, though another installation runs that label", call)
+			}
 		}
 	})
 	t.Run("a retired job's label", func(t *testing.T) {

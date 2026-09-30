@@ -352,6 +352,16 @@ follow [Semantic Versioning](https://semver.org/).
   problems as information rather than ✗ rows, when there is nothing to do
   (a subagent that could not be captured, sessions over the transcript
   size limit).
+- Recovering an interrupted setup, or rolling back a failed one, no longer
+  gets stuck when another installation has taken over this installation's
+  background collector label (an older release under a sandboxed `HOME`, or
+  an older binary for another data directory). Setup used to try to start the
+  collector over the other installation's job, which launchd refuses, and
+  reported "launchctl could not restart the background collector" on every
+  rerun until `--abandon-recovery`. It now puts the files back, leaves the
+  other installation's job running, and finishes; `setup` then explains that
+  the job belongs to another installation (uninstall that one, or set
+  `AGENT_ARCHIVE_HOME`).
 
 ### Changed
 
