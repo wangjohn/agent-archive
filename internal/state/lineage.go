@@ -169,7 +169,7 @@ func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, defe
 		// be unregistered already.
 		return err == nil, err
 	}
-	// Nothing of the session is gone, so the record goes back.
+	// None of the session's own records are gone, so the record goes back.
 	if err != nil {
 		return false, errors.Join(err, takeBack())
 	}

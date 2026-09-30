@@ -236,9 +236,13 @@ func TestForgetIdleSessionDoesNotWaitForASubagentCandidateLock(t *testing.T) {
 				t.Fatal(err)
 			}
 			removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: at}
-			started := time.Now()
+			// Only the part under the request lock is timed: the record's
+			// durable write before it can take seconds on a loaded machine.
+			var started time.Time
+			local.afterRemovalRecord = func() { started = time.Now() }
 			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, removal)
 			took := time.Since(started)
+			local.afterRemovalRecord = nil
 			unlock()
 			if forgotten || (deferForWork && err != nil) || (!deferForWork && !errors.Is(err, aalocal.ErrBusy)) {
 				t.Fatalf("forgotten=%t err=%v", forgotten, err)
