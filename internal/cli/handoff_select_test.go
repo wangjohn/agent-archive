@@ -302,6 +302,14 @@ func TestHandoffToInCursorUsesLatestCursorSession(t *testing.T) {
 	if _, errOut, code := runHandoff(t, f.env, "--to", "claude", "--harness", "codex"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
+	// On a terminal it is the same: CURSOR_AGENT switches prompts off, so
+	// neither case falls back to the picker.
+	if out, errOut, code := runPicker(t, f.env, "1\n", "--to", "claude"); code != 1 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, "(harness cursor)") {
+		t.Fatalf("on a terminal: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if out, errOut, code := runPicker(t, f.env, "1\n", "--to", "claude", "--harness", "codex"); code != 2 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("--harness codex on a terminal: code=%d stderr=%s\n%s", code, errOut, out)
+	}
 }
 
 func TestHandoffToWithoutSelectorPicksOnATerminal(t *testing.T) {
@@ -323,6 +331,18 @@ func TestHandoffToWithoutSelectorPicksOnATerminal(t *testing.T) {
 	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
 	if code != 2 || strings.Contains(out, "to hand off") || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
 		t.Fatalf("in an agent: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	// The switch alone does the same, and set to 0 it brings the picker back
+	// even with the agent's variable set.
+	f.env.LookupEnv = agentEnv(map[string]string{envNonInteractive: "1"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 2 || strings.Contains(out, "to hand off") || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("switch on: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "unregistered", envNonInteractive: "0"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 0 || !strings.Contains(out, "to hand off") || *document == "" {
+		t.Fatalf("switch off: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 
