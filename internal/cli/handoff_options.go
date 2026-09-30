@@ -42,7 +42,7 @@ const (
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
-	latest := fs.Bool("latest", false, "the most recent session for the project")
+	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")

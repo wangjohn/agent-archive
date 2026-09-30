@@ -163,7 +163,8 @@ func writeNewFile(path string, content []byte) error {
 // launchHandoffPrompt adds local retrieval instructions outside the quoted
 // historical record. show reads the last published copy, while handoff with
 // --source local reads the current transcript without waiting for sync. A
-// session handed off from the archive has no local transcript to point to.
+// session handed off from the archive (one from another machine, say) has no
+// local transcript to point to: both commands read the archive's copy.
 func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget, executable string) string {
 	var b strings.Builder
 	b.WriteString("You are continuing work in this local checkout. Agent Archive is available. Its executable is at ")
@@ -173,7 +174,7 @@ func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget,
 	case target.filePath != "":
 		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %q --harness %s --max-bytes 0.\n\n", target.filePath, h.Session.Harness)
 	case target.source == "archive":
-		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation, or agent-archive handoff %s --harness %s --max-bytes 0 for the complete filtered record.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID, h.Session.Harness)
+		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation, or agent-archive handoff %s --source archive --harness %s --max-bytes 0 for the complete filtered record.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID, h.Session.Harness)
 	default:
 		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation if it has been published. It may lag this local session. For the complete filtered local record as it stands now, run agent-archive handoff %s --source local --max-bytes 0.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID)
 	}

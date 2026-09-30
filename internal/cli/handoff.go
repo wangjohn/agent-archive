@@ -47,6 +47,14 @@ type handoffTarget struct {
 	filePath string
 	// describe is the stderr line naming a --latest choice.
 	describe string
+	// byRepo is set when --latest chose the session by repository (the
+	// remote origin's key) and not by the checkout path. A repository's own
+	// configuration and anyone who can write to the archive steer that
+	// match, so the person must accept it (see gateRepoMatch). machine and
+	// projectName describe such a session to them.
+	byRepo      bool
+	machine     string
+	projectName string
 	// startedAt and lastActivityAt are what this machine knows about a local
 	// session (its registration, its transcript's modification time), used
 	// only where the transcript records no timestamps.
@@ -109,11 +117,16 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
 	}
-	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt})
+	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
+		Checkout: handoffCheckout(opts, env)})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
+	if code, done := gateRepoMatch(target, h, opts, interactive, answers, stderr); done {
+		return code
+	}
+	noteBranchDifference(h, stderr)
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
@@ -178,6 +191,12 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 	}
 	if err != nil {
 		return handoffTarget{}, err
+	}
+	// The lookup finds the repository from any directory inside it, so a
+	// subdirectory has its checkout's key and a parent of several
+	// repositories has none. It needs an absolute path.
+	if abs, absErr := filepath.Abs(dir); absErr == nil {
+		resolver.repoKey = env.repoKeyResolver()(abs)
 	}
 	return resolver.latest(dir)
 }
@@ -355,6 +374,9 @@ type handoffResolver struct {
 	// skip holds native session IDs `--latest` must pass over: the agent
 	// session running the command.
 	skip map[string]bool
+	// repoKey is the key of the repository the current directory is in (a
+	// hash of its origin, see archive.RepoKey), or "" when it has none.
+	repoKey string
 	// stderr receives warnings, such as a skipped metadata sidecar.
 	stderr io.Writer
 }
@@ -415,8 +437,14 @@ func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe st
 }
 
 // latest resolves `--latest`: the most recently active local registration
-// for the project, then the most recently captured archived session with the
-// project's ID, then an error listing recent sessions to choose from.
+// for the project, then the most recently captured archived session for it,
+// then an error listing recent sessions to choose from. A session is for the
+// project when it ran at this path (or inside it), or in a checkout of the
+// same repository, which is how a session from another machine, or another
+// clone, matches. Both kinds rank together, by recency alone: a path match
+// is not preferred, and a repository match need not agree with the path. This
+// machine's sessions are still tried before the archive's; --source archive
+// skips them.
 func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	dir = filepath.Clean(dir)
 	now := r.env.now()
@@ -435,6 +463,8 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 type localHandoffCandidate struct {
 	reg    archive.SessionRegistration
 	active time.Time
+	// byRepo is set when the registration matched only by repository key.
+	byRepo bool
 }
 
 // localCandidates reads activity only for registrations that match the
@@ -442,7 +472,12 @@ type localHandoffCandidate struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) []localHandoffCandidate {
 	var candidates []localHandoffCandidate
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] {
+			continue
+		}
+		byPath := sameProject(reg.ProjectRoot, dir)
+		byRepo := !byPath && r.repoKey != "" && reg.RepoKey == r.repoKey
+		if !byPath && !byRepo {
 			continue
 		}
 		if r.harness != "" && reg.Harness.Name != r.harness {
@@ -452,7 +487,7 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
 			active = at
 		}
-		candidates = append(candidates, localHandoffCandidate{reg, active})
+		candidates = append(candidates, localHandoffCandidate{reg: reg, active: active, byRepo: byRepo})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].active.After(candidates[j].active) })
 	return candidates
@@ -476,7 +511,11 @@ func (r handoffResolver) latestLocal(dir string, now time.Time) (handoffTarget, 
 			}
 			continue
 		}
-		target.describe = fmt.Sprintf("%s session %s, active %s (this machine)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active))
+		target.describe = fmt.Sprintf("%s session %s, active %s (%s)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active), machineThis)
+		target.byRepo, target.machine = c.byRepo, machineThis
+		if c.reg.ProjectRoot != "" {
+			target.projectName = filepath.Base(filepath.Clean(c.reg.ProjectRoot))
+		}
 		return target, true, nil
 	}
 	if r.source == "local" {
@@ -501,23 +540,33 @@ func (r handoffResolver) latestArchive(dir string, now time.Time) (handoffTarget
 	sessions = topLevelSessions(sessions)
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CapturedAt.After(sessions[j].CapturedAt) })
 	projectIDs := r.projectIDs(dir)
-	for _, m := range archiveHandoffCandidates(sessions, projectIDs, r.skip) {
+	for _, m := range archiveHandoffCandidates(sessions, projectIDs, r.repoKey, r.skip) {
 		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
 		if err != nil {
 			continue
 		}
-		describe := fmt.Sprintf("%s session %s, captured %s (%s)", m.Harness.Name, m.SessionID, relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID))
-		return r.fromArchive(store, key, describe)
+		machine := r.machineLabel(m.MachineID)
+		describe := fmt.Sprintf("%s session %s, captured %s (%s)", m.Harness.Name, m.SessionID, relativeAge(now, m.CapturedAt), machine)
+		target, err := r.fromArchive(store, key, describe)
+		if err != nil {
+			return target, err
+		}
+		target.byRepo, target.machine, target.projectName = !projectIDs[m.ProjectID], machine, m.ProjectName
+		return target, nil
 	}
 	return handoffTarget{}, r.noMatch(dir, sessions, now)
 }
 
 // archiveHandoffCandidates is the selection policy; its inputs are already
-// loaded and sorted, so it can be checked without storage or a transcript.
-func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs, skip map[string]bool) []archive.Metadata {
+// loaded and sorted, so it can be checked without storage or a transcript. A
+// session is a candidate when its project ID is one of projectIDs (the same
+// path) or, when repoKey is not empty, its repository key is repoKey (the
+// same repository, wherever it was checked out).
+func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[string]bool) []archive.Metadata {
 	var candidates []archive.Metadata
 	for _, m := range sessions {
-		if projectIDs[m.ProjectID] && !skip[m.NativeSessionID] && (m.Counts.Turns == nil || *m.Counts.Turns != 0) {
+		matches := projectIDs[m.ProjectID] || (repoKey != "" && m.RepoKey == repoKey)
+		if matches && !skip[m.NativeSessionID] && (m.Counts.Turns == nil || *m.Counts.Turns != 0) {
 			candidates = append(candidates, m)
 		}
 	}
@@ -579,18 +628,24 @@ func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {
 	return out
 }
 
+// machineThis and machineOther say whose machine captured a session.
+const (
+	machineThis  = "this machine"
+	machineOther = "another machine"
+)
+
 func (r handoffResolver) machineLabel(machineID string) string {
 	if machineID != "" && machineID == r.cfg.MachineID {
-		return "this machine"
+		return machineThis
 	}
-	return "another machine"
+	return machineOther
 }
 
 // noMatch builds the --latest failure, listing the most recent archived
 // sessions from metadata only so one can be picked directly.
 func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now time.Time) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "no session for %s on this machine or under its project ID in the archive", dir)
+	fmt.Fprintf(&b, "no session for %s on this machine or in the archive", dir)
 	if r.harness != "" {
 		fmt.Fprintf(&b, " (harness %s)", r.harness)
 	}
@@ -598,7 +653,14 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 		b.WriteString(".\nThe archive has no sessions yet; run `agent-archive list` after the next sync.")
 		return errors.New(b.String())
 	}
-	b.WriteString(".\nThe project ID depends on the checkout path, so a session from another machine\nonly matches when the repository is at the same path. Recent archived sessions:\n")
+	// Say what was tried, and how to make a session from another machine
+	// match: by repository when the directory has one, else by path.
+	if r.repoKey != "" {
+		b.WriteString(".\nTried this directory's repository (its remote origin), then its path. A session\nmatches when it ran in a checkout of the same origin or at this path.")
+	} else {
+		b.WriteString(".\nTried this directory's path only: it is not in a git repository with a remote\nnamed origin, so it cannot match by repository. Matching a session from another\nmachine by repository needs that remote (see `git remote -v`); without it, the\nrepository must be at the same path.")
+	}
+	b.WriteString(" Recent archived sessions:\n")
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for i, m := range sessions {
 		if i == handoffFallbackRows {

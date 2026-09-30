@@ -97,6 +97,12 @@ func renderHandoffSession(b *strings.Builder, h Handoff) {
 	if len(where) > 0 {
 		fmt.Fprintf(b, "- %s (as recorded)\n", oneLine(capitalize(strings.Join(where, " · "))))
 	}
+	if h.Workspace.Elsewhere {
+		b.WriteString("- The recorded directory differs from your current checkout: the session ran in another clone or on another machine, so check paths against the current tree.\n")
+	}
+	if h.Workspace.CurrentBranch != "" {
+		fmt.Fprintf(b, "- Your current checkout is on branch %s, not the recorded one.\n", codeSpan(h.Workspace.CurrentBranch))
+	}
 	if h.ToolResultsUnavailable {
 		fmt.Fprintf(b, "- %s does not record tool results, so none appear below.\n", agent)
 	}

@@ -112,6 +112,8 @@ func (*resolverStub) now() time.Time { return time.Unix(1, 0) }
 
 func (*resolverStub) cursorDatabase() string { return "" }
 
+func (*resolverStub) repoKeyResolver() func(string) string { return func(string) string { return "" } }
+
 func TestHandoffResolverUsesReadStoreBoundary(t *testing.T) {
 	_, mem, id := publishedFixture(t)
 	deps := &resolverStub{store: mem}

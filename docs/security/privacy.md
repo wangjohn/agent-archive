@@ -36,6 +36,26 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   access only to Macs you trust, and treat a handoff from a shared bucket
   like any other text you paste into an agent (see
   [handoff](../guides/handoff.md#what-the-receiving-agent-is-told)).
+- **A repository can claim another's identity.** `handoff --latest` finds a
+  session from another computer by the repository key (see
+  [what is uploaded](#what-is-uploaded)), a hash of the `origin` remote in
+  the directory's git configuration. Anyone who wrote a repository you clone
+  controls that configuration, and anyone who can write to your prefix can
+  put any key on a session, so a hostile repository can declare
+  `origin = https://github.com/you/private` and make `--latest` in its
+  directory choose your session of that repository, whose text a coding agent
+  started there would then read. The key is a convenience for finding your
+  own work, not authentication. What limits the damage: the match is
+  recognized as one made by repository and not by path, and `handoff` then
+  names the session on stderr (machine, project, branch, start time, first
+  prompt) and, on a terminal, asks before printing or launching, default No;
+  where it cannot ask (a pipe, or an agent's shell) it refuses, shows only
+  the machine, project, and start time, and prints the command that selects
+  the session by ID. A path match, an explicit session ID, and the picker are
+  never questioned, because nothing there is chosen by a key. This does not
+  protect against someone who can write to your prefix, who can plant
+  sessions outright (see the previous point), and nothing stops you from
+  answering yes.
 - **The recorded agent runs as you.** The coding agent whose session is
   being archived runs with your account's permissions. It can read and
   change agent-archive's local state and configuration, the apps' hook
@@ -122,7 +142,11 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   be out of date: one recorded when the session started is never looked up
   again; one derived later stays if the remote is removed or git cannot be
   run; a changed remote replaces it only at the session's next content
-  publish or metadata refresh; and a finished session never updates.
+  publish or metadata refresh; and a finished session never updates. The key
+  is also read from the directory you run `handoff --latest` in, and is a
+  convenience, not proof of identity: see the
+  [threat model](#threat-model) for what a repository that lies about its
+  `origin` can do and what `handoff` does about it.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

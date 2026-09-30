@@ -251,10 +251,55 @@ yet, and, when run by an agent that names its own session (Claude Code does,
 through `CLAUDE_CODE_SESSION_ID`), skips that session unless `--to` is used.
 With `--to`, the calling session is eligible because it is the source being
 handed off. `--latest` matches the current directory's project, not projects
-beneath it. On another Mac it matches the project only when the repository
-is checked out at the same path; when nothing matches it lists the five most
-recent archived sessions with the command for each. Uncommitted changes stay
-on the machine that made them, so push a branch before continuing elsewhere.
+beneath it.
+
+### Finding a session by repository
+
+A session matches the current directory when it ran at the same path, or in
+a checkout of the same repository. The repository is identified by its
+`origin` remote (`git remote get-url origin`): a session captured in a
+repository with an `origin` records a hash of it (see
+[privacy](../security/privacy.md#what-is-uploaded)), so the
+session from your other Mac is found even when the repository is at a
+different path there, and whether it was cloned over SSH or HTTPS.
+Running in a subdirectory of the repository works; running from a folder that
+holds several repositories matches none of them. Sessions rank by how recently
+they were active, with no preference for a path match, but this Mac's
+own sessions are tried before the archive's: to take the newest session from
+another Mac when this one has an older one for the repository, add
+`--source archive`.
+
+- **A fork's `origin` is the fork.** It is not the repository it was forked
+  from, so a clone of the fork and a clone of the upstream do not match each
+  other. Only the remote named `origin` is read.
+- **No `origin`, no repository match.** A directory that is not a git
+  repository, or has no remote named `origin`, matches by path only, as
+  before. `git` must be installed, and sessions captured before you updated
+  gain the key on the Mac that captured them, when the collector next
+  refreshes them and the repository is still there.
+- **Branches are not compared.** When the session was on another branch than
+  the one you have checked out, `handoff` says so on stderr
+  (``handoff: session was on `feature/x`; you are on `main` ``) and tells the
+  receiving agent in the workspace lines, and continues anyway. The
+  workspace lines also say when the session ran in a different directory
+  than yours, so the agent checks paths against the tree in front of it.
+- **When nothing matches**, `handoff` says what it tried (the repository,
+  then the path) and lists the five most recent archived sessions with the
+  command for each.
+
+A repository can name any origin, and so can anyone who can write to the
+archive, so the key is a convenience and not proof that a session is yours.
+When `--latest` picks a session by repository and not by path, `handoff`
+therefore says so and names it (this or another Mac, project, branch, start
+time, first prompt), and on a terminal asks before going on; the answer
+defaults to no. Where it cannot ask (a pipe, or an agent's shell, which has
+prompts off), it does not use the session: it prints the command that does,
+`agent-archive handoff SESSION_ID`, and exits 1. Naming a session yourself,
+or picking one in the picker, is never questioned. The reasons are in the
+[threat model](../security/privacy.md#threat-model).
+
+Uncommitted changes stay on the machine that made them, so push a branch
+before continuing elsewhere.
 
 ## What the receiving agent is told
 

@@ -270,7 +270,13 @@ the archive. Piped, or with --output, --format json, or --no-preamble, it
 prints without asking. Without a terminal, give a SESSION_ID, --latest, or
 --file PATH (or --to, from inside an agent). Inside a coding agent, or with
 AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a terminal.
-  --latest              The most recent session for the project
+  --latest              The most recent session for the project: one that ran
+                        at this path, or in another checkout of the same
+                        repository (its remote origin), such as on another
+                        Mac. A match by repository alone is named on stderr
+                        and, on a terminal, asked about (default no); with no
+                        terminal it is refused and the SESSION_ID command
+                        printed, since a repository chooses its own origin
   --project DIR         Project for --latest, and where the agent starts
                         (default: current directory)
   --harness NAME        claude, codex, or cursor
