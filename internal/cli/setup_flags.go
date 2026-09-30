@@ -178,7 +178,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 			return discard(err)
 		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
-		return fmt.Errorf("the stored R2 key can't be read from the Keychain; pass --r2-access-key-id and the secret (see agent-archive setup --help)")
+		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialGOOS))
 	}
 
 	accessErr := runStorageCheck(p, &cfg, env)
@@ -302,9 +302,9 @@ func answersError(errs []error) error {
 // which it sets in cfg. The reference is written to draft's file first, so
 // a run stopped in between leaves a setup that can be discarded.
 func stageR2Key(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
-	keychain, err := env.keychain()
+	keychain, err := env.credentialStore()
 	if err != nil {
-		return fmt.Errorf("open Keychain: %w", err)
+		return openCredentialStoreError(credentialGOOS, err)
 	}
 	id, err := local.ID()
 	if err != nil {

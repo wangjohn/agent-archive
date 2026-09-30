@@ -782,7 +782,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		RetentionDays:    p.RetentionDays,
 		StorageChecked:   false,
 		// False when Cursor's database could not be read; see
-		// CursorDatabaseReader.
+		// CursorDatabaseReaderFor.
 		CursorDatabaseChecked:         p.CursorDatabaseChecked,
 		CursorDatabaseUncheckedReason: p.CursorDatabaseUnchecked,
 		CursorDatabaseNewerFormat:     p.CursorDatabaseNewerFormat,
