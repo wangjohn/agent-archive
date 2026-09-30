@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 )
 
 // The permissions guided setup needs, as Cloudflare names them. The
@@ -37,19 +38,10 @@ var Jurisdictions = []string{"eu", "us", "fedramp", "fedramp-high"}
 var LocationHints = []string{"apac", "eeur", "enam", "weur", "wnam", "oc"}
 
 // ValidJurisdiction reports whether j is a jurisdiction.
-func ValidJurisdiction(j string) bool { return contains(Jurisdictions, j) }
+func ValidJurisdiction(j string) bool { return slices.Contains(Jurisdictions, j) }
 
 // ValidLocationHint reports whether h is a location hint.
-func ValidLocationHint(h string) bool { return contains(LocationHints, h) }
-
-func contains(list []string, s string) bool {
-	for _, item := range list {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
+func ValidLocationHint(h string) bool { return slices.Contains(LocationHints, h) }
 
 var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*[a-z0-9]$`)
 

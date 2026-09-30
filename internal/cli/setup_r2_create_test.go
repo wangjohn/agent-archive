@@ -127,14 +127,23 @@ func (g *guidedR2Fixture) assertNothingHolds(t *testing.T, output string, secret
 			t.Errorf("output holds %q", secret)
 		}
 	}
-	files := 0
+	var paths []string
 	err := filepath.WalkDir(g.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !d.Type().IsRegular() {
-			return nil
+		if err == nil && d.Type().IsRegular() {
+			paths = append(paths, path)
 		}
-		data, e := os.ReadFile(path)
-		if e != nil {
-			return nil
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := 0
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			// A file that went away, or is not ours to read, holds nothing
+			// of ours.
+			continue
 		}
 		files++
 		for _, secret := range secrets {
@@ -142,10 +151,6 @@ func (g *guidedR2Fixture) assertNothingHolds(t *testing.T, output string, secret
 				t.Errorf("%s holds %q", path, secret)
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if files == 0 {
 		t.Fatal("the search found no files, so it proved nothing")
@@ -442,7 +447,9 @@ func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 	var names []string
 	for _, r := range g.cf.Requests() {
 		if r.Route == cloudflaretest.RouteCreateBucket {
-			var body struct{ Name string }
+			var body struct {
+				Name string `json:"name"`
+			}
 			must(t, json.Unmarshal([]byte(r.Body), &body))
 			names = append(names, body.Name)
 		}
@@ -653,7 +660,9 @@ func TestGuidedR2PrintsTheTokenNameBeforeCreatingIt(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden})
 	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "y", "", "stop")...), 1)
-	var sent struct{ Name string }
+	var sent struct {
+		Name string `json:"name"`
+	}
 	for _, r := range g.cf.Requests() {
 		if r.Route == cloudflaretest.RouteCreateToken {
 			must(t, json.Unmarshal([]byte(r.Body), &sent))

@@ -109,8 +109,8 @@ const AccountID = "0123456789abcdef0123456789abcdef"
 
 // New starts a fake that lists one account and the R2 bucket-item-write
 // group, and accepts token.
-func New(t testing.TB, token string) *Server {
-	t.Helper()
+func New(tb testing.TB, token string) *Server {
+	tb.Helper()
 	s := &Server{
 		Token:    token,
 		Accounts: []Account{{ID: AccountID, Name: "Test account"}},
@@ -125,7 +125,7 @@ func New(t testing.TB, token string) *Server {
 		failures:    map[Route][]Failure{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
-	t.Cleanup(s.Close)
+	tb.Cleanup(s.Close)
 	return s
 }
 
