@@ -16,6 +16,12 @@ import (
 // has), and the rest of the file is the template's again. The goldens are the
 // plists a refresh leaves; the paths in them are tokens (@EXE@, @DATA_HOME@,
 // @LABEL@), so they read the same in every temporary directory.
+//
+// hand-edited documents what refresh does today, not what it should do: a
+// person's own keys (KeepAlive, Nice), their StartInterval of 300, and an
+// extra program argument (--verbose) are dropped and the template's written
+// instead; only the environment survives. A change that keeps them updates
+// that golden on purpose.
 func TestRefreshRewritesThePlistFromTheOneThatIsThere(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

@@ -111,6 +111,9 @@ func TestRefreshLaunchctlSequenceWhenTheRestartFails(t *testing.T) {
 // a file, is put back with no launchctl command at all, and one whose job is
 // not loaded asks only what it asked to plan.
 func TestRefreshFilesOnlyRollbackRunsNoLaunchctl(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into any directory")
+	}
 	for _, tc := range []struct {
 		name    string
 		mode    launchdMode

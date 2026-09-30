@@ -54,8 +54,10 @@ func TestRefreshWithAHungBootoutEndsAndLeavesItsJournal(t *testing.T) {
 	if want := []string{r.print(), r.print(), r.bootout(), r.print(), r.print(), r.bootout()}; !slices.Equal(r.launchd.argv(), want) {
 		t.Errorf("launchctl calls\n%q\nwant\n%q", r.launchd.argv(), want)
 	}
-	if left := r.launchd.remaining["bootout"]; left <= 0 || left > launchctlChangeTimeout {
-		t.Errorf("bootout ran with %v to its deadline, want at most %v", left, launchctlChangeTimeout)
+	// Only the upper bound: a loaded runner can pass the 50 ms before the stand-in
+	// reads the clock.
+	if left := r.launchd.remaining["bootout"]; left == noDeadline || left > launchctlChangeTimeout {
+		t.Errorf("bootout ran with %v to its deadline, want a deadline at most %v away", left, launchctlChangeTimeout)
 	}
 	if !setupjournal.TransactionPending(r.home) {
 		t.Fatal("the journal is gone")

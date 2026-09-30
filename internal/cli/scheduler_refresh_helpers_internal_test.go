@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,13 +44,17 @@ const (
 
 // argvLaunchd is a launchctl that answers as launchd does for one job and
 // records every call's arguments, and the time left on each call's context.
+// Like launchd, it refuses to bootstrap a label it already runs (from any
+// plist) or a plist that is not there, and to boot out a job it does not
+// run, so a golden here cannot record a sequence a Mac would not accept.
 type argvLaunchd struct {
 	mu    sync.Mutex
 	mode  launchdMode
+	label string
 	plist string
 	calls []string
 	// remaining is the first-seen time left before the context of a call
-	// with each verb expires.
+	// with each verb expires, or noDeadline.
 	remaining map[string]time.Duration
 	// failBootstrap makes the next bootstrap fail.
 	failBootstrap bool
@@ -59,21 +66,24 @@ type argvLaunchd struct {
 // stubArgvLaunchd replaces launchctl with an argvLaunchd for the test.
 func stubArgvLaunchd(t *testing.T, plist string, mode launchdMode) *argvLaunchd {
 	t.Helper()
-	l := &argvLaunchd{mode: mode, plist: plist, remaining: map[string]time.Duration{}}
+	l := &argvLaunchd{mode: mode, label: launchLabel(plist), plist: plist, remaining: map[string]time.Duration{}}
 	stubLaunchctlContext(t, l.run)
 	return l
 }
+
+// noDeadline is what remaining records for a call whose context has no
+// deadline, told apart from one whose deadline had already passed.
+const noDeadline = time.Duration(math.MinInt64)
 
 func (l *argvLaunchd) run(ctx context.Context, args ...string) ([]byte, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, strings.Join(args, " "))
-	if deadline, ok := ctx.Deadline(); ok {
-		if _, seen := l.remaining[args[0]]; !seen {
+	if _, seen := l.remaining[args[0]]; !seen {
+		l.remaining[args[0]] = noDeadline
+		if deadline, ok := ctx.Deadline(); ok {
 			l.remaining[args[0]] = time.Until(deadline)
 		}
-	} else {
-		l.remaining[args[0]] = -1
 	}
 	if l.hang[args[0]] {
 		l.mu.Unlock()
@@ -81,30 +91,42 @@ func (l *argvLaunchd) run(ctx context.Context, args ...string) ([]byte, error) {
 		l.mu.Lock()
 		return nil, ctx.Err()
 	}
-	switch args[0] {
-	case "print":
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+	switch {
+	case len(args) == 2 && args[0] == "print" && args[1] == domain+"/"+l.label:
 		switch l.mode {
 		case modeLoaded:
-			return []byte("gui/1/job = {\n\tpath = " + l.plist + "\n\tstate = running\n}\n"), nil
+			return []byte(args[1] + " = {\n\tpath = " + l.plist + "\n\tstate = running\n}\n"), nil
 		case modeElsewhere:
-			return []byte("gui/1/job = {\n\tpath = /somewhere/else.plist\n\tstate = running\n}\n"), nil
+			return []byte(args[1] + " = {\n\tpath = /somewhere/else.plist\n\tstate = running\n}\n"), nil
 		case modeUnknown:
 			return []byte("launchctl: something went wrong"), errors.New("exit status 1")
 		case modeMissing:
-			return []byte(`Could not find service "job" in domain for user gui: 1`), errors.New("exit status 113")
 		}
-	case "bootout":
-		l.mode = modeMissing
-		return nil, nil
-	case "bootstrap":
-		if l.failBootstrap {
+	case len(args) == 2 && args[0] == "print" && strings.HasPrefix(args[1], domain+"/"):
+		// Any other label is not loaded.
+	case len(args) == 2 && args[0] == "bootout" && args[1] == domain+"/"+l.label:
+		switch l.mode {
+		case modeLoaded, modeElsewhere:
+			l.mode = modeMissing
+			return nil, nil
+		case modeUnknown:
+			return []byte("launchctl: something went wrong"), errors.New("exit status 1")
+		case modeMissing:
+		}
+		return []byte("Boot-out failed: 113: Could not find specified service"), errors.New("exit status 113")
+	case len(args) == 3 && args[0] == "bootstrap" && args[1] == domain && launchLabel(args[2]) == l.label:
+		_, statErr := os.Stat(args[2])
+		if l.failBootstrap || l.mode != modeMissing || statErr != nil {
 			l.failBootstrap = false
 			return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit status 5")
 		}
-		l.mode = modeLoaded
+		l.mode, l.plist = modeLoaded, args[2]
 		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected launchctl %v", args)
 	}
-	return nil, fmt.Errorf("unexpected launchctl %v", args)
+	return []byte("Bad request.\nCould not find service \"" + path.Base(args[1]) + "\" in domain for user gui: " + strconv.Itoa(os.Getuid()) + "\n"), errors.New("exit status 113")
 }
 
 // argv is the calls so far, each as its arguments joined by spaces.

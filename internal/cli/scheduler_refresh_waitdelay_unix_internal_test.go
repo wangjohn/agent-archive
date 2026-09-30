@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -31,22 +32,57 @@ func TestExecLaunchctlDoesNotWaitForAChildThatOutlivesTheKill(t *testing.T) {
 	t.Cleanup(func() {
 		if data, err := os.ReadFile(pidFile); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				// Both sleeps are in the stand-in's own process group.
+				if group, err := syscall.Getpgid(pid); err == nil && group > 1 && group != syscall.Getpgrp() {
+					_ = syscall.Kill(-group, syscall.SIGKILL)
+				}
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 			}
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	// The context ends once the stand-in has started its child, however long a
+	// loaded machine takes to get there, and the wait is timed from then.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	started := time.Now()
-	_, err := execLaunchctl(ctx, "bootout", "gui/1/job")
-	elapsed := time.Since(started)
-	if err == nil {
+	var cancelled atomic.Int64
+	go func() {
+		for ctx.Err() == nil {
+			if data, err := os.ReadFile(pidFile); err == nil && strings.HasSuffix(string(data), "\n") {
+				cancelled.Store(time.Now().UnixNano())
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	type result struct {
+		err error
+		at  time.Time
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, err := execLaunchctl(ctx, "bootout", "gui/1/job")
+		done <- result{err, time.Now()}
+	}()
+	var got result
+	select {
+	case got = <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("execLaunchctl never returned")
+	}
+	if got.err == nil {
 		t.Fatal("a launchctl the context killed reported success")
 	}
+	if cancelled.Load() == 0 {
+		t.Fatalf("execLaunchctl returned (%v) before the stand-in started its child", got.err)
+	}
+	// Without WaitDelay it would wait for the child, 20 s; with it, 2 s. The
+	// bounds leave a loaded runner room on both sides.
+	elapsed := got.at.Sub(time.Unix(0, cancelled.Load()))
 	if elapsed > 10*time.Second {
 		t.Errorf("execLaunchctl waited %v for a child holding its pipe, want about two seconds after the context ended", elapsed)
 	}
 	if elapsed < time.Second {
-		t.Errorf("execLaunchctl returned after %v, before the child's pipe could have been given up on", elapsed)
+		t.Errorf("execLaunchctl returned %v after the context ended, before the child's pipe could have been given up on", elapsed)
 	}
 }
