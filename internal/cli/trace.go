@@ -24,10 +24,10 @@ var tracedCommands = map[string]bool{
 // commands the hooks and the collector run are not listed and never trace:
 // their stderr is not a person's.
 func startTrace(command string, stderr io.Writer, env Env) (finish func()) {
-	value, _ := env.lookupEnv(envTrace)
+	value, set := env.lookupEnv(envTrace)
 	// Only the commands listed: the root span is named for the command,
 	// and help, version or an unknown word has nothing worth timing.
-	if on, _ := parseSwitch(value); !on || !tracedCommands[command] {
+	if on, _ := parseSwitch(value); !set || !on || !tracedCommands[command] {
 		return func() {}
 	}
 	disable := trace.Enable()

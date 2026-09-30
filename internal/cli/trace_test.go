@@ -64,6 +64,14 @@ func TestTraceOffForInvalidValuesAndInternalCommands(t *testing.T) {
 	if code := Run([]string{"list"}, nil, &out, &errOut, withTrace(env, "verbose")); code != 0 || strings.Contains(errOut.String(), "trace") {
 		t.Fatalf("exit=%d stderr=%s", code, errOut.String())
 	}
+	// A lookup that reports the variable unset, whatever value it hands
+	// back with that, is off.
+	errOut.Reset()
+	unset := env
+	unset.LookupEnv = func(string) (string, bool) { return "1", false }
+	if code := Run([]string{"list"}, nil, &out, &errOut, unset); code != 0 || strings.Contains(errOut.String(), "trace") {
+		t.Fatalf("traced with the variable unset: exit=%d stderr=%s", code, errOut.String())
+	}
 	errOut.Reset()
 	Run([]string{"_collect"}, nil, &out, &errOut, withTrace(env, "1"))
 	if strings.Contains(errOut.String(), "agent-archive trace") {
