@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -105,7 +106,8 @@ class InstallScriptTest(unittest.TestCase):
 
     def run_install(self, system='Darwin', machine='arm64', rosetta='0', extra_env=None, path_dirs=(),
                     default_dir=False, script=None, signing_team=TEAM,
-                    hermetic=False, codesign=True, hash_tools=None, overrides=None, start=False):
+                    hermetic=False, codesign=True, hash_tools=None, overrides=None, start=False,
+                    cwd=None, umask=None):
         """Run install.sh under shims for uname, sysctl and codesign.
 
         By default PATH ends in the host's /usr/bin:/bin. hermetic=True puts
@@ -115,7 +117,8 @@ class InstallScriptTest(unittest.TestCase):
         'sha256sum' and/or 'shasum' to a HASH_BEHAVIOR key (default: both,
         'ok'). Passing hash_tools implies hermetic. overrides maps a tool
         name to the body of a shell shim that replaces it. start=True returns
-        the running Popen instead of waiting for the result."""
+        the running Popen instead of waiting for the result. cwd and umask
+        set the script's working directory and umask."""
         self.runs += 1
         hermetic = hermetic or hash_tools is not None or not codesign
         shims = self.root / f'shims-{self.runs}'
@@ -156,9 +159,18 @@ class InstallScriptTest(unittest.TestCase):
             env['AGENT_ARCHIVE_INSTALL_DIR'] = str(self.home / '.local' / 'bin')
         env.update(extra_env or {})
         argv = [shutil.which('sh'), str(script or self.install_sh)]
+
+        def prepare_child():
+            # A test runner started in the background may have SIGINT ignored,
+            # and an ignored signal cannot be trapped.
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            if umask is not None:
+                os.umask(umask)
+
         if start:
-            return subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return subprocess.run(argv, env=env, capture_output=True, text=True)
+            return subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    cwd=cwd, preexec_fn=prepare_child)
+        return subprocess.run(argv, env=env, capture_output=True, text=True, cwd=cwd, preexec_fn=prepare_child)
 
     def assert_nothing_installed(self):
         self.assertFalse((self.home / '.local').exists(), 'something was installed')
@@ -771,29 +783,32 @@ class InstallScriptTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.temp_dir_entries(), [])
 
-    def test_a_hangup_during_the_download_removes_the_temporary_directory(self):
-        import signal
+    def test_a_signal_during_the_download_removes_the_temporary_directory(self):
         import time
         started = self.root / 'curl.started'
-        # A download that is still running when the terminal closes.
+        # A download that is still running when the terminal closes or the
+        # user interrupts.
         slow_curl = f': > {started}\n/bin/sleep 2\nexit 1'
-        proc = self.run_install(system='Linux', machine='x86_64', hermetic=True, start=True,
-                                overrides={'curl': slow_curl, **self.private_tmpdir()})
-        try:
-            deadline = time.time() + 10
-            while not started.exists() and time.time() < deadline:
-                time.sleep(0.05)
-            self.assertTrue(started.exists(), 'the download never started')
-            self.assertEqual(len(self.temp_dir_entries()), 1)
-            proc.send_signal(signal.SIGHUP)
-            proc.communicate(timeout=20)
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.communicate()
-        self.assertEqual(proc.returncode, 129)
-        self.assertEqual(self.temp_dir_entries(), [])
-        self.assert_nothing_installed()
+        for sig, code in ((signal.SIGHUP, 129), (signal.SIGTERM, 130), (signal.SIGINT, 130)):
+            with self.subTest(signal=sig.name):
+                started.unlink(missing_ok=True)
+                proc = self.run_install(system='Linux', machine='x86_64', hermetic=True, start=True,
+                                        overrides={'curl': slow_curl, **self.private_tmpdir()})
+                try:
+                    deadline = time.time() + 10
+                    while not started.exists() and time.time() < deadline:
+                        time.sleep(0.05)
+                    self.assertTrue(started.exists(), 'the download never started')
+                    self.assertEqual(len(self.temp_dir_entries()), 1)
+                    proc.send_signal(sig)
+                    proc.communicate(timeout=20)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.communicate()
+                self.assertEqual(proc.returncode, code)
+                self.assertEqual(self.temp_dir_entries(), [])
+                self.assert_nothing_installed()
 
     def test_fails_clearly_when_no_temporary_directory_can_be_made(self):
         result = self.run_install(system='Linux', machine='x86_64', hermetic=True, overrides={'mktemp': 'exit 1'})
@@ -829,6 +844,76 @@ class InstallScriptTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('is a directory', result.stderr)
         self.assertEqual(list(self.default_target.iterdir()), [])
+
+
+    # --- What lands on disk --------------------------------------------
+
+    def test_an_upgrade_replaces_the_file_rather_than_overwriting_it(self):
+        # macOS can kill an upgraded binary that was overwritten in place, so
+        # the new file must be a new inode: an old hard link keeps old content.
+        for system, machine in (('Darwin', 'arm64'), ('Linux', 'x86_64')):
+            with self.subTest(system=system):
+                shutil.rmtree(self.home / '.local', ignore_errors=True)
+                self.default_target.parent.mkdir(parents=True)
+                write_executable(self.default_target, '#!/bin/sh\necho old\n')
+                old_link = self.root / f'old-link-{system}'
+                os.link(self.default_target, old_link)
+                old_inode = self.default_target.stat().st_ino
+                result = self.run_install(system=system, machine=machine, hermetic=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(self.default_target.stat().st_ino, old_inode)
+                self.assertEqual(old_link.read_text(), '#!/bin/sh\necho old\n')
+                self.assertNotEqual(self.installed_output(), 'old\n')
+
+    def test_the_installed_binary_is_mode_755_whatever_the_umask_or_staging_mode(self):
+        real = shutil.which('mktemp')
+        # A staging file that mktemp made world-writable, and one made 0600.
+        loose = {'mktemp': f'f="$({real} "$@")" || exit 1\n[ "$1" = -d ] || chmod 666 "$f"\necho "$f"'}
+        for label, umask, overrides in (('umask 000', 0o000, None), ('umask 077', 0o077, None),
+                                        ('umask 022', 0o022, None), ('loose staging file', 0o000, loose)):
+            for system, machine in (('Darwin', 'arm64'), ('Linux', 'x86_64')):
+                with self.subTest(case=label, system=system):
+                    shutil.rmtree(self.home / '.local', ignore_errors=True)
+                    result = self.run_install(system=system, machine=machine, hermetic=True, umask=umask,
+                                              overrides=overrides)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(stat.S_IMODE(self.default_target.stat().st_mode), 0o755)
+
+    def test_a_relative_install_dir_is_made_absolute(self):
+        work = self.root / 'work'
+        work.mkdir()
+        for given in ('rel/bin', './rel/bin', 'rel/bin/'):
+            with self.subTest(given=given):
+                shutil.rmtree(work / 'rel', ignore_errors=True)
+                result = self.run_install(system='Linux', machine='x86_64', hermetic=True, cwd=work,
+                                          extra_env={'AGENT_ARCHIVE_INSTALL_DIR': given})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                target = (work / 'rel' / 'bin' / 'agent-archive').resolve()
+                self.assertTrue(target.exists())
+                self.assertIn(f'installed agent-archive v9.9.9-linux-amd64 to {work.resolve()}/rel/bin', result.stdout)
+                # Every printed path can be pasted from another directory.
+                self.assertIn(f"gh attestation verify '{work.resolve()}/rel/bin", result.stdout)
+                self.assertIn(f'export PATH="{work.resolve()}/rel/bin', result.stdout)
+                self.assertNotIn('/./', result.stdout)
+
+    def test_an_install_dir_starting_with_a_dash_is_not_taken_for_an_option(self):
+        work = self.root / 'work'
+        work.mkdir()
+        for system, machine in (('Linux', 'x86_64'), ('Darwin', 'arm64')):
+            with self.subTest(system=system):
+                shutil.rmtree(work / '-bin', ignore_errors=True)
+                result = self.run_install(system=system, machine=machine, hermetic=True, cwd=work,
+                                          extra_env={'AGENT_ARCHIVE_INSTALL_DIR': '-bin'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((work / '-bin' / 'agent-archive').exists())
+                self.assertEqual([p.name for p in (work / '-bin').iterdir()], ['agent-archive'])
+
+    def test_the_word_latest_is_not_a_release_tag(self):
+        result = self.run_install(extra_env={'AGENT_ARCHIVE_VERSION': 'latest'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('leave it unset', result.stderr)
+        self.assertNotIn('Downloading', result.stdout)
+        self.assert_nothing_installed()
 
 
 class ManualInstallGuideTest(unittest.TestCase):

@@ -52,6 +52,9 @@ main() {
 
   version="${AGENT_ARCHIVE_VERSION:-}"
   if [ -n "$version" ]; then
+    if [ "$version" = latest ]; then
+      fail "AGENT_ARCHIVE_VERSION=latest is not a release tag; leave it unset to install the latest release."
+    fi
     case "$version" in v*) ;; *) version="v${version}" ;; esac
     # A release tag is one path segment of the download URL: no slashes, no
     # "..", nothing but tag characters.
@@ -67,6 +70,12 @@ main() {
   base="${AGENT_ARCHIVE_DOWNLOAD_URL:-$default_base}"
 
   install_dir="$(choose_install_dir)"
+  # Absolute, so the commands printed below work from any directory, and so
+  # a directory whose name starts with "-" is never taken for an option.
+  case "$install_dir" in
+    /*) ;;
+    *) install_dir="$(pwd)/${install_dir#./}" ;;
+  esac
   target="${install_dir}/agent-archive"
 
   tmp="$(mktemp -d)" || fail "cannot create a temporary directory"
@@ -123,6 +132,8 @@ main() {
     fail "installed ${target}, but it failed to run: ${installed_version}"
   say "✓ installed agent-archive ${installed_version} to ${target}"
   if [ "$os" != darwin ]; then
+    # This advice holds only for releases whose workflow attests the Linux
+    # binaries (Linux PR 1, #174); it says nothing about older releases.
     say ""
     say "The checksum only guards against a damaged download, and this binary is not signed."
     say "To confirm it came from the project's release workflow, run (needs the gh CLI):"
