@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `agent-archive stats --json` carries more of what the screen is built from:
+  each day's estimated cost (`daily[].cost`, adding up to the overview's) and
+  the dearest day (`peak_spend`), the share of tokens that were cache reads
+  (`overview.cache_share`), up to three prioritized `heads_up` notes as data
+  (subagents using a quarter or more of the tokens, one session costing a
+  tenth or more of the spend, sessions without token data, a low cache-hit
+  rate), and `display_skills`, which lists a plugin's skill once under its
+  bare name, with `total_skills`, `total_display_skills` and
+  `mcp.total_servers` counting every row. Existing fields and the screen and
+  page are unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
 - **Handoff without copying.** Continuing a session in another coding agent
   is one step: inside Claude Code, `/handoff codex` opens Codex in a new
   terminal tab or window with the session as its context (in Codex, ask for
