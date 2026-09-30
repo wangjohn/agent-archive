@@ -116,6 +116,53 @@ func Percent(share float64) string {
 	return strconv.FormatFloat(math.Round(share*100), 'f', 0, 64) + "%"
 }
 
+// MaxShownChange is the largest change, in percent, shown as a number: a
+// period compared with almost nothing (a few cents against a few thousand
+// dollars) is up by millions of percent, which is arithmetic, not news.
+const MaxShownChange = 999
+
+// Change is a change in percent (18 for a rise of 18%, -40 for a fall of 40%)
+// as its direction (1 up, -1 down, 0 for none: no change at whole percents,
+// or not a number) and its size in whole percents, "18". A size over
+// MaxShownChange reads ">999", so a rise from next to nothing says "more than
+// 999%" and not a figure that only measures how small the earlier number was.
+// A fall is at most 100%.
+func Change(pct float64) (dir int, size string) {
+	if !finite(pct) {
+		return 0, ""
+	}
+	rounded := math.Round(pct)
+	switch {
+	case rounded > 0:
+		dir = 1
+	case rounded < 0:
+		dir = -1
+	default:
+		return 0, ""
+	}
+	magnitude := math.Abs(rounded)
+	if magnitude > MaxShownChange {
+		return dir, ">" + strconv.Itoa(MaxShownChange)
+	}
+	return dir, strconv.FormatFloat(magnitude, 'f', 0, 64)
+}
+
+// RoundInt is v rounded to a whole number, as the same int64 on every
+// platform: a float past the int64 range saturates (converting it directly is
+// left to the platform, which is not the same on arm64 and amd64), and NaN is
+// 0.
+func RoundInt(v float64) int64 {
+	switch {
+	case math.IsNaN(v):
+		return 0
+	case v >= math.MaxInt64:
+		return math.MaxInt64
+	case v <= math.MinInt64:
+		return math.MinInt64
+	}
+	return int64(math.Round(v))
+}
+
 // RatePercent is a rate (0 to 1) with one decimal under ten percent.
 func RatePercent(rate float64) string {
 	if !finite(rate) {

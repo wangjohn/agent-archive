@@ -595,6 +595,11 @@ func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
 		id: "today", harness: "claude", project: "p", captured: statsDay(time.September, 29, 9), models: []string{"claude-opus-5"},
 		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
 	}.publish(t, mem)
+	// The day before has a session, so the detail screen compares with it.
+	syntheticSession{
+		id: "yesterday", harness: "claude", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"claude-opus-5"},
+		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
+	}.publish(t, mem)
 	out := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices)
 	for _, bad := range []string{"1 days", "Sep 29 Sep 29"} {
 		if strings.Contains(out, bad) {
@@ -603,6 +608,13 @@ func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
 	}
 	if !strings.Contains(out, "today") {
 		t.Errorf("one-day window:\n%s", out)
+	}
+	// A chart of one bar says nothing the headline does not.
+	if strings.Contains(out, "DAILY SPEND") {
+		t.Errorf("a one-day window draws a one-bar chart:\n%s", out)
+	}
+	if two := mustRunStats(t, env, 100, "--days", "2", "--prices", goldenPrices); !strings.Contains(two, "DAILY SPEND") {
+		t.Errorf("a two-day window has no chart:\n%s", two)
 	}
 	if detail := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices, "--view", "detail"); !strings.Contains(detail, "day before") {
 		t.Errorf("one-day detail does not name the day before:\n%s", detail)

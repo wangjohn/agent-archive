@@ -61,6 +61,40 @@ func TestNumberFormats(t *testing.T) {
 	}
 }
 
+// A change is a direction and a whole-percent size, which reads ">999" once it
+// is past 999: a rise from next to nothing is not measured to the digit.
+func TestChangeShowsAtMost999Percent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		pct  float64
+		dir  int
+		size string
+	}{
+		{18.4, 1, "18"}, {18.5, 1, "19"}, {0.4, 0, ""}, {-0.4, 0, ""}, {-40, -1, "40"}, {-100, -1, "100"},
+		{999, 1, "999"}, {999.4, 1, "999"}, {999.6, 1, ">999"}, {1000, 1, ">999"}, {25_219_191, 1, ">999"},
+		{1e300, 1, ">999"}, {math.MaxFloat64, 1, ">999"}, {-1e300, -1, ">999"},
+		{math.NaN(), 0, ""}, {math.Inf(1), 0, ""}, {math.Inf(-1), 0, ""},
+	} {
+		if dir, size := Change(tc.pct); dir != tc.dir || size != tc.size {
+			t.Errorf("Change(%v) = %d, %q; want %d, %q", tc.pct, dir, size, tc.dir, tc.size)
+		}
+	}
+}
+
+// RoundInt is the same on every platform, whatever the float.
+func TestRoundIntSaturatesOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+	for v, want := range map[float64]int64{
+		0: 0, 1.4: 1, 1.5: 2, -1.5: -2, 9e18: 9_000_000_000_000_000_000, math.MaxInt64: math.MaxInt64, 1e19: math.MaxInt64,
+		math.Inf(1): math.MaxInt64, math.MaxFloat64: math.MaxInt64, math.MinInt64: math.MinInt64, -1e19: math.MinInt64,
+		math.Inf(-1): math.MinInt64, math.NaN(): 0,
+	} {
+		if got := RoundInt(v); got != want {
+			t.Errorf("RoundInt(%v) = %d, want %d", v, got, want)
+		}
+	}
+}
+
 // A number that is not a number is never shown as one.
 func TestNonFiniteNumbersReadAsUnavailable(t *testing.T) {
 	t.Parallel()

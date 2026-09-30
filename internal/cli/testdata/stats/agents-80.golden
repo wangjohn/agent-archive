@@ -6,7 +6,7 @@ AGENTS                            sessions  share   tokens  est. cost  cache hit
 ● Cursor       ██                        3    14%  unknown        n/a        n/a
 
 Codex: MCP calls and tool errors are not recorded.
-Cursor: 3 of 3 have no token data, so they are left out of tokens and spend.
+Cursor: 3 of 3 sessions have no token data; left out of tokens and spend.
 Cache hit is cache reads over all input-side tokens.
 
 Estimated at list price, not a bill. + leaves out models with no price.

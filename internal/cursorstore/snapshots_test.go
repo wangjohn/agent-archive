@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // TestSweepSkipsASnapshotInUse: a Reader's copy is never swept while the
@@ -104,51 +106,45 @@ func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
 	}
 }
 
-// TestUserTempDir: macOS uses the per-user temporary directory the system
-// reports, whatever $TMPDIR says, so a collector started by launchd without
-// TMPDIR, a hook run with it, and a shell with a custom one share one
-// snapshot root; $TMPDIR only when the system can't say, and elsewhere.
-func TestUserTempDir(t *testing.T) {
-	env := func(tmp string) func(string) string {
-		return func(key string) string {
-			if key == "TMPDIR" {
-				return tmp
-			}
-			return ""
-		}
-	}
-	perUser := func() string { return "/var/folders/xy/abc/T" }
-	for _, tc := range []struct {
-		name   string
-		tmpdir string
-		goos   string
-		darwin func() string
-		want   string
-	}{
-		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
-		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, fallbackTemp()},
-		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
-		{"Linux without TMPDIR", "", "linux", perUser, fallbackTemp()},
-		// A relative $TMPDIR is ignored as if unset: the snapshot root, a
-		// copy of every chat, must not depend on the working directory.
-		{"Linux relative TMPDIR", "tmp", "linux", perUser, fallbackTemp()},
-		{"Linux dot-relative TMPDIR", "./tmp", "linux", perUser, fallbackTemp()},
-		{"Linux tilde TMPDIR", "~/tmp", "linux", perUser, fallbackTemp()},
-		{"macOS relative TMPDIR, getconf failed", "tmp", "darwin", func() string { return "" }, fallbackTemp()},
-		{"macOS relative TMPDIR, getconf answers", "tmp", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"macOS absolute TMPDIR, getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
-		{"Linux absolute TMPDIR", "/var/tmp/mine", "linux", perUser, "/var/tmp/mine"},
-	} {
-		if got := userTempDir(env(tc.tmpdir), tc.goos, tc.darwin); got != tc.want {
-			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
-		}
-	}
-	if runtime.GOOS == "darwin" {
-		if dir := darwinUserTempDir(); !filepath.IsAbs(dir) {
+// TestSnapshotRootIsTheSystemsPerUserTempDir: the snapshot root is
+// platform.Locations.SnapshotRoot wired to this package's getconf and this
+// process's environment (the choice itself, on both systems, is tested in
+// internal/platform). On macOS it is under the per-user temporary directory
+// the system reports, whatever $TMPDIR says, so a collector started by launchd
+// without TMPDIR and a shell with a custom one share one root.
+func TestSnapshotRootIsTheSystemsPerUserTempDir(t *testing.T) {
+	name := platform.SnapshotDirName(os.Getuid())
+	mine := t.TempDir()
+	t.Setenv("TMPDIR", mine)
+	switch runtime.GOOS {
+	case "darwin":
+		dir := darwinUserTempDir()
+		if !filepath.IsAbs(dir) {
 			t.Fatalf("DARWIN_USER_TEMP_DIR = %q", dir)
 		}
+		if got, want := snapshotRootPath(), filepath.Join(dir, name); got != want {
+			t.Errorf("on macOS the root is %q, want %q", got, want)
+		}
+	case "linux":
+		if got, want := snapshotRootPath(), filepath.Join(mine, name); got != want {
+			t.Errorf("on Linux the root is %q, want %q", got, want)
+		}
+	}
+	// The real system's own process environment is what is read.
+	if got, want := snapshotRootPath(), snapshotLocations(platform.Current(), os.Getenv).SnapshotRoot(); got != want {
+		t.Errorf("snapshotRootPath = %q, want %q", got, want)
+	}
+}
+
+// A system the program does not know has no snapshot directory: no path, and
+// SnapshotRoot fails closed instead of using a shared temporary directory.
+func TestUnknownSystemHasNoSnapshotRoot(t *testing.T) {
+	t.Parallel()
+	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }).SnapshotRoot(); got != "" {
+		t.Errorf("the snapshot root on an unknown system is %q, want none", got)
+	}
+	if root, err := preparedSnapshotRoot(""); !errors.Is(err, errSnapshotUnsupportedSystem) || root != "" {
+		t.Errorf("preparedSnapshotRoot(\"\") = %q, %v; want errSnapshotUnsupportedSystem", root, err)
 	}
 }
 
@@ -265,29 +261,4 @@ func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
 			t.Errorf("mode %v: err %v, want errSnapshotRootNotPrivate", mode, err)
 		}
 	}
-}
-
-// With the process's own $TMPDIR relative, os.TempDir would return it; the
-// snapshot root still falls back to /tmp rather than a working-directory
-// path.
-func TestUserTempDirIgnoresARelativeProcessTMPDIR(t *testing.T) {
-	t.Setenv("TMPDIR", "relative/tmp")
-	if runtime.GOOS == "windows" {
-		t.Skip("no /tmp")
-	}
-	for _, goos := range []string{"linux", "darwin"} {
-		got := userTempDir(func(string) string { return "relative/tmp" }, goos, func() string { return "" })
-		if got != "/tmp" {
-			t.Errorf("%s: %q, want /tmp", goos, got)
-		}
-	}
-}
-
-// fallbackTemp is what userTempDir answers when neither the system nor an
-// absolute $TMPDIR says: os.TempDir when that is absolute, else /tmp.
-func fallbackTemp() string {
-	if dir := os.TempDir(); filepath.IsAbs(dir) {
-		return dir
-	}
-	return "/tmp"
 }

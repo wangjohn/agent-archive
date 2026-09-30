@@ -98,7 +98,7 @@ func runSetupRefresh(out, errOut io.Writer, env Env, verbose bool) int {
 		}
 	}
 	for _, path := range plan.left {
-		terminal.Print(out, leftSkillLine(path, userHome))
+		terminal.Print(out, leftSkillLine(agentskills.TitleFor(filepath.Base(filepath.Dir(path))), path, userHome))
 	}
 	return 0
 }
@@ -359,10 +359,10 @@ func leftSkillFiles(files []agentskills.File, changes []hooks.Change) []string {
 	return left
 }
 
-// leftSkillLine says setup left the file at path as it is, because it is
-// not this installation's.
-func leftSkillLine(path, userHome string) string {
-	return fmt.Sprintf("Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(path, userHome), filepath.Base(filepath.Dir(path)))
+// leftSkillLine says setup left the file at path (of the skill titled title)
+// as it is, because it is not this installation's.
+func leftSkillLine(title, path, userHome string) string {
+	return fmt.Sprintf("Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so %s is not installed there.\n", displayPath(path, userHome), title)
 }
 
 // summary is the one line that says what was refreshed.

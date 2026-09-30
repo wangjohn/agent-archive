@@ -120,12 +120,14 @@ func deltaText(m stats.Measure) (glyph, spoken, dir string) {
 	if m.ChangePct == nil || !finite(*m.ChangePct) {
 		return "", "", ""
 	}
-	p := math.Round(*m.ChangePct)
-	switch {
-	case p > 0:
-		return "▲ " + statsfmt.CommaInt(int64(p)) + "%", "up " + statsfmt.CommaInt(int64(p)) + " percent", "up"
-	case p < 0:
-		return "▼ " + statsfmt.CommaInt(int64(-p)) + "%", "down " + statsfmt.CommaInt(int64(-p)) + " percent", "down"
+	// A rise from next to nothing reads "more than 999%", as on the terminal.
+	way, size := statsfmt.Change(*m.ChangePct)
+	spokenSize := strings.Replace(size, ">", "more than ", 1)
+	switch way {
+	case 1:
+		return "▲ " + size + "%", "up " + spokenSize + " percent", "up"
+	case -1:
+		return "▼ " + size + "%", "down " + spokenSize + " percent", "down"
 	}
 	return "no change", "no change", "flat"
 }
@@ -134,14 +136,14 @@ func measureCount(m stats.Measure) string {
 	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
-	return statsfmt.CommaInt(int64(math.Round(*m.Value)))
+	return statsfmt.CommaInt(statsfmt.RoundInt(*m.Value))
 }
 
 func measureTokens(m stats.Measure) string {
 	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
-	return statsfmt.TokenCount(int64(math.Round(*m.Value)))
+	return statsfmt.TokenCount(statsfmt.RoundInt(*m.Value))
 }
 
 func ordinalHeaviest(rank int) string {

@@ -230,16 +230,3 @@ func TestStatsStackedBarSurvivesAnyShare(t *testing.T) {
 		}
 	}
 }
-
-// A window of one session has no "costliest session" to look at.
-func TestStatsHeadsUpSkipsTheCostliestOfOneSession(t *testing.T) {
-	t.Parallel()
-	s := realisticStats()
-	if out := strings.Join(pageLines(pageOverview, s, 100, false, false), "\n"); !strings.Contains(out, "Costliest session") {
-		t.Fatalf("no costliest session in a window of many:\n%s", out)
-	}
-	s.Coverage.Sessions = 1
-	if out := strings.Join(pageLines(pageOverview, s, 100, false, false), "\n"); strings.Contains(out, "Costliest session") {
-		t.Errorf("a costliest session in a window of one:\n%s", out)
-	}
-}

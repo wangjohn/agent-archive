@@ -37,10 +37,11 @@ type spendCell struct {
 // there is no gap), and a window with more days than columns draws each cell
 // as the costliest day of a run. Days without sessions are a baseline, and days
 // whose spend is unknown are a dot, never a low bar. No chart is drawn when no
-// day has any priced spend.
+// day has any priced spend, or for a window of one day: a chart of one bar
+// says nothing the headline does not.
 func (p *statsPrinter) dailySpend() []string {
 	s := p.s
-	if len(s.Daily) == 0 || s.PeakSpend == nil {
+	if len(s.Daily) < 2 || s.PeakSpend == nil {
 		return nil
 	}
 	perDay, run := p.chartScale(len(s.Daily))
@@ -55,17 +56,13 @@ func (p *statsPrinter) dailySpend() []string {
 	lines := []string{p.heading(title, note, edge)}
 	lines = append(lines, p.chartRows(cells, perDay)...)
 	first, last := p.dayLabel(s.Daily[0].Date), p.dayLabel(s.Daily[len(s.Daily)-1].Date)
-	labels := first
-	if len(s.Daily) > 1 {
-		// A chart too narrow to put the two dates apart names them side by
-		// side rather than leaving the last day unlabeled.
-		gap := span - visibleWidth(first) - visibleWidth(last)
-		if gap < 1 {
-			gap = 2
-		}
-		labels += strings.Repeat(" ", gap) + last
+	// A chart too narrow to put the two dates apart names them side by side
+	// rather than leaving the last day unlabeled.
+	gap := span - visibleWidth(first) - visibleWidth(last)
+	if gap < 1 {
+		gap = 2
 	}
-	lines = append(lines, p.dim(labels))
+	lines = append(lines, p.dim(first+strings.Repeat(" ", gap)+last))
 	if caption := p.chartCaption(cells, run); caption != "" {
 		lines = append(lines, p.dim(caption))
 	}
@@ -146,7 +143,9 @@ func spendCellOf(days []stats.Day, peak float64) spendCell {
 	case best <= 0 || peak <= 0:
 		return spendCell{}
 	}
-	level := int(math.Round(math.Min(best/peak, 1) * chartLevels))
+	// A share that is not a number is 0 (converting a NaN to an int is up to
+	// the CPU), which the minimum level then raises.
+	level := int(math.Round(clampShare(best/peak) * chartLevels))
 	return spendCell{level: min(max(level, chartMinLevel), chartLevels)}
 }
 

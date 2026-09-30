@@ -3,7 +3,7 @@ agent-archive stats · agents · last 30 days · 1 agent
 AGENTS                          sessions  share   tokens  est. cost  cache hit
 ● Cursor  ████████████████████         8   100%  unknown        n/a        n/a
 
-Cursor: 8 of 8 have no token data, so they are left out of tokens and spend.
+Cursor: 8 of 8 sessions have no token data; left out of tokens and spend.
 Cache hit is cache reads over all input-side tokens.
 
 Estimated at list price, not a bill.   --view overview

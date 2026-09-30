@@ -39,7 +39,8 @@ func (p *statsPrinter) periodHeads() (this, prior string) {
 }
 
 // numbersTable is the headline numbers with the previous period's and the
-// change. The previous columns appear only when some number has one.
+// change. The previous columns appear only when the previous period had some
+// number above zero.
 func (p *statsPrinter) numbersTable() []string {
 	o := p.s.Overview
 	type row struct {
@@ -47,17 +48,19 @@ func (p *statsPrinter) numbersTable() []string {
 		m     stats.Measure
 		text  func(float64) string
 	}
-	count := func(v float64) string { return statsfmt.CommaInt(roundInt(v)) }
+	count := func(v float64) string { return statsfmt.CommaInt(statsfmt.RoundInt(v)) }
 	rows := []row{
 		{"Est. spend", o.Cost.Measure, func(v float64) string { return p.estimate(v) }},
 		{"Sessions", o.Sessions, count},
 		{"Prompts", o.Prompts, count},
-		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(roundInt(v)) }},
-		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", roundInt(v), o.DaysInWindow) }},
+		{"Tokens", o.Tokens, func(v float64) string { return statsfmt.TokenCount(statsfmt.RoundInt(v)) }},
+		{"Active days", o.ActiveDays, func(v float64) string { return fmt.Sprintf("%d of %d", statsfmt.RoundInt(v), o.DaysInWindow) }},
 	}
+	// The previous period's columns appear only when it had something: a
+	// column of zeros and blanks says nothing more than the change's absence.
 	hasPrior := false
 	for _, r := range rows {
-		hasPrior = hasPrior || r.m.Previous != nil
+		hasPrior = hasPrior || (r.m.Previous != nil && *r.m.Previous > 0)
 	}
 	var labels, now, before, change []string
 	for _, r := range rows {

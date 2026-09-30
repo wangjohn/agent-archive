@@ -77,7 +77,9 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
 - **The headline** is estimated spend, sessions and tokens. When the period
   before this one had any, spend shows its change (`▲ 18% vs prior 30d`):
   an arrow up is amber and down is green, never red, because more spend is
-  not an error. With nothing to compare against, nothing is shown, never a
+  not an error. A change of more than 999% reads `▲ >999%` (against next to
+  nothing the exact figure only measures how little there was; `--json` has it
+  exactly). With nothing to compare against, nothing is shown, never a
   "new". Under the tokens is how much of them were cache reads: most of a long
   session's tokens are the same context read again, so the count alone
   overstates the work.
@@ -87,7 +89,8 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   whose sessions have no price (Cursor records no tokens) is a dot, never a
   low bar (a line under the chart says so). When the window has more days than
   the terminal has columns, as 90 days do on 80, each bar is the costliest day
-  of a run of days, and a line under the chart says how many.
+  of a run of days, and a line under the chart says how many. A window of one
+  day has no chart.
 - **Where it went** is the projects and the models by spend. From 80 columns
   they are two columns; from 60 they are stacked; narrower, plain rows. Bars
   are scaled to the largest row of their list and have no track behind them.
@@ -97,8 +100,8 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   when there is data for it.
 - **Heads up** is up to three things worth a look, in this order: subagents
   using a quarter or more of your tokens (a subagent run is counted as a run,
-  never as a session), one session costing a tenth or more of your spend and
-  what likely made it costly, sessions with no token data, and a cache hit
+  never as a session), one session costing a tenth or more of your spend (with
+  more than one session in the window) and what likely made it costly, sessions with no token data, and a cache hit
   rate under 60%.
 
 The colors are the terminal's own 16 (so they follow your theme): Claude Code
@@ -228,9 +231,8 @@ AGENTS                            sessions  share   tokens  est. cost  cache hit
 ● Cursor       █                         8     9%  unknown        n/a        n/a
 ● Codex        █                         1     1%     100M        $49        90%
 
-Claude Code: 2 of 84 have no token data, so they are left out of tokens and
-spend.
-Cursor: 8 of 8 have no token data, so they are left out of tokens and spend.
+Claude Code: 2 of 84 sessions have no token data; left out of tokens and spend.
+Cursor: 8 of 8 sessions have no token data; left out of tokens and spend.
 Codex: MCP calls and tool errors are not recorded.
 Cache hit is cache reads over all input-side tokens.
 
@@ -359,7 +361,7 @@ script can chart or check them: each `daily` entry has that day's estimated
 dearest day, `overview.cache_share` is the part of your tokens that were
 cache reads, and `heads_up` lists up to three things worth a second look
 (subagents using a quarter or more of your tokens, one session costing a tenth
-or more of your spend, sessions with no token data, a low cache-hit rate) as
+or more of your spend when the window has more than one session, sessions with no token data, a low cache-hit rate) as
 data, in that order of priority. A skill that a plugin provides is listed once
 as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
 and `skills` keeps the recorded names. Every field, rule and threshold is in

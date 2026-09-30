@@ -70,10 +70,10 @@ func (p *statsPrinter) sessionsCell() headCell {
 	o := p.s.Overview
 	value, sub := p.bold("sessions unknown"), ""
 	if o.Sessions.Value != nil {
-		value = p.bold(count(roundInt(*o.Sessions.Value), "session"))
+		value = p.bold(count(statsfmt.RoundInt(*o.Sessions.Value), "session"))
 	}
 	if o.Prompts.Value != nil {
-		sub = p.dim(count(roundInt(*o.Prompts.Value), "prompt"))
+		sub = p.dim(count(statsfmt.RoundInt(*o.Prompts.Value), "prompt"))
 	}
 	return headCell{value, sub}
 }
@@ -87,7 +87,7 @@ func (p *statsPrinter) tokensCell() headCell {
 	if o.CacheShare != nil {
 		sub = p.dim(statsfmt.Percent(*o.CacheShare) + " served from cache")
 	}
-	return headCell{p.bold(statsfmt.TokenCount(roundInt(*o.Tokens.Value)) + " tokens"), sub}
+	return headCell{p.bold(statsfmt.TokenCount(statsfmt.RoundInt(*o.Tokens.Value)) + " tokens"), sub}
 }
 
 // deltaText is a measure's change against the previous period: an arrow, the
@@ -103,17 +103,18 @@ func (p *statsPrinter) deltaText(m stats.Measure) string {
 	return change + p.dim(" vs "+prior)
 }
 
-// changeText is the arrow and percentage alone, colored.
+// changeText is the arrow and percentage alone, colored. A change of more
+// than statsfmt.MaxShownChange percent reads ">999%": against next to nothing,
+// the exact figure only measures how little there was.
 func (p *statsPrinter) changeText(m stats.Measure) string {
 	if m.Value == nil || m.Previous == nil || m.ChangePct == nil || math.IsNaN(*m.ChangePct) || math.IsInf(*m.ChangePct, 0) {
 		return ""
 	}
-	pct := roundInt(*m.ChangePct)
-	switch {
-	case pct > 0:
-		return p.role(roleDeltaUp, p.g.up+" "+statsfmt.CommaInt(pct)+"%")
-	case pct < 0:
-		return p.role(roleDeltaDown, p.g.down+" "+statsfmt.CommaInt(-max(pct, -math.MaxInt64))+"%")
+	switch dir, size := statsfmt.Change(*m.ChangePct); dir {
+	case 1:
+		return p.role(roleDeltaUp, p.g.up+" "+size+"%")
+	case -1:
+		return p.role(roleDeltaDown, p.g.down+" "+size+"%")
 	}
 	return p.dim("no change")
 }
@@ -456,7 +457,11 @@ func (p *statsPrinter) skillsRow(limit int) []string {
 	for i, sk := range shown {
 		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(sk.Name), statsNameLimit), statsfmt.CommaInt(int64(sk.Sessions)))
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " sessions"
+	unit := "sessions"
+	if len(shown) == 1 && shown[0].Sessions == 1 {
+		unit = "session"
+	}
+	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
 	if more := max(p.s.TotalDisplaySkills, len(skills)) - len(shown); more > 0 {
 		text += fmt.Sprintf(", + %d more", more)
 	}
@@ -475,7 +480,11 @@ func (p *statsPrinter) mcpRow(limit int) []string {
 	for i, srv := range shown {
 		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(srv.Name), statsNameLimit), statsfmt.CommaInt(srv.Calls))
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " calls"
+	unit := "calls"
+	if len(shown) == 1 && shown[0].Calls == 1 {
+		unit = "call"
+	}
+	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
 	if more := max(m.TotalServers, len(m.Servers)) - len(shown); more > 0 {
 		text += fmt.Sprintf(", + %d more", more)
 	}
@@ -542,8 +551,7 @@ func (p *statsPrinter) noteText(n stats.Note) string {
 }
 
 func (p *statsPrinter) costliestText(n stats.Note) string {
-	// The costliest of one session is all of it: nothing to look at.
-	if n.Cost == nil || n.Cost.USD == nil || p.s.Coverage.Sessions <= 1 {
+	if n.Cost == nil || n.Cost.USD == nil {
 		return ""
 	}
 	parts := []string{"Costliest session " + p.estimate(*n.Cost.USD)}

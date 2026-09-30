@@ -26,6 +26,18 @@ import "strings"
 // yellow (a bullet, a bar, an arrow with its figure), never a sentence or an
 // amount, because yellow text is hard to read on a light background.
 //
+// Judged on the screens rendered on a dark, a light, a Solarized dark and a
+// Solarized light background: the yellow of Claude Code's bar, of a heads-up
+// bullet and of a rise in spend does not read as one thing, because the bar is
+// a large block under a legend that names it and the other two are a bullet
+// and an arrow far below and above it. Two hues that do run together are
+// Claude Code (Solarized's mustard) and Codex (its olive), which sit side by
+// side on the agents bar; they are told apart by the blank cell between the
+// segments and by the legend's names, as the color rule requires. The detail
+// screen puts the agents' colors beside the token types' (cache write is also
+// yellow, cache read blue, fresh input green): each bullet is labeled and the
+// two lists are under different headings, so no color is asked to carry both.
+//
 // Dim (SGR 2) rather than bright black is the grey: bright black is the
 // background itself in some popular themes (Solarized), and the rest of the
 // command line already uses dim for secondary text.

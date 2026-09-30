@@ -442,21 +442,6 @@ func (p *statsPrinter) spend(c stats.Cost, tokens *int64) string {
 	return p.money(*c.USD)
 }
 
-// roundInt is v rounded to a whole number, as the same int64 on every
-// platform: a float past the int64 range saturates (converting it directly is
-// left to the platform), and NaN is 0.
-func roundInt(v float64) int64 {
-	switch {
-	case math.IsNaN(v):
-		return 0
-	case v >= math.MaxInt64:
-		return math.MaxInt64
-	case v <= math.MinInt64:
-		return math.MinInt64
-	}
-	return int64(math.Round(v))
-}
-
 // count is a number with its noun, thousands separated: "1,234 sessions".
 func count(n int64, unit string) string {
 	if n == 1 {
@@ -638,9 +623,11 @@ func clampShare(share float64) float64 {
 }
 
 // barCells is how many of width cells share (0 to 1) fills: at least one
-// for any share above zero.
+// for any share above zero. A share outside 0 to 1, or not a number, is
+// clamped: converting a NaN to an int is up to the CPU, and a negative count
+// of cells would panic.
 func barCells(share float64, width int) int {
-	share = math.Min(1, share)
+	share = clampShare(share)
 	n := int(math.Round(share * float64(width)))
 	if share > 0 && n == 0 {
 		n = 1
