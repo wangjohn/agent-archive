@@ -10,6 +10,7 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
 
 Configuration saved.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
+Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 Next, in each app:

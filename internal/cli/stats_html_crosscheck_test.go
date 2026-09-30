@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -126,11 +125,17 @@ func expectedDelta(m stats.Measure, days int) string {
 	if days == 1 {
 		vs = "vs the day before"
 	}
+	// Written out here, not read back from the formatter: a change past 999
+	// percent reads ">999%".
+	size := strconv.FormatFloat(math.Abs(p), 'f', 0, 64)
+	if math.Abs(p) > 999 {
+		size = ">999"
+	}
 	switch {
 	case p > 0:
-		return fmt.Sprintf("▲ %s%% %s", statsfmt.CommaInt(int64(p)), vs)
+		return fmt.Sprintf("▲ %s%% %s", size, vs)
 	case p < 0:
-		return fmt.Sprintf("▼ %s%% %s", statsfmt.CommaInt(int64(-p)), vs)
+		return fmt.Sprintf("▼ %s%% %s", size, vs)
 	}
 	return "no change " + vs
 }
@@ -157,15 +162,15 @@ func checkPageHero(t *testing.T, page *node, doc statsDocument) {
 	}
 	sessions := "unknown"
 	if o.Sessions.Value != nil {
-		sessions = statsfmt.CommaInt(int64(math.Round(*o.Sessions.Value)))
+		sessions = statsfmt.CommaInt(statsfmt.RoundInt(*o.Sessions.Value))
 	}
 	tokens := "unknown"
 	if o.Tokens.Value != nil {
-		tokens = statsfmt.TokenCount(int64(math.Round(*o.Tokens.Value)))
+		tokens = statsfmt.TokenCount(statsfmt.RoundInt(*o.Tokens.Value))
 	}
 	var prompts, cache []string
 	if o.Prompts.Value != nil {
-		prompts = []string{countOf(int(math.Round(*o.Prompts.Value)), "prompt")}
+		prompts = []string{countOf(int(statsfmt.RoundInt(*o.Prompts.Value)), "prompt")}
 	}
 	switch {
 	case o.Tokens.Value == nil:
@@ -324,22 +329,19 @@ func checkPageWhereItWent(t *testing.T, page *node, doc statsDocument) {
 	if projects == nil {
 		t.Fatal("the page has no by-project table")
 	}
-	rows := slices.Clone(doc.Projects)
-	slices.SortStableFunc(rows, func(a, b stats.Project) int {
-		av, aok := spendDown(a.Cost)
-		bv, bok := spendDown(b.Cost)
-		switch {
-		case aok && bok:
-			return cmp.Compare(bv, av)
-		case aok:
-			return -1
-		case bok:
-			return 1
+	// The page lists the document's projects in the document's order (the
+	// engine's, by spend): no re-sorting here, so a page that reordered them
+	// would fail.
+	for i := 1; i < len(doc.Projects); i++ {
+		prev, cur := doc.Projects[i-1], doc.Projects[i]
+		pv, pok := spendDown(prev.Cost)
+		cv, cok := spendDown(cur.Cost)
+		if (!pok && cok) || (pok && cok && cv > pv) {
+			t.Errorf("the document's projects are not dearest first: %q ($%v) before %q ($%v)", prev.Name, pv, cur.Name, cv)
 		}
-		return 0
-	})
+	}
 	var want [][]string
-	for _, p := range rows {
+	for _, p := range doc.Projects {
 		name, cost := p.Name, "n/a"
 		if name == "" {
 			name = "(no project)"

@@ -170,11 +170,16 @@ func groups(current []*unit, by Grouping) *Groups {
 	}
 	if by == GroupProject {
 		sort.SliceStable(rows, func(i, j int) bool {
-			return projectBefore(Project{Name: rows[i].Key, Sessions: rows[i].Sessions, Tokens: rows[i].Tokens},
-				Project{Name: rows[j].Key, Sessions: rows[j].Sessions, Tokens: rows[j].Tokens})
+			return projectBefore(rows[i].asProject(), rows[j].asProject())
 		})
 	}
 	return &Groups{By: by, Rows: rows}
+}
+
+// asProject is a project group's row as the project it counts, to rank it as
+// projects are ranked.
+func (g Group) asProject() Project {
+	return Project{Name: g.Key, Sessions: g.Sessions, Tokens: g.Tokens, Cost: g.Cost}
 }
 
 func groupKey(u *unit, by Grouping) string {

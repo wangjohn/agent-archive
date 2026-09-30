@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -175,7 +176,7 @@ func TestSetupYesKeepsTheKeyWhenApplyFails(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
-	env.LoadLaunchAgent = func(string) error { return errors.New("cannot load the job") }
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("cannot load the job") }
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
 	if !strings.Contains(output, "run agent-archive setup to finish or discard it") || len(kc.items) != 1 {
 		t.Fatalf("%d keys\n%s", len(kc.items), output)
@@ -317,9 +318,7 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 				report.State, report.Reason = tc.privacy.State, tc.privacy.Reason
 				return privacyReportStore{ObjectStore: storagetest.NewMemoryStore(), report: report}, nil
 			}
-			loaded := 0
-			load := env.LoadLaunchAgent
-			env.LoadLaunchAgent = func(path string) error { loaded++; return load(path) }
+			sched := fakeSched(env)
 			output := setupYes(t, env, "", tc.exit, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", project)
 			for _, want := range tc.want {
 				if !strings.Contains(output, want) {
@@ -332,8 +331,8 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 			}
 			if tc.exit == 0 {
 				// The checks below would see the job a successful run starts.
-				if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil || loaded == 0 {
-					t.Fatalf("a successful run installed no LaunchAgent (loaded %d times): %v", loaded, err)
+				if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil || len(sched.loaded()) == 0 {
+					t.Fatalf("a successful run installed no LaunchAgent (loaded %d times): %v", len(sched.loaded()), err)
 				}
 				return
 			}
@@ -343,8 +342,8 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(userHome, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("refusal installed hooks")
 			}
-			if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !errors.Is(err, os.ErrNotExist) || loaded != 0 {
-				t.Fatalf("refusal installed the LaunchAgent (loaded %d times)", loaded)
+			if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !errors.Is(err, os.ErrNotExist) || len(sched.loaded()) != 0 {
+				t.Fatalf("refusal installed the LaunchAgent (loaded %d times)", len(sched.loaded()))
 			}
 		})
 	}
@@ -375,7 +374,7 @@ func TestSetupYesListsEveryMissingAnswer(t *testing.T) {
 			kc := newFakeKeychain()
 			env := setupTestEnv(t, home, userHome, kc, time.Now())
 			env.DetectHarnesses = func(string) []string { return nil }
-			env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
+			fakeSched(env).stateFn = func(scheduler.Ref) string { t.Error("launchctl was asked"); return "missing" }
 			env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 			env.IsTerminal = func(any) bool { return false }
 			var out, errOut bytes.Buffer
@@ -420,7 +419,7 @@ func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
 	t.Parallel()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, t.TempDir(), t.TempDir(), kc, time.Now())
-	env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
+	fakeSched(env).stateFn = func(scheduler.Ref) string { t.Error("launchctl was asked"); return "missing" }
 	env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex")
 	if !strings.Contains(output, "Setup incomplete: the R2 secret access key is needed") {

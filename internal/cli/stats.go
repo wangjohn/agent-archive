@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -58,13 +59,21 @@ type statsFilters struct {
 // The previous period of the same length and the last six months are read
 // too, for the overview's changes and the month rank, but only the window is
 // reported.
-func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDependencies) int {
+//
+// With a terminal on both stdin and stdout, interaction on, and none of
+// --json, --html, --view, --detail, --by or --no-pager, it opens the
+// interactive screen (see statsBrowser) instead of printing the overview.
+// That screen switches windows without reading again, so it reads what the
+// longest of them and its previous period need.
+func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env statsCommandDependencies) int {
 	fs := env.newCommandFlags("stats", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	since := fs.String("since", "", "start the window on this local day: a date (2026-09-01), RFC 3339 time, or age (7d, 12h)")
 	days := fs.Int("days", stats.DefaultDays, "the window's length in calendar days, ending today")
 	by := fs.String("by", "", "also break the window down by day, week, month, or project")
+	viewName := fs.String("view", "", "which screen to print: overview (the default), detail, projects, models, or agents")
+	detail := fs.Bool("detail", false, "print the detail screen; the same as --view detail")
 	pricesFile := fs.String("prices", "", "price the tokens from this JSON file's prices on top of the built-in table")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
@@ -84,6 +93,10 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 			daysSet = true
 		}
 	})
+	page, code := statsPageFromFlags(fs, *viewName, *detail, *by, *jsonOut || htmlFlags.html)
+	if code != 0 {
+		return code
+	}
 	loc := statsZone(env.now(), env)
 	now := env.now().In(loc)
 	windowDays, code := statsWindowDays(fs, *days, daysSet, *since, now)
@@ -112,7 +125,12 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	if code != 0 {
 		return code
 	}
-	opts.filter.From = statsFetchFrom(now, loc, windowDays)
+	screen := statsScreenWanted(fs, env, stdin, stdout, *by != "" || *jsonOut || htmlFlags.html || *noPager || *detail)
+	windows, windowIndex := []int{windowDays}, 0
+	if screen {
+		windows, windowIndex = statsWindowCycle(windowDays)
+	}
+	opts.filter.From = statsFetchFrom(now, loc, slices.Max(windows))
 
 	store, _, found, err := openReadOnlyStore(env)
 	if err != nil {
@@ -129,16 +147,14 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return code
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
+	// A page lists every project and skill and lets the screen cut them. The
+	// JSON and the web page keep the engine's default lists: the top few
+	// projects by spend.
+	textPage := !*jsonOut && !htmlFlags.html
 	computed := stats.Compute(sessions, stats.Options{
-		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping,
+		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage,
 	})
-	filters := statsFilters{Harness: opts.filter.Harness, Model: opts.filter.Model}
-	switch {
-	case opts.imported:
-		filters.Origin = "imported"
-	case opts.hookCaptured:
-		filters.Origin = "hook"
-	}
+	filters := statsFiltersOf(opts)
 	if *jsonOut {
 		return printJSON(stdout, stderr, statsDocument{
 			Version: statsSchemaVersion, GeneratedAt: now, Filters: filters, Stats: computed,
@@ -147,14 +163,25 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	if htmlFlags.html {
 		return htmlFlags.write(stdout, stderr, computed, filters, now, statsEmptyMessage(computed, filters, len(sessions) > 0))
 	}
-	if computed.Coverage.Sessions == 0 {
-		terminal.Println(stdout, newStatsView(stdout, env).wrap(statsEmptyMessage(computed, filters, len(sessions) > 0)))
-		return 0
-	}
 	view := newStatsView(stdout, env)
 	view.filters = filters
+	// A window with nothing in it is still a screen when another window may
+	// have something: w moves on. Nothing at all is the message below.
+	if screen && len(sessions) > 0 {
+		start := statsBrowserStart{
+			inputs:  statsInputs{sessions: sessions, now: now, location: loc, prices: table, filters: filters},
+			windows: windows, window: windowIndex, first: computed, view: view,
+		}
+		if code, ran := runStatsBrowser(env, stdin, stdout, stderr, start); ran {
+			return code
+		}
+	}
+	if computed.Coverage.Sessions == 0 {
+		terminal.Println(stdout, view.wrap(statsEmptyMessage(computed, filters, len(sessions) > 0)))
+		return 0
+	}
 	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
-		return renderStats(w, computed, view)
+		return renderStats(w, computed, page, view)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return 1
@@ -237,6 +264,80 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 		return reader.RecentResult{}, 1
 	}
 	return listed, 0
+}
+
+// statsFiltersOf is the filters a run applied, as the output echoes them.
+func statsFiltersOf(opts listOptions) statsFilters {
+	filters := statsFilters{Harness: opts.filter.Harness, Model: opts.filter.Model}
+	switch {
+	case opts.imported:
+		filters.Origin = "imported"
+	case opts.hookCaptured:
+		filters.Origin = "hook"
+	}
+	return filters
+}
+
+// statsScreenWanted is whether stats opens the interactive screen: stdin and
+// stdout are terminals and interaction is on (Env.interactive), the terminal
+// is not a dumb one (which cannot switch screens or place the cursor, so the
+// escape sequences would print as text), and no flag asks for a printed page
+// (printed is whether --by, --json, --html, --no-pager or --detail was given;
+// --view is looked at here).
+func statsScreenWanted(fs *commandFlags, env statsCommandDependencies, stdin io.Reader, stdout io.Writer, printed bool) bool {
+	if printed || viewGiven(fs) || !env.interactive(stdin) || !env.interactive(stdout) {
+		return false
+	}
+	term, _ := env.lookupEnv("TERM")
+	return term != "dumb"
+}
+
+// viewGiven is whether --view was given, whatever its value.
+func viewGiven(fs *commandFlags) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "view" })
+	return given
+}
+
+// statsPageFromFlags is the screen --view, --detail and --by ask for. --detail
+// is --view detail, and the two together are refused. --by project is the
+// projects screen, and --by day, week or month is a table under the detail
+// screen; asking for another screen with them is refused rather than
+// guessed at. --view and --detail print a screen, so they do not go with
+// --json or --html.
+func statsPageFromFlags(fs *commandFlags, viewName string, detail bool, by string, structured bool) (statsPage, int) {
+	viewSet := viewGiven(fs)
+	if viewSet && detail {
+		return "", fs.usageError("choose one of --view and --detail")
+	}
+	if structured && (viewSet || detail) {
+		return "", fs.usageError("--view and --detail choose a screen; --json and --html print the whole document")
+	}
+	page := pageOverview
+	switch {
+	case detail:
+		page = pageDetail
+	case viewSet:
+		parsed, ok := parseStatsPage(viewName)
+		if !ok {
+			return "", fs.usageError("--view must be overview, detail, projects, models, or agents, not %q", viewName)
+		}
+		page = parsed
+	}
+	if structured || by == "" {
+		return page, 0
+	}
+	byPage := pageDetail
+	if by == string(stats.GroupProject) {
+		byPage = pageProjects
+	}
+	switch {
+	case !viewSet && !detail:
+		return byPage, 0
+	case page != byPage:
+		return "", fs.usageError("--by %s is shown on the %s screen; drop --by or use --view %s", by, byPage, byPage)
+	}
+	return page, 0
 }
 
 // statsWindowDays is the window's length in calendar days: --days, or the
@@ -323,10 +424,6 @@ func statsPriceTable(fs *commandFlags, path string) (stats.PriceTable, int) {
 // statsEmptyMessage says why there is nothing to show, and what to try.
 // sawSessions is whether any session (of the previous period, say) was read.
 func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) string {
-	span := fmt.Sprintf("in the last %d days (%s to %s)", s.Window.Days, s.Window.FirstDay, s.Window.LastDay)
-	if s.Window.Days == 1 {
-		span = fmt.Sprintf("today (%s)", s.Window.LastDay)
-	}
 	longer := ""
 	switch {
 	case s.Window.Days < 90:
@@ -334,16 +431,26 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 	case s.Window.Days < 365:
 		longer = " Try a longer window, for example agent-archive stats --days 365."
 	}
+	return statsEmptyMessageWith(s, filters, sawSessions, longer)
+}
+
+// statsEmptyMessageWith is statsEmptyMessage ending in advice: the screen
+// tells the person to press w, not to run the command again.
+func statsEmptyMessageWith(s stats.Stats, filters statsFilters, sawSessions bool, advice string) string {
+	span := fmt.Sprintf("in the last %d days (%s to %s)", s.Window.Days, s.Window.FirstDay, s.Window.LastDay)
+	if s.Window.Days == 1 {
+		span = fmt.Sprintf("today (%s)", s.Window.LastDay)
+	}
 	switch {
 	case filters.Model != "":
 		// The screen names models by family ("opus"); the filter is exact.
-		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + longer
+		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + advice
 	case filters != statsFilters{}:
-		return "No archived sessions match these filters " + span + "." + longer
+		return "No archived sessions match these filters " + span + "." + advice
 	case sawSessions:
-		return "No archived sessions were captured " + span + "." + longer
+		return "No archived sessions were captured " + span + "." + advice
 	}
-	return "No archived sessions " + span + ". If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture)." + longer
+	return "No archived sessions " + span + ". If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture)." + advice
 }
 
 // statsZone is the time zone days, weeks and months are counted in: the

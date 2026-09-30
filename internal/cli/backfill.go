@@ -671,7 +671,7 @@ func (e Env) backfillTempDirs() []string {
 	if e.BackfillTempDirs != nil {
 		return e.BackfillTempDirs
 	}
-	temps := backfill.Environment{GOOS: e.BackfillGOOS}.DefaultTempDirs()
+	temps := backfill.Environment{OS: e.OS}.DefaultTempDirs()
 	if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
 		temps = append(temps, strings.TrimSpace(tmp))
 	}
@@ -686,7 +686,7 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 	claude, codex := e.appSessionDirs(userHome, cfg)
 	env := backfill.Environment{
 		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
-		TempDirs: e.backfillTempDirs(), Now: e.now, GOOS: e.BackfillGOOS,
+		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,
 	}

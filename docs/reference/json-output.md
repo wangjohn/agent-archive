@@ -127,6 +127,18 @@ Work done outside the session, such as a pull request merged on GitHub's
 website, is not seen. Work a subagent did is in the subagent's own
 metadata.
 
+From parser `0.16.0` a sidecar may also carry `repo_key`, an opaque
+identifier for the git repository the session ran in (`repo-` and 16 hex
+digits: a hash of the normalized `origin` address, never the address). Two
+sessions of one repository share it whatever their checkout paths, and
+whether cloned over SSH or HTTPS. It is absent for a project that is not a
+git repository or has no `origin`. The repository name keeps its case and a
+port is ignored (see [privacy](../security/privacy.md)). It can be stale: a
+key recorded when the session started is never re-derived, a derived one
+persists if the remote is later removed or git fails, a changed remote
+replaces it only at the next content publish or parser refresh, and a
+finished session never updates.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
@@ -226,12 +238,30 @@ at the top level. Read the rules below before using a number:
   cache counts; when it is present it equals `composition.cache_read.share`.
 - **Top lists.** `projects`, `skills` and `mcp.servers` keep the top few rows
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
-  there are. `models` lists every model family. `display_skills` is `skills`
+  there are. `projects` is ranked by estimated cost before it is cut, so the
+  top five are the five that cost the most, not the five with the most tokens
+  (see below). `models` lists every model family. `display_skills` is `skills`
   for showing to a person: a plugin prefix is stripped from each name
   (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
   that then share a name are one row, counted in the sessions that used any
   of them (a session that used both counts once); `total_display_skills` is
   its length before the cut. `skills` keeps the names as recorded.
+- **Project order.** `projects` (and `groups.rows` with `--by project`) are
+  ordered by `cost.usd`, the highest first, and only then cut to the top
+  five, so a project left out never has a higher `usd` than one listed. A
+  project whose cost is partial (`cost.partial`) is ordered on the `usd` it
+  has, which leaves out `cost.unpriced_tokens`, so its real cost is higher
+  than its place says; a project with no priced cost (`usd` is `null`) comes
+  after every project that has one, and is the first to be cut, however many
+  `tokens` it has. The overall `overview.cost` says when any of that
+  happened (`partial`, `unpriced_tokens`), and `models` names the model with
+  no price (`priced` is `false`). Projects of equal cost, and those with none,
+  are ordered by `tokens` (highest first, `null` last), then `sessions`
+  (highest first), then `name`, so the order does not depend on the order
+  sessions were read in. Releases through 0.2.0 ordered both lists by tokens,
+  which cache reads dominate, so a cheaper project with more cache reads could
+  push a dearer one out of the top five; the fields and `schema_version` (1)
+  are unchanged, only the order and which five are kept.
 - **`heads_up`** is what deserves a second look, at most three notes in
   priority order, `[]` when nothing does. Each note is data only, with a
   `kind` that says which fields it has; the words are the reader's:
@@ -239,7 +269,7 @@ at the top level. Read the rules below before using a number:
   | `kind` | Applies when | Fields |
   | --- | --- | --- |
   | `subagent_share` | subagents used 25% or more of the window's tokens | `share` (0 to 1), `tokens`, `runs` (subagent runs rolled into their parents, which are not sessions of their own) |
-  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
+  | `costliest_session` | the window has more than one session, and the costliest cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
   | `unmetered_sessions` | any session reports no token counts | `sessions`, `by_agent` (`harness`, `label`, `sessions`; most sessions first) |
   | `low_cache_hit` | the window's cache-hit rate is under 60%, over at least 50,000 input-side tokens | `hit_rate`, `input_tokens` |
 
@@ -252,8 +282,8 @@ at the top level. Read the rules below before using a number:
 - **`groups`** is present with `--by day|week|month|project`: `by` and
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
-  or by tokens for `project`. `projects` keeps only the top few of
-  `total_projects`.
+  or by estimated cost for `project` (in the order of `projects`, above).
+  `projects` keeps only the top few of `total_projects`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server
@@ -288,8 +318,8 @@ Treat an absent field and `null` the same way.
 | `projects` | Included project roots. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |
 | `applications[]` | Per app: hook state (`installed`, `missing or incomplete`, `broken`, or `unknown` when the hook file could not be read or no executable is recorded to check the hooks against; `warnings` then names the file), `other_installations` (the data directories of other agent-archive installations whose hooks are in the same hook file; this installation never changes them, and setup won't install beside them), installed version and its support (`verified_by_capture` once a session from that version was read back, else `unverified`), capture evidence (`configured`, `hook_observed`, `captured_locally`, `published`, `read_back_verified`, with counts), `sessions_with_capture_gaps`, observed app and adapter versions, and per-project breakdowns. |
-| `agent_skills` | The agent skill files (the `/handoff` skill) setup installed that are there now (absolute paths; absent when there are none). A file at one of those paths without setup's marker line is the person's own, and one naming another data directory is another installation's; neither is listed. |
-| `agent_skills_out_of_date` | The files in `agent_skills` whose text differs from what this version of `agent-archive` writes (an earlier release wrote them, or the executable moved); `agent-archive setup` refreshes them, and status warns about each. Absent when there are none, or when no executable is recorded to compare with. |
+| `agent_skills` | The agent skill files (the `/handoff` and `agent-archive` skills) setup installed that are there now (absolute paths; absent when there are none). A file at one of those paths without setup's marker line is the person's own, and one naming another data directory is another installation's; neither is listed. |
+| `agent_skills_out_of_date` | The files in `agent_skills` whose text differs from what this version of `agent-archive` writes (an earlier release wrote them, or the executable moved); `agent-archive setup --refresh` (or `setup`) refreshes them, and status warns about each. Absent when there are none, or when no executable is recorded to compare with. |
 | `agent_skills_disabled` | `true` when the agent skills are turned off (`agent-archive setup --no-skills`); absent otherwise. Setup then installs and refreshes none, and `agent_skills` is empty unless a file of setup's is left over (a restored backup, an interrupted removal): status warns about it, `agent_skills_out_of_date` is absent, and `agent-archive setup` removes it. `agent-archive setup --skills` turns them back on. |
 | `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this Mac only, never uploaded; not a problem). |

@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -115,7 +116,7 @@ type preflightScope struct {
 type preflightDependencies interface {
 	hookFiles(userHome string) hooks.Files
 	installation(home, userHome string) installation
-	jobState(plist string) string
+	jobState(userHome, plist string) string
 	credentialStore() (credentials.CredentialStore, error)
 }
 
@@ -139,14 +140,14 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 
 	plist := env.installation(home, userHome).collectorPlist()
 	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
-	switch env.jobState(plist) {
+	switch env.jobState(userHome, plist) {
 	case "unknown":
 		job.OK = false
-		job.Detail = "launchctl did not say whether the " + launchLabel(plist) + " job is loaded, and setup loads it only when it can tell"
+		job.Detail = "launchctl did not say whether the " + launchd.Label(plist) + " job is loaded, and setup loads it only when it can tell"
 		job.Fix = "Check that launchctl print gui/$(id -u) works in Terminal, then run agent-archive setup again."
 	case setupjournal.JobAnotherInstallation:
 		job.OK = false
-		job.Detail = fmt.Sprintf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation", launchLabel(plist), displayPath(plist, userHome))
+		job.Detail = fmt.Sprintf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation", launchd.Label(plist), displayPath(plist, userHome))
 		job.Fix = "Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own."
 	}
 	checks = append(checks, job)
@@ -214,12 +215,12 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 	}
 	if err != nil {
 		return preflightCheck{
-			Label:  credentialCheckLabel(credentialGOOS),
+			Label:  credentialCheckLabel(credentialOS),
 			Detail: "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")",
-			Fix:    credentialCheckFix(credentialGOOS, errors.Is(err, credentials.ErrKeychainLocked)),
+			Fix:    credentialCheckFix(credentialOS, errors.Is(err, credentials.ErrKeychainLocked)),
 		}
 	}
-	return preflightCheck{Label: credentialCheckLabel(credentialGOOS), Detail: "opens (for the R2 key)", OK: true}
+	return preflightCheck{Label: credentialCheckLabel(credentialOS), Detail: "opens (for the R2 key)", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks

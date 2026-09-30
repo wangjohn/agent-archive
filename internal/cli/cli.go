@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -29,9 +28,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -101,6 +101,9 @@ type Env struct {
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
+	// repoKey, set only by tests, replaces the git lookup of a project's
+	// repository key (see repoKeyResolver).
+	repoKey func(root string) string
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults
@@ -128,10 +131,8 @@ type Env struct {
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
 	WorkingDir func() (string, error)
-	// JobState reports loaded, running, missing, or unknown without changing launchd.
-	JobState func(string) string
-	Home     func() (string, error)
-	Now      func() time.Time
+	Home       func() (string, error)
+	Now        func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -161,15 +162,12 @@ type Env struct {
 	// DiscoverApplications performs bounded, read-only installed-version
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
-	// LoadLaunchAgent loads the just-written LaunchAgent plist so scheduled
-	// collection starts without a login/logout cycle. Defaults to shelling
-	// out to launchctl (runLaunchctl).
-	LoadLaunchAgent func(plistPath string) error
-	// UnloadLaunchAgent undoes a successful LoadLaunchAgent: it rolls setup
-	// back if a later step (config.Save) fails after the LaunchAgent was
-	// already loaded, and stops the collector during uninstall. Defaults to
-	// shelling out to launchctl, like LoadLaunchAgent.
-	UnloadLaunchAgent func(plistPath string) error
+	// Scheduler is the background job manager: it reports the collector's job
+	// state, loads the LaunchAgent setup wrote so scheduled collection
+	// starts without a login/logout cycle, and stops it again (rolling setup
+	// back, or during uninstall). Defaults to this system's own, through
+	// newScheduler (launchd on macOS, through launchctl).
+	Scheduler scheduler.Scheduler
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the
@@ -183,11 +181,12 @@ type Env struct {
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
 	BackfillTempDirs []string
-	// BackfillGOOS is the operating system backfill and the collector look
-	// for apps of: the macOS-only backfill inputs and where Cursor keeps its
-	// data (Cursor's database included) depend on it. Empty means
-	// runtime.GOOS; tests set it so a Mac's layout is exercised on any OS.
-	BackfillGOOS string
+	// OS is the operating system backfill and the collector look for apps
+	// of: the macOS-only backfill inputs and where Cursor keeps its data
+	// (Cursor's database included) depend on it. Empty means
+	// platform.Current; tests set it so a Mac's layout is exercised on any
+	// OS.
+	OS platform.OS
 	// IsTerminal reports whether stdin or stdout is a terminal. backfill
 	// redraws its progress line only on one; whether a command may also ask
 	// questions there is Env.interactive, which the
@@ -234,6 +233,16 @@ type Env struct {
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
 	Interrupts func() (signals <-chan os.Signal, stop func())
+	// RefreshCollectorWait is how long setup --refresh waits for a running
+	// collector pass to finish before it refuses. Defaults to
+	// refreshCollectorWait; tests shorten it.
+	RefreshCollectorWait func() time.Duration
+	// EffectiveUID is the user ID this process runs as. Defaults to
+	// os.Geteuid; tests set it to run as root.
+	EffectiveUID func() int
+	// FileOwner is the user ID that owns a path (ok false when unknown).
+	// Defaults to the file system's.
+	FileOwner func(path string) (uid int, ok bool)
 }
 
 func (e Env) isTerminal(stream any) bool {
@@ -251,6 +260,27 @@ func (e Env) interrupts() (<-chan os.Signal, func()) {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	return signals, func() { signal.Stop(signals) }
+}
+
+func (e Env) refreshCollectorWait() time.Duration {
+	if e.RefreshCollectorWait != nil {
+		return e.RefreshCollectorWait()
+	}
+	return refreshCollectorWait
+}
+
+func (e Env) effectiveUID() int {
+	if e.EffectiveUID != nil {
+		return e.EffectiveUID()
+	}
+	return os.Geteuid()
+}
+
+func (e Env) fileOwner(path string) (uid int, ok bool) {
+	if e.FileOwner != nil {
+		return e.FileOwner(path)
+	}
+	return fileOwner(path)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {
@@ -337,14 +367,17 @@ func (e Env) userHomeDir() (string, error) {
 }
 
 // cursorDatabase is Cursor's state.vscdb under the user's home, which
-// cursor-sqlite sessions are read from; "" (the process's own home) only
-// when the home can't be resolved.
+// cursor-sqlite sessions are read from, for Env.OS. It is "" when the home
+// can't be resolved or the system is not one the program knows; the collector
+// reads "" as "the default for this process" (cursorstore.StateDatabase of
+// the process's own home and platform.Current), which on an unknown system is
+// "" again, so Cursor reads as not installed.
 func (e Env) cursorDatabase() string {
 	home, err := e.userHomeDir()
 	if err != nil {
 		return ""
 	}
-	return cursorstore.StateDatabaseFor(home, e.getenv, e.goos())
+	return platform.NewLocations(e.operatingSystem(), home, e.getenv, platform.LocationDeps{}).CursorStateDB
 }
 
 // getenv reads one variable of the Env's environment (LookupEnv; the process
@@ -355,10 +388,10 @@ func (e Env) getenv(key string) string {
 	return v
 }
 
-// goos is the operating system whose app locations backfill and the
-// collector look for: BackfillGOOS, else the real one.
-func (e Env) goos() string {
-	return cmp.Or(e.BackfillGOOS, runtime.GOOS)
+// operatingSystem is the operating system whose app locations backfill and
+// the collector look for: OS, else the real one.
+func (e Env) operatingSystem() platform.OS {
+	return cmp.Or(e.OS, platform.Current())
 }
 
 func (e Env) detectHarnesses(userHome string) []string {
@@ -375,20 +408,6 @@ func (e Env) discoverApplications(userHome string) map[string]applicationDiscove
 	return discoverApplications(userHome)
 }
 
-func (e Env) loadLaunchAgent(plistPath string) error {
-	if e.LoadLaunchAgent != nil {
-		return e.LoadLaunchAgent(plistPath)
-	}
-	return loadLaunchAgent(plistPath)
-}
-
-func (e Env) unloadLaunchAgent(plistPath string) error {
-	if e.UnloadLaunchAgent != nil {
-		return e.UnloadLaunchAgent(plistPath)
-	}
-	return unloadLaunchAgent(plistPath)
-}
-
 func (e Env) credentialStore() (credentials.CredentialStore, error) {
 	if e.Credentials != nil {
 		return e.Credentials()
@@ -396,10 +415,10 @@ func (e Env) credentialStore() (credentials.CredentialStore, error) {
 	return openCredentialStore()
 }
 
-// credentialGOOS is the platform whose credential store is opened and named:
-// runtime.GOOS. It is a variable so a test can see both platforms' wording
-// and choices (credentialWords, credentials.OpenDefault) on any OS.
-var credentialGOOS = runtime.GOOS
+// credentialOS is the platform whose credential store is opened and named:
+// platform.Current. It is a variable so a test can see both platforms'
+// wording and choices (credentialWords, credentials.OpenDefault) on any OS.
+var credentialOS = platform.Current()
 
 // openCredentialStore opens the platform's credential store (see
 // credentials.OpenDefault): Env.Credentials's default. The package's tests
@@ -408,7 +427,7 @@ var credentialGOOS = runtime.GOOS
 // file into a real data directory.
 var openCredentialStore = func() (credentials.CredentialStore, error) {
 	return credentials.OpenDefault(credentials.OpenOptions{
-		GOOS: credentialGOOS,
+		OS: credentialOS,
 		Dir: func() (string, error) {
 			home, err := local.ReadHome()
 			if err != nil {
@@ -529,7 +548,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":
-		return runStatsCommand(args[1:], stdout, stderr, env)
+		return runStatsCommand(args[1:], stdin, stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

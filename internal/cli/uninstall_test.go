@@ -14,6 +14,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // installedFixture runs a real S3 setup into fresh temp homes so uninstall
@@ -56,7 +58,7 @@ func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
 func TestUninstallDeclineChangesNothing(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
-	env.UnloadLaunchAgent = func(string) error {
+	fakeSched(env).beforeUnload = func(scheduler.Ref) error {
 		t.Fatal("declining must not unload the LaunchAgent")
 		return nil
 	}
@@ -222,7 +224,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	if err := hooks.Apply(changes); err != nil {
 		t.Fatal(err)
 	}
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
+	plist, err := launchd.LaunchAgent(executable, home, launchd.Label(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +234,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	}
 	// A launchd that never had this plist loaded reports an error; that
 	// must be a warning, not a failure.
-	env.UnloadLaunchAgent = func(string) error { return errors.New("not loaded") }
+	fakeSched(env).beforeUnload = func(scheduler.Ref) error { return errors.New("not loaded") }
 
 	var stdout, stderr bytes.Buffer
 	code := runUninstallCommand(nil, strings.NewReader("y\n"), &stdout, &stderr, env)
@@ -413,12 +415,12 @@ func TestUninstallConcurrentEditNamesUninstall(t *testing.T) {
 	t.Parallel()
 	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	settings := filepath.Join(userHome, ".claude", "settings.json")
-	jobState := env.JobState
-	env.JobState = func(p string) string {
+	sched := fakeSched(env)
+	sched.stateFn = func(ref scheduler.Ref) string {
 		// Runs after uninstall planned its changes: an editor saves the file.
 		b, _ := os.ReadFile(settings)
 		must(t, os.WriteFile(settings, append(b, ' '), 0600))
-		return jobState(p)
+		return sched.state(ref)
 	}
 	var out, errOut bytes.Buffer
 	code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env)

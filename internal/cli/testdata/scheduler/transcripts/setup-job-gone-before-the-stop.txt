@@ -1,0 +1,7 @@
+# setup whose loaded job is gone when the commit stops it
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=present own=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=present
+# exit 0, end: journal=absent own=present

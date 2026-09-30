@@ -105,7 +105,8 @@ $ agent-archive status --json
     }
   ],
   "agent_skills": [
-    "/Users/alex/.agents/skills/handoff/SKILL.md"
+    "/Users/alex/.agents/skills/handoff/SKILL.md",
+    "/Users/alex/.agents/skills/agent-archive/SKILL.md"
   ],
   "collector": {
     "last_scan_at": "2026-09-25T12:00:00Z",

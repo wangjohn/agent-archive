@@ -14,6 +14,9 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // testTempPrefix names the folder under /tmp that holds one test run's
@@ -25,7 +28,8 @@ const testTempPrefix = "agent-archive-cli-test-"
 // reaches past the test's temporary directories is replaced here, before any
 // test runs, with one that stays inside them or stops the test.
 //
-//   - launchctl: runLaunchctl panics, naming the command. launchd is global to
+//   - launchctl: newScheduler makes a launchd scheduler whose launchctl
+//     panics, naming the command. launchd is global to
 //     the login session, so even `launchctl print` from a test reads the
 //     developer's real jobs, and bootstrap or bootout would change them. A
 //     test that means to drive launchctl stubs it with stubLaunchctl.
@@ -34,10 +38,10 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     Keychain nor a credentials file in a real data directory can be
 //     reached. Set Env.Credentials (newFakeKeychain).
 //
-//   - The platform the credential store is named for: credentialGOOS is
-//     "darwin", so the many tests whose fake stands for the Keychain see the
-//     Keychain's wording on every runner, Linux CI included. A test of the
-//     other platform's wording sets it to "linux" (useCredentialGOOS).
+//   - The platform the credential store is named for: credentialOS is
+//     platform.Darwin, so the many tests whose fake stands for the Keychain
+//     see the Keychain's wording on every runner, Linux CI included. A test
+//     of another platform's wording sets it (useCredentialOS).
 //
 //   - less: detectLessVersion panics. Set Env.LessVersion (testEnv does).
 //
@@ -86,15 +90,17 @@ func isolateProcessForTesting() func() {
 	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", envNonInteractive}, agentShellEnv()...) {
 		must(os.Unsetenv(name))
 	}
-	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) {
-		panic(fmt.Sprintf("a test reached the real launchctl %q: set Env.JobState, Env.LoadLaunchAgent and Env.UnloadLaunchAgent (testEnv does), or call stubLaunchctl", args))
+	newScheduler = func() scheduler.Scheduler {
+		return launchd.Scheduler{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			panic(fmt.Sprintf("a test reached the real %s %q: set Env.Scheduler (testEnv does), or call stubLaunchctl", name, args))
+		}}
 	}
 	realOpenCredentialStore = openCredentialStore
 	openCredentialStore = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real credential store: set Env.Credentials (newFakeKeychain)")
 	}
-	productionCredentialGOOS = credentialGOOS
-	credentialGOOS = "darwin"
+	productionCredentialOS = credentialOS
+	credentialOS = platform.Darwin
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
@@ -118,8 +124,11 @@ func TestIsolationFailsClosed(t *testing.T) {
 		}()
 		f()
 	}
-	panics("launchctl print", func() { launchdJobState("/nonexistent/com.agent-archive.collector.plist") })
-	panics("launchctl bootstrap", func() { _ = loadLaunchAgent("/nonexistent/x.plist") })
+	// A bare Env{} reaches launchd through newScheduler.
+	site, ref := scheduler.Site{UserHome: "/nonexistent"}, scheduler.Ref("com.agent-archive.collector")
+	panics("launchctl print", func() { Env{}.scheduler().JobState(context.Background(), site, ref) })
+	panics("launchctl bootstrap", func() { _ = Env{}.scheduler().Load(context.Background(), site, ref) })
+	panics("launchctl bootout", func() { _ = Env{}.scheduler().Unload(context.Background(), site, ref) })
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
 	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {
@@ -148,7 +157,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if _, err := env.executable(); err == nil {
 		t.Error("testEnv's Executable must fail unless a test sets one")
 	}
-	if got := env.jobState("/nonexistent.plist"); got != "missing" {
+	if got := env.jobState("/nonexistent", "/nonexistent/x.plist"); got != "missing" {
 		t.Errorf("testEnv job state = %q", got)
 	}
 }
@@ -158,23 +167,43 @@ func TestIsolationFailsClosed(t *testing.T) {
 // (TestOpenCredentialStoreIsWiredToTheDataDirectory).
 var realOpenCredentialStore func() (credentials.CredentialStore, error)
 
-// productionCredentialGOOS is credentialGOOS as the program starts, before
-// isolateProcessForTesting pins it to "darwin" for the tests.
-var productionCredentialGOOS string
+// productionCredentialOS is credentialOS as the program starts, before
+// isolateProcessForTesting pins it to Darwin for the tests.
+var productionCredentialOS platform.OS
 
-// useCredentialGOOS names the credential store for another platform for one
+// useCredentialOS names the credential store for another platform for one
 // test. The test must not be parallel: the variable is shared.
-func useCredentialGOOS(t *testing.T, goos string) {
+func useCredentialOS(t *testing.T, system platform.OS) {
 	t.Helper()
-	previous := credentialGOOS
-	credentialGOOS = goos
-	t.Cleanup(func() { credentialGOOS = previous })
+	previous := credentialOS
+	credentialOS = system
+	t.Cleanup(func() { credentialOS = previous })
 }
 
-// stubLaunchctl replaces launchctl for one test.
+// launchctlChangeTimeout is the bound the launchd scheduler puts on launchctl
+// bootstrap and bootout while a test runs (launchd.ChangeTimeout); a test of
+// what a hung launchctl does shortens it, and so must not run in parallel.
+var launchctlChangeTimeout = launchd.ChangeTimeout
+
+// stubLaunchctl replaces launchctl for one test: a nil Env.Scheduler then
+// means launchd's own code over run, which answers each launchctl call.
 func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
 	t.Helper()
-	previous := runLaunchctl
-	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) { return run(args...) }
-	t.Cleanup(func() { runLaunchctl = previous })
+	stubLaunchctlContext(t, func(_ context.Context, args ...string) ([]byte, error) { return run(args...) })
+}
+
+// stubLaunchctlContext is stubLaunchctl for a stand-in that watches the
+// command's context.
+func stubLaunchctlContext(t *testing.T, run func(ctx context.Context, args ...string) ([]byte, error)) {
+	t.Helper()
+	previous := newScheduler
+	newScheduler = func() scheduler.Scheduler {
+		return launchd.Scheduler{ChangeTimeout: launchctlChangeTimeout, Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			if name != "launchctl" {
+				t.Errorf("the scheduler ran %q, not launchctl", name)
+			}
+			return run(ctx, args...)
+		}}
+	}
+	t.Cleanup(func() { newScheduler = previous })
 }

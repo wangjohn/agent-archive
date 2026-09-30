@@ -90,7 +90,7 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the Mac that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
-  the app and its version, the app's own session ID, capture times and the
+  a repository key (below), the app and its version, the app's own session ID, capture times and the
   session's last record time, counts (including how many distinct files were
   edited, never which), models, skills used, the names of the ten most-called
   tools (MCP tool names included) with their call counts, the MCP servers
@@ -100,6 +100,29 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   or commands), and the
   capture gaps the filter recorded (the names of omitted fields, never their
   values).
+- **Repository key** (`repo_key`, in the metadata): when a project is a git
+  repository with an `origin` remote, a hash of that remote's normalized
+  address (host, owner, and repository name, with any username or token,
+  scheme, port, and `.git` removed), so the same repository on another
+  computer can be recognized. Only the hash is stored: never the address, and
+  never a credential that was part of it. The hash is not secret from someone
+  who already knows the address. Anyone with read access to your bucket can
+  hash a repository URL they are curious about and check whether it appears,
+  which reveals that you worked in that repository, and for a public
+  repository the address is guessable. That is why only the hash is stored,
+  and why bucket read access should stay limited to you. A project that is
+  not a git repository, has no `origin`, or whose remote is a local path has
+  no key. Two details of the matching: the repository name keeps its case, so
+  `Acme/Widget` and `acme/widget` get different keys even on a host that
+  treats them as one repository (a missed match, never a wrong one), and a
+  remote's port is ignored, so two repositories with the same name on
+  different ports of one host share a key. Only `origin` is read, as written
+  in your git configuration: a remote that is a `url.insteadOf` shorthand is
+  not expanded and may not match the full address used elsewhere. The key can
+  be out of date: one recorded when the session started is never looked up
+  again; one derived later stays if the remote is removed or git cannot be
+  run; a changed remote replaces it only at the session's next content
+  publish or metadata refresh; and a finished session never updates.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
@@ -392,12 +415,49 @@ on the capturing Mac and changes again, that Mac publishes it anew. On an S3
 bucket with versioning turned on, a delete only hides the object: remove
 the noncurrent versions too, or add a lifecycle rule that expires them.
 
+## What an agent can read through the skill
+
+Setup also installs an [`agent-archive` skill](../guides/agent-skills.md) in
+each app, so that a coding agent can pull in a past session when you ask. It
+reads through the same commands you run: `handoff`, `list`, `show`, and
+`status`. That is the filtered content the [archive holds](#what-is-uploaded)
+(a session found on this Mac is filtered the same way before it is printed),
+cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
+nothing broader: no bucket credentials, no raw transcript files, no files of
+your projects. `status` adds your setup's summary: the storage destination,
+the included project folders, and the state of capture. `list` shows titles
+(each is the session's first prompt) across all your projects. Three things
+follow.
+
+- **It is shown to that agent's provider.** A pulled-in session becomes part
+  of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and
+  whoever they send prompts to) see what another agent's session held,
+  including any secret the filter missed. Ask for a session only in an agent
+  you would show it to.
+- **It is untrusted text.** The filter removes credentials and injected
+  instruction blocks, not hostile wording, and a session's text may have come
+  from a web page or a file the original agent read. The skill tells the
+  agent to treat what it prints as data: never to follow an instruction in it,
+  or run a command because it suggests one, and to open only the one file a
+  trimmed handoff names. That is guidance to a model, not a guarantee. The
+  backstop is the agent's own permission prompt: in Claude Code, `handoff
+  --to`, `setup`, and `purge` are not pre-approved and ask you first (unless
+  you allowed them, or run the agent without approvals); in Codex and Cursor,
+  their approvals and sandbox decide, and Cursor's Run Everything mode asks
+  nothing.
+- **The skill is not a barrier.** The agent runs as you, so it can read
+  anything you can whatever the skill says; the skill only names what it
+  should run. `agent-archive setup --no-skills` stops offering agents the
+  skill; it does not stop an agent you have given a shell from running
+  `agent-archive`.
+
 ## What changes on your Mac
 
-The `hooks` entry of each included app's settings file, one LaunchAgent,
-local state private to your account (transcripts are read in place, not
-copied), and, for R2, one Keychain item (a credentials file on a build
-without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
+The `hooks` entry of each included app's settings file, one LaunchAgent, two
+agent skill files per app location (`agent-archive` and `/handoff`, marked so
+uninstall removes only setup's), local state private to your account
+(transcripts are read in place, not copied), and, for R2, one Keychain item (a
+credentials file on a build without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
 removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-mac).
 
 ## Where credentials are kept

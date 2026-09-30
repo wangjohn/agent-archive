@@ -1,0 +1,15 @@
+\e[1magent-archive stats\e[0m\e[2m · projects · last 30 days · 3 agents\e[0m
+
+\e[1mPROJECTS (10)\e[0m                        \e[2msessions\e[0m  \e[2m tokens\e[0m  \e[2mest. cost\e[0m  \e[2mshare\e[0m
+agent-archive  \e[36m████████████████████\e[0m        31     4.6B     $1,862    47%
+levenshtein    \e[36m████████\e[0m                    18     1.9B       $751    19%
+styleprofile   \e[36m██████\e[0m                       9     1.5B       $586    15%
+family_books   \e[36m█████\e[0m                       12     1.1B       $427    11%
+benchplan      \e[36m██\e[0m                           6     500M       $200     5%
+notes          \e[36m█\e[0m                            5     170M        $70     2%
+blog           \e[36m█\e[0m                            4     110M        $45     1%
+scripts        \e[36m█\e[0m                            3      70M        $28     1%
+infra          \e[36m█\e[0m                            3      50M        $20     1%
+dotfiles                                    2  unknown        n/a
+
+\e[2mEstimated at list price, not a bill.   --view overview\e[0m

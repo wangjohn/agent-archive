@@ -1,0 +1,10 @@
+# setup with two earlier-label collectors, one loaded
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=absent earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=absent earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector.cf1324b3e539  |  journal=absent own=absent earlier:223bda05f72f=present earlier:cf1324b3e539=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
+bootout gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present own=present earlier:223bda05f72f=present earlier:cf1324b3e539=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=present earlier:223bda05f72f=absent earlier:cf1324b3e539=absent
+# exit 0, end: journal=absent own=present earlier:223bda05f72f=absent earlier:cf1324b3e539=absent

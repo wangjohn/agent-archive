@@ -83,10 +83,12 @@ In Go tests, everything goes through injection:
 
 - `internal/cli` tests build an `Env` (see `testEnv` in `cli_test.go`) with a
   temporary data directory, temporary user and account homes, a fixed clock,
-  no environment variables, and an in-memory bucket. Its launchd, Keychain,
-  and executable fields fail the test unless the test sets them. Replace
-  `runLaunchctl` with `stubLaunchctl` for anything that would load or stop a
-  job.
+  no environment variables, and an in-memory bucket. Its scheduler
+  (`Env.Scheduler`, a `fakeScheduler` that answers every job "missing" and
+  fails the test on a load or stop), Keychain, and executable fields fail the
+  test unless the test sets them; `setupTestEnv` gives it a scheduler that
+  loads and stops jobs like launchd. To drive the real launchd code, set
+  `Env.Scheduler` to nil and replace `runLaunchctl` with `stubLaunchctl`.
 - Isolation in `internal/cli` fails closed. Its `TestMain` points `$HOME` at a
   temporary folder, unsets `AGENT_ARCHIVE_HOME`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME` and the AWS configuration variables, and replaces the real
@@ -111,6 +113,14 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
+  the `scheduler.Runner` it is given, so its tests pass a recording Runner and
+  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  tests run a stand-in `launchctl` script found on a temporary `PATH`.
+  `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
+  set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
+  (and, for now, `cli`) imports an adapter; depguard says the same in
+  `.golangci.yml`.
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
@@ -147,10 +157,20 @@ In Go tests, everything goes through injection:
   off macOS) have no build tag, so their tests run on macOS and Ubuntu alike;
   they write only under `t.TempDir()`, take the platform, the folder, the
   environment and the Keychain constructor as arguments, and never open a
-  real Keychain. In `internal/cli`, `credentialGOOS` is `"darwin"` in every
-  test (the fake store stands for the Keychain, so its wording is pinned on
-  every runner); a test of the other platform's wording calls
-  `useCredentialGOOS` and must not be parallel.
+  real Keychain. In `internal/cli`, `credentialOS` is `platform.Darwin` in
+  every test (the fake store stands for the Keychain, so its wording is pinned
+  on every runner); a test of the other platform's wording calls
+  `useCredentialOS` and must not be parallel.
+- The operating system is a value (`platform.OS`), read once by
+  `platform.Current` and passed everywhere else, so a test answers for macOS,
+  Linux or an unknown system on any host: `Env.OS` in `internal/cli`,
+  `Environment.OS` in `internal/backfill`, `OpenOptions.OS` in
+  `internal/credentials`, `platform.NewLocations` for where each system keeps
+  Cursor's data. Tests pin a platform explicitly (`testEnv` models a Mac) and
+  never branch on `runtime.GOOS` except to say what the real system must
+  answer; `TestOnlyPlatformReadsRuntimeGOOS` fails a production file that reads
+  `runtime.GOOS` itself. An unknown system fails closed (no Cursor location, no
+  credential store) and each caller's choice is pinned by a test.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
@@ -214,8 +234,13 @@ LaunchAgent runs) are not part of the user interface and may change.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), the `stats` screens at 60, 80 and 120 columns and
-  without a terminal (`internal/cli/testdata/stats/`), backfill plans (`internal/cli/testdata/backfill/`,
+  (`testdata/handoff/`), the `stats` screens end to end at 60, 80 and 120
+  columns and without a terminal (`internal/cli/testdata/stats/`), every `stats`
+  page (overview, detail, projects, models, agents) at 60, 80 and 120 columns
+  with and without color from hand-built numbers, plus a previous period,
+  Cursor alone, saturated sums, hostile names and ASCII
+  (`internal/cli/testdata/stats/pages/`; a colored golden writes each escape
+  character as `\e`), backfill plans (`internal/cli/testdata/backfill/`,
   `internal/backfill/testdata/`) and the [CLI reference](../../docs/reference/cli.md)
   have goldens of their own.
 - One flag rewrites every golden file:
@@ -328,6 +353,13 @@ In `internal/hooks`:
 | --- | --- | --- |
 | `FuzzMergeRemove` | any hook file Merge accepts, per harness | merging twice changes nothing; Remove takes out exactly what Merge added |
 | `FuzzCommandDataHome` | any data directory | the hook command reads back the directory it was built with |
+
+In `internal/scheduler/launchd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
+| `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
 
 In `internal/cli`:
 

@@ -136,7 +136,7 @@ func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			env, _, _ := preflightEnv(t)
-			env.JobState = func(string) string { return state }
+			env.Scheduler = newFakeScheduler(t, state)
 			for _, args := range [][]string{nil, {"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir()}} {
 				output, code, in := runUnanswered(t, env, args...)
 				if code != 1 || in.reads != 0 || !strings.Contains(output, want) || strings.Contains(output, "Checking your storage") {
@@ -320,7 +320,7 @@ func TestSetupStopsBeforeAnyQuestionWhenTheKeychainIsLocked(t *testing.T) {
 func TestSetupYesReportsFlagMistakesBeforeItsChecks(t *testing.T) {
 	t.Parallel()
 	env, _, _ := preflightEnv(t)
-	env.JobState = func(string) string { return "unknown" }
+	env.Scheduler = newFakeScheduler(t, "unknown")
 	output, code, _ := runUnanswered(t, env, "--yes", "--provider", "r2", "--bucket", "b", "--project", t.TempDir())
 	if code != 1 || !strings.Contains(output, "--provider r2 needs --r2-account") || strings.Contains(output, "Background job") {
 		t.Fatalf("exit %d\n%s", code, output)

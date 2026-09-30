@@ -170,7 +170,7 @@ func TestStatusReadDoesNotCreateCollectorLayout(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
 	env := testEnv(t, home, time.Now())
-	env.JobState = func(string) string { return "unknown" }
+	env.Scheduler = newFakeScheduler(t, "unknown")
 	if _, err := readStatus(env); err != nil {
 		t.Fatal(err)
 	}

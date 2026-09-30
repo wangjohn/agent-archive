@@ -201,7 +201,7 @@ func TestGroupings(t *testing.T) {
 		{GroupWeek, map[string]int{"2026-08-31": 2, "2026-09-14": 1, "2026-09-21": 2, "2026-09-28": 2},
 			[]string{"2026-08-31", "2026-09-14", "2026-09-21", "2026-09-28"}},
 		{GroupMonth, map[string]int{"2026-08": 1, "2026-09": 6}, []string{"2026-08", "2026-09"}},
-		{GroupProject, map[string]int{"alpha": 5, "beta": 2}, []string{"beta", "alpha"}}, // beta: 100 tokens, alpha: 37... beta first
+		{GroupProject, map[string]int{"alpha": 5, "beta": 2}, []string{"alpha", "beta"}}, // by spend: alpha's 37 opus tokens cost more than beta's 100 gpt-5 tokens
 	} {
 		t.Run(string(tc.by), func(t *testing.T) {
 			t.Parallel()
@@ -228,7 +228,8 @@ func TestGroupings(t *testing.T) {
 		t.Fatalf("groups without By: %+v", g)
 	}
 	byProject := Compute(sessions, Options{Now: now, Location: newYork, By: GroupProject}).Groups.Rows
-	if byProject[0].Key != "beta" || *byProject[0].Tokens != 100 || *byProject[1].Tokens != 37 || *byProject[1].Prompts != 3 || byProject[0].Prompts != nil {
+	if byProject[0].Key != "alpha" || *byProject[1].Tokens != 100 || *byProject[0].Tokens != 37 || *byProject[0].Prompts != 3 || byProject[1].Prompts != nil ||
+		*byProject[0].Cost.USD <= *byProject[1].Cost.USD {
 		t.Fatalf("project rows = %+v", byProject)
 	}
 }

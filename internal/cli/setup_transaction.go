@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -383,7 +384,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	plistPath := env.installation(home, userHome).collectorPlist()
 	// The collector gets the AWS files and PATH this storage was just
 	// verified with; launchd would otherwise start it with none of them.
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
+	plist, err := launchd.LaunchAgent(executable, home, launchd.Label(plistPath), env.collectorEnvironment(next.Storage))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -401,14 +402,14 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
-	job := env.jobState(plistPath)
+	job := env.jobState(userHome, plistPath)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job == "unknown" {
 		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
 	}
 	if job == setupjournal.JobAnotherInstallation {
-		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
+		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchd.Label(plistPath), plistPath)
 	}
 	// The prototype's job is the account's, retired only by the account's
 	// default installation: a test installation must not change it.

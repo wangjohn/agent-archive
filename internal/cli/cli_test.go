@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -37,22 +38,14 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		LookupEnv: func(string) (string, bool) { return "", false },
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
-		BackfillGOOS: "darwin",
+		OS: platform.Darwin,
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
 		// Everything below would otherwise reach this Mac itself. Reads get
 		// a harmless answer; anything that would change the Mac fails the
 		// test. A test that needs one sets it (setupTestEnv sets them all).
-		JobState: func(string) string { return "missing" },
-		LoadLaunchAgent: func(plist string) error {
-			t.Errorf("unexpected LaunchAgent load of %s: set Env.LoadLaunchAgent", plist)
-			return errors.New("no launchd in this test")
-		},
-		UnloadLaunchAgent: func(plist string) error {
-			t.Errorf("unexpected LaunchAgent unload of %s: set Env.UnloadLaunchAgent", plist)
-			return errors.New("no launchd in this test")
-		},
+		Scheduler: noLaunchd(t),
 		Credentials: func() (credentials.CredentialStore, error) {
 			return nil, errors.New("no credential store in this test: set Env.Credentials")
 		},

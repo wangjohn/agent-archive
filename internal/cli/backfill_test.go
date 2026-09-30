@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 
@@ -18,7 +19,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -153,9 +153,9 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 		LookupEnv:        func(string) (string, bool) { return "", false },
 		BackfillTempDirs: []string{filepath.Join(root, "tmp")},
 		// The fixture is a Mac: Library folders, Documents/Codex, TCC.
-		BackfillGOOS: "darwin",
+		OS: platform.Darwin,
 		// status reads the collector's job state; no test may ask launchd.
-		JobState:   func(string) string { return "missing" },
+		Scheduler:  newFakeScheduler(t, "missing"),
 		Interrupts: noInterrupts,
 	}
 	return f
@@ -177,7 +177,7 @@ func cursorSlugFor(path string) string {
 // mode so it can be read with Cursor closed.
 func (f *backfillFixture) cursorDatabase(t *testing.T, rows map[string]string) {
 	t.Helper()
-	path := cursorstore.StateDatabaseFor(f.userHome, nil, "darwin")
+	path := macCursorDatabase(f.userHome)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestBackfillGolden(t *testing.T) {
 func TestBackfillDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	f := newBackfillFixture(t)
-	cursorDir := filepath.Dir(cursorstore.StateDatabaseFor(f.userHome, nil, "darwin"))
+	cursorDir := filepath.Dir(macCursorDatabase(f.userHome))
 	before, cursorBefore := snapshotTree(t, f.data), snapshotTree(t, cursorDir)
 	for _, args := range [][]string{{"--dry-run"}, {"--dry-run", "--json"}} {
 		if _, errOut, code := f.run(t, args...); code != 0 {

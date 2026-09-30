@@ -6,12 +6,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // PR #53 second review: the look inside an added plain folder must not make
@@ -21,7 +23,7 @@ import (
 // and other apps' containers as locations of their own inside Library.
 func TestProtectedOutside(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Home: "/Users/me", GOOS: "darwin", EvalSymlinks: func(p string) (string, error) { return p, nil }})
+	protected := privacyProtectedFolders(Environment{Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
 		path string
 		root string
@@ -48,6 +50,28 @@ func TestProtectedOutside(t *testing.T) {
 		if got := protectedOutside(tc.path, tc.root, protected); got != tc.want {
 			t.Errorf("protectedOutside(%q, %q) = %v, want %v", tc.path, tc.root, got, tc.want)
 		}
+	}
+}
+
+// A home reached through a symlink is protected under both spellings: the
+// protected folders are resolved the way the rest of backfill resolves paths
+// (Environment.EvalSymlinks), so a project path spelled through the link's
+// target is still kept out of Documents.
+func TestProtectedFoldersCoverTheResolvedHome(t *testing.T) {
+	t.Parallel()
+	protected := privacyProtectedFolders(Environment{Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) {
+		if p == "/Users/me" {
+			return "/Volumes/Data/Users/me", nil
+		}
+		return p, nil
+	}})
+	for _, folder := range []string{"/Users/me/Documents", "/Volumes/Data/Users/me/Documents", "/Volumes/Data/Users/me/Library/Containers"} {
+		if !slices.Contains(protected, folder) {
+			t.Errorf("%s is not protected: %v", folder, protected)
+		}
+	}
+	if !protectedOutside("/Volumes/Data/Users/me/Documents/x", "/Volumes/Data/Users/me", protected) {
+		t.Error("a path through the resolved home reads inside Documents")
 	}
 }
 

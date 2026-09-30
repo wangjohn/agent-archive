@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"github.com/wangjohn/agent-archive/internal/statshtml"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -87,6 +88,28 @@ func crossScenarios() []crossScenario {
 			claude("e2", statsDay(time.September, 21, 10), modelTokenSpec{"claude-opus-5", 500, 500, 999_499, 1}))},
 		{name: "one-cache-type-only", build: only(
 			claude("r", statsDay(time.September, 20, 10), modelTokenSpec{"claude-opus-5", 0, 0, 1_000_000, 0}))},
+		// Projects ranked by spend, not by tokens: five with the most tokens
+		// (cache reads, which are cheap), two that cost more, one that cannot
+		// be priced and one with no tokens. Every screen, the page and the
+		// document must list them in the same order.
+		{name: "projects-ranked-by-spend-not-tokens", build: func(tb testing.TB, mem *storagetest.MemoryStore) {
+			tb.Helper()
+			in := func(name string, hour int, spec modelTokenSpec) syntheticSession {
+				s := claude("s-"+name, statsDay(time.September, 20, hour), spec)
+				s.project = name
+				return s
+			}
+			for i := range 5 {
+				in(fmt.Sprintf("cache-heavy-%d", i), 9+i, modelTokenSpec{"claude-opus-5", 0, 0, 10_000_000 + i*1_000_000, 0}).publish(tb, mem)
+			}
+			for i := range 2 {
+				in(fmt.Sprintf("output-heavy-%d", i), 9+i, modelTokenSpec{"claude-opus-5", 0, 1_000_000 + i*100_000, 0, 0}).publish(tb, mem)
+			}
+			mystery := in("unpriced-project", 10, modelTokenSpec{"mystery-1", 90_000_000, 0, 0, 0})
+			mystery.harness, mystery.models = "codex", []string{"mystery-1"}
+			mystery.publish(tb, mem)
+			syntheticSession{id: "c1", harness: "cursor", project: "cursor-only", captured: statsDay(time.September, 20, 12), models: []string{"cursor-auto"}, turns: 3, noTokens: true}.publish(tb, mem)
+		}, args: []string{"--by", "project"}},
 		{name: "subagents-skills-and-mcp-present", build: func(tb testing.TB, mem *storagetest.MemoryStore) {
 			tb.Helper()
 			parent := claude("parent", statsDay(time.September, 20, 10), opus)
@@ -248,3 +271,66 @@ func (n *node) byClass(name, class string) []*node {
 var spaces = regexp.MustCompile(`\s+`)
 
 func squash(s string) string { return strings.TrimSpace(spaces.ReplaceAllString(s, " ")) }
+
+// The costliest session of a window of one session is all of its spend:
+// nothing to look at. The engine leaves the note out, so the terminal, --json
+// and --html all say the same; a second session brings it back in every one.
+func TestStatsCostliestNoteNeedsMoreThanOneSession(t *testing.T) {
+	t.Parallel()
+	opus := modelTokenSpec{"claude-opus-5", 10_000, 20_000, 3_000_000, 40_000}
+	small := modelTokenSpec{"claude-opus-5", 100, 100, 100, 0}
+	session := func(id string, hour int, tokens modelTokenSpec) syntheticSession {
+		return syntheticSession{
+			id: id, harness: "claude", project: "alpha", captured: statsDay(time.September, 20, hour), models: []string{"claude-opus-5"},
+			turns: 5, messages: 20, toolResults: 10, errors: 1, perModel: []modelTokenSpec{tokens},
+		}
+	}
+	for _, tc := range []struct {
+		name     string
+		sessions []syntheticSession
+		want     bool
+	}{
+		{"one session", []syntheticSession{session("a", 10, opus)}, false},
+		{"two sessions", []syntheticSession{session("a", 10, opus), session("b", 11, small)}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env, mem := statsEnv(t)
+			for _, s := range tc.sessions {
+				s.publish(t, mem)
+			}
+			args := []string{"--prices", goldenPrices}
+			var doc statsDocument
+			if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, append([]string{"--json"}, args...)...)), &doc); err != nil {
+				t.Fatal(err)
+			}
+			inJSON := false
+			for _, n := range doc.HeadsUp {
+				inJSON = inJSON || n.Kind == stats.NoteCostliestSession
+			}
+			if inJSON != tc.want {
+				t.Errorf("--json has the costliest_session note: %v, want %v", inJSON, tc.want)
+			}
+			// The detail screen's highlights row says "Costliest" and the
+			// page's says "Costliest session" too: a fact, not a heads-up
+			// note. The note is a bulleted line, or a line of the page's
+			// heads-up section.
+			for name, out := range map[string]string{
+				"overview": mustRunStats(t, env, 80, args...),
+				"detail":   mustRunStats(t, env, 80, append([]string{"--detail"}, args...)...),
+			} {
+				if got := strings.Contains(out, "● Costliest session"); got != tc.want {
+					t.Errorf("%s has the costliest-session note: %v, want %v", name, got, tc.want)
+				}
+			}
+			page := parsePage(t, mustRunStats(t, env, 0, append([]string{"--html", "--include-names"}, args...)...))
+			got := false
+			if sec := pageCard(page, "h-heads"); sec != nil {
+				got = strings.Contains(sec.visible(), "Costliest session")
+			}
+			if got != tc.want {
+				t.Errorf("html has the costliest-session note: %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // Without a repository to pre-select, or without an app setup knows, setup
@@ -112,15 +113,15 @@ func TestCurrentProjectRefusalNamesTheFolder(t *testing.T) {
 // both, on macOS and on Linux.
 func TestSetupAndBackfillShareOneTempFolderList(t *testing.T) {
 	t.Parallel()
-	for goos, refused := range map[string][]string{
-		"darwin": {"/tmp", "/private/tmp", "/scratch/tmp"},
-		"linux":  {"/tmp", "/var/tmp", "/scratch/tmp"},
+	for goos, refused := range map[platform.OS][]string{
+		platform.Darwin: {"/tmp", "/private/tmp", "/scratch/tmp"},
+		platform.Linux:  {"/tmp", "/var/tmp", "/scratch/tmp"},
 	} {
-		t.Run(goos, func(t *testing.T) {
+		t.Run(string(goos), func(t *testing.T) {
 			t.Parallel()
-			env := Env{BackfillGOOS: goos, LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
+			env := Env{OS: goos, LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
 			temps := env.backfillTempDirs()
-			for _, want := range append(backfill.Environment{GOOS: goos}.DefaultTempDirs(), "/scratch/tmp") {
+			for _, want := range append(backfill.Environment{OS: goos}.DefaultTempDirs(), "/scratch/tmp") {
 				if !slices.Contains(temps, want) {
 					t.Fatalf("temporary folders %v lack %s", temps, want)
 				}

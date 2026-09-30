@@ -29,7 +29,7 @@ func TestHandoffRendersByteForByte(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			files := Files("/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
+			files := skillFiles(handoffOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
 			if len(files) != 2 || files[0].Skill != "handoff" || files[1].Skill != "handoff" {
 				t.Fatalf("files = %+v", files)
 			}
