@@ -5,12 +5,12 @@ import (
 	"io"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -214,12 +214,12 @@ func (p *statsPrinter) header() []string {
 	if s.Coverage.Agents != 1 {
 		agents = fmt.Sprintf("%d agents", s.Coverage.Agents)
 	}
-	sessions := commaInt(int64(s.Coverage.Sessions)) + " sessions"
+	sessions := statsfmt.CommaInt(int64(s.Coverage.Sessions)) + " sessions"
 	if s.Coverage.Sessions == 1 {
 		sessions = "1 session"
 	}
 	if s.Coverage.SessionsWithTokens != s.Coverage.Sessions {
-		sessions += fmt.Sprintf(" (%s with token data)", commaInt(int64(s.Coverage.SessionsWithTokens)))
+		sessions += fmt.Sprintf(" (%s with token data)", statsfmt.CommaInt(int64(s.Coverage.SessionsWithTokens)))
 	}
 	parts = append(parts, agents, sessions)
 	sep := " " + p.g.sep + " "
@@ -264,7 +264,7 @@ func (p *statsPrinter) tokensByDay() []string {
 	}
 	note := ""
 	if s.Peak != nil {
-		note = "peak " + tokenCount(s.Peak.Tokens) + " " + p.g.sep + " " + p.dayLabel(s.Peak.Date)
+		note = "peak " + statsfmt.TokenCount(s.Peak.Tokens) + " " + p.g.sep + " " + p.dayLabel(s.Peak.Date)
 	}
 	line, span := p.sparkline()
 	first, last := p.dayLabel(s.Daily[0].Date), p.dayLabel(s.Daily[len(s.Daily)-1].Date)
@@ -442,9 +442,9 @@ func (p *statsPrinter) delta(m stats.Measure) string {
 	pct := math.Round(*m.ChangePct)
 	switch {
 	case pct > 0:
-		return p.g.up + " " + commaInt(int64(pct)) + "%"
+		return p.g.up + " " + statsfmt.CommaInt(int64(pct)) + "%"
 	case pct < 0:
-		return p.g.down + " " + commaInt(int64(-pct)) + "%"
+		return p.g.down + " " + statsfmt.CommaInt(int64(-pct)) + "%"
 	}
 	return "no change"
 }
@@ -453,14 +453,14 @@ func commaMeasure(m stats.Measure) string {
 	if m.Value == nil {
 		return "unknown"
 	}
-	return commaInt(int64(math.Round(*m.Value)))
+	return statsfmt.CommaInt(int64(math.Round(*m.Value)))
 }
 
 func tokenMeasure(m stats.Measure) string {
 	if m.Value == nil {
 		return "unknown"
 	}
-	return tokenCount(int64(math.Round(*m.Value)))
+	return statsfmt.TokenCount(int64(math.Round(*m.Value)))
 }
 
 func (p *statsPrinter) costMeasureText(o stats.Overview) string {
@@ -477,7 +477,7 @@ func (p *statsPrinter) costText(usd *float64, approximate, partial, precise bool
 	if usd == nil {
 		return "unpriced"
 	}
-	text := money(p.s.Prices.Currency, *usd, precise)
+	text := statsfmt.Money(p.s.Prices.Currency, *usd, precise)
 	if approximate {
 		text = "~" + text
 		p.approx = true
@@ -603,11 +603,11 @@ func (p *statsPrinter) agents() []string {
 	for _, a := range p.s.Agents {
 		labels = append(labels, archive.DisplayLine(a.Label))
 		bar.shares = append(bar.shares, a.SessionShare)
-		sessions = append(sessions, commaInt(int64(a.Sessions)))
+		sessions = append(sessions, statsfmt.CommaInt(int64(a.Sessions)))
 		tokens = append(tokens, "unknown")
 		costs = append(costs, "n/a")
 		if a.Tokens != nil {
-			tokens[len(tokens)-1] = tokenCount(*a.Tokens)
+			tokens[len(tokens)-1] = statsfmt.TokenCount(*a.Tokens)
 			costs[len(costs)-1] = p.costText(a.Cost.USD, a.Cost.Approximate, a.Cost.Partial, false)
 		}
 	}
@@ -617,7 +617,7 @@ func (p *statsPrinter) agents() []string {
 		sessionW = max(sessionW, len(n))
 	}
 	for i, a := range p.s.Agents {
-		shares[i] = padLeft(sessions[i], sessionW) + " " + padLeft(percent(a.SessionShare), 4)
+		shares[i] = padLeft(sessions[i], sessionW) + " " + padLeft(statsfmt.Percent(a.SessionShare), 4)
 	}
 	if !p.full {
 		bar = nil
@@ -646,8 +646,8 @@ func (p *statsPrinter) costByModel() []string {
 			// tokens are said instead.
 			bar.shares = append(bar.shares, -1)
 			costs = append(costs, "unpriced")
-			shares = append(shares, tokenCount(r.Tokens)+" tokens")
-			notes = append(notes, tokenCount(r.Tokens)+" tokens")
+			shares = append(shares, statsfmt.TokenCount(r.Tokens)+" tokens")
+			notes = append(notes, statsfmt.TokenCount(r.Tokens)+" tokens")
 			continue
 		}
 		share := 0.0
@@ -656,7 +656,7 @@ func (p *statsPrinter) costByModel() []string {
 		}
 		bar.shares = append(bar.shares, share)
 		costs = append(costs, p.costText(r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false))
-		shares = append(shares, percent(share))
+		shares = append(shares, statsfmt.Percent(share))
 		notes = append(notes, "")
 	}
 	var lines []string
@@ -689,11 +689,11 @@ func (p *statsPrinter) topProjects() []string {
 			share = float64(r.Sessions) / float64(top)
 		}
 		bar.shares = append(bar.shares, share)
-		sessions = append(sessions, commaInt(int64(r.Sessions)))
+		sessions = append(sessions, statsfmt.CommaInt(int64(r.Sessions)))
 		tokens = append(tokens, "unknown")
 		costs = append(costs, "n/a")
 		if r.Tokens != nil {
-			tokens[len(tokens)-1] = tokenCount(*r.Tokens)
+			tokens[len(tokens)-1] = statsfmt.TokenCount(*r.Tokens)
 			costs[len(costs)-1] = p.costText(r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
 		}
 	}
@@ -748,8 +748,8 @@ func (p *statsPrinter) composition() []string {
 	}
 	var inline []string
 	for i, seg := range segments {
-		inline = append(inline, fmt.Sprintf("%s %s %s %s", p.g.segments[i], seg.label, percent(seg.Share), tokenCount(seg.Tokens)))
-		legend = append(legend, fmt.Sprintf("%s %s  %4s  %s", p.g.segments[i], padRight(seg.label, labelW), percent(seg.Share), tokenCount(seg.Tokens)))
+		inline = append(inline, fmt.Sprintf("%s %s %s %s", p.g.segments[i], seg.label, statsfmt.Percent(seg.Share), statsfmt.TokenCount(seg.Tokens)))
+		legend = append(legend, fmt.Sprintf("%s %s  %4s  %s", p.g.segments[i], padRight(seg.label, labelW), statsfmt.Percent(seg.Share), statsfmt.TokenCount(seg.Tokens)))
 	}
 	// The legend goes on one line under the bar when it fits, with three
 	// spaces between the segments or, when that is too wide for the
@@ -764,12 +764,12 @@ func (p *statsPrinter) composition() []string {
 		lines = append(lines, legend...)
 	}
 	if c.ReasoningOfOutput != nil && *c.ReasoningOfOutput > 0 {
-		lines = append(lines, p.dim("Output includes "+tokenCount(*c.ReasoningOfOutput)+" reasoning tokens."))
+		lines = append(lines, p.dim("Output includes "+statsfmt.TokenCount(*c.ReasoningOfOutput)+" reasoning tokens."))
 	}
 	labelWidth := len("Subagents")
 	if sub := p.s.Subagents; sub != nil {
 		lines = append(lines, padRight("Subagents", labelWidth)+"  "+
-			fmt.Sprintf("%s of tokens (%s) in %s", percent(sub.Share), tokenCount(sub.Tokens), plural(sub.Sessions, "session")))
+			fmt.Sprintf("%s of tokens (%s) in %s", statsfmt.Percent(sub.Share), statsfmt.TokenCount(sub.Tokens), plural(sub.Sessions, "session")))
 	}
 	if len(p.s.Skills) > 0 {
 		var names []string
@@ -781,7 +781,7 @@ func (p *statsPrinter) composition() []string {
 	if m := p.s.MCP; m != nil && len(m.Servers) > 0 {
 		var names []string
 		for _, srv := range m.Servers {
-			names = append(names, fmt.Sprintf("%s %s", truncateVisible(archive.DisplayLine(srv.Name), statsNameLimit), commaInt(srv.Calls)))
+			names = append(names, fmt.Sprintf("%s %s", truncateVisible(archive.DisplayLine(srv.Name), statsNameLimit), statsfmt.CommaInt(srv.Calls)))
 		}
 		lines = append(lines, p.hang(padRight("MCP", labelWidth)+"  ", strings.Join(names, " "+p.g.sep+" ")))
 	}
@@ -861,7 +861,7 @@ func (p *statsPrinter) highlights() []string {
 		lines = append(lines, p.hang(padRight("Costliest", labelW)+"  ", text))
 	}
 	if t := h.ToolErrors; t != nil {
-		text := fmt.Sprintf("%s of %s tool results flagged as errors, %s measured", ratePercent(t.Rate), commaInt(t.Results), plural(t.Sessions, "session"))
+		text := fmt.Sprintf("%s of %s tool results flagged as errors, %s measured", statsfmt.RatePercent(t.Rate), statsfmt.CommaInt(t.Results), plural(t.Sessions, "session"))
 		if t.UnknownSessions > 0 {
 			text += fmt.Sprintf(" (%d do not record them)", t.UnknownSessions)
 		}
@@ -889,22 +889,7 @@ func ordinalHeaviest(rank int) string {
 	if rank <= 1 {
 		return "heaviest"
 	}
-	return ordinal(rank) + "-heaviest"
-}
-
-func ordinal(n int) string {
-	suffix := "th"
-	if n%100 < 11 || n%100 > 13 {
-		switch n % 10 {
-		case 1:
-			suffix = "st"
-		case 2:
-			suffix = "nd"
-		case 3:
-			suffix = "rd"
-		}
-	}
-	return strconv.Itoa(n) + suffix
+	return statsfmt.Ordinal(rank) + "-heaviest"
 }
 
 // drivers says what likely made the costliest session costly.
@@ -917,7 +902,7 @@ func (p *statsPrinter) drivers(c *stats.CostliestSession) string {
 		parts = append(parts, plural(c.Subagents, "subagent"))
 	}
 	if slices.Contains(c.Drivers, stats.DriverLowCacheHit) && c.CacheHitRate != nil {
-		parts = append(parts, percent(*c.CacheHitRate)+" cache hit")
+		parts = append(parts, statsfmt.Percent(*c.CacheHitRate)+" cache hit")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -951,14 +936,14 @@ func (p *statsPrinter) grouped() []string {
 		} else {
 			labels = append(labels, r.Key)
 		}
-		sessions = append(sessions, commaInt(int64(r.Sessions)))
+		sessions = append(sessions, statsfmt.CommaInt(int64(r.Sessions)))
 		prompts, tokens = append(prompts, "unknown"), append(tokens, "unknown")
 		if r.Prompts != nil {
-			prompts[len(prompts)-1] = commaInt(*r.Prompts)
+			prompts[len(prompts)-1] = statsfmt.CommaInt(*r.Prompts)
 		}
 		costs = append(costs, "n/a")
 		if r.Tokens != nil {
-			tokens[len(tokens)-1] = tokenCount(*r.Tokens)
+			tokens[len(tokens)-1] = statsfmt.TokenCount(*r.Tokens)
 			costs[len(costs)-1] = p.costText(r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
 		}
 	}
@@ -1126,87 +1111,4 @@ func padLeft(text string, width int) string {
 		return strings.Repeat(" ", gap) + text
 	}
 	return text
-}
-
-// commaInt is n with thousands separators: 3,204.
-func commaInt(n int64) string {
-	sign := ""
-	if n < 0 {
-		sign, n = "-", -n
-	}
-	digits := strconv.FormatInt(n, 10)
-	var b strings.Builder
-	for i, r := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(r)
-	}
-	return sign + b.String()
-}
-
-// maxShownTokens and maxShownMoney are where a number is shown as a bound: a
-// saturated sum, not a measurement.
-const (
-	maxShownTokens = 1e15
-	maxShownMoney  = 1e12
-)
-
-// tokenCount is a token total in its shortest form: 812, 4.9K, 61M, 1.2B.
-// Under ten of a unit it keeps one decimal, beyond that none.
-func tokenCount(n int64) string {
-	if n >= maxShownTokens {
-		// Sums saturate at the largest int64; no real usage is near this.
-		return ">999T"
-	}
-	units := []struct {
-		size   float64
-		suffix string
-	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
-	value := float64(n)
-	for _, u := range units {
-		if value >= u.size {
-			v := value / u.size
-			if v < 9.95 {
-				return strings.TrimSuffix(strconv.FormatFloat(v, 'f', 1, 64), ".0") + u.suffix
-			}
-			return strconv.FormatFloat(math.Round(v), 'f', 0, 64) + u.suffix
-		}
-	}
-	return strconv.FormatInt(n, 10)
-}
-
-// money is an amount of currency. USD is "$" and any other currency its code
-// and a space. An amount from ten up has no cents unless precise.
-func money(currency string, amount float64, precise bool) string {
-	symbol := "$"
-	if currency != "" && currency != "USD" {
-		symbol = archive.DisplayLine(currency) + " "
-	}
-	if amount >= maxShownMoney {
-		return symbol + ">999B"
-	}
-	if !precise && amount >= 10 {
-		return symbol + commaInt(int64(math.Round(amount)))
-	}
-	whole, cents, _ := strings.Cut(strconv.FormatFloat(amount, 'f', 2, 64), ".")
-	n, _ := strconv.ParseInt(whole, 10, 64)
-	return symbol + commaInt(n) + "." + cents
-}
-
-// percent is a share (0 to 1) as a whole percentage, "<1%" for a nonzero
-// share under half a percent.
-func percent(share float64) string {
-	if share > 0 && share < 0.005 {
-		return "<1%"
-	}
-	return strconv.FormatFloat(math.Round(share*100), 'f', 0, 64) + "%"
-}
-
-// ratePercent is a rate (0 to 1) with one decimal under ten percent.
-func ratePercent(rate float64) string {
-	if rate > 0 && rate < 0.1 {
-		return strconv.FormatFloat(rate*100, 'f', 1, 64) + "%"
-	}
-	return percent(rate)
 }
