@@ -1,0 +1,260 @@
+package stats
+
+import (
+	"bytes"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"regexp"
+	"strings"
+	"time"
+)
+
+//go:embed prices.json
+var defaultPricesJSON []byte
+
+// PriceTable is a dated, versioned list of per-model list prices, in
+// Currency per million tokens. It is what turns token counts into an
+// estimate: the estimate is only ever as current as AsOf, and only ever
+// covers the models the table names. A model that is not in the table is
+// unpriced, and every cost that includes its tokens says so (Cost.Partial);
+// the engine never substitutes a similar model's price.
+//
+// The built-in table is DefaultPriceTable. A person's own prices come from a
+// JSON file through ParsePriceTable, and replace or add to the built-in
+// entries with WithOverrides.
+type PriceTable struct {
+	// Version names the table's revision, for example "2026-09.1".
+	Version string `json:"version"`
+	// AsOf is the date (YYYY-MM-DD) the prices were read from Sources.
+	AsOf string `json:"as_of"`
+	// Currency is the ISO 4217 code of every price. It defaults to USD.
+	Currency string `json:"currency"`
+	// Sources are the pages the prices came from.
+	Sources []string `json:"sources,omitempty"`
+	// Notes states what the prices assume (speed, context, cache tier).
+	Notes  string       `json:"notes,omitempty"`
+	Models []ModelPrice `json:"models"`
+	// Overridden is set by WithOverrides: the table is the built-in one with
+	// a person's own entries applied, so its numbers are theirs.
+	Overridden bool `json:"overridden,omitempty"`
+}
+
+// ModelPrice is one model's price per million tokens. CacheWritePerMTok is
+// the rate for writing the prompt cache; a model with no separate cache-write
+// charge (OpenAI's) has it 0. Reasoning tokens have no price of their own:
+// they are part of the output tokens and cost what output costs.
+type ModelPrice struct {
+	// ID is the model id as the archive records it, in lower case and
+	// without a date suffix ("claude-opus-5-5"); see NormalizeModel.
+	ID string `json:"id"`
+	// Family is the short label cost-by-model groups the model under
+	// ("opus", "gpt-5"). It defaults to ID.
+	Family            string  `json:"family,omitempty"`
+	InputPerMTok      float64 `json:"input_per_mtok"`
+	OutputPerMTok     float64 `json:"output_per_mtok"`
+	CacheReadPerMTok  float64 `json:"cache_read_per_mtok"`
+	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
+}
+
+// priceFile is the wire form of a table: every price is a pointer so a file
+// that leaves one out is an error, not a silently free token type.
+type priceFile struct {
+	Version  string   `json:"version"`
+	AsOf     string   `json:"as_of"`
+	Currency string   `json:"currency"`
+	Sources  []string `json:"sources"`
+	Notes    string   `json:"notes"`
+	Models   []struct {
+		ID                string   `json:"id"`
+		Family            string   `json:"family"`
+		InputPerMTok      *float64 `json:"input_per_mtok"`
+		OutputPerMTok     *float64 `json:"output_per_mtok"`
+		CacheReadPerMTok  *float64 `json:"cache_read_per_mtok"`
+		CacheWritePerMTok *float64 `json:"cache_write_per_mtok"`
+	} `json:"models"`
+}
+
+// DefaultPriceTable returns the price table built into this release. Its
+// prices are list prices read from the pages in Sources on AsOf; they change
+// with releases, not at run time.
+func DefaultPriceTable() PriceTable {
+	table, err := ParsePriceTable(defaultPricesJSON)
+	if err != nil {
+		// prices.json is embedded and checked by TestDefaultPriceTableIsValid.
+		panic("stats: built-in price table is invalid: " + err.Error())
+	}
+	return table
+}
+
+// ParsePriceTable reads a price table from its JSON form (the format of the
+// built-in table). It rejects a table with no version or no models, a date
+// that is not YYYY-MM-DD, an empty or repeated model id, and any of the four
+// prices missing, negative, or not finite. Unknown fields are an error, so a
+// misspelled price name does not turn into a free token type.
+func ParsePriceTable(data []byte) (PriceTable, error) {
+	var file priceFile
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		return PriceTable{}, fmt.Errorf("price table is not valid JSON in the expected shape: %w", err)
+	}
+	if decoder.More() {
+		return PriceTable{}, errors.New("price table has content after its JSON object")
+	}
+	if strings.TrimSpace(file.Version) == "" {
+		return PriceTable{}, errors.New(`price table needs a "version"`)
+	}
+	if _, err := time.Parse("2006-01-02", file.AsOf); err != nil {
+		return PriceTable{}, fmt.Errorf(`price table "as_of" must be a date like 2026-09-29, got %q`, file.AsOf)
+	}
+	if len(file.Models) == 0 {
+		return PriceTable{}, errors.New(`price table needs at least one entry in "models"`)
+	}
+	table := PriceTable{
+		Version: file.Version, AsOf: file.AsOf, Currency: strings.ToUpper(strings.TrimSpace(file.Currency)),
+		Sources: file.Sources, Notes: file.Notes,
+	}
+	if table.Currency == "" {
+		table.Currency = "USD"
+	}
+	seen := map[string]bool{}
+	for i, entry := range file.Models {
+		id := NormalizeModel(entry.ID)
+		if id == "" {
+			return PriceTable{}, fmt.Errorf("price table model %d has no id", i+1)
+		}
+		if seen[id] {
+			return PriceTable{}, fmt.Errorf("price table lists model %q twice", id)
+		}
+		seen[id] = true
+		prices := []struct {
+			name  string
+			value *float64
+		}{
+			{"input_per_mtok", entry.InputPerMTok}, {"output_per_mtok", entry.OutputPerMTok},
+			{"cache_read_per_mtok", entry.CacheReadPerMTok}, {"cache_write_per_mtok", entry.CacheWritePerMTok},
+		}
+		for _, price := range prices {
+			if price.value == nil {
+				return PriceTable{}, fmt.Errorf("price table model %q is missing %q (use 0 for a token type that costs nothing)", id, price.name)
+			}
+			if *price.value < 0 || math.IsNaN(*price.value) || math.IsInf(*price.value, 0) {
+				return PriceTable{}, fmt.Errorf("price table model %q has an invalid %q", id, price.name)
+			}
+		}
+		family := strings.TrimSpace(entry.Family)
+		if family == "" {
+			family = id
+		}
+		table.Models = append(table.Models, ModelPrice{
+			ID: id, Family: family, InputPerMTok: *entry.InputPerMTok, OutputPerMTok: *entry.OutputPerMTok,
+			CacheReadPerMTok: *entry.CacheReadPerMTok, CacheWritePerMTok: *entry.CacheWritePerMTok,
+		})
+	}
+	return table, nil
+}
+
+// WithOverrides returns t with every entry of custom applied on top: an
+// entry for a model t already prices replaces it, any other is added. The
+// result takes custom's version, date, sources and notes and is marked
+// Overridden, so output built from it says the prices are the person's own.
+func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
+	currency := t.Currency
+	if custom.Currency != "" {
+		currency = custom.Currency
+	}
+	merged := PriceTable{
+		Version: custom.Version, AsOf: custom.AsOf, Currency: currency, Sources: custom.Sources,
+		Notes: custom.Notes, Overridden: true,
+	}
+	replaced := map[string]ModelPrice{}
+	for _, entry := range custom.Models {
+		replaced[NormalizeModel(entry.ID)] = entry
+	}
+	for _, entry := range t.Models {
+		if repl, ok := replaced[NormalizeModel(entry.ID)]; ok {
+			merged.Models = append(merged.Models, repl)
+			delete(replaced, NormalizeModel(entry.ID))
+			continue
+		}
+		merged.Models = append(merged.Models, entry)
+	}
+	for _, entry := range custom.Models {
+		if _, ok := replaced[NormalizeModel(entry.ID)]; ok {
+			merged.Models = append(merged.Models, entry)
+		}
+	}
+	return merged
+}
+
+// Lookup returns the price of a model id as the archive records it (any
+// case, with or without a date or context suffix), and whether the table
+// prices it.
+func (t PriceTable) Lookup(model string) (ModelPrice, bool) {
+	id := NormalizeModel(model)
+	for _, entry := range t.Models {
+		if NormalizeModel(entry.ID) == id {
+			return entry, true
+		}
+	}
+	return ModelPrice{}, false
+}
+
+var (
+	contextSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
+	dateSuffix    = regexp.MustCompile(`[-@]\d{8}$`)
+)
+
+// NormalizeModel is the form of a model id the price table is keyed by:
+// trimmed, lower case, without a bracketed suffix such as Claude Code's
+// "[1m]" context marker and without a trailing 8-digit date ("-20251001" or
+// "@20251001"). It does not map aliases: a bare "opus" stays "opus", which
+// no table prices, because it does not say which version answered.
+func NormalizeModel(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = contextSuffix.ReplaceAllString(id, "")
+	id = dateSuffix.ReplaceAllString(id, "")
+	return strings.TrimSpace(id)
+}
+
+// priceIndex is a table's entries by normalized id, for the many lookups one
+// Compute makes.
+type priceIndex map[string]ModelPrice
+
+func (t PriceTable) index() priceIndex {
+	index := priceIndex{}
+	for _, entry := range t.Models {
+		index[NormalizeModel(entry.ID)] = entry
+	}
+	return index
+}
+
+// price returns USD-like cost for tokens of one model, and whether the model
+// is priced.
+func (p priceIndex) price(model string, tokens tokenSet) (float64, bool) {
+	entry, ok := p[model]
+	if !ok {
+		return 0, false
+	}
+	const perMillion = 1e6
+	cost := float64(tokens.fresh)*entry.InputPerMTok +
+		float64(tokens.read)*entry.CacheReadPerMTok +
+		float64(tokens.write)*entry.CacheWritePerMTok +
+		float64(tokens.out)*entry.OutputPerMTok
+	return cost / perMillion, true
+}
+
+// label is the short name a model is grouped under in cost by model: its
+// price entry's family, or the normalized id when it is unpriced.
+func (p priceIndex) label(model string) string {
+	if entry, ok := p[model]; ok {
+		if entry.Family != "" {
+			return entry.Family
+		}
+		return entry.ID
+	}
+	return model
+}

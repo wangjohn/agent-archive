@@ -108,6 +108,14 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/stats` (the statistics engine) is a pure function of the metadata,
+  time, time zone and price table it is passed, so its tests build synthetic
+  `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
+  `TestStatsReadsNoClockOrEnvironment` keep it that way: it imports only
+  `archive`'s types and reads no clock, file or environment. Its default
+  prices are `internal/stats/prices.json`, dated and versioned; update the
+  file (and its `as_of` and `version`) from the pages in its `sources` when
+  list prices change.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
