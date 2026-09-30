@@ -2,4 +2,5 @@ background: loaded
 state: Waiting for capture
 code: awaiting_capture
 next_action: Review hook approval in Claude Code, then start a new session in @PROJECT@.
+headline: ! Waiting for the first Claude Code session
 screen: ✓ Background collector on       no scan yet

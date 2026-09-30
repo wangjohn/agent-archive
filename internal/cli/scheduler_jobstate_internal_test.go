@@ -1,25 +1,60 @@
 package cli
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// Characterization of the macOS scheduler (PR 5a-0): parseJobState over the
-// recorded launchctl print output of scheduler_jobstate_test.go. It calls the
-// parser directly, and moves with it (into the launchd adapter) in a later PR;
-// TestStatusBackgroundForEveryJobState reads the same files through status.
+// Characterization of the macOS scheduler (PR 5a-0), the part that names code
+// a later PR moves or removes: parseJobState moves into the launchd adapter,
+// and Env.JobState, LoadLaunchAgent and UnloadLaunchAgent give way to the
+// scheduler seam (5a-1). This file moves or changes with them, mechanically;
+// scheduler_jobstate_test.go pins the same answers through status and names
+// none of it.
+
+// TestParseJobStateOverRecordedOutput reads the recordings of
+// testdata/scheduler/launchctl-print with the parser itself.
 func TestParseJobStateOverRecordedOutput(t *testing.T) {
 	t.Parallel()
 	plist := filepath.Join(t.TempDir(), "Library", "LaunchAgents", "com.agent-archive.collector.plist")
-	for _, job := range printedJobs {
-		if got := parseJobState(recordedPrint(t, job.file, plist), job.failed, plist); got != job.want {
-			t.Errorf("%s: %s, want %s", job.file, got, job.want)
+	read := func(file string) string {
+		data, err := os.ReadFile(filepath.Join("testdata", "scheduler", "launchctl-print", file))
+		must(t, err)
+		return strings.ReplaceAll(string(data), "@PLIST@", plist)
+	}
+	for _, tc := range []struct {
+		file   string
+		failed error
+		want   string
+	}{
+		{"running.txt", nil, "running"},
+		{"loaded-not-running.txt", nil, "loaded"},
+		{"missing.txt", errors.New("exit status 113"), "missing"},
+		{"another-installation.txt", nil, "another_installation"},
+		{"no-path-line.txt", nil, "unknown"},
+		{"failed-unrelated.txt", errors.New("exit status 1"), "unknown"},
+		// A print that succeeded but names no file is unknown, whatever
+		// else it says; one that failed is unknown unless it says the
+		// service is missing, even when it names this plist.
+		{"missing.txt", nil, "unknown"},
+		{"running.txt", errors.New("signal: killed"), "unknown"},
+	} {
+		if got := parseJobState(read(tc.file), tc.failed, plist); got != tc.want {
+			t.Errorf("%s (error %v): %s, want %s", tc.file, tc.failed, got, tc.want)
 		}
 	}
-	// A failed print that still names the service missing is missing, and one
-	// that succeeded but describes no file is unknown, whatever else it says.
-	if got := parseJobState(recordedPrint(t, "missing.txt", plist), nil, plist); got != "unknown" {
-		t.Errorf("a successful print of a missing service: %s, want unknown", got)
-	}
+}
+
+// launchdAnswering is env asking launchd the way the program does, through
+// launchctl, with run answering for launchctl: the Env's scheduler stand-ins
+// (which setupTestEnv sets) are cleared, so status reaches the code that runs
+// launchctl print and reads its output.
+func launchdAnswering(t *testing.T, env Env, run func(args ...string) ([]byte, error)) Env {
+	t.Helper()
+	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	stubLaunchctl(t, run)
+	return env
 }

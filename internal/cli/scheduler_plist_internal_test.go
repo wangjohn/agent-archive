@@ -41,13 +41,13 @@ func TestCollectorLabelVectors(t *testing.T) {
 	}
 }
 
-// The plist for fixed inputs, byte for byte: a data directory that needs
-// escaping, an environment given out of order (written sorted), and a label
-// with a hash.
+// The plist for fixed inputs, byte for byte: an executable, a data directory
+// and an environment value that need escaping, an environment given out of
+// order (written sorted), and a label with a hash.
 func TestLaunchAgentBytesForFixedInputs(t *testing.T) {
 	t.Parallel()
-	plist, err := hooks.LaunchAgent("/opt/agent archive/bin/agent-archive", "/Users/alex/data & <more>", "com.agent-archive.collector.134b03ccc4cc",
-		map[string]string{"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "AWS_CONFIG_FILE": "/Users/alex/aws/config", "HTTPS_PROXY": "http://proxy.example:3128"})
+	plist, err := hooks.LaunchAgent("/opt/agent & archive/bin/agent-archive", "/Users/alex/data & <more>", "com.agent-archive.collector.134b03ccc4cc",
+		map[string]string{"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "AWS_CONFIG_FILE": "/Users/alex/aws/config", "HTTPS_PROXY": "http://proxy.example:3128/?a=1&b=<2>"})
 	must(t, err)
 	golden.Check(t, filepath.Join("testdata", "scheduler", "plists", "literal-fixed-inputs.plist"), plist)
 	plist, err = hooks.LaunchAgent("/usr/local/bin/agent-archive", "/Users/alex/.local/share/agent-archive", hooks.LaunchLabel, nil)

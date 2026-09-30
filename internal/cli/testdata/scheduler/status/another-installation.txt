@@ -2,4 +2,5 @@ background: another_installation
 state: Needs attention
 code: needs_attention
 next_action: Another agent-archive installation's collector runs under this installation's launchd label (@LABEL@), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.
+headline: ! Another installation's collector has this installation's label
 screen: ! Background collector belongs to another installation

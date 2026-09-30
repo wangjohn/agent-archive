@@ -2,4 +2,5 @@ background: missing
 state: Needs attention
 code: needs_attention
 next_action: Run agent-archive setup to restore the background collector.
+headline: ! The background collector isn't running
 screen: ! Background collector isn't running
