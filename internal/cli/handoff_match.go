@@ -3,8 +3,10 @@ package cli
 import (
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -51,6 +53,30 @@ func branchInNote(branch string) string {
 	return strings.ReplaceAll(cappedLine(branch, matchFieldWidth), "`", "'")
 }
 
+// wellFormedID is the only shape of archive session ID the program makes
+// (local.ID: 32 lowercase hex digits). An ID read from a registration or a
+// sidecar may be anything a writer put there, and is repeated to a person or
+// an agent only when it has this shape.
+var wellFormedID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// shownID is id for a message, or a placeholder when it is not well formed.
+func shownID(id string) string {
+	if wellFormedID.MatchString(id) {
+		return id
+	}
+	return "(unusual ID)"
+}
+
+// handoffCommandFor is the command that hands off the session with id, or the
+// command that finds it when id is not well formed (nothing free-form from a
+// sidecar or registration is repeated).
+func handoffCommandFor(id string) string {
+	if wellFormedID.MatchString(id) {
+		return "agent-archive handoff " + id
+	}
+	return "agent-archive list"
+}
+
 // matchFieldWidth is the most display columns of a session's own words (its
 // project name, its first prompt) the repository-match question shows.
 const matchFieldWidth = 60
@@ -58,12 +84,18 @@ const matchFieldWidth = 60
 // cappedLine is text as one plain line of at most limit display columns, cut
 // with an ellipsis: archive.DisplayLine (no controls, escape sequences, or
 // invisible format characters), then the cap. Use it for a string a bucket or
-// a transcript supplied that has to be shown in a fixed space.
+// a transcript supplied that has to be shown in a fixed space. Columns are
+// counted per character: DisplayLine has removed the joiners and emoji
+// presentation selectors, so a joined emoji counts as its parts.
 func cappedLine(text string, limit int) string {
 	// Nothing past this many bytes can be shown, and a hostile sidecar can
-	// be far longer than any name.
+	// be far longer than any name. The cut falls between characters.
 	if maxBytes := limit * 8; len(text) > maxBytes {
-		text = text[:maxBytes]
+		cut := maxBytes
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut]
 	}
 	return ellipsize(archive.DisplayLine(text), limit)
 }
@@ -100,21 +132,24 @@ func (r handoffResolver) acceptRepoMatch(match repoMatch) error {
 // without the person's say. The key comes from the current directory's git
 // configuration, which whoever wrote a repository controls, and a session's
 // key from a sidecar anyone who can write to the archive controls, so a
-// repository can claim another's origin; a path match cannot be steered that
-// way. On a terminal it names the session and asks, default No. Where it
-// cannot ask (a pipe, or a coding agent's shell) it refuses, naming only the
-// machine and start time, and the command that hands off that session by its
-// ID.
+// repository can claim another's origin. A path match cannot be steered by a
+// hostile repository that way; it can be forged by a writer of the archive,
+// who can compute a project ID (a hash of a path), so the archive stays
+// trusted only as far as its writers are. On a terminal the gate names the
+// session and asks, default No. Where it cannot ask (a pipe, or a coding
+// agent's shell) it refuses, printing the machine label and the start time
+// (both ours) and the command that hands off that session, only when its ID
+// is well formed; otherwise how to find it.
 //
 // That refusal is a speed bump, not a barrier: it stops a steered agent from
 // using the session by accident, and an agent can still run the command it
-// prints. Nothing free-form from the session or the bucket is printed there,
-// since an agent is who reads it.
+// prints. Nothing free-form from the session or the bucket, its ID included
+// unless well formed, is printed there, since an agent is who reads it.
 func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, stderr io.Writer) repoMatchGate {
 	return func(match repoMatch) error {
 		if !interactive {
 			terminal.Printf(stderr, "handoff: matched by repository (remote origin), not by path: %s\n", matchFacts(match, false))
-			terminal.Printf(stderr, "agent-archive: handoff: not using it. This session matched only by repository, not by path, and this run cannot ask the user. Ask the user whether to use it; they can run: %s\n", explicitHandoffCommand(match.id, opts))
+			terminal.Printf(stderr, "agent-archive: handoff: not using it. This session matched only by repository, not by path, and this run cannot ask the user. Ask the user whether to use it; %s\n", refusalCommand(match.id, opts))
 			return errRepoMatchNotUsed
 		}
 		terminal.Println(stderr, "handoff: matched by repository (remote origin), not by path")
@@ -149,8 +184,20 @@ func matchFacts(match repoMatch, words bool) string {
 	return strings.Join(facts, " · ")
 }
 
+// refusalCommand tells the person how to use the session: the command that
+// hands it off by its ID, only when the ID is well formed, else how to find
+// it.
+func refusalCommand(id string, opts handoffOptions) string {
+	if !wellFormedID.MatchString(id) {
+		return "they can find it with: agent-archive list"
+	}
+	return "they can run: " + explicitHandoffCommand(id, opts)
+}
+
 // explicitHandoffCommand is the command that hands off a session by its ID,
-// with the destination, harness, and --worktree the person already named.
+// with the destination, harness, and --worktree the person already named. It
+// leaves out the rest (--format, --output, --max-bytes, --branch, --project,
+// --source): the person adds what they want.
 func explicitHandoffCommand(id string, opts handoffOptions) string {
 	words := []string{"agent-archive", "handoff", id}
 	if opts.harness != "" {

@@ -318,10 +318,10 @@ has an older one at the same path, add `--source archive`.
   before. `git` must be installed, and sessions captured before you updated
   gain the key on the Mac that captured them, when the collector next
   refreshes them and the repository is still there.
-- **Branches are not compared.** When the session was on another branch than
-  the one you have checked out, `handoff` says so on stderr
-  (``handoff: session was on `feature/x`; you are on `main` ``) and tells the
-  receiving agent in the workspace lines, and continues anyway. The
+- **Branches are not compared.** When the session was on another branch
+  than the one you have checked out, `handoff` says so on stderr
+  (``handoff: session was on `feature/x`; you are on `main` ``) and tells
+  the receiving agent in the workspace lines, and continues anyway. The
   workspace lines also say when the session ran in a different directory
   than yours, so the agent checks paths against the tree in front of it.
 - **When nothing matches**, `handoff` says what it tried (the repository,
@@ -331,13 +331,18 @@ has an older one at the same path, add `--source archive`.
 A repository can name any origin, and so can anyone who can write to the
 archive, so the key is a convenience and not proof that a session is yours.
 When `--latest` reaches a session by repository and not by path, `handoff`
-therefore stops before reading any of it. On a terminal it names the session
+therefore stops before downloading any of it. On a terminal it names the session
 (this or another Mac, project, start time, first prompt, each cut short) and
-asks; the answer defaults to no, and nothing is printed or launched until you
-say yes. Where it cannot ask (a pipe, or an agent's shell, which has prompts
-off) it does not use the session: it says which machine and when it started
-and prints the command that does, `agent-archive handoff SESSION_ID`, and
-exits 1. That refusal is a speed bump for an agent that has been steered, not
+asks; the answer defaults to no, and nothing is printed or launched until
+you say yes (for a session on this Mac its transcript is read first, to show
+the first prompt, and stays on the Mac). Where it cannot ask (a pipe, or an
+agent's shell, which has prompts off) it does not use the session and exits
+1. It prints only which machine (this or another Mac), when the session
+started, and the command that does, `agent-archive handoff SESSION_ID`, with
+the `--harness`, `--to`, and `--worktree` you gave (not `--format`,
+`--output`, `--max-bytes`, or `--branch`; add them). If the session's ID is
+not 32 lowercase hexadecimal digits, it says to run `agent-archive list`
+instead. That refusal is a speed bump for an agent that has been steered, not
 a barrier: it can still run the command or name a session ID, so check what
 an agent is doing with a session from another computer. Naming a session
 yourself, or picking one in the picker, is never questioned. The reasons are

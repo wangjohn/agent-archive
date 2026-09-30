@@ -556,7 +556,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 		}
 		if err != nil {
 			if !errors.Is(err, collector.ErrNoTranscript) {
-				*skipped = append(*skipped, fmt.Sprintf("%s (%v)", c.reg.ArchiveSessionID, err))
+				*skipped = append(*skipped, fmt.Sprintf("%s (%v)", shownID(c.reg.ArchiveSessionID), err))
 			}
 			continue
 		}
@@ -565,7 +565,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 				return handoffTarget{}, false, err
 			}
 		}
-		target.describe = fmt.Sprintf("%s session %s, active %s (%s)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active), machineThis)
+		target.describe = fmt.Sprintf("%s session %s, active %s (%s)", cappedLine(c.reg.Harness.Name, 20), shownID(c.reg.ArchiveSessionID), relativeAge(now, c.active), machineThis)
 		return target, true, nil
 	}
 	return handoffTarget{}, false, nil
@@ -626,7 +626,7 @@ func (r handoffResolver) firstArchive(a archiveMatches, candidates []archive.Met
 				return handoffTarget{}, false, err
 			}
 		}
-		describe := fmt.Sprintf("%s session %s, captured %s (%s)", m.Harness.Name, m.SessionID, relativeAge(now, m.CapturedAt), machine)
+		describe := fmt.Sprintf("%s session %s, captured %s (%s)", cappedLine(m.Harness.Name, 20), shownID(m.SessionID), relativeAge(now, m.CapturedAt), machine)
 		target, err := r.fromArchive(a.store, key, describe)
 		return target, true, err
 	}
@@ -741,14 +741,17 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 	} else {
 		b.WriteString(".\nTried this directory's path only: it is not in a git repository with a remote\nnamed origin, so it cannot match by repository. Matching a session from another\nmachine by repository needs that remote (see `git remote -v`); without it, the\nrepository must be at the same path.")
 	}
-	b.WriteString("\nSessions captured before repository keys (parser 0.16.0) carry none until they are\nrefreshed on the Mac that captured them. Recent archived sessions:\n")
+	if r.repoKey != "" {
+		b.WriteString("\nSessions captured before repository keys (parser 0.16.0) carry none until they are\nrefreshed on the Mac that captured them.")
+	}
+	b.WriteString(" Recent archived sessions:\n")
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for i, m := range sessions {
 		if i == handoffFallbackRows {
 			break
 		}
 		// The table is built in memory, where writes cannot fail.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\tagent-archive handoff %s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID), cappedLine(m.SessionID, 64))
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
 	}
 	_ = tw.Flush()
 	return errors.New(strings.TrimRight(b.String(), "\n"))

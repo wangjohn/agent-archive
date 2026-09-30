@@ -314,7 +314,7 @@ session running the command, unless --to is given.
                         at this path, else one from another checkout of the
                         same repository (its remote origin), such as on
                         another Mac. A match by repository alone is named
-                        before anything is read and, on a terminal, asked
+                        before anything is downloaded and, on a terminal, asked
                         about (default no); with no terminal it is refused
                         and the SESSION_ID command printed, since a
                         repository chooses its own origin

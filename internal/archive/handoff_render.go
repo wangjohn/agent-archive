@@ -397,10 +397,12 @@ func displayValue(v reflect.Value) reflect.Value {
 //
 // It also removes invisible format characters (Unicode category Cf: zero-width
 // spaces and joiners, the byte-order mark, soft hyphens, the Arabic letter
-// mark) and the tag characters U+E0000 to U+E007F, which show nothing on a
-// terminal but can carry text a model reads. That costs a joined emoji its
-// joiners (it shows as its parts) and a Persian word its non-joiner, which is
-// why displayText, which shapes a handoff's own content, leaves them.
+// mark), the tag characters U+E0000 to U+E007F, the variation selectors,
+// U+034F, the Hangul fillers, and the braille blank, which show nothing on a
+// terminal but can carry text a model reads or pad a line. That costs a joined
+// emoji its joiners and emoji presentation selector (it shows as its parts)
+// and a Persian word its non-joiner, which is why displayText, which shapes a
+// handoff's own content, leaves them.
 //
 // It does not cap length: a caller that shows a string in a fixed space cuts
 // it after this, so what is cut is what would have been shown.
@@ -421,10 +423,21 @@ func stripInvisible(s string) string {
 	}, s)
 }
 
-// isInvisibleFormat reports whether r is a format character or a tag
-// character: no glyph of its own.
+// isInvisibleFormat reports whether r has no glyph of its own: a format
+// character, a tag character, a variation selector (also the Mongolian ones),
+// the combining grapheme joiner, a Hangul filler, or the braille blank.
 func isInvisibleFormat(r rune) bool {
-	return unicode.Is(unicode.Cf, r) || (r >= 0xE0000 && r <= 0xE007F)
+	switch {
+	case unicode.Is(unicode.Cf, r):
+		return true
+	case r >= 0xE0000 && r <= 0xE007F, r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF, r >= 0x180B && r <= 0x180D, r == 0x180F:
+		return true
+	}
+	switch r {
+	case 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800:
+		return true
+	}
+	return false
 }
 
 // DisplayJSON returns JSON text (from encoding/json) safe to print to a

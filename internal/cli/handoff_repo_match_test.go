@@ -127,7 +127,8 @@ func TestArchiveHandoffCandidatesSplitByPathAndRepository(t *testing.T) {
 
 // The point of the change: a session captured on another computer, at another
 // path, is found by the repository's origin. On a terminal the person is
-// shown what matched and agrees before anything is printed.
+// shown what matched (from the sidecar, before any source is read) and
+// agrees before anything is printed.
 func TestHandoffLatestFindsAnotherMachinesSessionByRepository(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "claude", claudeHandoffTranscript)

@@ -49,19 +49,24 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   own work, not authentication. What limits the damage:
   - A session that matched only by key never displaces one that matched by
     path, so this cannot turn a working `--latest` into something else.
-  - `handoff` puts a key-only match to a check before reading any of the
+  - `handoff` puts a key-only match to a check before downloading any of the
     session's source. On a terminal it names the session (this or another
     Mac, project, start time, first prompt, each cut short) and asks, default
-    No. Where it cannot ask (a pipe, or an agent's shell) it refuses, shows
-    only the machine and the start time, and prints the command that selects
-    the session by ID, worded for the person. It prints no text from the
-    session or the archive there, since an agent reads it.
+    No. Where it cannot ask (a pipe, or an agent's shell) it refuses and
+    prints only the machine (this or another Mac), the start time, and the
+    command that selects the session by ID, worded for the person, with the
+    ID only when it is 32 lowercase hexadecimal digits (otherwise "agent-archive
+    list"). It prints no other text from the session or the archive there,
+    since an agent reads it. The command carries the agent and `--worktree`
+    you gave, not `--format`, `--output`, `--max-bytes`, or `--branch`.
   - That refusal is a speed bump, not a barrier. It stops a steered agent
     from using such a session by accident; an agent can still name the
     session ID itself, run the command it printed, or set
     `AGENT_ARCHIVE_NONINTERACTIVE=0`.
   - A path match, an explicit session ID, and the picker are never
-    questioned, because nothing there is chosen by a key.
+    questioned, because nothing there is chosen by a key. A path match cannot
+    be steered by a hostile repository, but a writer of the archive can forge
+    one (a project ID is a hash of a path), which is the previous point again.
   This does not protect against someone who can write to your prefix, who can
   plant sessions outright (see the previous point), and nothing stops you
   from answering yes.

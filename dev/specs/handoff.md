@@ -199,26 +199,39 @@ the metadata sidecar; R1 records it).
   label; the key is also a hash of a guessable public URL. So a repository
   that names another repository's origin, or a planted session, can make
   `--latest` reach a session that matched only by repository. A path match
-  cannot be steered that way. When the search reaches a repository-only
-  match, `handoffResolver.acceptRepoMatch` puts it to a gate
-  (`newRepoMatchGate`), **before any of the session's source is read**: an
-  archived session is judged from its sidecar alone, so a hostile bucket
-  cannot make every `--latest` download a large bundle first. The
-  `handoff: using ...` line is printed only after the gate passes.
+  cannot be steered that way by a hostile repository (it names no path of
+  its own); it can be forged by a writer of the bucket, who can compute a
+  project ID (a hash of a path), so the archive is trusted as far as its
+  writers are. When the search reaches a repository-only match,
+  `handoffResolver.acceptRepoMatch` puts it to a gate (`newRepoMatchGate`)
+  before it is used. An archived session is judged from its sidecar alone:
+  none of its source bundle is read until the gate passes, so a hostile
+  bucket cannot make every `--latest` download a large bundle first. For a
+  session on this machine the local transcript is read first (its first
+  prompt is needed for the question), and nothing is printed or launched
+  until the gate passes. The `handoff: using ...` line is printed only
+  after the gate passes.
   - On a terminal (both stdin and stdout, with `AGENT_ARCHIVE_NONINTERACTIVE`
     off) stderr says `handoff: matched by repository (remote origin), not by
     path`, then the machine (this or another), the project name, the start
     time and the first prompt (the sidecar's `title`, or the transcript's for
     a session on this machine), each of the session's own words shown through
     `archive.DisplayLine` and cut to 60 columns, and asks `Hand off this
-    session?`, default No. Nothing is printed to stdout, launched, or read
-    from the source before a yes.
+    session?`, default No. Nothing is printed to stdout or launched, and no
+    archived source is read, before a yes.
   - Where it cannot ask (a pipe, or a coding agent's shell) it exits 1. It
-    prints only the machine, the start time (both ours) and the command that
-    hands off that session by its ID (with the `--harness`, `--to`, and
-    `--worktree` given), worded for the person: `Ask the user whether to use
-    it; they can run: ...`. No free text from the sidecar or the transcript
-    is printed there, since an agent reads it.
+    prints only the machine label and the start time (both ours) and, worded
+    for the person, `Ask the user whether to use it; they can run: agent-archive
+    handoff ID ...`, with the `--harness`, `--to`, and `--worktree` given (not
+    `--format`, `--output`, `--max-bytes`, `--branch`, `--project`, or
+    `--source`: the person adds what they want). The ID is printed only when
+    it is well formed (32 lowercase hexadecimal digits, the one shape the
+    program makes); an ID from a sidecar or a registration can be anything, of
+    any length, so otherwise the message says `they can find it with:
+    agent-archive list`. No other text from the sidecar or the transcript is
+    printed there, since an agent reads it. The same rule covers the IDs in
+    the `handoff: using` line and in the list of recent sessions that ends a
+    failed `--latest`.
   - **That refusal is a speed bump, not a barrier.** It stops a steered agent
     from using the session by accident. An agent can still run the printed
     command, name a session ID itself, or set `AGENT_ARCHIVE_NONINTERACTIVE=0`.

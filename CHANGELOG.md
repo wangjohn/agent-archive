@@ -287,13 +287,14 @@ follow [Semantic Versioning](https://semver.org/).
   without an `origin` matches by path only, as before, and a fork's `origin`
   is the fork's. A session that ran at the same path always comes first. A
   repository chooses its own `origin`, so when `--latest` can only find a
-  session by repository it says so before reading any of it (machine, project,
+  session by repository it says so before downloading any of it (machine, project,
   start time, first prompt) and, on a terminal, asks before going on (default
   no); where nothing can be asked (a pipe, or inside a coding agent) it
   refuses, printing only the machine and start time and the `handoff
-  SESSION_ID` command for you to run. That refusal slows a steered agent; it
-  does not stop one that runs the command. Path matches, explicit session IDs, and the
-  picker behave as before. `--to` launches an archived session from another
+  SESSION_ID` command for you to run (`agent-archive list` when the ID is not
+  a normal one). That refusal slows a steered agent; it does not stop one
+  that runs the command. Path matches, explicit session IDs, and the picker
+  behave as before. `--to` launches an archived session from another
   computer the same way, and the handoff tells the agent the session was on
   another branch or in another directory when it was. When nothing matches,
   the message says what was tried and how to make a match possible. See the
