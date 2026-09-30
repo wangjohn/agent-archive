@@ -280,11 +280,11 @@ func TestRefreshRefreshesAndRemovesEverySkill(t *testing.T) {
 	if code, stdout, _ := refreshRun(t, env); code != 0 || stdout != "nothing to refresh\n" {
 		t.Fatalf("second run: %d %q", code, stdout)
 	}
-	setupYes(t, env, "", 0, "--yes", "--no-skills")
-	wantSkillFiles(t, nil, all)
 	if calls := launchd.all(); len(calls) != 0 {
 		t.Errorf("refresh asked launchd: %v", calls)
 	}
+	setupYes(t, env, "", 0, "--yes", "--no-skills")
+	wantSkillFiles(t, nil, all)
 }
 
 // With nothing to change, refresh says so in one line, exits 0, writes no
