@@ -15,6 +15,7 @@
 package stats
 
 import (
+	"math"
 	"sort"
 	"time"
 
@@ -40,6 +41,9 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 	table := opts.PriceTable
 	if table.Version == "" && len(table.Models) == 0 {
 		table = DefaultPriceTable()
+	}
+	if table.Currency == "" {
+		table.Currency = "USD" // as ParsePriceTable defaults it
 	}
 	prices := table.index()
 
@@ -177,8 +181,11 @@ func floatPtr[T int | int64](p *T) *float64 {
 func measure(value, previous *float64) Measure {
 	var change *float64
 	if value != nil && previous != nil && *previous != 0 {
-		pct := (*value - *previous) / *previous * 100
-		change = &pct
+		// A price table can make both sides tiny or huge; a change that
+		// overflows is unknown, since JSON cannot carry Inf or NaN.
+		if pct := (*value - *previous) / *previous * 100; !math.IsInf(pct, 0) && !math.IsNaN(pct) {
+			change = &pct
+		}
 	}
 	return Measure{Value: value, Previous: previous, ChangePct: change}
 }

@@ -47,8 +47,13 @@ func TestDefaultPriceTableIsValid(t *testing.T) {
 			if !near(m.CacheWritePerMTok, 1.25*m.InputPerMTok) || !near(m.CacheReadPerMTok, readMultiplier*m.InputPerMTok) {
 				t.Errorf("%s cache prices do not follow Anthropic's multipliers: %+v", m.ID, m)
 			}
+		} else if strings.HasPrefix(m.ID, "gpt-6") || strings.HasPrefix(m.ID, "gpt-5.6") {
+			// The GPT-6 and GPT-5.6 families list a cache-write price of 1.25x input.
+			if !near(m.CacheWritePerMTok, 1.25*m.InputPerMTok) {
+				t.Errorf("%s: cache write should be 1.25x input: %+v", m.ID, m)
+			}
 		} else if m.CacheWritePerMTok != 0 {
-			t.Errorf("%s: OpenAI has no cache-write charge: %+v", m.ID, m)
+			t.Errorf("%s: older OpenAI models have no cache-write charge: %+v", m.ID, m)
 		}
 	}
 	for _, source := range table.Sources {
@@ -116,6 +121,17 @@ func TestNormalizeModel(t *testing.T) {
 		"gpt-5.3-codex":                "gpt-5.3-codex",
 		"":                             "",
 		"claude-sonnet-4-20250514[1m]": "claude-sonnet-4",
+		// The same model named by a cloud platform.
+		"anthropic/claude-opus-5-5":                            "claude-opus-5-5",
+		"openai/gpt-5":                                         "gpt-5",
+		"anthropic.claude-opus-4-1-20250805-v1:0":              "claude-opus-4-1",
+		"us.anthropic.claude-sonnet-4-5-20250929-v1:0":         "claude-sonnet-4-5",
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0":      "claude-haiku-4-5",
+		"us-gov.anthropic.claude-sonnet-4-5-v1":                "claude-sonnet-4-5",
+		"publishers/anthropic/models/claude-opus-4-5@20251101": "claude-opus-4-5",
+		"anthropic.":                "",
+		"/":                         "",
+		"claude-3-5-haiku-20241022": "claude-3-5-haiku",
 	} {
 		if got := NormalizeModel(in); got != want {
 			t.Errorf("NormalizeModel(%q) = %q, want %q", in, got, want)

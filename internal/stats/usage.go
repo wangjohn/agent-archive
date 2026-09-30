@@ -54,8 +54,10 @@ func value(p *int) int64 {
 // and reports whether any of them was reported at all (a nil field is
 // unknown, and a set with no reported field is not data). Storage keeps each
 // harness's own meaning; the normalization happens only here: Codex's input
-// includes its cached input, so its fresh input is input minus cache read
-// (never below 0). Every other harness's input already leaves the cache out.
+// includes its cached input and its cache-write input (its total_tokens is
+// input plus output, so neither is added on top), so its fresh input is input
+// minus cache read and cache write (never below 0). Every other harness's
+// input already leaves the cache out.
 func normalizedTokens(harness string, input, output, read, write, reasoning *int) (tokenSet, bool) {
 	has := input != nil || output != nil || read != nil || write != nil
 	set := tokenSet{
@@ -64,7 +66,7 @@ func normalizedTokens(harness string, input, output, read, write, reasoning *int
 		cacheKnown: read != nil || write != nil,
 	}
 	if harness == archive.HarnessCodex {
-		set.fresh = max(set.fresh-set.read, 0)
+		set.fresh = max(set.fresh-satAdd(set.read, set.write), 0)
 	}
 	return set, has
 }

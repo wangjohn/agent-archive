@@ -91,7 +91,13 @@ const MCPScope = "Claude Code and Cursor only; Codex MCP calls are not recorded.
 
 // Stats is everything `agent-archive stats` shows, computed by Compute from
 // session metadata. It marshals to JSON. Throughout, a null (nil pointer) is
-// unknown, never zero: it means no session in scope reported the number.
+// unknown, never zero: it means no session in scope reported the number. A
+// section or field marked omitempty (Peak, Composition, Subagents, Skills,
+// MCP, Groups, each Highlights entry, and PriceInfo's optional fields) is left
+// out of the JSON when it has nothing to show, not sent as null; every other
+// key is always present, and every other list is [] when empty, never null.
+// Numbers are never NaN or infinite, which JSON cannot carry: a value that
+// would be one is unknown (null) instead.
 //
 // Scope and sessions. Only the window's sessions count, by captured_at (what
 // list and --since use), not started_at; an imported session's captured_at
@@ -308,7 +314,8 @@ type Segment struct {
 }
 
 // Composition splits the window's tokens four ways. Fresh input is input
-// that was not read from the cache (Codex's input minus its cached input),
+// that was not read from or written to the cache (Codex's input minus its
+// cached input and cache-write input: its total_tokens is input plus output),
 // so the four add up to Total without counting anything twice.
 // ReasoningOfOutput is the part of Output spent reasoning: a subset, never
 // an addition.
