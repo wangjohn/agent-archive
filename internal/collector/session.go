@@ -518,7 +518,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
 func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
-	rendered, err := renderPublication(candidate, s.reg, s.now, s.opts)
+	rendered, err := renderPublication(candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -577,7 +577,7 @@ type renderedPublication struct {
 
 // renderPublication compresses candidate, derives its object keys, and
 // builds its metadata document.
-func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options) (renderedPublication, error) {
+func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
 	compressed, err := archive.BuildCompressedSource(candidate)
 	if err != nil {
 		return renderedPublication{}, fmt.Errorf("compress source bundle: %w", err)
@@ -594,6 +594,7 @@ func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegist
 	metadata, buildErr := archive.BuildMetadata(candidate, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: opts.parserVersion()})
 	metadata.ApplyRegistrationProvenance(reg)
 	metadata.ApplyProjectName(reg.ProjectRoot)
+	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return renderedPublication{}, fmt.Errorf("derive metadata: %w", buildErr)
 	}

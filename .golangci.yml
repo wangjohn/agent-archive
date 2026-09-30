@@ -65,7 +65,8 @@ linters:
               desc: retention deletes through its own DeleteWholeSession
         # The hook runtime runs on the user's turn. internal/cli owns flags,
         # prompts, terminal output and the exit code; capture does none of
-        # them, and nothing a hook must never do: run a program (launchctl),
+        # them, and nothing a hook must never do: run a program itself (launchctl;
+        # the git lookup for a repository key is passed in by cli),
         # open the Keychain or a bucket, or use the network.
         # TestCaptureImportBoundary checks the same on every platform.
         capture-is-not-the-command-line:
@@ -80,7 +81,7 @@ linters:
             - pkg: golang.org/x/term
               desc: a hook never prompts
             - pkg: os/exec
-              desc: a hook runs no other program
+              desc: capture spawns nothing itself; the one program a hook runs (git, for the repository key) is a lookup cli passes in
             - pkg: os/signal
               desc: cli owns process signals
             - pkg: net$
@@ -206,6 +207,7 @@ linters:
             - "!$test"
             - "!**/internal/cli/*.go"
             - "!**/internal/cursorstore/*.go"
+            - "!**/internal/gitremote/*.go"
             - "!**/internal/scheduler/host/*.go"
             - "!**/internal/termlaunch/*.go"
             - "!**/internal/testutil/**"

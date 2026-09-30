@@ -95,6 +95,20 @@ follow [Semantic Versioning](https://semver.org/).
   through the skill is in
   [privacy](docs/security/privacy.md#what-an-agent-can-read-through-the-skill).
   See [agent skills](docs/guides/agent-skills.md).
+  Claude Code only `agent-archive status` runs without asking; the rest asks
+  once, since no permission rule can allow `handoff` without allowing
+  `handoff --to`. See [agent skills](docs/guides/agent-skills.md).
+- Sessions in a git repository now carry a `repo_key` in their metadata: a
+  hash of the repository's `origin` address (credentials, scheme, port, and
+  `.git` removed, so SSH and HTTPS clones of one repository agree), which
+  identifies the repository wherever it is checked out. Only the hash is
+  stored, never the address; the
+  [privacy page](docs/security/privacy.md) explains what a hash of a known
+  address does and does not hide. Parser version is now `0.16.0`, so existing
+  sessions gain the field on the next metadata refresh, on the Mac that
+  captured them and only while the repository is still there. Nothing uses it
+  yet: a later release matches `handoff` to a session by repository rather
+  than checkout path.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -223,7 +237,7 @@ follow [Semantic Versioning](https://semver.org/).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). They arrive with parser `0.13.0`; this release ships `0.14.0`,
+  paths). They arrive with parser `0.13.0`; this release ships `0.16.0`,
   so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
