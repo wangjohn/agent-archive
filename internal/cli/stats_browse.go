@@ -237,18 +237,20 @@ func (b *statsBrowser) handle(k key) (quit bool) {
 }
 
 // viewKey applies a key at a view: scrolling, another view or window, help, h,
-// or q, Esc and Ctrl-D to quit.
+// or q and Ctrl-D to quit. Esc does not quit: on a slow link an arrow key can
+// arrive in two reads, and the first is a lone Esc (the session browser's Esc
+// does not go back for the same reason).
 func (b *statsBrowser) viewKey(k key) (quit bool) {
 	if move, ok := scrollKeys[k.kind]; ok {
 		b.scroll(move)
 		return false
 	}
 	switch k.kind {
-	case keyEscape, keyEndOfInput:
+	case keyEndOfInput:
 		return true
 	case keyRune:
 		return b.viewRune(unicode.ToLower(k.r))
-	case keyEnter, keyBackspace, keyLeft, keyRight, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+	case keyEscape, keyEnter, keyBackspace, keyLeft, keyRight, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
 		// Scrolled above, or nothing to do.
 	}
 	return false

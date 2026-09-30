@@ -13,6 +13,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/stats"
 )
 
+// clockTime is a time of day.
+type clockTime struct {
+	hour   int
+	minute int
+	second int
+}
+
+// moment is the local time a run happens at.
+type moment struct {
+	year   int
+	month  int
+	day    int
+	hour   int
+	minute int
+}
+
 // statsShape is a way an archive can be laid out over time, to check that a
 // window means the same wherever it is counted from.
 type statsShape struct {
@@ -26,15 +42,15 @@ func spread(harness, model string, now time.Time, loc *time.Location, n, step, h
 	var out []syntheticSession
 	for i := range n {
 		captured := time.Date(year, month, day-i*step, hour, 30, 0, 0, loc)
-		s := syntheticSession{
+		var perModel []modelTokenSpec
+		if tokens {
+			perModel = []modelTokenSpec{{model, 1000 * (i + 1), 500 * (i + 1), 20_000 * (i + 1), 100 * i}}
+		}
+		out = append(out, syntheticSession{
 			id: fmt.Sprintf("%s-%s-%d-%d-%d", harness, model, n, step, i), harness: harness, project: fmt.Sprintf("project-%d", i%4),
 			captured: captured, models: []string{model}, turns: 3 + i%5, messages: 20, toolResults: 10, errors: i % 3,
-			skills: []string{"review-pr"}, mcp: map[string]int{"github": 1 + i%3},
-		}
-		if tokens {
-			s.perModel = []modelTokenSpec{{model, 1000 * (i + 1), 500 * (i + 1), 20_000 * (i + 1), 100 * i}}
-		}
-		out = append(out, s)
+			skills: []string{"review-pr"}, mcp: map[string]int{"github": 1 + i%3}, perModel: perModel,
+		})
 	}
 	return out
 }
@@ -72,8 +88,8 @@ func statsShapes() []statsShape {
 			year, month, day := now.In(loc).Date()
 			var out []syntheticSession
 			for _, back := range []int{0, 1, 6, 7, 8, 13, 14, 15, 29, 30, 31, 59, 60, 61, 89, 90, 91, 119, 120, 121, 179, 180, 181, 200, 300} {
-				for j, edge := range []struct{ h, m, s int }{{0, 0, 0}, {23, 59, 59}, {12, 0, 0}} {
-					captured := time.Date(year, month, day-back, edge.h, edge.m, edge.s, 0, loc)
+				for j, edge := range []clockTime{{0, 0, 0}, {23, 59, 59}, {12, 0, 0}} {
+					captured := time.Date(year, month, day-back, edge.hour, edge.minute, edge.second, 0, loc)
 					out = append(out, syntheticSession{
 						id: fmt.Sprintf("edge-%d-%d", back, j), harness: "claude", project: "edge", captured: captured,
 						models: []string{"claude-opus-5"}, turns: 2, messages: 4, toolResults: 4,
@@ -114,7 +130,7 @@ func fetched(sessions []archive.Metadata, now time.Time, loc *time.Location, win
 func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 	t.Parallel()
 	zones := []string{"UTC", "America/New_York", "Australia/Lord_Howe", "Pacific/Kiritimati", "Europe/London", "America/St_Johns"}
-	moments := []struct{ y, m, d, h, min int }{
+	moments := []moment{
 		{2026, 9, 29, 12, 0},
 		{2026, 3, 9, 0, 30},   // the day after New York's clocks went forward
 		{2026, 11, 2, 23, 59}, // the day after they went back, at the end of the day
@@ -140,7 +156,7 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, at := range moments {
-			now := time.Date(at.y, time.Month(at.m), at.d, at.h, at.min, 0, 0, loc)
+			now := time.Date(at.year, time.Month(at.month), at.day, at.hour, at.minute, 0, 0, loc)
 			for _, shape := range statsShapes() {
 				var metas []archive.Metadata
 				for _, s := range shape.build(now, loc) {
@@ -221,15 +237,15 @@ func hostileInputs() statsInputs {
 	var sessions []archive.Metadata
 	for i, name := range names {
 		for j := range 3 {
-			s := syntheticSession{
+			var perModel []modelTokenSpec
+			if j != 2 {
+				perModel = []modelTokenSpec{{"claude-opus-5", 1000, 1000, 100_000, 100}}
+			}
+			sessions = append(sessions, syntheticSession{
 				id: fmt.Sprintf("hostile-%d-%d", i, j), harness: []string{"claude", "codex", "cursor"}[j], project: name,
 				captured: statsNow.AddDate(0, 0, -j*3-i), models: []string{"claude-opus-5"}, turns: 3, messages: 10, toolResults: 5,
-				skills: []string{name}, mcp: map[string]int{name: 2},
-			}
-			if j != 2 {
-				s.perModel = []modelTokenSpec{{"claude-opus-5", 1000, 1000, 100_000, 100}}
-			}
-			sessions = append(sessions, s.build())
+				skills: []string{name}, mcp: map[string]int{name: 2}, perModel: perModel,
+			}.build())
 		}
 	}
 	return statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}

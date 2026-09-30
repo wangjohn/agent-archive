@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,22 @@ func TestStatsScreenSavesUnderTheDefaultName(t *testing.T) {
 	}
 	if string(data) == string(thirty) {
 		t.Error("the page saved from the 7 day window is the 30 day page")
+	}
+}
+
+// A name of spaces, or with spaces around it, is the name without them: the
+// screen never makes a file called " ".
+func TestStatsScreenSaveIgnoresSurroundingSpaces(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	runScreen(t, screenOptions{width: 100, height: 30, dir: dir}, "h", "  ", "\r", "h", " named.html ", "\r", "q")
+	var names []string
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{"agent-archive-stats-2026-09-29.html", "named.html"}) {
+		t.Errorf("saved as %q", names)
 	}
 }
 

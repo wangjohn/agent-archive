@@ -314,7 +314,7 @@ screen, like the `list` browser, so quitting leaves your scrollback as it was.
 | Home, End | Jump to the top or the bottom. |
 | `h` | Save the window on show as a web page (see [below](#share-it-as-a-web-page)). |
 | `?` | List the keys; any key that is not a scroll key closes the list. |
-| `q`, Esc, Ctrl-C | Quit. |
+| `q`, Ctrl-C, Ctrl-D | Quit. Esc does not quit: over a slow connection an arrow key can arrive in two pieces, and the first looks like a lone Esc. (At the file name prompt of `h`, Esc cancels.) |
 
 A view taller than the terminal is cut to fit and scrolls (the overview needs
 about 32 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more

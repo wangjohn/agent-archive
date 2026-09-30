@@ -14,7 +14,7 @@ follow [Semantic Versioning](https://semver.org/).
   (7, 30, 90 days) instantly from what was already read, the arrows, `j` `k`,
   PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
   `h` saves the redacted page as HTML (it asks for a file name and never
-  replaces a file) and `q`, Esc or Ctrl-C quit, leaving the terminal as it
+  replaces a file) and `q` or Ctrl-C quit, leaving the terminal as it
   was. The bar names the window `w` moves to next. It opens only when
   standard input and output are terminals (not a dumb one) and
   `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,

@@ -53,7 +53,7 @@ func (b *statsBrowser) helpLines(width int) []string {
 	heading("Other")
 	entry("h", "save this window as a redacted web page: asks for a file name, and never replaces a file")
 	entry("?", "this help; any key but a scroll key closes it")
-	entry("q Esc Ctrl-C", "quit")
+	entry("q Ctrl-C Ctrl-D", "quit; Esc does not, so an arrow key split in transit cannot close the screen")
 	lines = append(lines, "")
 	lines = append(lines, style.dim(hangingIndent("", "The saved page says project A, model A, and so on instead of your names, so it can be shared. To keep the real names, run agent-archive stats --html --include-names --output FILE.", width)))
 	// The dim paragraph is one string with line breaks: one line each.
@@ -132,6 +132,8 @@ func (b *statsBrowser) defaultHTMLName() string {
 // step (writeStatsHTMLFile). It returns the message to show: where the page
 // went, or why it was not written.
 func (b *statsBrowser) saveHTML(name string) string {
+	// A space typed by accident is not part of the name.
+	name = strings.TrimSpace(name)
 	if name == "" {
 		name = b.defaultHTMLName()
 	}

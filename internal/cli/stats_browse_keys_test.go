@@ -142,7 +142,7 @@ func TestStatsScreenHelp(t *testing.T) {
 	// The whole help, read at a tall terminal, names every key.
 	all := runScreen(t, screenOptions{width: 100, height: 60}, "?", "x", "q")
 	text := strings.Join(all.frames[1], "\n")
-	for _, want := range []string{"overview", "detail", "projects", "models", "agents", "7d, 30d, 90d", "PgUp PgDn", "Home End", "save this window", "q Esc Ctrl-C", "--include-names"} {
+	for _, want := range []string{"overview", "detail", "projects", "models", "agents", "7d, 30d, 90d", "PgUp PgDn", "Home End", "save this window", "q Ctrl-C Ctrl-D", "--include-names"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the help lacks %q:\n%s", want, text)
 		}
