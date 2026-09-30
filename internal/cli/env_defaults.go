@@ -31,8 +31,14 @@ func detectHarnesses(files hooks.Files) []string {
 
 // runLaunchctl runs launchctl with args. Tests replace it; nothing else
 // shells out to launchctl.
-var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
+var runLaunchctl = execLaunchctl
+
+// execLaunchctl is the launchctl on PATH, in a process group of its own (a
+// terminal's Ctrl-C reaches setup, which decides what to do, not launchctl
+// halfway through changing a job).
+func execLaunchctl(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "launchctl", args...)
+	ownProcessGroup(cmd)
 	// A child that outlives the kill must not keep this waiting on its pipe.
 	cmd.WaitDelay = 2 * time.Second
 	return cmd.CombinedOutput()

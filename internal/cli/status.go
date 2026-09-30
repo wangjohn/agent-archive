@@ -1020,7 +1020,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		}
 		view.State = "Needs attention"
 		view.problem = "agent-archive can't run from where setup installed it"
-		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup from the binary's new location to point the hooks and background collector at it.", moved)
+		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup --refresh from the binary's new location to point the hooks and background collector at it.", moved)
 	}
 	if !cfg.Archive.Enabled {
 		view.State = "Not installed"
