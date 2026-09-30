@@ -103,10 +103,9 @@ daily chart answers a hover with that day's numbers, and the chart has a "Show
 as a table" view (sessions, spend and tokens per day) for screen readers and
 keyboards; every other number is in a table or a sentence.
 
-The by-project list holds the five projects with the most tokens, dearest
-first. Cost does not always follow tokens (cache reads are cheap, output is
-not), so the page says how many more projects there are and that they are not
-necessarily cheaper; `--by project` lists them all.
+The by-project list shows only the top few projects, dearest first among those
+shown, and says how many more there are (it does not say they cost less or
+more); `--by project` lists more of them.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
   only; change that when you share it) and says so on stderr. The page is
@@ -136,8 +135,9 @@ necessarily cheaper; `--by project` lists them all.
   says nothing about a hidden model). A model your own `--prices` file adds
   is not listed either, and neither is the version of your own `--prices`
   file (the footer says only that the file was used). A `--model` filter
-  written with a path or a vendor prefix (`acme/claude-opus-5`) is shown as
-  the model's family, not as typed. The project of the costliest session in "Heads up" is
+  written with a path, a vendor prefix or a bracketed suffix
+  (`acme/claude-opus-5`, `claude-opus-5[acme]`) is shown as the model's family, not
+  as typed. The project of the costliest session in "Heads up" is
   a stand-in like any other. The same name has the same letter throughout the
   page, but the letters follow the order the page first names them (the
   dearest project listed is "project A") and are not stable between runs. `--include-names` shows the real names of all four, for a page only

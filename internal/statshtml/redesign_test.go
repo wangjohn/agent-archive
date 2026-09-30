@@ -305,6 +305,29 @@ func TestWhereItWent(t *testing.T) {
 	}
 }
 
+// The by-project list is the engine's top few projects, and how the engine
+// ranks them is not the page's to say: the note says how many more there are
+// and nothing about whether they cost less or more or have fewer tokens, so it
+// stays true whether the engine ranks by tokens or by spend.
+func TestByProjectNoteSaysOnlyHowManyMore(t *testing.T) {
+	t.Parallel()
+	s := modelStats(t, realisticSessions(), realisticPrices, stats.GroupNone)
+	more := s.TotalProjects - len(s.Projects)
+	if more <= 0 {
+		t.Fatalf("the fixture has %d projects for %d shown; it must have more", s.TotalProjects, len(s.Projects))
+	}
+	out := string(render(t, s, Options{}))
+	table := out[strings.Index(out, `id="h-projects"`):strings.Index(out, `id="h-models"`)]
+	if want := "and " + strconv.Itoa(more) + " more projects, not shown"; !strings.Contains(table, want) {
+		t.Errorf("the projects table does not say %q", want)
+	}
+	for _, claim := range []string{"fewer", "less", "cheaper", "dearer", "more tokens", "most tokens", "necessarily", "top "} {
+		if strings.Contains(strings.ToLower(table), claim) {
+			t.Errorf("the projects table makes a claim about the rest (%q)", claim)
+		}
+	}
+}
+
 // Most used lists skills by the sessions that used them, with a plugin prefix
 // stripped for display (and the merged spellings counted once), and MCP servers
 // by calls with the scope note. Names are stand-ins unless asked for.
@@ -446,6 +469,46 @@ func TestPrintPatternsExistWithoutADonut(t *testing.T) {
 		if !strings.Contains(styleSheet, rule) {
 			t.Errorf("the stylesheet lacks %q", rule)
 		}
+	}
+}
+
+// On paper the peak day's bar is darker than a priced day's and an unknown
+// day's mark is lighter, so a black-and-white print still shows which day was
+// dearest. The rules that win for each bar (by specificity, then order) among
+// the screen rules and the print sheet must give three different fills; the
+// peak once lost to a more specific rule of the screen sheet.
+func TestPrintedDailyBarsAreToldApart(t *testing.T) {
+	t.Parallel()
+	forcedAt := strings.Index(styleSheet, "@media (forced-colors")
+	if !strings.Contains(styleSheet, "@media print") || forcedAt < 0 {
+		t.Fatal("the stylesheet lacks its print or forced-colors sheet")
+	}
+	rule := regexp.MustCompile(`(svg\.daily \.[.a-z]+)\s*\{\s*fill:\s*([^;]+);`)
+	winner := func(classes ...string) string {
+		bestSpecificity, fill := -1, ""
+		for _, m := range rule.FindAllStringSubmatch(styleSheet[:forcedAt], -1) {
+			needed := strings.Split(strings.TrimPrefix(strings.TrimPrefix(m[1], "svg.daily "), "."), ".")
+			if slices.ContainsFunc(needed, func(c string) bool { return !slices.Contains(classes, c) }) {
+				continue
+			}
+			// The svg element and its class, then the bar's classes.
+			if specificity := 2 + len(needed); specificity >= bestSpecificity {
+				bestSpecificity, fill = specificity, m[2]
+			}
+		}
+		if bestSpecificity < 0 {
+			t.Fatalf("no rule colors a bar of %v", classes)
+		}
+		return fill
+	}
+	peak, day, unknown := winner("bar", "day", "peak"), winner("bar", "day"), winner("bar", "unknown")
+	for _, fill := range []string{peak, day, unknown} {
+		if !strings.HasPrefix(fill, "#") {
+			t.Errorf("a printed bar is colored %q, not by the print sheet", fill)
+		}
+	}
+	if peak == day || unknown == day || peak == unknown {
+		t.Errorf("printed bars are not told apart: peak %s, day %s, unknown %s", peak, day, unknown)
 	}
 }
 

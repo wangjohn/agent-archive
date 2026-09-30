@@ -407,7 +407,7 @@ ul.alerts li::before {
 </table>
 </div>
 <p class="note barnote">Bars show estimated cost, each against the dearest project listed.</p>
-<p class="note">and 7 more projects with fewer tokens (not necessarily less spend)</p>
+<p class="note">and 7 more projects, not shown</p>
 <p class="note">Project names are replaced by letters in this file.</p>
 </section>
 <section class="card" aria-labelledby="h-models">

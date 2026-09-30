@@ -174,7 +174,7 @@ func TestStatsHTMLEmptyWindowAndFilters(t *testing.T) {
 	}
 	publishStatsFixture(t, mem)
 	filtered := mustRunStats(t, env, 0, "--html", "--model", `<b>none</b>`, "--hook-captured")
-	for _, want := range []string{"No archived sessions match these filters", "Filtered to model model A", "hook-captured sessions"} {
+	for _, want := range []string{"No archived sessions match these filters", "Filtered to model A", "hook-captured sessions"} {
 		if !strings.Contains(filtered, want) {
 			t.Errorf("the filtered empty page lacks %q\n%s", want, filtered)
 		}

@@ -1,6 +1,7 @@
 package statshtml
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -124,14 +125,22 @@ func (m *modelNamer) label(label string) string {
 	return m.stand.name(label)
 }
 
+// dateOrVersion is what may follow a listed model id once it is normalized
+// without being text of the person's: a date ("-20251001", "@20251001"), a
+// platform's version ("-v1:0") and Claude Code's context marker ("[1m]").
+var dateOrVersion = regexp.MustCompile(`^[-@:0-9v]*(?:\[[0-9]+[km]\])?$`)
+
 // carriesOwnText is whether a model id that the built-in table lists once it is
-// normalized has text of its own in front of the listed part. The engine
-// looks a model up after dropping a path ("acme-client/claude-opus-5") or a
-// cloud vendor's prefix ("acme-prod.anthropic.claude-opus-5"), and whatever
-// was dropped can name a client, so such an id is never echoed as typed.
+// normalized has text of its own around the listed part. The engine looks a
+// model up after dropping a path ("acme-client/claude-opus-5"), a cloud
+// vendor's prefix ("acme-prod.anthropic.claude-opus-5") or a bracketed suffix
+// ("claude-opus-5[acme-client]"), and whatever was dropped can name a client,
+// so such an id is never echoed as typed. Only a date, a platform's version or
+// a context marker may follow the listed part.
 func carriesOwnText(id string) bool {
-	lower := strings.ToLower(id)
-	return strings.Contains(lower, "/") || strings.Contains(lower, "anthropic.")
+	typed := strings.TrimSpace(strings.ToLower(id))
+	rest, ok := strings.CutPrefix(typed, stats.NormalizeModel(id))
+	return !ok || !dateOrVersion.MatchString(rest)
 }
 
 // id is the text shown for a model id the caller named (the --model filter):

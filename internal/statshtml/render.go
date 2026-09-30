@@ -181,7 +181,12 @@ func (b *builder) header(p *page, window string) {
 		parts = append(parts, "harness "+clean(f.Harness))
 	}
 	if f.Model != "" {
-		parts = append(parts, "model "+b.modelNames.id(f.Model))
+		// A stand-in already reads "model A"; it is not "model model A".
+		id := b.modelNames.id(f.Model)
+		if !strings.HasPrefix(id, "model ") {
+			id = "model " + id
+		}
+		parts = append(parts, id)
 	}
 	if f.Origin != "" {
 		text, known := originText[f.Origin]
@@ -324,9 +329,10 @@ func (b *builder) modelRow(r stats.ModelRow, bar float64) barRow {
 }
 
 // projects is where the spend went by project, dearest first among those the
-// engine kept (it keeps the top projects by tokens, so the page says how many
-// more there are and that they may cost more; a project it could not price
-// goes last).
+// engine kept (a project it could not price goes last). The engine keeps only
+// its top few projects and this page does not say what ranks them, so it says
+// only how many more there are: whichever way the engine ranks, that stays
+// true, and no reader is told the rest are cheaper or dearer.
 func (b *builder) projects() *barTable {
 	rows := slices.Clone(b.s.Projects)
 	if len(rows) == 0 {
@@ -364,10 +370,7 @@ func (b *builder) projects() *barTable {
 	}
 	t.BarNote = "Bars show estimated cost, each against the dearest project listed."
 	if more := b.s.TotalProjects - len(rows); more > 0 {
-		// The engine keeps the projects with the most tokens, and cost does
-		// not always follow tokens (cache reads are cheap, output is not): a
-		// project it left out may cost more than one it kept.
-		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects with fewer tokens (not necessarily less spend)", more))
+		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects, not shown", more))
 	}
 	if !b.opts.IncludeNames {
 		t.Notes = append(t.Notes, "Project names are replaced by letters in this file.")
