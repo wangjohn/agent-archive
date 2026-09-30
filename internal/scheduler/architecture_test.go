@@ -12,6 +12,7 @@ const (
 	modulePath       = "github.com/wangjohn/agent-archive/"
 	schedulerPath    = modulePath + "internal/scheduler"
 	launchdPath      = modulePath + "internal/scheduler/launchd"
+	systemdPath      = modulePath + "internal/scheduler/systemd"
 	hostPath         = modulePath + "internal/scheduler/host"
 	credentialsPath  = modulePath + "internal/credentials"
 	hooksPath        = modulePath + "internal/hooks"
@@ -47,8 +48,8 @@ func TestOnlyHostImportsAdapters(t *testing.T) {
 	t.Parallel()
 	module := importgraph.ModuleImports(t)
 	adapters := adapterPackages(module)
-	if !slices.Contains(adapters, launchdPath) {
-		t.Fatalf("the adapter scan found %v, not the launchd adapter", adapters)
+	if !slices.Contains(adapters, launchdPath) || !slices.Contains(adapters, systemdPath) {
+		t.Fatalf("the adapter scan found %v, not the launchd and systemd adapters", adapters)
 	}
 	seen := map[string]bool{}
 	for _, adapter := range adapters {

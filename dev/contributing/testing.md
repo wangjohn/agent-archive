@@ -371,6 +371,13 @@ In `internal/scheduler/launchd`:
 | `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
 | `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
 
+In `internal/scheduler/systemd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzRenderServiceRoundTrip` | an executable, a data directory, and one environment variable | the unit reader gives back exactly what `renderService` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`), whatever `%`, `$`, quotes, backslashes and spaces the values hold, and every line of the unit is a setting the renderer writes, so a value cannot inject one |
+| `FuzzReadService` | any bytes | the reader never panics, and a unit it accepts has a program and an environment |
+
 In `internal/cli`:
 
 | Target | Input | Properties |
