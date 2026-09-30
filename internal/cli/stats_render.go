@@ -556,11 +556,15 @@ func (p *statsPrinter) table(title string, labels []string, bar *tableBar, cols 
 	}
 	var head strings.Builder
 	head.WriteString(p.bold(title) + strings.Repeat(" ", max(leftW+barSpace-visibleWidth(title), 0)))
+	// Columns after the last one with a head have nothing to say over them:
+	// the head line stops there, with no trailing blanks.
+	lastHead := -1
 	for i, c := range cols {
-		if c.head == "" && (i == len(cols)-1 || cols[i+1].head == "") {
-			// Nothing to say over this column: no trailing blanks.
-			continue
+		if c.head != "" {
+			lastHead = i
 		}
+	}
+	for i, c := range cols[:lastHead+1] {
 		head.WriteString("  " + p.dim(padLeft(c.head, widths[i])))
 	}
 	lines := []string{head.String()}
