@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -139,7 +140,7 @@ func (f *refreshFixture) wantRunning(t *testing.T, exe string) {
 	}
 	plist, err := os.ReadFile(f.plist())
 	must(t, err)
-	if program, err := hooks.LaunchAgentProgram(plist); err != nil || program != exe {
+	if program, err := launchd.LaunchAgentProgram(plist); err != nil || program != exe {
 		t.Errorf("the plist runs %q (%v), want %s", program, err, exe)
 	}
 	for _, path := range []string{claudeSkillPath(f.userHome), agentsSkillPath(f.userHome)} {
@@ -405,7 +406,7 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
 	plistPath := f.plist()
-	written, err := hooks.LaunchAgent(f.oldExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	written, err := launchd.LaunchAgent(f.oldExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	must(t, os.WriteFile(plistPath, written, 0600))
 
@@ -415,15 +416,15 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	}
 	after, err := os.ReadFile(plistPath)
 	must(t, err)
-	environment, err := hooks.LaunchAgentEnvironment(after)
+	environment, err := launchd.LaunchAgentEnvironment(after)
 	must(t, err)
 	if want := map[string]string{"AGENT_ARCHIVE_HOME": f.home, "AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"}; !reflect.DeepEqual(environment, want) {
 		t.Fatalf("plist environment %v, want %v", environment, want)
 	}
-	if program, _ := hooks.LaunchAgentProgram(after); program != f.newExe {
+	if program, _ := launchd.LaunchAgentProgram(after); program != f.newExe {
 		t.Fatalf("the plist runs %s", program)
 	}
-	want, err := hooks.LaunchAgent(f.newExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	want, err := launchd.LaunchAgent(f.newExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	if !bytes.Equal(after, want) {
 		t.Fatalf("plist:\n%s\nwant\n%s", after, want)

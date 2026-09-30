@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -165,7 +166,7 @@ func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 	env.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", true, true, false, t.TempDir()), 0)
 
-	if loaded := fakeSched(env).loaded(); len(loaded) != 1 || loaded[0] == hooks.LaunchLabel {
+	if loaded := fakeSched(env).loaded(); len(loaded) != 1 || loaded[0] == launchd.LaunchLabel {
 		t.Fatalf("a relocated data directory loaded %v", loaded)
 	}
 	for _, path := range []string{filepath.Join(claudeDir, "settings.json"), filepath.Join(codexDir, "hooks.json")} {
@@ -222,8 +223,8 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 			if owner == "another" {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
-			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
+			old := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LaunchLabel+".plist")
+			plist, _ := launchd.LaunchAgent("/opt/old/agent-archive", dataHome, launchd.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
@@ -258,8 +259,8 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 			if owner == "another" {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
-			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
+			old := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LaunchLabel+".plist")
+			plist, _ := launchd.LaunchAgent("/opt/old/agent-archive", dataHome, launchd.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
@@ -308,7 +309,7 @@ func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
 	} {
 		in := env.installation(tc.home, tc.userHome)
 		label := launchLabel(in.collectorPlist())
-		if in.isDefault() != tc.isDefault || (label == hooks.LaunchLabel) != tc.isDefault {
+		if in.isDefault() != tc.isDefault || (label == launchd.LaunchLabel) != tc.isDefault {
 			t.Errorf("%s: default=%v label=%s", tc.name, in.isDefault(), label)
 		}
 		if got := serviceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {

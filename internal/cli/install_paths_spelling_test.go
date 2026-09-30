@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // Regression: phase-1 review follow-up. The default installation and each
@@ -57,7 +57,7 @@ func TestEverySpellingOfADataDirectoryIsOneInstallation(t *testing.T) {
 			if in.label() != want.label() {
 				t.Errorf("%s: label %s, want %s", spelling, in.label(), want.label())
 			}
-			if (in.label() == hooks.LaunchLabel) != (dir == accountDefault) {
+			if (in.label() == launchd.LaunchLabel) != (dir == accountDefault) {
 				t.Errorf("%s: label %s", spelling, in.label())
 			}
 		}
@@ -105,9 +105,9 @@ func TestExistingInstallationsKeepTheirLabel(t *testing.T) {
 			home = resolved
 		}
 		if home == accountDefault {
-			return hooks.LaunchLabel
+			return launchd.LaunchLabel
 		}
-		return hooks.CollectorLabel(home, "")
+		return launchd.CollectorLabel(home, "")
 	}
 	for _, home := range []string{accountDefault, other, link, filepath.Join(account, "not-created-yet")} {
 		if got, want := env.installation(home, account).label(), previous(home); got != want {
@@ -136,12 +136,12 @@ func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldLabel := hooks.CollectorLabel(resolved, "")
+	oldLabel := launchd.CollectorLabel(resolved, "")
 	if oldLabel == env.installation(home, userHome).label() {
 		t.Fatal("the other-case spelling kept its own label; the test no longer covers the migration")
 	}
 	old := filepath.Join(userHome, "Library", "LaunchAgents", oldLabel+".plist")
-	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, oldLabel, nil)
+	plist, _ := launchd.LaunchAgent("/opt/old/agent-archive", home, oldLabel, nil)
 	if err := local.WriteBytes(old, plist); err != nil {
 		t.Fatal(err)
 	}
