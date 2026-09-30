@@ -75,6 +75,12 @@ const (
 	recoveryMissing  = "The storage credential is missing from the Keychain. Run agent-archive setup and choose storage to save it again."
 	recoveryLocked   = "The Keychain is locked or denied this program access. Unlock the login Keychain (log in, or open Keychain Access), then run agent-archive sync; if it still fails, run agent-archive setup and choose storage to grant this executable access again."
 	recoveryKeychain = "The Keychain could not be read. Run agent-archive setup and choose storage to check the stored credential."
+
+	// The same failures for the credentials file kept where there is no
+	// Keychain (see FileStore).
+	recoveryFileMissing  = "The storage credential is missing from the credentials file. Run agent-archive setup and choose storage to save it again, or set " + EnvR2AccessKeyID + " and " + EnvR2SecretAccessKey + " in the environment."
+	recoveryFileInsecure = "agent-archive will not read its credentials file: the file, or the credentials folder holding it, is open to other users, is not yours, or is a link. Run chmod 600 on the file and chmod 700 on the folder (the error names them), then run agent-archive sync; or run agent-archive setup and choose storage to save the credential again."
+	recoveryFileUnread   = "The credentials file could not be read. Run agent-archive setup and choose storage to save the credential again."
 )
 
 // RecoveryAction returns what a person should do about a credential failure,
@@ -86,6 +92,12 @@ func RecoveryAction(err error) string {
 		return ""
 	case errors.Is(err, ErrKeychainLocked):
 		return recoveryLocked
+	case errors.Is(err, ErrInsecurePermissions):
+		return recoveryFileInsecure
+	case errors.Is(err, ErrCredentialFileNotFound):
+		return recoveryFileMissing
+	case errors.Is(err, ErrCredentialFileUnreadable):
+		return recoveryFileUnread
 	case errors.Is(err, ErrMissingCredential):
 		return recoveryMissing
 	case errors.As(err, &status), errors.Is(err, ErrUnavailable):
@@ -102,6 +114,12 @@ func RecoveryActionForMessage(message string) string {
 		return ""
 	case strings.Contains(message, ErrKeychainLocked.Error()):
 		return recoveryLocked
+	case strings.Contains(message, ErrInsecurePermissions.Error()):
+		return recoveryFileInsecure
+	case strings.Contains(message, ErrCredentialFileNotFound.Error()):
+		return recoveryFileMissing
+	case strings.Contains(message, ErrCredentialFileUnreadable.Error()):
+		return recoveryFileUnread
 	case strings.Contains(message, ErrKeychainItemNotFound.Error()), strings.Contains(message, ErrMissingCredential.Error()):
 		return recoveryMissing
 	case strings.Contains(message, "Keychain error (OSStatus"), strings.Contains(message, ErrUnavailable.Error()):

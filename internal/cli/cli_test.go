@@ -34,6 +34,9 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
+		// Tests model a Mac (its app folders and Cursor's Library data
+		// folder), whatever system runs them.
+		BackfillGOOS: "darwin",
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
@@ -49,8 +52,8 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 			t.Errorf("unexpected LaunchAgent unload of %s: set Env.UnloadLaunchAgent", plist)
 			return errors.New("no launchd in this test")
 		},
-		Keychain: func() (credentials.CredentialStore, error) {
-			return nil, errors.New("no Keychain in this test: set Env.Keychain")
+		Credentials: func() (credentials.CredentialStore, error) {
+			return nil, errors.New("no credential store in this test: set Env.Credentials")
 		},
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")
@@ -60,8 +63,14 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
 		Interrupts:           noInterrupts,
+		// A less new enough for --mouse, as macOS ships; the tests of the
+		// other defaults set their own.
+		LessVersion: func(string) (int, bool) { return testLessVersion, true },
 	}
 }
+
+// testLessVersion is the less version testEnv reports.
+const testLessVersion = 668
 
 // noInterrupts is Env.Interrupts for tests that do not send signals. The
 // default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while

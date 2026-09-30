@@ -550,7 +550,7 @@ func (b *Batch) RecordKept(kept []KeptProject) {
 // republishes everything, neither of which is a resume.
 func resumedSinceImport(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (resumed, unknown bool, err error) {
 	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
-		sig, err := cursorstore.ReadSignature(context.Background(), CursorStateDatabase(env.Home), reg.SourceKey)
+		sig, err := cursorstore.ReadSignature(context.Background(), env.cursorStateDatabase(), reg.SourceKey)
 		if err == nil && sig.LastUpdatedAt > reg.AdmittedAt.UnixMilli() {
 			return true, false, nil
 		}
