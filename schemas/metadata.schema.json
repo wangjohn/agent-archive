@@ -53,7 +53,7 @@
       "minLength": 1
     },
     "repo_key": {
-      "description": "From parser 0.14.0: identifies the git repository the session ran in, independent of where it is checked out. 'repo-' plus 16 hex digits of the SHA-256 of the normalized origin remote URL (host/owner/repo, credentials, scheme, port and .git removed); only this hash is stored, never the URL. Absent when the project had no origin remote a second machine could reach, or the project was gone when the metadata was derived.",
+      "description": "From parser 0.15.0: identifies the git repository the session ran in, independent of where it is checked out. 'repo-' plus 16 hex digits of the SHA-256 of the normalized origin remote URL (host/owner/repo, credentials, scheme, port and .git removed); only this hash is stored, never the URL. Absent when the project had no origin remote a second machine could reach, or the project was gone when the metadata was derived.",
       "type": "string",
       "pattern": "^repo-[0-9a-f]{16}$"
     },
@@ -216,9 +216,36 @@
           "minimum": 0
         },
         "cache_write_tokens": {
+          "description": "Claude Code's cache_creation_input_tokens, or, from parser 0.14.0, Codex's cache_write_input_tokens.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "description": "From parser 0.14.0: tokens the model spent reasoning (Claude Code's output_tokens_details.thinking_tokens, Codex's reasoning_output_tokens), summed like the other token counts. It is part of output_tokens, not in addition to it. Absent when the harness reported none.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_errors": {
+          "description": "From parser 0.14.0: how many of tool_results the harness marked as errors (is_error true). Known wherever tool_results is, for Claude Code and Cursor. Absent for Codex, which writes no such flag: its count is unknown, not zero.",
           "type": "integer",
           "minimum": 0
         }
+      }
+    },
+    "model_tokens": {
+      "description": "From parser 0.14.0: the session's token counts split by model, sorted by model id. Each entry uses the field meanings of counts. A record whose usage names no model is counted under the model 'unknown'. A model id longer than 128 characters is cut to that, and at most 32 entries are kept: beyond that, the models with the fewest tokens are added together under the model 'other', so the sums hold. For Claude Code the model is the one named on the response message; for Codex, the model of the latest turn_context before the token record, so a model switched mid-session splits the counts at the switch. Streamed duplicates of one Claude Code message count once, as in counts. Below 2^53 tokens each token field of counts is the sum of that field over model_tokens, and both are absent when the harness exposed no token accounting (Cursor's unmetered zeros are not accounting).",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/model_tokens"
+      }
+    },
+    "mcp_calls": {
+      "description": "From parser 0.14.0: the session's MCP tool calls counted by server (the server in an mcp__<server>__<tool> tool name), by count descending and then name ascending, at most 50. Absent when no such call was observed or the counts are unknown. Codex's MCP calls do not name their server in what is retained, so they are not counted.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/tool_usage"
       }
     },
     "tools_used": {
@@ -434,6 +461,40 @@
             "native_invocation",
             "skill_read_inference"
           ]
+        }
+      }
+    },
+    "model_tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

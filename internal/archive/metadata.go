@@ -18,24 +18,34 @@ import (
 // each record's usage would count one response as many. The latest record seen
 // for a message id replaces the earlier ones. Accounting with no message
 // identity (Codex's `turn_token_usage`) is summed as it comes.
+//
+// Each record's accounting also remembers the model it belongs to, so the same
+// records that make the session-wide totals make the per-model ones: the
+// per-model sums add up to the totals by construction.
 type tokenTotals struct {
-	byMessage map[string]map[string]any
-	anonymous []map[string]any
+	byMessage map[string]modelUsage
+	anonymous []modelUsage
 }
 
-func (t *tokenTotals) observe(usage map[string]any, messageID string) {
+// modelUsage is one record's usage object and the model it is attributed to
+// ("" when no model name could be attached).
+type modelUsage struct {
+	usage map[string]any
+	model string
+}
+
+func (t *tokenTotals) observe(usage map[string]any, messageID, model string) {
+	entry := modelUsage{usage: usage, model: model}
 	if messageID == "" {
-		t.anonymous = append(t.anonymous, usage)
+		t.anonymous = append(t.anonymous, entry)
 		return
 	}
 	if t.byMessage == nil {
-		t.byMessage = map[string]map[string]any{}
+		t.byMessage = map[string]modelUsage{}
 	}
-	t.byMessage[messageID] = usage
+	t.byMessage[messageID] = entry
 }
 
-// usage sums the collected accounting. A field stays nil until some record
-// reports it, so "no accounting" is never published as zero tokens.
 // maxTokenCount is the largest count JSON carries exactly (2^53).
 const maxTokenCount = 1 << 53
 
@@ -51,37 +61,175 @@ func tokenCount(raw any) (int, bool) {
 	return int(value), true
 }
 
-func (t *tokenTotals) usage() TokenUsage {
-	var out TokenUsage
-	add := func(target **int, source map[string]any, keys ...string) {
-		for _, key := range keys {
-			value, ok := tokenCount(source[key])
-			if !ok {
-				continue
+// reasoningTokenCount reads a usage object's reasoning tokens: Codex's
+// `reasoning_output_tokens`, or the `thinking_tokens` (or OpenAI-style
+// `reasoning_tokens`) inside Claude Code's `output_tokens_details`. They are
+// part of the output tokens, not in addition to them.
+func reasoningTokenCount(source map[string]any) (int, bool) {
+	if value, ok := tokenCount(source["reasoning_output_tokens"]); ok {
+		return value, true
+	}
+	if details, ok := source["output_tokens_details"].(map[string]any); ok {
+		for _, key := range []string{"thinking_tokens", "reasoning_tokens"} {
+			if value, ok := tokenCount(details[key]); ok {
+				return value, true
 			}
-			// Each count is at most maxTokenCount, so the sum of two fits in
-			// an int; the total saturates there, so enough hostile records
-			// can neither overflow it negative nor break the schema's
-			// bound (parser 0.11.0; 0.10.0 overflowed after 1,025).
-			total := value
-			if *target != nil {
-				total = min(total+**target, maxTokenCount)
-			}
-			*target = &total
-			return
 		}
 	}
-	sources := append([]map[string]any(nil), t.anonymous...)
+	return 0, false
+}
+
+// addTokenCount adds one count to a field that stays nil until some record
+// reports it, so "no accounting" is never published as zero tokens. Each
+// count is at most maxTokenCount, so the sum of two fits in an int; the total
+// saturates there, so enough hostile records can neither overflow it negative
+// nor break the schema's bound (parser 0.11.0; 0.10.0 overflowed after 1,025).
+func addTokenCount(target **int, value int) {
+	total := value
+	if *target != nil {
+		total = min(total+**target, maxTokenCount)
+	}
+	*target = &total
+}
+
+// addUsage adds one usage object's counts to out. Of the several names a
+// field goes by, the first one present with a valid count is read.
+func addUsage(out *TokenUsage, source map[string]any) {
+	add := func(target **int, keys ...string) {
+		for _, key := range keys {
+			if value, ok := tokenCount(source[key]); ok {
+				addTokenCount(target, value)
+				return
+			}
+		}
+	}
+	add(&out.Input, "input_tokens", "prompt_tokens")
+	add(&out.Output, "output_tokens", "completion_tokens")
+	add(&out.CacheRead, "cache_read_input_tokens", "cached_input_tokens")
+	add(&out.CacheWrite, "cache_creation_input_tokens", "cache_write_input_tokens")
+	if value, ok := reasoningTokenCount(source); ok {
+		addTokenCount(&out.Reasoning, value)
+	}
+}
+
+// usage sums the collected accounting, session-wide and per model (sorted by
+// model id, UnknownModel for accounting no model was named on). A field stays
+// nil until some record reports it, and a record that reports no count makes
+// no per-model entry.
+func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
+	var total TokenUsage
+	byModel := map[string]*TokenUsage{}
+	sources := append([]modelUsage(nil), t.anonymous...)
 	for _, source := range t.byMessage {
 		sources = append(sources, source)
 	}
 	for _, source := range sources {
-		add(&out.Input, source, "input_tokens", "prompt_tokens")
-		add(&out.Output, source, "output_tokens", "completion_tokens")
-		add(&out.CacheRead, source, "cache_read_input_tokens", "cached_input_tokens")
-		add(&out.CacheWrite, source, "cache_creation_input_tokens")
+		var one TokenUsage
+		addUsage(&one, source.usage)
+		if one == (TokenUsage{}) {
+			continue
+		}
+		addUsage(&total, source.usage)
+		model := boundModelName(source.model)
+		if model == "" {
+			model = UnknownModel
+		}
+		if byModel[model] == nil {
+			byModel[model] = &TokenUsage{}
+		}
+		addUsage(byModel[model], source.usage)
 	}
-	return out
+	foldExtraModels(byModel)
+	models := make([]string, 0, len(byModel))
+	for model := range byModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	var split []ModelTokens
+	for _, model := range models {
+		u := byModel[model]
+		split = append(split, ModelTokens{
+			Model: model, InputTokens: u.Input, OutputTokens: u.Output,
+			CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite, ReasoningTokens: u.Reasoning,
+		})
+	}
+	return total, split
+}
+
+// boundModelName caps a model id at maxModelNameRunes runes, since the filter
+// bounds a string only at 64 KB and a hostile transcript could name a new one
+// on every record. A real model id is far shorter.
+func boundModelName(name string) string {
+	runes := []rune(name)
+	if len(runes) <= maxModelNameRunes {
+		return name
+	}
+	return string(runes[:maxModelNameRunes-1]) + "…"
+}
+
+// foldExtraModels keeps the per-model split to MaxModelTokens entries without
+// losing a token: the models with the most tokens stay, and the rest are added
+// together under OtherModels, so the split still sums to the session's counts.
+// Which stay does not depend on map order (most tokens first, then name).
+func foldExtraModels(byModel map[string]*TokenUsage) {
+	if len(byModel) <= MaxModelTokens {
+		return
+	}
+	// A model's weight is its tokens, reasoning excluded (it is inside
+	// Output). Each count is at most maxTokenCount, so four of them cannot
+	// overflow an int.
+	weight := func(u *TokenUsage) int {
+		sum := 0
+		for _, count := range []*int{u.Input, u.Output, u.CacheRead, u.CacheWrite} {
+			if count != nil {
+				sum += *count
+			}
+		}
+		return sum
+	}
+	names := make([]string, 0, len(byModel))
+	for name := range byModel {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if wi, wj := weight(byModel[names[i]]), weight(byModel[names[j]]); wi != wj {
+			return wi > wj
+		}
+		return names[i] < names[j]
+	})
+	var folded TokenUsage
+	for _, name := range names[MaxModelTokens-1:] {
+		addTokenUsage(&folded, *byModel[name])
+		delete(byModel, name)
+	}
+	if byModel[OtherModels] == nil {
+		byModel[OtherModels] = &TokenUsage{}
+	}
+	addTokenUsage(byModel[OtherModels], folded)
+}
+
+// addTokenUsage adds every count src reports to dst, saturating like
+// addTokenCount.
+func addTokenUsage(dst *TokenUsage, src TokenUsage) {
+	for _, pair := range []struct {
+		to   **int
+		from *int
+	}{{&dst.Input, src.Input}, {&dst.Output, src.Output}, {&dst.CacheRead, src.CacheRead}, {&dst.CacheWrite, src.CacheWrite}, {&dst.Reasoning, src.Reasoning}} {
+		if pair.from != nil {
+			addTokenCount(pair.to, *pair.from)
+		}
+	}
+}
+
+// tokenModel is the model a record's token accounting belongs to: for Codex
+// the model of the latest turn_context (the token record itself names none),
+// for any other harness the model the record names. "" when there is none, or
+// only a placeholder.
+func tokenModel(bundle SourceBundle, record map[string]any, codexModel string) string {
+	if bundle.harness() == HarnessCodex && codexModel != "" && !isPlaceholderModel(codexModel) {
+		return codexModel
+	}
+	return recordModel(record)
 }
 
 // accumulateTokens records one record's token accounting: Claude stamps
@@ -90,8 +238,8 @@ func (t *tokenTotals) usage() TokenUsage {
 // figures are deliberately ignored, so the sum stays additive across records.
 // The accounting is attributed to the `id` of the object that carries it
 // (Claude's `message.id`), which is what lets repeated streamed records of one
-// message count once.
-func accumulateTokens(record map[string]any, totals *tokenTotals) {
+// message count once, and to the model given.
+func accumulateTokens(record map[string]any, model string, totals *tokenTotals) {
 	usage, owner := firstMapDeepOwner(record, "usage")
 	if usage == nil {
 		usage, owner = firstMapDeepOwner(record, "turn_token_usage")
@@ -99,7 +247,7 @@ func accumulateTokens(record map[string]any, totals *tokenTotals) {
 	if usage == nil {
 		return
 	}
-	totals.observe(usage, firstString(owner, "id"))
+	totals.observe(usage, firstString(owner, "id"), model)
 }
 
 // nativeTurnEnd reads Cursor's own end-of-turn record. Cursor has no lifecycle
@@ -207,6 +355,8 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 	if len(bundle.NativeText) == 0 {
 		metadata.Counts = structuredCounts(bundle, view, prompts, messages, shellCommands)
 		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, workspaceRoot(bundle))
+		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, workspaceRoot(bundle))
+		metadata.ModelTokens = view.ModelTokens
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	metadata.Models = models
@@ -310,11 +460,36 @@ func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, message
 		}
 		compactions = &count
 	}
+	var toolErrors *int
+	if toolErrorsObservable(bundle) {
+		count := 0
+		for _, result := range view.ToolResults {
+			if result.IsError {
+				count++
+			}
+		}
+		toolErrors = &count
+	}
 	return Counts{
 		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
 		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: &filesTouched,
 		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
 		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
+		ReasoningTokens: view.Tokens.Reasoning, ToolErrors: toolErrors,
+	}
+}
+
+// toolErrorsObservable reports whether a bundle's tool results say whether
+// they failed: Claude Code writes is_error on a tool_result, and Cursor's
+// adapter sets it on a tool that reported an error. Codex writes no such flag,
+// so its failed calls cannot be told from the rest and the count is unknown,
+// not zero.
+func toolErrorsObservable(bundle SourceBundle) bool {
+	switch bundle.harness() {
+	case HarnessClaude, HarnessCursor:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -344,6 +519,59 @@ func deriveToolsUsed(calls []NormalizedToolCall, root string) []ToolUsage {
 			counts[name]++
 		}
 	}
+	return rankToolUsage(counts, MaxToolsUsed)
+}
+
+// MaxMCPCalls is the most entries Metadata.MCPCalls holds. The schema's
+// mcp_calls maxItems matches it.
+const MaxMCPCalls = 50
+
+// mcpToolPrefix and mcpNameSeparator frame an MCP tool's harness-side name,
+// mcp__<server>__<tool>.
+const (
+	mcpToolPrefix    = "mcp__"
+	mcpNameSeparator = "__"
+)
+
+// mcpServer returns the server an MCP tool name (mcp__<server>__<tool>)
+// belongs to, and false for any other name or one with no server or no tool.
+func mcpServer(name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, mcpToolPrefix)
+	if !ok {
+		return "", false
+	}
+	server, tool, ok := strings.Cut(rest, mcpNameSeparator)
+	if !ok || server == "" || tool == "" {
+		return "", false
+	}
+	return server, true
+}
+
+// deriveMCPCalls counts the same calls as deriveToolsUsed (each counted once,
+// echoes included) by the MCP server they went to, by count descending and
+// then name ascending, at most MaxMCPCalls. Only a name of the form
+// mcp__<server>__<tool> is an MCP call: Codex's McpToolCall completion names
+// the tool but not the server in what the filter retains, so those are not
+// attributed.
+func deriveMCPCalls(calls []NormalizedToolCall, root string) []ToolUsage {
+	counts := map[string]int{}
+	for _, call := range calls {
+		listedName, _, listed := listedCall(call, root)
+		if !listed {
+			continue
+		}
+		if server, ok := mcpServer(listedName); ok {
+			if name := metadataToolName(server); name != "" {
+				counts[name]++
+			}
+		}
+	}
+	return rankToolUsage(counts, MaxMCPCalls)
+}
+
+// rankToolUsage orders counted names by count descending, then name
+// ascending, and keeps the first limit. Nil when nothing was counted.
+func rankToolUsage(counts map[string]int, limit int) []ToolUsage {
 	if len(counts) == 0 {
 		return nil
 	}
@@ -357,8 +585,8 @@ func deriveToolsUsed(calls []NormalizedToolCall, root string) []ToolUsage {
 		}
 		return out[i].Name < out[j].Name
 	})
-	if len(out) > MaxToolsUsed {
-		out = out[:MaxToolsUsed]
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }

@@ -27,6 +27,9 @@ type NormalizedView struct {
 	// Tokens holds whatever token accounting the harness exposed in the
 	// retained records. Absent accounting stays nil rather than zero.
 	Tokens TokenUsage
+	// ModelTokens is Tokens split by the model each record's usage belongs
+	// to, sorted by model; empty when Tokens is.
+	ModelTokens []ModelTokens
 	// CompactBoundaries and CompactSummaries count Claude Code's
 	// compact_boundary records and isCompactSummary records.
 	CompactBoundaries int
@@ -45,6 +48,7 @@ type TokenUsage struct {
 	Output     *int `json:"output_tokens,omitempty"`
 	CacheRead  *int `json:"cache_read_tokens,omitempty"`
 	CacheWrite *int `json:"cache_write_tokens,omitempty"`
+	Reasoning  *int `json:"reasoning_tokens,omitempty"`
 }
 
 // TurnKind classifies a visible record for counting. A harness writes tool
@@ -236,7 +240,7 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			continue
 		}
 		if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
-			accumulateTokens(record, &tokens)
+			accumulateTokens(record, tokenModel(bundle, record, codexModel), &tokens)
 		}
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		candidates = append(candidates, calls...)
@@ -283,7 +287,7 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 	resolveSlashCommands(view.Turns)
 	view.ToolCalls = dedupeToolCalls(candidates)
 	linkToolResults(view.ToolCalls, view.ToolResults)
-	view.Tokens = tokens.usage()
+	view.Tokens, view.ModelTokens = tokens.usage()
 	view.HookFinals = reconcileHookFinals(bundle, view.Turns)
 	return view, nil
 }
