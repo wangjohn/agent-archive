@@ -98,6 +98,50 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 	}
 }
 
+// TestCursorSQLiteNamingAChatIsNotARewrite: Cursor names a chat after its
+// first messages, and the person can rename it. Filter 13 keeps the name on
+// the chat's first record, but a change to it alone is not Cursor changing
+// messages: the chat is republished with its new name and no
+// cursor_chat_rewritten gap.
+func TestCursorSQLiteNamingAChatIsNotARewrite(t *testing.T) {
+	passes := countSnapshots(t)
+	local := newTestStore(t)
+	db := newCursorDB(t, true)
+	db.chatSaying("chat", 1000, "hi", "b1", "b2")
+	reg := cursorRegistration("session", "chat")
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
+		t.Fatalf("first capture: %+v", result)
+	}
+	for i, name := range []string{"Fix the widget test", "Fix the widget parser"} {
+		db.namedChatSaying("chat", name, int64(1001+i), "hi", "b1", "b2")
+		result, _ := run(t, local, remote, opts, passes)
+		if len(result.Errors) != 0 || !contains(result.Published, reg.ArchiveSessionID) {
+			t.Fatalf("named %q: %+v", name, result)
+		}
+		bundle, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID)
+		if n, detail := rewriteGaps(bundle.Capture.Gaps); n != 0 {
+			t.Fatalf("named %q: %d rewrite gaps, %q", name, n, detail)
+		}
+		if got := bundle.NativeRecords[0]["name"]; got != name {
+			t.Fatalf("named %q: the session record's name is %#v", name, got)
+		}
+	}
+	// A changed message is still a rewrite.
+	db.namedChatSaying("chat", "Fix the widget parser", 1010, "edited", "b1", "b2")
+	if result, _ := run(t, local, remote, opts, passes); !contains(result.Published, reg.ArchiveSessionID) {
+		t.Fatalf("edit: %+v", result)
+	}
+	bundle, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID)
+	if n, detail := rewriteGaps(bundle.Capture.Gaps); n != 1 || !strings.Contains(detail, " 1 time(s)") {
+		t.Fatalf("after an edit: %d rewrite gaps, %q", n, detail)
+	}
+}
+
 // recordsText is a bundle's native records as one string, for a content
 // check.
 func recordsText(bundle archive.SourceBundle) string {

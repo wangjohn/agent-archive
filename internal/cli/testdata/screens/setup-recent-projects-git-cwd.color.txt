@@ -27,7 +27,8 @@ Included: ~/src/web-app, ~/src/docs
 \e[1mWhere should sessions be stored?\e[0m
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [\e[1m1\e[0m] › Setup incomplete: no more input: EOF
+  3) Amazon S3: create a new bucket for me
+  4) Show setup instructions
+Enter 1-4 [\e[1m1\e[0m] › Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]
