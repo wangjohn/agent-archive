@@ -341,7 +341,7 @@ func TestHandoffInAnAgentNeverPicks(t *testing.T) {
 				return nil
 			}
 			out, errOut, code := ttyRun(t, withEnvironment(f.env, agentShell(key)), "1\n", args...)
-			wantCode, want := 2, "name a session ID, --latest, or --file PATH"
+			wantCode, want := 2, "name a session ID or title, --latest, or --file PATH"
 			if key == cursorAgentEnv && slices.Contains(args, "--to") {
 				wantCode, want = 1, "no session for "
 			}

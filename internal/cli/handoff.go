@@ -92,6 +92,13 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// scripted) ahead for a later prompt is not lost to an earlier one's.
 	// A launched agent gets stdin itself: it must see the terminal.
 	answers := bufio.NewReader(stdin)
+	// Only an argument the person typed is a query; an ID the picker or the
+	// calling agent chose below is already a session's.
+	if opts.sessionID != "" {
+		if code, done := resolveHandoffQuery(&opts, home, interactive, answers, stdout, stderr, env); done {
+			return code
+		}
+	}
 	if opts.sessionID == "" && !opts.latest && opts.file == "" {
 		if code, done := chooseHandoffSession(&opts, home, interactive, answers, stdout, stderr, env); done {
 			return code
@@ -371,7 +378,7 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 		switch {
 		case err != nil:
 			localErr = err
-		case found && (r.harness == "" || reg.Harness.Name == r.harness):
+		case found && (r.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(r.harness)):
 			target, err := r.localTarget(reg)
 			if err == nil {
 				return target, nil
