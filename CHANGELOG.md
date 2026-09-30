@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Metadata may include, from parser `0.15.0`, `git_activity`: the commits,
+  pushes, and pull requests created or merged that the session's own tool
+  calls confirmed (`git` and `gh` commands, and GitHub MCP tools), each with
+  its time and, when known, the commit SHA, branch, `owner/repo`, pull
+  request number, and a URL. Only work whose result shows it succeeded is
+  recorded, never a failed, rejected, or dry-run attempt. `counts.commits`,
+  `counts.pushes`, `counts.prs_created`, and `counts.prs_merged` count it,
+  and `show` has a `Git` row. Commit messages and pull request text are not
+  kept. Existing sessions gain the fields on the next metadata refresh;
+  nothing is re-uploaded but the metadata.
 - `agent-archive stats` shows how you use your coding agents over the last 30
   days (`--days`, or `--since` for a start day): tokens by day, sessions,
   prompts, estimated cost and active days with their change from the

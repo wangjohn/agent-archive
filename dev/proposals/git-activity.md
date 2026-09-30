@@ -1,6 +1,6 @@
 # Git activity in session metadata: plan
 
-> **Proposed.** Prepared 2026-09-30 from a read of the current code (no builds or tests were run). File and line references are to `main` at commit 7dfc1bb.
+> **Implemented** in parser 0.15.0 (`internal/archive/git_activity.go`). This is the design record; the [metadata schema](../../schemas/metadata.schema.json) and [JSON output](../../docs/reference/json-output.md#show) are the contract. Where the implementation settled a detail differently, it is noted under [Implementation notes](#implementation-notes). Prepared 2026-09-30 from a read of `main` at commit 7dfc1bb.
 
 ## Purpose
 
@@ -119,6 +119,14 @@ GitHub MCP tool names are matched by suffix, whatever the server prefix (`mcp__g
 - **Subagents.** Git work done in a subagent lands in the child session's metadata, not the parent's. Rolling it up is a follow-up.
 - **Claude Code PR-link records.** Newer Claude Code builds may write a dedicated record when a PR is created. The Claude adapter keeps only `user`, `assistant`, `tool_use`, `tool_result`, `message`, and `summary` records (`adapters.go:115`), so such a record would be dropped as `unknown_record_type`. Admitting it is a filter change (a `FilterVersion` bump, a changelog section, and goldens). It is deferred until the record's shape is confirmed from a real transcript. It would add a third `source` value and no schema change.
 - **Hosts.** Any host is accepted when it parses as `owner/repo` (GitHub Enterprise, GitLab-style URLs from `git push`). `pr_created` and `pr_merged` recognize only GitHub's `/pull/<n>` and `gh`/GitHub MCP.
+
+## Implementation notes
+
+- **Parser version.** `0.14.0` was taken by per-model tokens and MCP calls (#160), so this ships as `0.15.0`.
+- **Remote userinfo.** The filter rewrites a remote's userinfo as `[REDACTED]@`, which is not a valid URL. The recognizer drops the userinfo before parsing, and never keeps it.
+- **gh without a host.** When `gh pr merge` names the repository (`owner/repo#n`) or takes `-R owner/repo` with no host, the URL is built on `github.com`, as gh itself assumes.
+- **MCP hosts.** An MCP result carrying a pull request URL uses that URL's host. When the result has only a number, a URL is built on `github.com` only for a server whose name contains `github`.
+- **Exit codes.** Besides Codex's JSON wrapper, an `Exit code N` or `Process exited with code N` line with a non-zero code marks the command as failed.
 
 ## Work: one PR, about 500 lines plus tests and docs
 

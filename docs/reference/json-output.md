@@ -101,6 +101,30 @@ Codex record's fresh input is its input minus both, and never below zero, so
 a record whose cache counts exceed its input keeps both counts and has no
 fresh input rather than a negative one.
 
+From parser `0.15.0` a sidecar also carries the session's git work, also
+optional:
+
+- `git_activity`: up to 100 events, in transcript order, as `{"kind",
+  "at", "source", "sha", "branch", "repository", "pr_number", "url"}`.
+  `kind` is `commit`, `push`, `pr_created`, or `pr_merged`; `source` is
+  `shell` (a `git` or `gh` command's output) or `mcp` (a GitHub MCP tool's
+  result); `at` is when the confirming result was recorded. An event is
+  recorded only when the call's result was not an error and shows the
+  effect: the new commit's SHA, a push's ref update, the new pull request's
+  URL, or a merge confirmation. A failed, rejected, up-to-date, or dry-run
+  attempt, and `gh pr merge --auto`, are not events. Every other field is
+  optional: `sha` is abbreviated as `git commit` printed it and absent for a
+  new branch's push; `url` is rebuilt from the parsed host and repository
+  and absent when the host is not a public DNS name (a local git proxy).
+  Commit messages, pull request text, and commands are never kept.
+- `counts.commits`, `counts.pushes`, `counts.prs_created`,
+  `counts.prs_merged`: the same events counted, exact even beyond the 100
+  listed.
+
+Work done outside the session, such as a pull request merged on GitHub's
+website, is not seen. Work a subagent did is in the subagent's own
+metadata.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output

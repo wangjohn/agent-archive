@@ -46,6 +46,14 @@ func summaryFixture() sessionView {
 			Counts: archive.Counts{
 				Turns: intPtr(35), Messages: intPtr(212), ToolCalls: intPtr(148),
 				UserShellCommands: intPtr(3), Compactions: intPtr(1), FilesTouched: intPtr(14),
+				Commits: intPtr(2), Pushes: intPtr(1), PRsCreated: intPtr(1), PRsMerged: intPtr(1),
+			},
+			GitActivity: []archive.GitEvent{
+				{Kind: archive.GitEventCommit, Source: archive.GitEventSourceShell, SHA: "3f9c2ab"},
+				{Kind: archive.GitEventCommit, Source: archive.GitEventSourceShell, SHA: "4a0d3bc"},
+				{Kind: archive.GitEventPush, Source: archive.GitEventSourceShell, Branch: "fix-oauth"},
+				{Kind: archive.GitEventPRCreated, Source: archive.GitEventSourceMCP, Repository: "wangjohn/agent-archive", PRNumber: 155},
+				{Kind: archive.GitEventPRMerged, Source: archive.GitEventSourceMCP, Repository: "wangjohn/agent-archive", PRNumber: 155},
 			},
 			ToolsUsed: []archive.ToolUsage{
 				{Name: "Bash", Count: 42}, {Name: "Edit", Count: 18}, {Name: "Read", Count: 12},
@@ -494,5 +502,22 @@ func TestRoutineGapsAreKnownCodes(t *testing.T) {
 		if !known[gap.code] {
 			t.Errorf("routineGaps names %q, which is not in archive.CaptureGapCodes", gap.code)
 		}
+	}
+}
+
+// The Git row counts commits and pushes and names each pull request, or
+// counts pull requests the capped event list does not hold.
+func TestSummaryGit(t *testing.T) {
+	t.Parallel()
+	m := summaryFixture().Metadata
+	if got := strings.Join(summaryGit(m), " · "); got != "2 commits · 1 push · PR #155 opened · PR #155 merged" {
+		t.Fatalf("git = %q", got)
+	}
+	m.Counts.Pushes, m.Counts.PRsCreated = intPtr(3), intPtr(140)
+	if got := strings.Join(summaryGit(m), " · "); got != "2 commits · 3 pushes · 140 PRs opened · PR #155 merged" {
+		t.Fatalf("capped git = %q", got)
+	}
+	if got := summaryGit(archive.Metadata{Counts: archive.Counts{Commits: intPtr(0), Pushes: intPtr(0)}}); got != nil {
+		t.Fatalf("a session with no git work shows %q", got)
 	}
 }
