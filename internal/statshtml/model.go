@@ -7,8 +7,8 @@ import "strings"
 // context it lands in; nothing here is marked as trusted markup. The renderer's
 // own stylesheet is part of the template's text, not a value.
 type page struct {
-	CSP      string
-	Title    string
+	CSP   string
+	Title string
 	// Subtitle is the parts of the line under the title; the template keeps
 	// each part whole when the line wraps (a date is never cut in two).
 	Subtitle []string

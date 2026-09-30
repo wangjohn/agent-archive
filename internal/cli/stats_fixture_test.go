@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -143,6 +144,8 @@ func statsEnv(t *testing.T) (Env, *storagetest.MemoryStore) {
 	mem := storagetest.NewMemoryStore()
 	env := testEnv(t, home, statsNow)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
+	// No test catches the process's real signals.
+	env.Interrupts = func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }
 	return env, mem
 }
 

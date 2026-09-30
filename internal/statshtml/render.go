@@ -202,7 +202,7 @@ func (b *builder) overview() ([]card, string) {
 		{Label: "Sessions", Value: measureCount(o.Sessions)},
 		{Label: "Prompts", Value: measureCount(o.Prompts)},
 		{Label: "Tokens", Value: measureTokens(o.Tokens)},
-		{Label: "Est. cost", Value: cost, Note: "at list price"},
+		{Label: "Est. cost", Value: cost, Note: costNote(b.s.Prices.AsOf)},
 		{Label: "Active days", Value: fmt.Sprintf("%d/%d", activeDays, o.DaysInWindow), Note: streak},
 	}
 	measures := []stats.Measure{o.Sessions, o.Prompts, o.Tokens, o.Cost.Measure}
@@ -211,9 +211,21 @@ func (b *builder) overview() ([]card, string) {
 		cards[i].Delta, cards[i].DeltaSpoken = deltaText(m)
 		if cards[i].Delta != "" {
 			vs = fmt.Sprintf("vs the previous %d days", b.s.Window.Days)
+			if b.s.Window.Days == 1 {
+				vs = "vs the day before"
+			}
 		}
 	}
 	return cards, vs
+}
+
+// costNote says what the estimated cost rests on, where it is read: list
+// prices, and how old they are.
+func costNote(asOf string) string {
+	if asOf == "" {
+		return "at list price"
+	}
+	return "at list price, prices as of " + plain(asOf)
 }
 
 func (b *builder) agents() *barTable {

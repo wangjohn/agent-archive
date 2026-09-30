@@ -129,8 +129,8 @@ func (cmd undoCommand) run() int {
 	if plan.Empty() {
 		return cmd.finishEmpty(plan)
 	}
-	if !yes && !env.isTerminal(stdin) {
-		return fail("confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking.")
+	if !yes && !env.interactive(stdin) {
+		return fail("%s", "confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking."+env.overrideHint(stdin))
 	}
 	// The bucket must work before anything is confirmed, as for an import.
 	// The check writes one test object and deletes it again.

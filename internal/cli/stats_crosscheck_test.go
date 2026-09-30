@@ -111,7 +111,8 @@ func TestStatsPageAgreesWithTheTerminalAndJSON(t *testing.T) {
 			base := append([]string{"--prices", goldenPrices}, sc.args...)
 			jsonOut := mustRunStats(t, env, 0, append([]string{"--json"}, base...)...)
 			page := mustRunStats(t, env, 0, append([]string{"--html", "--include-project-names"}, base...)...)
-			screen := mustRunStats(t, env, 80, base...)
+			// The screen is a compact table below 80 columns and has bars from 80.
+			screen := mustRunStats(t, env, 60, base...)
 			wide := mustRunStats(t, env, 120, base...)
 
 			var doc statsDocument
@@ -306,7 +307,7 @@ func screenBlock(screen, title string) []string {
 func screenRows(lines []string) []string {
 	var rows []string
 	for _, line := range lines[1:] {
-		if strings.HasPrefix(line, "+ ") || strings.Contains(line, "not shown") {
+		if strings.HasPrefix(line, "+ ") || strings.HasPrefix(line, "Weeks start") || strings.Contains(line, "not shown") {
 			continue
 		}
 		var fields []string
@@ -391,14 +392,15 @@ func checkOverview(t *testing.T, page *node, screen string) {
 	for i, card := range cards {
 		var fields []string
 		for _, c := range card.children {
-			// The "at list price" note is on the wide screen only.
-			if hasClass(c, "note") && c.visible() == "at list price" {
+			// The note under the cost ("at list price, prices as of ...") is on
+			// the wide screen only.
+			if hasClass(c, "note") && strings.HasPrefix(c.visible(), "at list price") {
 				continue
 			}
 			fields = append(fields, c.visible())
 		}
 		got := squash(strings.Join(fields, " "))
-		want := squash(strings.ReplaceAll(block[i+1], "at list price", ""))
+		want := squash(block[i+1])
 		if got != want {
 			t.Errorf("overview row %d: page %q, screen %q", i, got, want)
 		}

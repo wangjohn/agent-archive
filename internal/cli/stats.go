@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -119,16 +121,10 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	stopReading := func() {}
-	if !*jsonOut && !htmlFlags.toStdout() {
-		stopReading = startActivity(stdout, "Reading sessions…")
-	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0,
-		reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "stats")})
-	stopReading()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
-		return 1
+	// The page on standard output carries nothing but the page: no spinner.
+	listed, code := readStatsSessions(stdout, stderr, env, store, opts, *jsonOut || htmlFlags.toStdout())
+	if code != 0 {
+		return code
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
 	computed := stats.Compute(sessions, stats.Options{
@@ -162,6 +158,64 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return 1
 	}
 	return 0
+}
+
+// readStatsSessions reads the sessions stats counts. On a terminal it shows
+// a spinner with how many sidecars are read, since the first run downloads
+// and caches every one. Ctrl-C (or SIGTERM or SIGHUP) stops the read at
+// once, leaves nothing on the screen and exits as the signal would have;
+// the cache is only ever written by atomic renames, so an interrupted read
+// leaves nothing damaged. A non-zero code is the command's exit code.
+func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, store storage.ObjectStore, opts listOptions, jsonOut bool) (reader.RecentResult, int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals, stopSignals := env.interrupts()
+	defer stopSignals()
+	interrupted := make(chan os.Signal, 1)
+	go func() {
+		select {
+		case sig := <-signals:
+			interrupted <- sig
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	var done, total atomic.Int64
+	listOpts := reader.ListOptions{
+		Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "stats"),
+		// Calls come from several goroutines, out of order: keep the highest.
+		Progress: func(d, t int) {
+			total.Store(int64(t))
+			for cur := done.Load(); int64(d) > cur; cur = done.Load() {
+				if done.CompareAndSwap(cur, int64(d)) {
+					break
+				}
+			}
+		},
+	}
+	stopReading := func() {}
+	if !jsonOut {
+		style := activityStyle(stdout)
+		stopReading = style.spinLabelEvery(stdout, func() string {
+			if n := total.Load(); n > 0 {
+				return fmt.Sprintf("Reading sessions… %s of %s", commaInt(done.Load()), commaInt(n))
+			}
+			return "Reading sessions…"
+		}, spinnerInterval).stop
+	}
+	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	stopReading()
+	if err != nil {
+		select {
+		case sig := <-interrupted:
+			return reader.RecentResult{}, signalExitCode(sig)
+		default:
+		}
+		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
+		return reader.RecentResult{}, 1
+	}
+	return listed, 0
 }
 
 // statsWindowDays is the window's length in calendar days: --days, or the
@@ -260,6 +314,9 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 		longer = " Try a longer window, for example agent-archive stats --days 365."
 	}
 	switch {
+	case filters.Model != "":
+		// The screen names models by family ("opus"); the filter is exact.
+		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + longer
 	case filters != statsFilters{}:
 		return "No archived sessions match these filters " + span + "." + longer
 	case sawSessions:
@@ -271,28 +328,62 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 // statsZone is the time zone days, weeks and months are counted in: the
 // clock's own. The machine's local zone is found by its name, from $TZ or
 // where /etc/localtime points, so the output can say which zone it counted
-// in (Go's time.Local is only called "Local"); when no name matches the
-// clock's offset, it stays time.Local.
+// in (Go's time.Local is only called "Local"); when no name is known to be
+// the same zone, it stays time.Local.
 func statsZone(now time.Time, env interface{ lookupEnv(string) (string, bool) }) *time.Location {
 	if now.Location() != time.Local {
 		return now.Location()
 	}
-	var names []string
-	if tz, _ := env.lookupEnv("TZ"); tz != "" {
-		names = append(names, strings.TrimPrefix(tz, ":"))
+	tz, tzSet := env.lookupEnv("TZ")
+	link := ""
+	if !tzSet {
+		link, _ = os.Readlink("/etc/localtime")
 	}
-	if target, err := os.Readlink("/etc/localtime"); err == nil {
-		if _, name, found := strings.Cut(target, "zoneinfo/"); found {
-			names = append(names, name)
-		}
+	return resolveLocalZone(time.Local, now, tz, tzSet, link)
+}
+
+// resolveLocalZone names the zone local is, or returns local when it cannot
+// be sure. Go reads $TZ when it is set (an unset one means /etc/localtime),
+// so a set $TZ is the only name to try: when it does not resolve Go counts in
+// UTC, and /etc/localtime is not consulted. A name is used only when it has
+// the same offset as local at every season of the year, so a zone that merely
+// shares today's offset is not mistaken for it.
+func resolveLocalZone(local *time.Location, now time.Time, tz string, tzSet bool, localtimeLink string) *time.Location {
+	var names []string
+	if tzSet {
+		names = append(names, strings.TrimPrefix(tz, ":"))
+	} else {
+		names = append(names, localtimeLink)
 	}
 	for _, name := range names {
+		// A path to a zone file (a $TZ, or the link's target) names the zone
+		// by what follows the zoneinfo directory.
+		if _, rest, found := strings.Cut(name, "zoneinfo/"); found {
+			name = rest
+		}
 		if name == "" || name == "Local" {
 			continue
 		}
-		if named, err := time.LoadLocation(name); err == nil && now.In(named).Format("-07:00") == now.Format("-07:00") {
+		if named, err := time.LoadLocation(name); err == nil && sameZone(named, local, now) {
 			return named
 		}
 	}
-	return time.Local
+	return local
+}
+
+// sameZone is whether a and b have the same UTC offset at the start of every
+// season of the years around now, which is what a zone's daylight-saving
+// rules come to.
+func sameZone(a, b *time.Location, now time.Time) bool {
+	for year := now.Year() - 1; year <= now.Year(); year++ {
+		for month := time.January; month <= time.December; month += 3 {
+			at := time.Date(year, month, 1, 12, 0, 0, 0, time.UTC)
+			_, offsetA := at.In(a).Zone()
+			_, offsetB := at.In(b).Zone()
+			if offsetA != offsetB {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -309,7 +309,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <div class="label">Est. cost</div>
 <div class="value">$163&#43;</div>
 <div class="delta"><span aria-hidden="true">▲ 486%</span><span class="sr">up 486 percent</span></div>
-<div class="note">at list price</div>
+<div class="note">at list price, prices as of 2026-09-29</div>
 </div>
 <div class="card stat">
 <div class="label">Active days</div>
