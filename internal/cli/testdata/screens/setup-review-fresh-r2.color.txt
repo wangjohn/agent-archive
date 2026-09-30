@@ -16,7 +16,7 @@ On the review screen: Edit a setting adds projects, drops apps, and changes how 
 \e[1mWhere should sessions be stored?\e[0m
   1) Cloudflare R2
   2) Amazon S3
-  3) Amazon S3: create a new private bucket for me
+  3) Amazon S3: create a new bucket for me
   4) Show setup instructions
 Enter 1-4 [\e[1m1\e[0m] › 1
 

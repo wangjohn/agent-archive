@@ -22,10 +22,17 @@ type fakeCreator struct {
 	block   []error
 	deleted error
 	privacy storage.PrivacyReport
-	// privacies, when set, answers each InspectPrivacy in turn (the last
-	// repeats) instead of privacy.
-	privacies []storage.PrivacyReport
-	calls     []string
+	// reads, when set, answers each ReadBlockPublicAccess in turn (the last
+	// repeats). Otherwise it answers as privacy says: all on when verified,
+	// off when the report has read the settings, and refused when it has
+	// not.
+	reads []fakeRead
+	calls []string
+}
+
+type fakeRead struct {
+	allOn bool
+	err   error
 }
 
 var errCreateDenied = &smithy.GenericAPIError{Code: "AccessDenied", Message: "synthetic"}
@@ -58,14 +65,25 @@ func (f *fakeCreator) DeleteBucket(_ context.Context, bucket string) error {
 
 func (f *fakeCreator) InspectPrivacy(_ context.Context, bucket string) storage.PrivacyReport {
 	f.calls = append(f.calls, "inspect "+bucket)
-	if len(f.privacies) > 0 {
-		report := f.privacies[0]
-		if len(f.privacies) > 1 {
-			f.privacies = f.privacies[1:]
-		}
-		return report
-	}
 	return f.privacy
+}
+
+func (f *fakeCreator) ReadBlockPublicAccess(_ context.Context, bucket string) (bool, error) {
+	f.calls = append(f.calls, "read "+bucket)
+	if len(f.reads) > 0 {
+		read := f.reads[0]
+		if len(f.reads) > 1 {
+			f.reads = f.reads[1:]
+		}
+		return read.allOn, read.err
+	}
+	switch {
+	case f.privacy.State == "verified_private":
+		return true, nil
+	case containsString(f.privacy.Checks, "bucket_public_access_block"):
+		return false, nil
+	}
+	return false, errCreateDenied
 }
 
 var verifiedPrivate = storage.PrivacyReport{State: "verified_private", Reason: "all_bucket_public_access_blocks_enabled"}
@@ -122,7 +140,7 @@ func TestCreateS3BucketInProfileRegionRecordsBucketAndPrintsPolicy(t *testing.T)
 	if want := []string{"work eu-west-2"}; strings.Join(opened, ",") != strings.Join(want, ",") {
 		t.Fatalf("creator opened for %q, want %q", opened, want)
 	}
-	want := []string{"create agent-archive-1 eu-west-2", "block agent-archive-1", "inspect agent-archive-1"}
+	want := []string{"create agent-archive-1 eu-west-2", "block agent-archive-1", "read agent-archive-1", "inspect agent-archive-1"}
 	if strings.Join(creator.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls %q, want %q", creator.calls, want)
 	}
@@ -172,7 +190,7 @@ func TestCreateS3BucketRetriesADefaultNameOnceThenAsksAboutTheNext(t *testing.T)
 	if err != nil {
 		t.Fatalf("err=%v output:\n%s", err, out)
 	}
-	want := []string{"create agent-archive-1 us-east-1", "create agent-archive-2 us-east-1", "create my-archive-store us-east-1", "block my-archive-store", "inspect my-archive-store"}
+	want := []string{"create agent-archive-1 us-east-1", "create agent-archive-2 us-east-1", "create my-archive-store us-east-1", "block my-archive-store", "read my-archive-store", "inspect my-archive-store"}
 	if strings.Join(creator.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls %q, want %q\n%s", creator.calls, want, out)
 	}
@@ -266,7 +284,7 @@ func TestCreateS3BucketOtherFailureIsExplainedWithoutQuotingS3(t *testing.T) {
 	}{
 		{
 			"unrecognized error", &smithy.GenericAPIError{Code: "SomethingNew", Message: "secret-account-detail"},
-			"S3 returned an error setup doesn't recognize", "Try again in a moment",
+			"S3 or STS returned an error setup doesn't recognize", "Try again in a moment",
 		},
 		{
 			"account bucket limit", errors.Join(storage.ErrTooManyBuckets, &smithy.GenericAPIError{Code: "TooManyBuckets", Message: "secret-account-detail"}),
@@ -348,7 +366,7 @@ func TestCreateS3BucketBlockPublicAccessRetrySucceeds(t *testing.T) {
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
-	want := "create agent-archive-1 us-east-1,block agent-archive-1,block agent-archive-1,inspect agent-archive-1"
+	want := "create agent-archive-1 us-east-1,block agent-archive-1,block agent-archive-1,read agent-archive-1,inspect agent-archive-1"
 	if strings.Join(creator.calls, ",") != want {
 		t.Fatalf("calls %q, want %q", creator.calls, want)
 	}
@@ -405,7 +423,7 @@ func TestStorageMenuOffersS3CreationAndUsesTheS3Provider(t *testing.T) {
 	if cfg.Provider != credentials.ProviderS3 || cfg.Bucket != "agent-archive-1" || cfg.Region != "us-east-1" || cfg.AWSProfile != "work" || cfg.Prefix != defaultPrefix {
 		t.Fatalf("cfg=%+v", cfg)
 	}
-	if !strings.Contains(out.String(), "Amazon S3: create a new private bucket for me") {
+	if !strings.Contains(out.String(), "Amazon S3: create a new bucket for me") {
 		t.Errorf("menu does not offer it:\n%s", &out)
 	}
 }
@@ -419,7 +437,7 @@ func TestEmptyBucketListOffersToCreateOneWithNew(t *testing.T) {
 	if err != nil || cfg.Bucket != "agent-archive-1" || cfg.Region != "eu-west-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, &out)
 	}
-	if !strings.Contains(out.String(), "Type the bucket name, or new to create a private one.") {
+	if !strings.Contains(out.String(), "Type the bucket name, or new to create one.") {
 		t.Errorf("the offer isn't shown:\n%s", &out)
 	}
 }
@@ -560,7 +578,7 @@ func TestSetupThroughStorageCheckWithACreatedS3Bucket(t *testing.T) {
 	// The storage question's third choice creates the bucket; the profile,
 	// region and name questions take their defaults; then the review is
 	// cancelled.
-	out := f.runSetup(t, strings.Join([]string{"", "3", "", "", "", "", "3"}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, storageChoiceS3New), "", "", "", "", "3"}, "\n")+"\n")
 	for _, text := range []string{
 		"Created bucket agent-archive-1 in us-west-2.",
 		"Checked: Block Public Access is on for all four settings.",
@@ -640,9 +658,9 @@ func TestCreateS3BucketOpensTheCreatorInTheChosenRegionNotTheProfilesOwn(t *test
 	}
 }
 
-func TestCreateS3BucketDeclinesRegionsOutsideTheStandardPartition(t *testing.T) {
+func TestCreateS3BucketDeclinesRegionsOutsideTheStandardOnes(t *testing.T) {
 	sequentialNames(t)
-	for _, region := range []string{"cn-north-1", "us-gov-west-1", "us-iso-east-1"} {
+	for _, region := range []string{"cn-north-1", "cn-northwest-1", "us-gov-west-1", "us-iso-east-1", "us-isob-east-1", "eusc-de-east-1"} {
 		creator := &fakeCreator{}
 		var opened []string
 		var cfg credentials.Config
@@ -650,20 +668,23 @@ func TestCreateS3BucketDeclinesRegionsOutsideTheStandardPartition(t *testing.T) 
 		if err != nil || cfg.Bucket != "typed" || len(opened) != 0 || len(creator.calls) != 0 {
 			t.Fatalf("%s: cfg=%+v opened=%q calls=%q err=%v\n%s", region, cfg, opened, creator.calls, err, out)
 		}
-		if !strings.Contains(out, "can only create buckets in the standard AWS partition") {
+		if !strings.Contains(out, "can only create buckets in the standard AWS regions") {
 			t.Errorf("%s: output:\n%s", region, out)
 		}
 	}
 }
 
-func TestAWSPartition(t *testing.T) {
+func TestStandardAWSRegion(t *testing.T) {
 	t.Parallel()
-	for region, want := range map[string]string{
-		"us-east-1": "aws", "eu-west-2": "aws", "ap-southeast-4": "aws",
-		"cn-north-1": "aws-cn", "us-gov-west-1": "aws-us-gov", "us-iso-east-1": "aws-iso", "us-isob-east-1": "aws-iso",
+	for region, want := range map[string]bool{
+		"us-east-1": true, "us-west-2": true, "eu-west-2": true, "eu-central-1": true, "ap-southeast-4": true,
+		"sa-east-1": true, "ca-central-1": true, "me-south-1": true, "af-south-1": true, "il-central-1": true, "mx-central-1": true,
+		"cn-north-1": false, "cn-northwest-1": false, "us-gov-west-1": false, "us-gov-east-1": false,
+		"us-iso-east-1": false, "us-isob-east-1": false, "eu-isoe-west-1": false, "eusc-de-east-1": false,
+		"": false, "us-east": false, "mars-east-1": false,
 	} {
-		if got := awsPartition(region); got != want {
-			t.Errorf("awsPartition(%q) = %q, want %q", region, got, want)
+		if got := standardAWSRegion(region); got != want {
+			t.Errorf("standardAWSRegion(%q) = %v, want %v", region, got, want)
 		}
 	}
 }
@@ -698,21 +719,28 @@ func TestCreateS3BucketBlankConfirmationKeepsTheBucket(t *testing.T) {
 	if err == nil || strings.Contains(strings.Join(creator.calls, ","), "delete") {
 		t.Fatalf("err=%v calls=%q\n%s", err, creator.calls, out)
 	}
+	if !strings.Contains(out, "Not deleted.\n") || strings.Contains(out, `Not deleted: ""`) {
+		t.Errorf("a blank answer should read plainly:\n%s", out)
+	}
+	if !strings.Contains(out, "Only delete it if setup just created it: a bucket you already owned under this name isn't yours to delete here.") {
+		t.Errorf("the delete prompt lacks its warning:\n%s", out)
+	}
 }
 
 func TestCreateS3BucketRetriesABucketThatIsNotThereYet(t *testing.T) {
 	sequentialNames(t)
 	noSuchBucket := &smithy.GenericAPIError{Code: "NoSuchBucket", Message: "synthetic"}
 	creator := &fakeCreator{
-		block:     []error{noSuchBucket, noSuchBucket, nil},
-		privacies: []storage.PrivacyReport{storage.UnknownPrivacy("s3"), verifiedPrivate},
+		block:   []error{noSuchBucket, noSuchBucket, nil},
+		reads:   []fakeRead{{err: noSuchBucket}, {allOn: true}},
+		privacy: verifiedPrivate,
 	}
 	var cfg credentials.Config
 	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n\n")
 	if err != nil || cfg.Bucket != "agent-archive-1" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
-	want := "create agent-archive-1 us-east-1,block agent-archive-1,block agent-archive-1,block agent-archive-1,inspect agent-archive-1,inspect agent-archive-1"
+	want := "create agent-archive-1 us-east-1,block agent-archive-1,block agent-archive-1,block agent-archive-1,read agent-archive-1,read agent-archive-1,inspect agent-archive-1"
 	if strings.Join(creator.calls, ",") != want {
 		t.Fatalf("calls %q, want %q", creator.calls, want)
 	}
@@ -753,7 +781,39 @@ func TestCreateS3BucketWithASettingStillOffIsAFailureNotAWarning(t *testing.T) {
 	if !strings.Contains(out, "Block Public Access reads back with a setting still off.") || strings.Contains(out, "can't read it back") {
 		t.Errorf("output:\n%s", out)
 	}
-	if n := strings.Count(strings.Join(creator.calls, ","), "inspect"); n != 1 {
-		t.Errorf("a read-back that shows the settings is not retried; inspected %d times", n)
+	if n := strings.Count(strings.Join(creator.calls, ","), "read "); n != 1 {
+		t.Errorf("a read-back that shows the settings is not retried; read %d times", n)
+	}
+}
+
+func TestCreateS3BucketDoesNotSpendAllAttemptsWhenTheReadBackIsRefused(t *testing.T) {
+	sequentialNames(t)
+	creator := &fakeCreator{reads: []fakeRead{{err: errCreateDenied}}}
+	var cfg credentials.Config
+	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n\n")
+	if err != nil || cfg.Bucket != "agent-archive-1" {
+		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
+	}
+	if n := strings.Count(strings.Join(creator.calls, ","), "read "); n != 1 {
+		t.Errorf("a refused read-back was tried %d times, want once: %q", n, creator.calls)
+	}
+	if !strings.Contains(out, "this profile can't read it back to confirm (that needs s3:GetBucketPublicAccessBlock)") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestCreateS3BucketRetriesAnEmptyReadBackAndThenWarnsWithoutBlamingPermissions(t *testing.T) {
+	sequentialNames(t)
+	creator := &fakeCreator{reads: []fakeRead{{err: errors.New("no answer")}}}
+	var cfg credentials.Config
+	out, err := runCreate(t, createEnv("us-east-1", creator, fakeBuckets{}, nil), &cfg, "\n\n\n")
+	if err != nil || cfg.Bucket != "agent-archive-1" {
+		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
+	}
+	if n := strings.Count(strings.Join(creator.calls, ","), "read "); n != bucketSettleAttempts {
+		t.Errorf("read %d times, want %d: %q", n, bucketSettleAttempts, creator.calls)
+	}
+	if !strings.Contains(out, "setup couldn't read it back to confirm (the lookup failed)") || strings.Contains(out, "that needs s3:GetBucketPublicAccessBlock") {
+		t.Errorf("output:\n%s", out)
 	}
 }

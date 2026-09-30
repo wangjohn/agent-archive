@@ -88,7 +88,7 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", "4", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, "help"), "2", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}

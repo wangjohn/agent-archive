@@ -1101,7 +1101,7 @@ func storageMenuOptions() []option {
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
 // (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
 func guidedStorageOptions() []option {
-	return []option{{storageChoiceS3New, "Amazon S3: create a new private bucket for me"}}
+	return []option{{storageChoiceS3New, "Amazon S3: create a new bucket for me"}}
 }
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
@@ -1117,7 +1117,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
 		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
-		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create a private Amazon S3 bucket for you.")
+		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create an Amazon S3 bucket for you.")
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {

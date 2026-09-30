@@ -47,6 +47,10 @@ type BucketCreator interface {
 	BlockPublicAccess(ctx context.Context, bucket string) error
 	// DeleteBucket deletes an empty bucket.
 	DeleteBucket(ctx context.Context, bucket string) error
+	// ReadBlockPublicAccess reads the bucket's Block Public Access settings
+	// back: allOn says whether all four are on, and the error is why they
+	// could not be read.
+	ReadBlockPublicAccess(ctx context.Context, bucket string) (allOn bool, err error)
 	// InspectPrivacy reads the bucket's public access controls back.
 	InspectPrivacy(ctx context.Context, bucket string) storage.PrivacyReport
 }
@@ -71,14 +75,14 @@ var openAWSBucketCreator = func(profile, region string) (BucketCreator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewBucketAdmin(storage.NewClient(cfg, "", true, 1)), nil
+	return storage.NewBucketAdmin(storage.NewClient(cfg, "", true, 1), cfg), nil
 }
 
 // bucketCreateTimeout bounds each call that creates, secures or deletes a
 // bucket.
 const bucketCreateTimeout = 60 * time.Second
 
-// promptS3Bucket asks for the S3 profile, then for a bucket: a new private
+// promptS3Bucket asks for the S3 profile, then for a bucket: a new
 // one when create is set, else an existing one.
 func promptS3Bucket(p *prompter, cfg *credentials.Config, env Env, failedRegion string, create bool) error {
 	if !create {
@@ -94,7 +98,7 @@ func promptS3Bucket(p *prompter, cfg *credentials.Config, env Env, failedRegion 
 	return promptS3ExistingBucket(p, cfg, env, failedRegion, profileRegion, noCredentials)
 }
 
-// createS3Bucket creates a private bucket with the profile in cfg and
+// createS3Bucket creates a bucket with the profile in cfg and
 // records its name and region in cfg. It returns false, having said why,
 // when setup should ask for an existing bucket instead: the profile cannot
 // create buckets, or the attempt failed with nothing left to clean up.
@@ -104,14 +108,14 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so it can't create a bucket. Pick an existing bucket instead.\n", profile)
 		return false, nil
 	}
-	terminal.Printf(p.out, "Setup will create a private bucket in the AWS account of profile %s, using that profile now.\n", profile)
+	terminal.Printf(p.out, "Setup will create a bucket in the AWS account of profile %s, using that profile now, and turn on Block Public Access for it.\n", profile)
 	terminal.Println(p.out, "That needs permission to create buckets and set Block Public Access, which day-to-day archiving does not.")
 	region, err := promptRegion(p, "Region for the new bucket (for example us-east-1)", firstNonEmpty(cfg.Region, profileRegion))
 	if err != nil {
 		return false, err
 	}
-	if partition := awsPartition(region); partition != "aws" {
-		terminal.Printf(p.out, "Setup can only create buckets in the standard AWS partition, and %s is in the %s partition. Create the bucket yourself (see the bucket guide) and pick it instead.\n", region, partition)
+	if !standardAWSRegion(region) {
+		terminal.Printf(p.out, "Setup can only create buckets in the standard AWS regions (such as us-east-1 or eu-west-2), and %s isn't one. Create the bucket yourself (see the bucket guide) and pick it instead.\n", region)
 		return false, nil
 	}
 	creator, err := env.awsBucketCreator(profile, region)
@@ -131,21 +135,16 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	return true, nil
 }
 
-// awsPartition names the AWS partition a region is in, from its name: "aws"
-// (the standard one), "aws-cn", "aws-us-gov", or "aws-iso" for the isolated
-// ones. ARNs, and so the runtime policy, differ by partition, and guided
-// creation is only built and worded for the standard one.
-func awsPartition(region string) string {
-	switch {
-	case strings.HasPrefix(region, "cn-"):
-		return "aws-cn"
-	case strings.HasPrefix(region, "us-gov-"):
-		return "aws-us-gov"
-	case strings.Contains(region, "-iso"):
-		return "aws-iso"
-	}
-	return "aws"
-}
+// standardRegion matches the region names of the standard AWS partition: a
+// continent or area, one direction, a number. Anything else (cn-*, us-gov-*,
+// the isolated and sovereign partitions' names) is not matched, so a region
+// this list has not been told about is declined, not guessed at.
+var standardRegion = regexp.MustCompile(`^(us|eu|ap|sa|ca|me|af|il|mx)-[a-z]+-[0-9]{1,2}$`)
+
+// standardAWSRegion reports whether region is one of the standard AWS
+// partition's. ARNs, and so the runtime policy, differ by partition, and
+// guided creation is only built and worded for the standard one.
+func standardAWSRegion(region string) bool { return standardRegion.MatchString(region) }
 
 // namesTakenBeforeAsking is how many "name in use" answers in a row setup
 // takes before it offers to give up on creating and pick an existing bucket.
@@ -247,7 +246,7 @@ func noteCreateFailure(p *prompter, profile, name string, err error) {
 		terminal.Println(p.out, "Couldn't create the bucket. "+d.Explanation)
 		terminal.Println(p.out, strings.ReplaceAll(d.Fix, "<profile>", profile)+fallback)
 	default:
-		terminal.Println(p.out, "Couldn't create the bucket: S3 returned an error setup doesn't recognize. Check the region and your AWS account, then run setup again."+fallback)
+		terminal.Println(p.out, "Couldn't create the bucket: S3 or STS returned an error setup doesn't recognize. Check the region and your AWS account, then run setup again."+fallback)
 	}
 }
 
@@ -307,6 +306,7 @@ func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string)
 		if secureChoice(answer) != secureDelete {
 			return secureChoice(answer), nil
 		}
+		terminal.Println(p.out, "Only delete it if setup just created it: a bucket you already owned under this name isn't yours to delete here.")
 		typed, err := p.withDefault("Type the bucket name "+bucket+" to delete it, or press Enter to keep it", "")
 		if err != nil {
 			return secureStop, err
@@ -315,7 +315,11 @@ func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string)
 			deleteNewBucket(p, creator, bucket, profile)
 			return secureDelete, nil
 		}
-		terminal.Printf(p.out, "Not deleted: %q isn't %s.\n", typed, bucket)
+		if typed == "" {
+			terminal.Println(p.out, "Not deleted.")
+		} else {
+			terminal.Printf(p.out, "Not deleted: %q isn't %s.\n", typed, bucket)
+		}
 	}
 }
 
@@ -329,10 +333,10 @@ const bucketSettleAttempts = 3
 var bucketSettleDelay = time.Second
 
 // blockPublicAccess turns Block Public Access on for bucket and reads it
-// back, and returns why not when it could not, or "" on success. A read-back
-// the profile may not make (no s3:GetBucketPublicAccessBlock) is a warning,
-// not a failure: setup's storage check reads it again with the profile it
-// saves. A read-back that shows a setting off is a failure.
+// back, and returns why not when it could not, or "" on success. A
+// read-back the profile may not make (no s3:GetBucketPublicAccessBlock) is a
+// warning, not a failure: setup's storage check reads it again with the
+// profile it saves. A read-back that shows a setting off is a failure.
 func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*bucketCreateTimeout)
 	defer cancel()
@@ -352,34 +356,38 @@ func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string
 		}
 		return "setup couldn't turn on Block Public Access (" + discoveryReason(err) + ")."
 	}
-	var report storage.PrivacyReport
+	allOn, readErr := readBackBlockPublicAccess(ctx, creator, bucket)
+	if readErr == nil && !allOn {
+		return "Block Public Access reads back with a setting still off."
+	}
+	report := creator.InspectPrivacy(ctx, bucket)
+	if report.State == "public_or_risky" {
+		return "it still looks public after Block Public Access was turned on (" + privacyReasonText(report.Reason) + ")."
+	}
+	switch {
+	case readErr == nil:
+		terminal.Println(p.out, "  "+p.style.okMark()+" Checked: Block Public Access is on for all four settings.")
+	case storage.Diagnose(readErr).Cause == storage.CauseAccessDenied:
+		p.warn("Block Public Access was turned on, but this profile can't read it back to confirm (that needs s3:GetBucketPublicAccessBlock). Setup checks again at the review.")
+	default:
+		p.warn("Block Public Access was turned on, but setup couldn't read it back to confirm (" + discoveryReason(readErr) + "). Setup checks again at the review.")
+	}
+	return ""
+}
+
+// readBackBlockPublicAccess reads the bucket's Block Public Access settings,
+// trying again a few times when the answer could be a bucket S3 does not
+// show yet, but not when the profile is simply not allowed to read them.
+func readBackBlockPublicAccess(ctx context.Context, creator BucketCreator, bucket string) (allOn bool, err error) {
 	for attempt := range bucketSettleAttempts {
 		if attempt > 0 {
 			time.Sleep(bucketSettleDelay)
 		}
-		report = creator.InspectPrivacy(ctx, bucket)
-		if report.State != "not_verified" || readBlockPublicAccess(report) {
+		if allOn, err = creator.ReadBlockPublicAccess(ctx, bucket); err == nil || storage.Diagnose(err).Cause == storage.CauseAccessDenied {
 			break
 		}
 	}
-	if report.State == "public_or_risky" {
-		return "it still looks public after Block Public Access was turned on (" + privacyReasonText(report.Reason) + ")."
-	}
-	if report.State == "verified_private" {
-		terminal.Println(p.out, "  "+p.style.okMark()+" Checked: Block Public Access is on for all four settings.")
-		return ""
-	}
-	if readBlockPublicAccess(report) {
-		return "Block Public Access reads back with a setting still off."
-	}
-	p.warn("Block Public Access was turned on, but this profile can't read it back to confirm (that needs s3:GetBucketPublicAccessBlock). Setup checks again at the review.")
-	return ""
-}
-
-// readBlockPublicAccess reports whether report includes the bucket's Block
-// Public Access settings as S3 answered them.
-func readBlockPublicAccess(report storage.PrivacyReport) bool {
-	return containsString(report.Checks, "bucket_public_access_block")
+	return allOn, err
 }
 
 // deleteNewBucket deletes the empty bucket this run created. When S3 refuses,

@@ -376,7 +376,7 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
-		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name, or %s to create a private one.\n", profile, newBucketWord)
+		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name, or %s to create one.\n", profile, newBucketWord)
 		bucket, err = p.required("Bucket name", saved)
 		if err == nil && bucket == newBucketWord {
 			return "", nil, errWantsNewBucket

@@ -56,10 +56,15 @@ func replyS3Error(w http.ResponseWriter, status int, code string) {
 	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>synthetic</Message><RequestId>r</RequestId></Error>`, code)
 }
 
-// adminIn is a BucketAdmin whose client is in region and talks to server.
+// adminIn is a BucketAdmin whose client is in region and talks to server for
+// every service, as AWS_ENDPOINT_URL (the global override) makes it.
 func adminIn(server *httptest.Server, region string) *BucketAdmin {
-	cfg := aws.Config{Region: region, Credentials: awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", "")}
-	return NewBucketAdmin(NewClient(cfg, server.URL, true, 1))
+	cfg := aws.Config{
+		Region:       region,
+		Credentials:  awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", ""),
+		BaseEndpoint: aws.String(server.URL),
+	}
+	return NewBucketAdmin(NewClient(cfg, server.URL, true, 1), cfg)
 }
 
 // bucketAnswers scripts the fake server: how it answers the HEAD request
@@ -227,6 +232,116 @@ func TestCreateBucketUnexpectedNameCheckAnswerStopsBeforeCreating(t *testing.T) 
 		}
 		if len(requests) != 1 || !strings.HasPrefix(requests[0], "HEAD") {
 			t.Errorf("HEAD %d: requests %q, want the HEAD alone", code, requests)
+		}
+	}
+}
+
+// A credentials check that got a server error is not retried: one attempt.
+func TestCreateBucketCredentialsCheckMakesOneAttempt(t *testing.T) {
+	t.Parallel()
+	requests, err := createWith(t, "us-east-1", bucketAnswers{head: status(http.StatusForbidden), sts: status(http.StatusInternalServerError)})
+	if err == nil || errors.Is(err, ErrBucketNameTaken) {
+		t.Fatalf("err = %v, want the credentials check's failure", err)
+	}
+	posts := 0
+	for _, request := range requests {
+		if strings.HasPrefix(request, "POST") {
+			posts++
+		}
+	}
+	if posts != 1 {
+		t.Fatalf("%d STS requests, want 1: %q", posts, requests)
+	}
+}
+
+// An override meant for S3 alone (AWS_ENDPOINT_URL_S3, a profile's
+// services.s3 endpoint_url) reaches S3 only. STS is asked where the global
+// override, or its own, says.
+func TestCreateBucketCredentialsCheckDoesNotUseAnS3OnlyEndpoint(t *testing.T) {
+	t.Parallel()
+	s3Server := &bucketRecorder{reply: bucketAnswers{head: status(http.StatusForbidden)}.reply}
+	s3 := httptest.NewServer(s3Server)
+	defer s3.Close()
+	var stsHosts []string
+	cfg := aws.Config{
+		Region:      "us-east-1",
+		Credentials: awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", ""),
+		HTTPClient: privacyHTTP(func(r *http.Request) (*http.Response, error) {
+			if !strings.HasPrefix(r.URL.Host, "127.0.0.1") {
+				stsHosts = append(stsHosts, r.URL.Host)
+				rec := httptest.NewRecorder()
+				stsIdentity(rec)
+				return rec.Result(), nil
+			}
+			return http.DefaultClient.Do(r)
+		}),
+	}
+	// The S3 client alone is pointed at the fake server, as an S3-only
+	// override does; cfg carries no global override.
+	admin := NewBucketAdmin(NewClient(cfg, s3.URL, true, 1), cfg)
+	err := admin.CreateBucket(context.Background(), "agent-archive-1", "us-east-1")
+	if !errors.Is(err, ErrBucketNameTaken) {
+		t.Fatalf("err = %v, want ErrBucketNameTaken", err)
+	}
+	if len(stsHosts) != 1 || !strings.HasPrefix(stsHosts[0], "sts.") {
+		t.Fatalf("STS was asked at %q, want its own endpoint (sts.<region>.amazonaws.com), not the S3 override", stsHosts)
+	}
+	for _, request := range s3Server.methods() {
+		if strings.HasPrefix(request, "POST") {
+			t.Errorf("the S3-only endpoint was sent an STS request: %q", s3Server.methods())
+		}
+	}
+}
+
+// The global override applies to STS as well.
+func TestCreateBucketCredentialsCheckUsesTheGlobalEndpoint(t *testing.T) {
+	t.Parallel()
+	s3Server := &bucketRecorder{reply: bucketAnswers{head: status(http.StatusForbidden)}.reply}
+	s3 := httptest.NewServer(s3Server)
+	defer s3.Close()
+	stsServer := &bucketRecorder{reply: bucketAnswers{}.reply}
+	sts := httptest.NewServer(stsServer)
+	defer sts.Close()
+	cfg := aws.Config{
+		Region:       "us-east-1",
+		Credentials:  awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", ""),
+		BaseEndpoint: aws.String(sts.URL),
+	}
+	admin := NewBucketAdmin(NewClient(cfg, s3.URL, true, 1), cfg)
+	if err := admin.CreateBucket(context.Background(), "agent-archive-1", "us-east-1"); !errors.Is(err, ErrBucketNameTaken) {
+		t.Fatalf("err = %v, want ErrBucketNameTaken", err)
+	}
+	if got := stsServer.methods(); len(got) != 1 || !strings.HasPrefix(got[0], "POST") {
+		t.Fatalf("the global endpoint got %q, want the one STS call", got)
+	}
+}
+
+func TestReadBlockPublicAccess(t *testing.T) {
+	t.Parallel()
+	all := `<PublicAccessBlockConfiguration><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>`
+	partial := `<PublicAccessBlockConfiguration><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>false</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>`
+	for _, tc := range []struct {
+		name   string
+		reply  func(http.ResponseWriter)
+		allOn  bool
+		denied bool
+		failed bool
+	}{
+		{"all four on", func(w http.ResponseWriter) { _, _ = io.WriteString(w, all) }, true, false, false},
+		{"one off", func(w http.ResponseWriter) { _, _ = io.WriteString(w, partial) }, false, false, false},
+		{"denied", apiError(http.StatusForbidden, "AccessDenied"), false, true, true},
+		{"not there yet", apiError(http.StatusNotFound, "NoSuchBucket"), false, false, true},
+	} {
+		server := httptest.NewServer(&bucketRecorder{reply: func(c bucketCall, w http.ResponseWriter) {
+			if c.method != http.MethodGet || !strings.Contains(c.query, "publicAccessBlock") {
+				t.Errorf("%s: unexpected request %s ?%s", tc.name, c.method, c.query)
+			}
+			tc.reply(w)
+		}})
+		allOn, err := adminIn(server, "us-east-1").ReadBlockPublicAccess(context.Background(), "agent-archive-1")
+		server.Close()
+		if allOn != tc.allOn || (err != nil) != tc.failed || (err != nil && (Diagnose(err).Cause == CauseAccessDenied) != tc.denied) {
+			t.Errorf("%s: allOn=%v err=%v", tc.name, allOn, err)
 		}
 	}
 }

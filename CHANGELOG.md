@@ -9,7 +9,7 @@ follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
-  new private bucket for me" at the storage question. It creates the bucket
+  new bucket for me" at the storage question. It creates the bucket
   in your own AWS account with the profile you pick (region and name are
   asked, the name suggested as `agent-archive-` and random characters),
   turns on all four Block Public Access settings, and reads them back, then
@@ -19,7 +19,7 @@ follow [Semantic Versioning](https://semver.org/).
   policy forbids it) setup says so and lets you pick an existing bucket. If
   Block Public Access can't be turned on, setup offers to retry, or to delete
   the empty bucket once you type its name, and never uploads to it. Only the
-  standard AWS partition is supported.
+  standard AWS regions are supported.
   Setup does not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,

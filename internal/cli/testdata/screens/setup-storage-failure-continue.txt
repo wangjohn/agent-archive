@@ -16,7 +16,7 @@ Step 2 of 3 · Connect storage
 Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
-  3) Amazon S3: create a new private bucket for me
+  3) Amazon S3: create a new bucket for me
   4) Show setup instructions
 Enter 1-4 [2]: 
 

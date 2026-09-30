@@ -45,10 +45,20 @@ const awsDefaultRegion = "us-east-1"
 // s3:DeleteBucket to undo a half-finished creation). Its client's region
 // must be the region the bucket is created in. It never handles object
 // data and never creates IAM users or keys.
-type BucketAdmin struct{ client *s3.Client }
+type BucketAdmin struct {
+	client *s3.Client
+	// cfg is the AWS configuration client was made from; the credentials
+	// check builds its STS client from it, so STS gets the region, FIPS and
+	// dual-stack settings and the endpoint overrides that apply to STS, not
+	// the ones that apply to S3.
+	cfg aws.Config
+}
 
-// NewBucketAdmin returns a BucketAdmin that calls S3 with client.
-func NewBucketAdmin(client *s3.Client) *BucketAdmin { return &BucketAdmin{client: client} }
+// NewBucketAdmin returns a BucketAdmin that calls S3 with client, which was
+// made from cfg (see NewClient).
+func NewBucketAdmin(client *s3.Client, cfg aws.Config) *BucketAdmin {
+	return &BucketAdmin{client: client, cfg: cfg}
+}
 
 // CreateBucket creates a bucket named name in region, with a location
 // constraint everywhere except us-east-1, where S3 refuses one.
@@ -112,12 +122,15 @@ func (e *credentialsCheckError) Unwrap() error { return e.err }
 
 // checkCredentials asks STS who the client's credentials belong to, a call
 // that needs no permission, so it fails only when the credentials do not
-// work. It reuses the S3 client's credentials, region, HTTP client and
-// endpoint override (so a test's fake server answers it too).
+// work. The STS client comes from the same AWS configuration as the S3 one,
+// so it takes the configuration's global endpoint override (AWS_ENDPOINT_URL
+// or a profile's endpoint_url), a service-specific one for STS
+// (AWS_ENDPOINT_URL_STS), and the FIPS and dual-stack settings, and never an
+// override meant for S3 alone. It makes one attempt: a check that retries
+// server errors would hold up setup for no better an answer.
 func (a *BucketAdmin) checkCredentials(ctx context.Context) error {
-	options := a.client.Options()
-	client := sts.NewFromConfig(aws.Config{Region: options.Region, Credentials: options.Credentials, HTTPClient: options.HTTPClient}, func(o *sts.Options) {
-		o.BaseEndpoint = options.BaseEndpoint
+	client := sts.NewFromConfig(a.cfg, func(o *sts.Options) {
+		o.HTTPClient = withTimeouts(a.cfg.HTTPClient)
 		o.Logger = logging.Nop{}
 		o.Retryer = aws.NopRetryer{}
 	})
@@ -177,6 +190,22 @@ func answerUnclear(err error) bool {
 	}
 	var response *smithyhttp.ResponseError
 	return errors.As(err, &response) && response.HTTPStatusCode() >= http.StatusInternalServerError
+}
+
+// ReadBlockPublicAccess reads bucket's Block Public Access settings back. On
+// success allOn says whether all four are on; the error, when there is
+// one, is why they could not be read (s3:GetBucketPublicAccessBlock, a
+// bucket S3 does not show yet). It needs s3:GetBucketPublicAccessBlock.
+func (a *BucketAdmin) ReadBlockPublicAccess(ctx context.Context, bucket string) (allOn bool, err error) {
+	output, err := a.client.GetPublicAccessBlock(ctx, &s3.GetPublicAccessBlockInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		return false, err
+	}
+	b := output.PublicAccessBlockConfiguration
+	if b == nil {
+		return false, nil
+	}
+	return aws.ToBool(b.BlockPublicAcls) && aws.ToBool(b.IgnorePublicAcls) && aws.ToBool(b.BlockPublicPolicy) && aws.ToBool(b.RestrictPublicBuckets), nil
 }
 
 // BlockPublicAccess turns on all four Block Public Access settings for

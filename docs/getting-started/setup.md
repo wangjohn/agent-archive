@@ -113,16 +113,17 @@ already have a profile with credentials, and R2 otherwise.
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
 
-  **Create a new S3 bucket.** Choose "Amazon S3: create a new private bucket
-  for me" at the storage question (or type `new` where setup says the
+  **Create a new S3 bucket.** Choose "Amazon S3: create a new bucket for
+  me" at the storage question (or type `new` where setup says the
   profile can see no buckets). After the profile, setup asks for the region
   (the profile's, unless you type another) and a name, suggesting
   `agent-archive-` and eight random characters, since bucket names are
   shared by everyone on AWS. A suggested name that turns out to be in use
   is replaced once by another random one; a name you typed is asked for
   again, and after two in-use answers in a row setup also offers to pick an
-  existing bucket instead. Regions outside the standard AWS partition (China,
-  GovCloud) are not supported here; pick an existing bucket for those.
+  existing bucket instead. Only the standard AWS regions (such as `us-east-1`
+  or `eu-west-2`) are supported here, not China or GovCloud; pick an existing
+  bucket for those.
   Setup then creates the bucket, turns on all four Block Public Access
   settings, and reads them back, showing "Checked: Block Public Access is
   on". It sets no lifecycle rule and no bucket policy, and it never creates
