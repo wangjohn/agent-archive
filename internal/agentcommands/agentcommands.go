@@ -67,7 +67,7 @@ func claudeSkill(executable, dataHome string) []byte {
 	command := commandLine(executable, dataHome)
 	front := []string{
 		"name: handoff",
-		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab.",
+		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab or window.",
 		`argument-hint: "[claude|codex|cursor]"`,
 		"disable-model-invocation: true",
 	}
@@ -87,7 +87,7 @@ func claudeSkill(executable, dataHome string) []byte {
 func agentsSkill(executable, dataHome string) []byte {
 	front := []string{
 		"name: handoff",
-		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab. Use only when the person explicitly asks to hand off.",
+		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab or window. Use only when the person explicitly asks to hand off.",
 	}
 	return skill(front, commandLine(executable, dataHome), "Only if they explicitly asked you to hand off, or to continue in another\nagent, run the command below; otherwise run nothing.\n\n")
 }
@@ -115,9 +115,9 @@ The person wants to continue this session in another coding agent.
 none, choose a different agent than yourself: codex if you are Claude Code,
 claude if you are Codex or Cursor.
 
-The command opens that agent in a new terminal tab with this session as its
-context, and returns at once. Report its output. Do not paste the handoff
-content, and do nothing else.
+The command opens that agent in a new terminal tab or window with this
+session as its context, and returns at once. Report its output. Do not
+paste the handoff content, and do nothing else.
 `)
 }
 
