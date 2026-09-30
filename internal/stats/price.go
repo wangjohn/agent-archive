@@ -249,6 +249,11 @@ var (
 	// the colon, unlike a name such as "deepseek-v3"). Only Claude models are
 	// served under it here, so only a Claude id loses it.
 	platformVersion = regexp.MustCompile(`-v\d+:\d+$`)
+	// bedrockBareVersion is the one colon-less version Bedrock uses, in
+	// "anthropic.claude-opus-4-6-v1". It is dropped only from an id that
+	// carried Bedrock's vendor prefix: a bare "claude-opus-5-5-v1" is not a
+	// Bedrock id and is left as it is (unpriced).
+	bedrockBareVersion = regexp.MustCompile(`-v1$`)
 )
 
 // NormalizeModel is the form of a model id the price table is keyed by:
@@ -257,9 +262,10 @@ var (
 // "@20251001", or OpenAI's "-2025-08-07"). It also unwraps the ways a cloud
 // platform names the same model: a path ("anthropic/claude-opus-5-5") and
 // Amazon Bedrock's vendor, region and version parts
-// ("us.anthropic.claude-opus-5-5-20251001-v1:0"). Those name the same model,
-// so they are priced at its list price; a platform that bills differently
-// (regional endpoints add 10%) is not reflected. It does not map aliases: a
+// ("us.anthropic.claude-opus-5-5-20251001-v1:0",
+// "anthropic.claude-opus-4-6-v1"). Those name the same model, so they are
+// priced at its list price; a platform that bills differently (regional
+// endpoints add 10%) is not reflected. It does not map aliases: a
 // bare "opus" stays "opus", which no table prices, because it does not say
 // which version answered.
 //
@@ -282,10 +288,14 @@ func normalizeModelOnce(id string) string {
 	if slash := strings.LastIndex(id, "/"); slash >= 0 {
 		id = id[slash+1:]
 	}
+	bedrock := vendorPrefix.MatchString(id)
 	id = vendorPrefix.ReplaceAllString(id, "")
 	id = contextSuffix.ReplaceAllString(id, "")
 	if strings.HasPrefix(id, "claude-") {
 		id = platformVersion.ReplaceAllString(id, "")
+		if bedrock {
+			id = bedrockBareVersion.ReplaceAllString(id, "")
+		}
 	}
 	id = dateSuffix.ReplaceAllString(id, "")
 	return strings.TrimSpace(id)

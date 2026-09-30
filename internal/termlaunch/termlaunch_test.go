@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/platform"
@@ -67,8 +69,21 @@ func testSpec(t *testing.T) Spec {
 		Dir:       "/work/app #1",
 		Argv:      []string{"/opt/bin/codex", "--cd", "/work/app #1", "read it's $(here)"},
 		Unset:     []string{"CODEX_THREAD_ID"},
-		ScriptDir: t.TempDir(),
+		ScriptDir: scriptDir(t),
 	}
+}
+
+// scriptDir returns an empty directory only its owner can write to.
+// t.TempDir creates its directory with the process's umask, so under umask
+// 002 (a container's default user, for one) it is group-writable, and
+// writeScript rightly refuses it.
+func scriptDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 var scriptName = regexp.MustCompile(`^launch-[0-9a-f]{24}\.sh$`)
@@ -223,7 +238,7 @@ func TestDefaultEnvironmentIsTheRunningSystem(t *testing.T) {
 }
 
 func TestOpenRejectsUnsafeSpecs(t *testing.T) {
-	dir := t.TempDir()
+	dir := scriptDir(t)
 	tests := map[string]Spec{
 		"no command":            {Dir: "/work", ScriptDir: dir},
 		"command found on PATH": {Dir: "/work", Argv: []string{"codex"}, ScriptDir: dir},
@@ -288,21 +303,33 @@ func TestRunReportsTheCommandsOutput(t *testing.T) {
 	}
 }
 
-func TestScriptIsPrivateAndExecutable(t *testing.T) {
-	spec := testSpec(t)
-	path, err := writeScript(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o700 {
-		t.Errorf("mode = %v, want 0700", got)
-	}
-	if filepath.Dir(path) != spec.ScriptDir || !scriptName.MatchString(filepath.Base(path)) {
-		t.Errorf("path = %s", path)
+// The launcher is 0700 whatever the process's umask: a strict one must not
+// strip the execute bit the terminal needs, and a loose one must not open
+// the script to others.
+//
+// Regression: the tests used t.TempDir as the script directory, which is
+// group-writable under umask 002, so writeScript refused it.
+func TestScriptIsPrivateAndExecutableUnderAnyUmask(t *testing.T) {
+	for _, umask := range []int{0o000, 0o002, 0o022, 0o077} {
+		t.Run(fmt.Sprintf("umask %03o", umask), func(t *testing.T) {
+			old := syscall.Umask(umask)
+			t.Cleanup(func() { syscall.Umask(old) })
+			spec := testSpec(t)
+			path, err := writeScript(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0o700 {
+				t.Errorf("mode = %v, want 0700", got)
+			}
+			if filepath.Dir(path) != spec.ScriptDir || !scriptName.MatchString(filepath.Base(path)) {
+				t.Errorf("path = %s", path)
+			}
+		})
 	}
 }
 
@@ -355,7 +382,7 @@ func TestScriptPassesArgumentsByteForByte(t *testing.T) {
 		Dir:       dir,
 		Argv:      append([]string{"/bin/sh", "-c", record, "sh", out}, hostile...),
 		Unset:     []string{"SECRET"},
-		ScriptDir: t.TempDir(),
+		ScriptDir: scriptDir(t),
 	}
 	if output, code := runScript(t, spec, ""); code != 0 {
 		t.Fatalf("exit %d: %s", code, output)
@@ -381,7 +408,7 @@ func TestScriptPassesArgumentsByteForByte(t *testing.T) {
 }
 
 func TestScriptWaitsAfterAFailure(t *testing.T) {
-	spec := Spec{Dir: t.TempDir(), Argv: []string{"/bin/sh", "-c", "exit 3"}, ScriptDir: t.TempDir()}
+	spec := Spec{Dir: t.TempDir(), Argv: []string{"/bin/sh", "-c", "exit 3"}, ScriptDir: scriptDir(t)}
 	output, code := runScript(t, spec, "\n")
 	if code != 3 {
 		t.Errorf("exit = %d, want 3", code)
@@ -392,7 +419,7 @@ func TestScriptWaitsAfterAFailure(t *testing.T) {
 }
 
 func TestScriptWaitsWhenTheDirectoryIsGone(t *testing.T) {
-	spec := Spec{Dir: filepath.Join(t.TempDir(), "gone"), Argv: []string{"/usr/bin/true"}, ScriptDir: t.TempDir()}
+	spec := Spec{Dir: filepath.Join(t.TempDir(), "gone"), Argv: []string{"/usr/bin/true"}, ScriptDir: scriptDir(t)}
 	output, code := runScript(t, spec, "\n")
 	if code != 1 || !strings.Contains(output, "Press Enter to close.") {
 		t.Errorf("exit %d, output %q", code, output)

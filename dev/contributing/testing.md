@@ -145,7 +145,9 @@ In Go tests, everything goes through injection:
   `archive`'s types and reads no clock, file or environment. Its default
   prices are `internal/stats/prices.json`, dated and versioned; update the
   file (and its `as_of` and `version`) from the pages in its `sources` when
-  list prices change.
+  list prices change. Read each model's own page as well as the pricing
+  table (the two can differ), and re-check any price the notes call
+  promotional on its end date: the table does not expire by itself.
 - `internal/statshtml` (the `stats --html` page) is a pure function of the
   `stats.Stats` it is passed, so its tests compute stats from synthetic
   metadata and need no isolation. Every page a test renders goes through
