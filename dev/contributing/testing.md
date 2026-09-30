@@ -83,10 +83,12 @@ In Go tests, everything goes through injection:
 
 - `internal/cli` tests build an `Env` (see `testEnv` in `cli_test.go`) with a
   temporary data directory, temporary user and account homes, a fixed clock,
-  no environment variables, and an in-memory bucket. Its launchd, Keychain,
-  and executable fields fail the test unless the test sets them. Replace
-  `runLaunchctl` with `stubLaunchctl` for anything that would load or stop a
-  job.
+  no environment variables, and an in-memory bucket. Its scheduler
+  (`Env.Scheduler`, a `fakeScheduler` that answers every job "missing" and
+  fails the test on a load or stop), Keychain, and executable fields fail the
+  test unless the test sets them; `setupTestEnv` gives it a scheduler that
+  loads and stops jobs like launchd. To drive the real launchd code, set
+  `Env.Scheduler` to nil and replace `runLaunchctl` with `stubLaunchctl`.
 - Isolation in `internal/cli` fails closed. Its `TestMain` points `$HOME` at a
   temporary folder, unsets `AGENT_ARCHIVE_HOME`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME` and the AWS configuration variables, and replaces the real

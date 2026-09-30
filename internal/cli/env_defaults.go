@@ -56,8 +56,13 @@ var launchctlChangeTimeout = 30 * time.Second
 // It shells out to launchctl (checked against a real launchd in live
 // installs); a failure here is reported as an incomplete setup, with
 // rollback and a retry path.
-func loadLaunchAgent(plistPath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), launchctlChangeTimeout)
+//
+// It runs on a context of its own, bounded by launchctlChangeTimeout, that
+// neither ctx's cancellation nor its deadline reaches (context.WithoutCancel):
+// an interrupt never stops a change halfway, since the setup journal handles
+// what is half applied.
+func loadLaunchAgent(ctx context.Context, plistPath string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), launchctlChangeTimeout)
 	defer cancel()
 	output, err := runLaunchctl(ctx, "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
 	if err != nil {
@@ -71,10 +76,12 @@ func loadLaunchAgent(plistPath string) error {
 // plist: bootout by path needs the file, and fails with a misleading
 // "Input/output error" when the plist was deleted while the job stayed
 // loaded. A label alone does not prove ownership, so it first confirms
-// launchd loaded the job from plistPath itself, and refuses otherwise.
-func unloadLaunchAgent(plistPath string) error {
-	//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
-	switch state := launchdJobState(plistPath); state {
+// launchd loaded the job from plistPath itself, and refuses otherwise. Like
+// loadLaunchAgent, nothing of ctx but its values reaches it.
+func unloadLaunchAgent(ctx context.Context, plistPath string) error {
+	ctx = context.WithoutCancel(ctx)
+	//lint:ignore LV1001 the scheduler (scheduler.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
+	switch state := launchdJobState(ctx, plistPath); state {
 	case "loaded", "running":
 	case "missing":
 		return nil
@@ -83,7 +90,7 @@ func unloadLaunchAgent(plistPath string) error {
 	default:
 		return fmt.Errorf("cannot confirm which plist launchd's %s job was loaded from; it was left as it is", launchLabel(plistPath))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), launchctlChangeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, launchctlChangeTimeout)
 	defer cancel()
 	output, err := runLaunchctl(ctx, "bootout", serviceTarget(plistPath))
 	if err != nil {
@@ -98,33 +105,9 @@ func serviceTarget(plist string) string {
 	return fmt.Sprintf("gui/%d/%s", os.Getuid(), launchLabel(plist))
 }
 
-func (e Env) jobState(plist string) string {
-	if e.JobState != nil {
-		return e.JobState(plist)
-	}
-	// Injected schedulers are not the user's launchd.
-	if e.LoadLaunchAgent != nil {
-		return "missing"
-	}
-	return launchdJobState(plist)
-}
-
-// launchd is e's launchd as internal/setupjournal drives it: the same
-// jobState, loadLaunchAgent, and unloadLaunchAgent every command uses, so a
-// test's stand-ins (and TestMain's failing launchctl) apply there too.
-func (e Env) launchd() setupjournal.Launchd { return envLaunchd{e} }
-
-type envLaunchd struct{ env Env }
-
-func (l envLaunchd) JobState(plist string) string { return l.env.jobState(plist) }
-
-func (l envLaunchd) Load(plist string) error { return l.env.loadLaunchAgent(plist) }
-
-func (l envLaunchd) Unload(plist string) error { return l.env.unloadLaunchAgent(plist) }
-
 // launchdJobState asks launchd about the job plist defines, by its label.
-func launchdJobState(plist string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func launchdJobState(ctx context.Context, plist string) string {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	output, err := runLaunchctl(ctx, "print", serviceTarget(plist))
 	return parseJobState(string(output), err, plist)

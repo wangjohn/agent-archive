@@ -151,7 +151,7 @@ func launchLabel(plist string) string {
 // such spellings left one job for each. A plist for any other directory is
 // never returned, so another installation's is never touched, and stopping
 // the job one defines still needs launchd to have loaded it from that very
-// file (unloadLaunchAgent).
+// file (launchdScheduler.unload).
 func (in installation) previousCollectorPlists() []string {
 	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
 	entries, err := os.ReadDir(dir)

@@ -401,7 +401,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
-	job := env.jobState(plistPath)
+	job := env.jobState(userHome, plistPath)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job == "unknown" {

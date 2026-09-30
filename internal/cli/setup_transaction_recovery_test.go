@@ -32,9 +32,10 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 			if failure == "stop" {
 				state = "loaded"
 			}
-			env.JobState = func(string) string { return state }
-			env.LoadLaunchAgent = func(string) error { return errors.New("Bootstrap failed: 5: Input/output error") }
-			env.UnloadLaunchAgent = func(string) error { return errors.New("Boot-out failed: 5: Input/output error") }
+			sched := newFakeScheduler(t, state)
+			sched.beforeLoad = func(schedulerRef) error { return errors.New("Bootstrap failed: 5: Input/output error") }
+			sched.beforeUnload = func(schedulerRef) error { return errors.New("Boot-out failed: 5: Input/output error") }
+			env.Scheduler = sched
 			output := setupRun(t, env, "", 1)
 			if !strings.Contains(output, "agent-archive setup --abandon-recovery") || !strings.Contains(output, "launchctl could not") || !strings.Contains(output, setupjournal.JournalPath(home)) {
 				t.Fatalf("output:\n%s", output)
@@ -144,8 +145,7 @@ func TestRecoveryStopsOnAnEditedRetiredJob(t *testing.T) {
 	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
-	env.UnloadLaunchAgent = func(p string) error { t.Fatalf("unloaded %s", p); return nil }
-	env.LoadLaunchAgent = func(p string) error { t.Fatalf("loaded %s", p); return nil }
+	fakeSched(env).forbidChanges = true
 	var out, errOut bytes.Buffer
 	code := Run([]string{"setup"}, strings.NewReader(""), &out, &errOut, env)
 	if code != 1 || !strings.Contains(errOut.String(), old) || !strings.Contains(errOut.String(), "--abandon-recovery") || strings.Contains(errOut.String(), "legacy upload job") {
