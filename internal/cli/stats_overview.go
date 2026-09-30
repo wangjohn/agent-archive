@@ -218,11 +218,12 @@ type rankRow struct {
 
 // rankRows draws a ranked list in colW columns: a name, a bar scaled to the
 // largest row, and the number, right-aligned at the column's edge; the names
-// take at least minLabelW columns, so two lists can line up. Without
+// take at least minLabelW columns and the numbers minValueW, so two lists can
+// line up. Without
 // room for a bar (or without bars, on a narrow terminal), it is a name and
 // its number.
-func (p *statsPrinter) rankRows(rows []rankRow, colW int, bars bool, minLabelW int) []string {
-	labelW, valueW := minLabelW, 0
+func (p *statsPrinter) rankRows(rows []rankRow, colW int, bars bool, minLabelW, minValueW int) []string {
+	labelW, valueW := minLabelW, minValueW
 	for _, r := range rows {
 		labelW = max(labelW, visibleWidth(r.label))
 		valueW = max(valueW, visibleWidth(r.value))
@@ -261,27 +262,43 @@ func (p *statsPrinter) moreLine(n int) string {
 	return p.dim(fmt.Sprintf("+ %d more", n))
 }
 
-// projectsBySpend is the projects ordered by estimated cost, largest first,
-// then by tokens, sessions and name; a project whose cost is unknown is after
-// every one that has one.
+// projectsBySpend is the projects ordered by estimated cost, largest first; a
+// project whose cost is unknown is after every one that has one. Projects of the
+// same cost (unpriced ones among them) are ordered by tokens (unknown last),
+// then sessions and name, whatever order they arrive in.
 func projectsBySpend(projects []stats.Project) []stats.Project {
 	sorted := slices.Clone(projects)
 	slices.SortStableFunc(sorted, func(a, b stats.Project) int {
-		switch {
-		case (a.Cost.USD != nil) != (b.Cost.USD != nil):
-			if a.Cost.USD != nil {
-				return -1
-			}
-			return 1
-		case a.Cost.USD != nil && *a.Cost.USD != *b.Cost.USD:
-			if *a.Cost.USD > *b.Cost.USD {
-				return -1
-			}
-			return 1
+		if c := compareOptional(a.Cost.USD, b.Cost.USD); c != 0 {
+			return c
 		}
-		return 0
+		if c := compareOptional(a.Tokens, b.Tokens); c != 0 {
+			return c
+		}
+		if a.Sessions != b.Sessions {
+			return b.Sessions - a.Sessions
+		}
+		return strings.Compare(a.Name, b.Name)
 	})
 	return sorted
+}
+
+// compareOptional orders numbers largest first, and a number that is unknown
+// after every one that is known.
+func compareOptional[T int64 | float64](a, b *T) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return 1
+	case b == nil:
+		return -1
+	case *a > *b:
+		return -1
+	case *a < *b:
+		return 1
+	}
+	return 0
 }
 
 // projectRows are the projects as ranked rows, by spend; the bar is scaled to
@@ -295,11 +312,11 @@ func (p *statsPrinter) projectRows(projects []stats.Project) []rankRow {
 	}
 	rows := make([]rankRow, len(projects))
 	for i, pr := range projects {
-		value, share := p.spend(pr.Cost, pr.Tokens), -1.0
+		share := -1.0
 		if pr.Cost.USD != nil && top > 0 {
-			value, share = p.money(*pr.Cost.USD), *pr.Cost.USD/top
+			share = *pr.Cost.USD / top
 		}
-		rows[i] = rankRow{label: projectLabel(pr.Name), value: value, share: share, code: statsRoleCodes[roleProject]}
+		rows[i] = rankRow{label: projectLabel(pr.Name), value: p.spend(pr.Cost, pr.Tokens), share: share, code: statsRoleCodes[roleProject]}
 	}
 	return rows
 }
@@ -316,8 +333,14 @@ func (p *statsPrinter) modelRows(models []stats.ModelRow) []rankRow {
 	rows := make([]rankRow, len(models))
 	for i, m := range models {
 		value, share := "unpriced", -1.0
-		if m.Priced && m.Cost.USD != nil && top > 0 {
-			value, share = p.money(*m.Cost.USD), *m.Cost.USD/top
+		if m.Priced && m.Cost.USD != nil {
+			value = p.money(*m.Cost.USD)
+			if m.Cost.Partial {
+				value += "+"
+			}
+			if top > 0 {
+				share = *m.Cost.USD / top
+			}
 		}
 		rows[i] = rankRow{label: clean(m.Label), value: value, share: share, code: modelCode(m.Label)}
 	}
@@ -368,18 +391,19 @@ func (p *statsPrinter) whereItWent() []string {
 	}
 	projectRows := p.projectRows(projects[:shownProjects])
 	modelRows := p.modelRows(models[:shownModels])
-	// Stacked lists line their bars up.
-	labelW := 0
+	// Stacked lists line their bars and their numbers up.
+	labelW, valueW := 0, 0
 	if !twoColumns {
 		for _, r := range append(slices.Clone(projectRows), modelRows...) {
 			labelW = max(labelW, min(visibleWidth(r.label), 18))
+			valueW = max(valueW, visibleWidth(r.value))
 		}
 	}
-	project = append(project, p.rankRows(projectRows, colW, bars, labelW)...)
+	project = append(project, p.rankRows(projectRows, colW, bars, labelW, valueW)...)
 	if more := totalProjects - shownProjects; more > 0 {
 		project = append(project, p.moreLine(more))
 	}
-	model = append(model, p.rankRows(modelRows, colW, bars, labelW)...)
+	model = append(model, p.rankRows(modelRows, colW, bars, labelW, valueW)...)
 	if more := len(models) - shownModels; more > 0 {
 		model = append(model, p.moreLine(more))
 	}
@@ -518,7 +542,8 @@ func (p *statsPrinter) noteText(n stats.Note) string {
 }
 
 func (p *statsPrinter) costliestText(n stats.Note) string {
-	if n.Cost == nil || n.Cost.USD == nil {
+	// The costliest of one session is all of it: nothing to look at.
+	if n.Cost == nil || n.Cost.USD == nil || p.s.Coverage.Sessions <= 1 {
 		return ""
 	}
 	parts := []string{"Costliest session " + p.estimate(*n.Cost.USD)}

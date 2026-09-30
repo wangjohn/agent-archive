@@ -389,8 +389,10 @@ func (p *statsPrinter) footer(hints ...string) []string {
 		return []string{p.dim(note + "   " + joined)}
 	}
 	lines := p.wrap(note)
-	lines = append(lines, packItems(hints, 0, 0, 3, p.width)...)
-	return p.dimAll(lines)
+	if visibleWidth(joined) <= p.width {
+		return p.dimAll(append(lines, joined))
+	}
+	return p.dimAll(append(lines, packItems(hints, 0, 0, 3, p.width)...))
 }
 
 func (p *statsPrinter) dimAll(lines []string) []string {
@@ -617,6 +619,14 @@ func (p *statsPrinter) bar(share float64, width int, code string) string {
 	return p.paint(code, strings.Repeat(p.g.block, n)) + strings.Repeat(" ", width-n)
 }
 
+// clampShare is share limited to 0 to 1, and 0 for a share that is not a number.
+func clampShare(share float64) float64 {
+	if math.IsNaN(share) {
+		return 0
+	}
+	return math.Min(math.Max(share, 0), 1)
+}
+
 // barCells is how many of width cells share (0 to 1) fills: at least one
 // for any share above zero.
 func barCells(share float64, width int) int {
@@ -710,7 +720,9 @@ type segment struct {
 func (p *statsPrinter) stackedBar(segments []segment, width int) string {
 	var shown []segment
 	for _, s := range segments {
-		if s.share > 0 {
+		// A share is 0 to 1; one that is not (or not a number) draws nothing
+		// more than the whole bar.
+		if s.share = clampShare(s.share); s.share > 0 {
 			shown = append(shown, s)
 		}
 	}

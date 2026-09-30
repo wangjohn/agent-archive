@@ -12,12 +12,13 @@ DAILY SPEND                              peak ~$66 · Sep 17
                                   █
 ▁▁▁▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▂▁▃▁·▁▃▁█▁▃▁▁▁▃▁▂▁▃▁▁▁▃▁▁▁▁▁▁▁▁▁▁
 Aug 31                                               Sep 29
+· spend unknown
 
 WHERE IT WENT
 By project
-proj-api           ██████████████████████████████    $96
-agent-archive      ███████████████████               $62
-dotfiles           ██                              $5.69
+proj-api           ██████████████████████████████       $96
+agent-archive      ███████████████████                  $62
+dotfiles           ██                                $5.69+
 
 By model
 opus               ██████████████████████████████      $136
@@ -37,4 +38,4 @@ HEADS UP
 
 Estimated at list price, not a bill. + leaves out models
 with no price.
---detail for more   --by project   --html
+--detail for more · --by project · --html

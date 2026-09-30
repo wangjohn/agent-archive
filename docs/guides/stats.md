@@ -83,8 +83,9 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
 - **Daily spend** is the estimated cost of each day, three rows tall, with
   the peak day named. A day with no sessions is only the baseline, and a day
   whose sessions have no price (Cursor records no tokens) is a dot, never a
-  low bar. A window of 90 days or more draws each cell as the costliest day of
-  a run of days.
+  low bar (a line under the chart says so). When the window has more days than
+  the terminal has columns, as 90 days do on 80, each bar is the costliest day
+  of a run of days, and a line under the chart says how many.
 - **Where it went** is the projects and the models by spend. From 80 columns
   they are two columns; from 60 they are stacked; narrower, plain rows. Bars
   are scaled to the largest row of their list and have no track behind them.
@@ -287,7 +288,7 @@ HEADS UP
 ● 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 Estimated at list price, not a bill.
---detail for more   --by project   --html
+--detail for more · --by project · --html
 ```
 
 The screen is paged through `$PAGER` on a terminal (`--no-pager` to print

@@ -7,7 +7,7 @@
         \e[33m●\e[0m Claude Code 90%   \e[34m●\e[0m Cursor 9%   \e[32m●\e[0m Codex 1%
         \e[2mof sessions\e[0m
 
-\e[1mDAILY SPEND\e[0m                           \e[2mpeak \e[0m\e[33m~$2,910\e[0m\e[2m · Sep 27\e[0m
+\e[1mDAILY SPEND\e[0m                           \e[2mpeak \e[0m\e[1m~$2,910\e[0m\e[2m · Sep 27\e[0m
                                                       \e[36m█\e[0m
                                                       \e[36m█\e[0m
 \e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[36m▂\e[0m\e[2m▁\e[0m\e[36m█\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[2m▁\e[0m\e[36m▇\e[0m
@@ -40,4 +40,4 @@ sonnet         \e[36m███\e[0m                               $320
 \e[33m●\e[0m 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 \e[2mEstimated at list price, not a bill.\e[0m
-\e[2m--detail for more   --by project   --html\e[0m
+\e[2m--detail for more · --by project · --html\e[0m

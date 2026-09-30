@@ -11,12 +11,13 @@ DAILY SPEND                                                            peak ~$66
                                                    ██
 ▁▁▁▁▁▁▃▃▁▁▁▁▃▃▁▂▂▁▃▃▁▁▁▁▃▃▁▂▂▁▃▃▁▁▁▁▃▃▁▂▂▁▃▃▁··▁▃▃▁██▁▃▃▁▁▁▁▃▃▁▂▂▁▃▃▁▁▁▁▃▃▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 Aug 31                                                                             Sep 29
+· spend unknown
 
 WHERE IT WENT
 By project                                          By model
-proj-api       ██████████████████████████    $96    opus               ███████████████████      $136
-agent-archive  █████████████████             $62    sonnet             ███                       $22
-dotfiles       ██                          $5.69    gpt-5              █                       $5.69
+proj-api       █████████████████████████     $96    opus               ███████████████████      $136
+agent-archive  ████████████████              $62    sonnet             ███                       $22
+dotfiles       █                          $5.69+    gpt-5              █                       $5.69
                                                     codex-auto-review                       unpriced
 
 MOST USED
@@ -28,4 +29,4 @@ HEADS UP
 ● 3 sessions have no token data (Cursor 3)
 
 Estimated at list price, not a bill. + leaves out models with no price.
---detail for more   --by project   --html
+--detail for more · --by project · --html

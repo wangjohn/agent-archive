@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -45,17 +46,47 @@ func (p *statsPrinter) dailySpend() []string {
 	perDay, run := p.chartScale(len(s.Daily))
 	cells := p.spendCells(run)
 	span := chartSpan(len(cells), perDay)
-	note := p.dim("peak ") + p.role(roleHeadsUp, p.estimate(s.PeakSpend.USD)) + p.dim(" "+p.g.sep+" "+p.dayLabel(s.PeakSpend.Date))
+	// The peak's amount is bold rather than colored: yellow text is hard to
+	// read on a light background, and yellow already means Claude Code and a
+	// heads-up.
+	note := p.dim("peak ") + p.bold(p.estimate(s.PeakSpend.USD)) + p.dim(" "+p.g.sep+" "+p.dayLabel(s.PeakSpend.Date))
 	title := "DAILY SPEND"
 	edge := max(span, visibleWidth(title)+2+visibleWidth(note))
 	lines := []string{p.heading(title, note, edge)}
 	lines = append(lines, p.chartRows(cells, perDay)...)
 	first, last := p.dayLabel(s.Daily[0].Date), p.dayLabel(s.Daily[len(s.Daily)-1].Date)
 	labels := first
-	if gap := span - visibleWidth(first) - visibleWidth(last); len(s.Daily) > 1 && gap >= 1 {
+	if len(s.Daily) > 1 {
+		// A chart too narrow to put the two dates apart names them side by
+		// side rather than leaving the last day unlabeled.
+		gap := span - visibleWidth(first) - visibleWidth(last)
+		if gap < 1 {
+			gap = 2
+		}
 		labels += strings.Repeat(" ", gap) + last
 	}
-	return append(lines, p.dim(labels))
+	lines = append(lines, p.dim(labels))
+	if caption := p.chartCaption(cells, run); caption != "" {
+		lines = append(lines, p.dim(caption))
+	}
+	return lines
+}
+
+// chartCaption says what a reader could not tell from the chart: that a bar
+// stands for several days (the costliest of them), and what a dot is. It is
+// empty when the chart shows one bar a day and no dot.
+func (p *statsPrinter) chartCaption(cells []spendCell, run int) string {
+	var parts []string
+	if run > 1 {
+		parts = append(parts, fmt.Sprintf("each bar is the costliest of %d days", run))
+	}
+	for _, c := range cells {
+		if c.unknown {
+			parts = append(parts, p.g.sparkUnknown+" spend unknown")
+			break
+		}
+	}
+	return strings.Join(parts, " "+p.g.sep+" ")
 }
 
 // chartScale is how many columns a day takes and how many days a cell
