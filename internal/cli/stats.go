@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -164,7 +165,9 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 	signals, stopSignals := env.interrupts()
 	defer stopSignals()
 	interrupted := make(chan os.Signal, 1)
+	watching := make(chan struct{})
 	go func() {
+		defer close(watching)
 		select {
 		case sig := <-signals:
 			interrupted <- sig
@@ -174,8 +177,13 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 	}()
 
 	var done, total atomic.Int64
+	// A skipped session is reported once the spinner is gone: a warning
+	// written while it runs would land on the spinner's line, and clearing
+	// the line would then cut into it. The reader reports them from the
+	// goroutine that called it, after every read has finished.
+	var skipped []reader.SkippedSidecar
 	listOpts := reader.ListOptions{
-		Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "stats"),
+		Cache: listCache(env, opts.noCache), Skipped: func(s reader.SkippedSidecar) { skipped = append(skipped, s) },
 		// Calls come from several goroutines, out of order: keep the highest.
 		Progress: func(d, t int) {
 			total.Store(int64(t))
@@ -198,12 +206,24 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 	}
 	listed, err := reader.ListRecent(ctx, store, archiveSessionsPrefix, opts.filter, 0, listOpts)
 	stopReading()
-	if err != nil {
-		select {
-		case sig := <-interrupted:
-			return reader.RecentResult{}, signalExitCode(sig)
-		default:
+	// From here on a signal is the default one's again; one that arrived
+	// while the read was finishing still stops the command, as it asked.
+	stopSignals()
+	cancel()
+	<-watching
+	select {
+	case sig := <-interrupted:
+		return reader.RecentResult{}, signalExitCode(sig)
+	case sig := <-signals:
+		return reader.RecentResult{}, signalExitCode(sig)
+	default:
+	}
+	if warn := warnSkippedSidecar(stderr, "stats"); warn != nil {
+		for _, s := range skipped {
+			warn(s)
 		}
+	}
+	if err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return reader.RecentResult{}, 1
 	}
@@ -329,9 +349,35 @@ func statsZone(now time.Time, env interface{ lookupEnv(string) (string, bool) })
 	tz, tzSet := env.lookupEnv("TZ")
 	link := ""
 	if !tzSet {
-		link, _ = os.Readlink("/etc/localtime")
+		link = zoneFileLink("/etc/localtime")
 	}
 	return resolveLocalZone(time.Local, now, tz, tzSet, link)
+}
+
+// maxZoneLinkHops bounds how far zoneFileLink follows a chain of links.
+const maxZoneLinkHops = 8
+
+// zoneFileLink is where the link at path points in the zone database: the
+// first target on its chain of links that has a zoneinfo directory in it (a
+// distribution may point /etc/localtime at another link, as NixOS does), or
+// the last target when none does. It is empty when path is not a link.
+func zoneFileLink(path string) string {
+	target := ""
+	for range maxZoneLinkHops {
+		next, err := os.Readlink(path)
+		if err != nil {
+			return target
+		}
+		if !filepath.IsAbs(next) {
+			next = filepath.Join(filepath.Dir(path), next)
+		}
+		target = next
+		if strings.Contains(target, "zoneinfo/") {
+			return target
+		}
+		path = target
+	}
+	return target
 }
 
 // resolveLocalZone names the zone local is, or returns local when it cannot
