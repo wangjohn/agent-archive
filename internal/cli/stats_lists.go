@@ -7,12 +7,32 @@ import (
 	"github.com/wangjohn/agent-archive/internal/statsfmt"
 )
 
-// listMore is the line under a list that says how many rows it leaves out.
-func (p *statsPrinter) listMore(shown, total int) []string {
+// The commands whose output has every row of a list a screen cuts. A hint
+// names one only when it is true: plain --json keeps the engine's top five
+// projects, so the projects are in --json --by project (groups.rows, which is
+// never cut), and the models are in --json (the engine never cuts them).
+const (
+	allProjectsHint = "--json --by project"
+	allModelsHint   = "--json"
+)
+
+// listMore is the line under a list that says how many rows it leaves out and
+// where to find them all: hint is the command that lists every row. The
+// interactive screen takes no command, and its window is the one w chose, not
+// a flag, so there the line says to quit first and names the window (and
+// that the filters it was started with apply).
+func (p *statsPrinter) listMore(shown, total int, hint string) []string {
 	if total <= shown {
 		return nil
 	}
-	return []string{p.dim(fmt.Sprintf("+ %d more (--json has them all)", total-shown))}
+	if p.v.interactive {
+		text := fmt.Sprintf("+ %d more (quit, then run agent-archive stats --days %d %s", total-shown, p.s.Window.Days, hint)
+		if p.v.filters != (statsFilters{}) {
+			text += ", with the same filters"
+		}
+		return p.dimAll(p.wrap(text + ")"))
+	}
+	return p.dimAll(p.wrap(fmt.Sprintf("+ %d more (all in %s)", total-shown, hint)))
 }
 
 // share is a row's part of a total (0 to 1); a total that is not above zero
@@ -75,7 +95,7 @@ func (p *statsPrinter) projectsTable() []string {
 		{head: "est. cost", cells: costs},
 		{head: "share", cells: shares, drop: true},
 	})
-	return append(lines, p.listMore(len(shown), total)...)
+	return append(lines, p.listMore(len(shown), total, allProjectsHint)...)
 }
 
 // modelsPage is every model family: its spend and share of it, tokens and
@@ -126,7 +146,7 @@ func (p *statsPrinter) modelsTable() []string {
 		{head: "est. cost", cells: costs},
 		{head: "share", cells: shares, drop: true},
 	})
-	lines = append(lines, p.listMore(len(shown), len(models))...)
+	lines = append(lines, p.listMore(len(shown), len(models), allModelsHint)...)
 	if names, total := p.unpricedNames(); total > 0 {
 		whose := "its"
 		if total > 1 {
