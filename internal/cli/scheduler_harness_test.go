@@ -128,7 +128,7 @@ const defaultLabel = launchd.LaunchLabel
 
 // prototypeLabel is the prototype's upload job, which the default
 // installation retires.
-const prototypeLabel = setupjournal.LegacyLaunchLabel
+const prototypeLabel = launchd.LegacyLaunchLabel
 
 // earlierCollector writes the plist an earlier release left under label for
 // this data directory; loaded says whether launchd runs it.

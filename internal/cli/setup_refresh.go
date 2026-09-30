@@ -297,7 +297,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 // stays that way. A state it cannot read, or a job of another installation
 // under this label, refuses, as setup does.
 func planJobRestart(plan *refreshPlan, in installation, userHome string, env Env) error {
-	ref, words := in.ref(), in.definer().Words()
+	ref, words := in.ref(), in.sched().Words()
 	job := env.jobStatus(userHome, ref)
 	switch {
 	case job.State == scheduler.Unknown:
