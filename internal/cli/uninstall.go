@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -125,7 +126,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
 	plists := append([]string{in.collectorPlist()}, in.previousCollectorPlists()...)
-	kept, err := stopCollectors(plists, out, env)
+	kept, err := stopCollectors(plists, out, userHome, env)
 	if err != nil {
 		return err
 	}
@@ -216,20 +217,20 @@ func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, pr
 // whose label launchd runs from another plist stays: removing it would leave
 // this installation with nothing to reinstall from. Those are returned in
 // kept, and their jobs are left running.
-func stopCollectors(plists []string, out io.Writer, env Env) (kept map[string]bool, err error) {
+func stopCollectors(plists []string, out io.Writer, userHome string, env Env) (kept map[string]bool, err error) {
 	kept = map[string]bool{}
 	for _, plist := range plists {
-		state := env.jobState(plist)
+		state := env.jobState(userHome, plist)
 		if state == "unknown" {
 			return nil, fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 		}
 		if state == setupjournal.JobAnotherInstallation {
-			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
+			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchd.Label(plist), plist)
 			kept[plist] = true
 			continue
 		}
 		if setupjournal.JobActive(state) {
-			if err = env.unloadLaunchAgent(plist); err != nil {
+			if err = env.unloadJob(userHome, plist); err != nil {
 				return nil, fmt.Errorf("stop collector: %w", err)
 			}
 		}

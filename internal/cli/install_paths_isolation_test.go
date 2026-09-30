@@ -2,16 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -161,11 +165,9 @@ func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	vars := map[string]string{"CLAUDE_CONFIG_DIR": claudeDir, "CODEX_HOME": codexDir}
 	env.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
-	var loaded []string
-	env.LoadLaunchAgent = func(p string) error { loaded = append(loaded, p); return nil }
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", true, true, false, t.TempDir()), 0)
 
-	if len(loaded) != 1 || filepath.Base(loaded[0]) == hooks.LaunchLabel+".plist" {
+	if loaded := fakeSched(env).loaded(); len(loaded) != 1 || loaded[0] == launchd.LaunchLabel {
 		t.Fatalf("a relocated data directory loaded %v", loaded)
 	}
 	for _, path := range []string{filepath.Join(claudeDir, "settings.json"), filepath.Join(codexDir, "hooks.json")} {
@@ -222,25 +224,22 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 			if owner == "another" {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
-			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
+			old := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LaunchLabel+".plist")
+			plist, _ := launchd.LaunchAgent("/opt/old/agent-archive", dataHome, launchd.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
-			states := map[string]string{old: "loaded"}
-			var unloaded []string
-			env.JobState = func(p string) string { return states[p] }
-			env.LoadLaunchAgent = func(p string) error { states[p] = "loaded"; return nil }
-			env.UnloadLaunchAgent = func(p string) error { unloaded = append(unloaded, p); states[p] = "missing"; return nil }
+			sched := fakeSched(env).set(jobRef(old), "loaded")
 			setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
 			_, err := os.Stat(old)
-			if owner == "this" && (!os.IsNotExist(err) || len(unloaded) != 1 || unloaded[0] != old) {
+			unloaded := sched.unloaded()
+			if owner == "this" && (!os.IsNotExist(err) || len(unloaded) != 1 || unloaded[0] != jobRef(old)) {
 				t.Fatalf("the old default-label job was not retired: unloaded %v, stat %v", unloaded, err)
 			}
 			if owner == "another" && (err != nil || len(unloaded) != 0) {
 				t.Fatalf("another directory's job was touched: unloaded %v, stat %v", unloaded, err)
 			}
-			if states[env.installation(home, userHome).collectorPlist()] != "loaded" {
+			if sched.state(jobRef(env.installation(home, userHome).collectorPlist())) != "loaded" {
 				t.Fatal("the collector was not loaded under its own label")
 			}
 		})
@@ -261,31 +260,28 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 			if owner == "another" {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
-			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
+			old := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LaunchLabel+".plist")
+			plist, _ := launchd.LaunchAgent("/opt/old/agent-archive", dataHome, launchd.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
 			current := env.installation(home, userHome).collectorPlist()
-			states := map[string]string{old: "running", current: "loaded"}
-			var unloaded []string
-			env.JobState = func(p string) string { return states[p] }
-			env.UnloadLaunchAgent = func(p string) error { unloaded = append(unloaded, p); states[p] = "missing"; return nil }
+			sched := fakeSched(env).set(jobRef(old), "running").set(jobRef(current), "loaded")
 			var out, errOut bytes.Buffer
 			if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
 				t.Fatalf("exit %d\n%s", code, &errOut)
 			}
 			_, err := os.Stat(old)
-			want := []string{current}
+			want := []scheduler.Ref{jobRef(current)}
 			if owner == "this" {
-				want = append(want, old)
+				want = append(want, jobRef(old))
 				if !os.IsNotExist(err) {
 					t.Fatal("the old default-label plist for this directory remains")
 				}
 			} else if err != nil {
 				t.Fatal("another directory's plist was removed")
 			}
-			if strings.Join(unloaded, ",") != strings.Join(want, ",") {
+			if unloaded := sched.unloaded(); !slices.Equal(unloaded, want) {
 				t.Fatalf("unloaded %v, want %v", unloaded, want)
 			}
 		})
@@ -313,11 +309,11 @@ func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
 		{"sandbox HOME pointed at the real data directory", accountDefault, sandbox, true},
 	} {
 		in := env.installation(tc.home, tc.userHome)
-		label := launchLabel(in.collectorPlist())
-		if in.isDefault() != tc.isDefault || (label == hooks.LaunchLabel) != tc.isDefault {
+		label := launchd.Label(in.collectorPlist())
+		if in.isDefault() != tc.isDefault || (label == launchd.LaunchLabel) != tc.isDefault {
 			t.Errorf("%s: default=%v label=%s", tc.name, in.isDefault(), label)
 		}
-		if got := serviceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {
+		if got := launchd.ServiceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {
 			t.Errorf("%s: service target %s", tc.name, got)
 		}
 	}
@@ -334,7 +330,7 @@ func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
 func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	env.Scheduler = nil
 	var calls []string
 	stubLaunchctl(t, func(args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
@@ -355,7 +351,7 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 			t.Fatalf("setup ran launchctl %s", call)
 		}
 	}
-	if err := unloadLaunchAgent(env.installation(home, userHome).collectorPlist()); err == nil || !strings.Contains(err.Error(), "another installation") {
+	if err := newScheduler().Unload(context.Background(), scheduler.Site{UserHome: userHome}, jobRef(env.installation(home, userHome).collectorPlist())); err == nil || !strings.Contains(err.Error(), "another installation") {
 		t.Fatalf("unload: %v", err)
 	}
 	for _, call := range calls {
@@ -369,11 +365,14 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
-	env.JobState = func(string) string { return setupjournal.JobAnotherInstallation }
-	env.UnloadLaunchAgent = func(p string) error { t.Fatalf("unloaded %s", p); return nil }
+	sched := newFakeScheduler(t, setupjournal.JobAnotherInstallation)
+	env.Scheduler = sched
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("exit %d\n%s", code, &errOut)
+	}
+	if unloaded := sched.unloaded(); len(unloaded) != 0 {
+		t.Fatalf("unloaded %v", unloaded)
 	}
 	if !strings.Contains(out.String(), "another installation") {
 		t.Fatalf("not reported:\n%s", &out)
@@ -389,7 +388,7 @@ func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 func TestStatusNamesAnotherInstallationsJob(t *testing.T) {
 	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
-	env.JobState = func(string) string { return setupjournal.JobAnotherInstallation }
+	env.Scheduler = newFakeScheduler(t, setupjournal.JobAnotherInstallation)
 	view, err := readStatus(env)
 	if err != nil {
 		t.Fatal(err)
@@ -405,9 +404,12 @@ func TestFirstSetupRefusesAnUnknownJobState(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	env.JobState = func(string) string { return "unknown" }
-	env.LoadLaunchAgent = func(p string) error { t.Fatalf("loaded %s", p); return nil }
+	sched := newFakeScheduler(t, "unknown")
+	env.Scheduler = sched
 	out := setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 1)
+	if loaded := sched.loaded(); len(loaded) != 0 {
+		t.Fatalf("loaded %v", loaded)
+	}
 	if !strings.Contains(out, "launchctl") {
 		t.Fatalf("output:\n%s", out)
 	}

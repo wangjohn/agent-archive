@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>@LABEL@</string>
+<key>ProgramArguments</key><array><string>@EXE@</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>@DATA_HOME@</string><key>AWS_PROFILE</key><string>work</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>@DATA_HOME@/collector.log</string>
+<key>StandardErrorPath</key><string>@DATA_HOME@/collector-error.log</string>
+</dict></plist>

@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +30,7 @@ func TestRefreshRefusesAsRootInAnotherUsersHome(t *testing.T) {
 			f.env.EffectiveUID = func() int { return tc.euid }
 			f.env.FileOwner = tc.owner
 			before, homeBefore := tree(t, f.userHome), tree(t, f.home)
-			f.launchd.calls = nil
+			f.launchd.forget()
 			code, stdout, stderr := refreshRun(t, f.env)
 			if !tc.refused {
 				if code != 0 {
@@ -56,35 +54,6 @@ func TestRefreshRefusesAsRootInAnotherUsersHome(t *testing.T) {
 	}
 }
 
-// launchctl bootstrap and bootout end on their own: refresh absorbs Ctrl-C
-// and SIGTERM while it runs them, so a launchctl that hangs must not leave a
-// process only SIGKILL stops.
-func TestLaunchctlChangesAreBounded(t *testing.T) {
-	previous := launchctlChangeTimeout
-	launchctlChangeTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { launchctlChangeTimeout = previous })
-	plist := filepath.Join(t.TempDir(), "com.example.collector.plist")
-	stubLaunchctlContext(t, func(ctx context.Context, args ...string) ([]byte, error) {
-		if args[0] == "print" {
-			return []byte("path = " + plist + "\nstate = running\n"), nil
-		}
-		<-ctx.Done() // a hung bootstrap or bootout
-		return nil, ctx.Err()
-	})
-	for name, run := range map[string]func(string) error{"bootstrap": loadLaunchAgent, "bootout": unloadLaunchAgent} {
-		done := make(chan error, 1)
-		go func() { done <- run(plist) }()
-		select {
-		case err := <-done:
-			if err == nil || !strings.Contains(err.Error(), "launchctl "+name) {
-				t.Errorf("%s: %v", name, err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatalf("%s hung: nothing bounds launchctl", name)
-		}
-	}
-}
-
 // A hook holds hooks.lock for milliseconds while it registers a session; an
 // installer that upgraded meanwhile waits for it rather than failing.
 func TestRefreshWaitsForAHookToFinish(t *testing.T) {
@@ -101,13 +70,4 @@ func TestRefreshWaitsForAHookToFinish(t *testing.T) {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	f.wantRunning(t, f.newExe)
-}
-
-// stubLaunchctlContext is stubLaunchctl for a stand-in that watches the
-// command's context.
-func stubLaunchctlContext(t *testing.T, run func(ctx context.Context, args ...string) ([]byte, error)) {
-	t.Helper()
-	previous := runLaunchctl
-	runLaunchctl = run
-	t.Cleanup(func() { runLaunchctl = previous })
 }

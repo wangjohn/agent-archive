@@ -51,7 +51,10 @@ it is left alone, and setup says so. An installation with
 another installation sharing the same home folder alone.
 `agent-archive status --verbose` lists the installed files, and `status`
 warns when one was written by an earlier release (after you upgrade
-`agent-archive`); `agent-archive setup` refreshes it.
+`agent-archive`); `agent-archive setup --refresh` (which the installer runs)
+refreshes it. To bring a session *into* the agent you are in, without opening
+another one, ask it in words: the `agent-archive` skill runs
+`handoff "<title>"` for you ([agent skills](agent-skills.md)).
 
 ## From a terminal
 

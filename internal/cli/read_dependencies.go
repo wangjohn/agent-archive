@@ -58,11 +58,24 @@ type listCommandDependencies interface {
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
+// statsBrowserDependencies is what the interactive stats screen uses: the
+// alternate screen and its interrupts, the window's size before each redraw,
+// stdin read a key at a time, the folder a saved page goes to, and the
+// environment for its "~/".
+type statsBrowserDependencies interface {
+	altScreenDependencies
+	terminalSizeDependencies
+	openKeyTerminal(io.Reader) (keyTerminal, bool)
+	workingDir() (string, error)
+	lookupEnv(string) (string, bool)
+}
+
 // statsCommandDependencies is what `stats` uses: list's store and cache, the
-// pager, and the environment for the character set.
+// pager, the interactive screen, and the environment for the character set.
 type statsCommandDependencies interface {
 	readOnlyStoreDependencies
 	pagerDependencies
+	statsBrowserDependencies
 	// isTerminal is whether stdout is a terminal, whatever the agent switch
 	// says: stats --html never fills one with markup.
 	isTerminal(any) bool

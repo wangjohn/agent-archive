@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -281,7 +282,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// since launchd runs the definition it loaded, not the file.
 	plan.journal = setupjournal.Journal{Changes: changes, Plist: in.collectorPlist(), FilesOnly: true}
 	if plan.plist {
-		if err := planJobRestart(&plan, env); err != nil {
+		if err := planJobRestart(&plan, userHome, env); err != nil {
 			return plan, err
 		}
 	}
@@ -293,14 +294,14 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 // new plist (the ordinary setup transaction), and a job that is not loaded
 // stays that way. A state it cannot read, or a job of another installation
 // under this label, refuses, as setup does.
-func planJobRestart(plan *refreshPlan, env Env) error {
+func planJobRestart(plan *refreshPlan, userHome string, env Env) error {
 	plist := plan.journal.Plist
-	job := env.jobState(plist)
+	job := env.jobState(userHome, plist)
 	switch {
 	case job == "unknown":
 		return refuse("cannot determine the background job's state; restore access to launchctl and retry")
 	case job == setupjournal.JobAnotherInstallation:
-		return refuse("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", launchLabel(plist), plist)
+		return refuse("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", launchd.Label(plist), plist)
 	case setupjournal.JobActive(job):
 		plan.journal.FilesOnly, plan.journal.WasLoaded, plan.restarted = false, true, true
 	}
@@ -319,19 +320,19 @@ func refreshPlist(plistPath, home, exe string) (change hooks.Change, changed boo
 	if err != nil {
 		return change, false, err
 	}
-	program, err := hooks.LaunchAgentProgram(current)
+	program, err := launchd.LaunchAgentProgram(current)
 	if err != nil {
 		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
 	}
 	if program == exe {
 		return change, false, nil
 	}
-	environment, err := hooks.LaunchAgentEnvironment(current)
+	environment, err := launchd.LaunchAgentEnvironment(current)
 	if err != nil {
 		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
 	}
 	delete(environment, "AGENT_ARCHIVE_HOME")
-	plist, err := hooks.LaunchAgent(exe, home, launchLabel(plistPath), environment)
+	plist, err := launchd.LaunchAgent(exe, home, launchd.Label(plistPath), environment)
 	if err != nil {
 		return change, false, err
 	}

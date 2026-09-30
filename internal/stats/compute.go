@@ -403,9 +403,23 @@ func projects(current []*unit, topN int) ([]Project, int) {
 	return out, count
 }
 
-// projectBefore orders projects by tokens (a project with unknown tokens
-// after every known one), then sessions, then name.
+// projectBefore ranks projects by spend, the order every list of them keeps
+// and the one a top-N cut is made in: the dearest first, a partly priced
+// project on the spend it does have, and a project with nothing priced after
+// every one that has a price. Projects of the same spend (or with none) go by
+// tokens (unknown last), then sessions, then name, so the order does not
+// depend on the order the sessions arrive in.
 func projectBefore(a, b Project) bool {
+	av, aok := spendOf(a.Cost)
+	bv, bok := spendOf(b.Cost)
+	switch {
+	case aok && !bok:
+		return true
+	case !aok && bok:
+		return false
+	case aok && av != bv:
+		return av > bv
+	}
 	switch {
 	case a.Tokens != nil && b.Tokens == nil:
 		return true
@@ -418,6 +432,16 @@ func projectBefore(a, b Project) bool {
 		return a.Sessions > b.Sessions
 	}
 	return a.Name < b.Name
+}
+
+// spendOf is a cost's dollars, and whether it has any: an unpriced cost, or a
+// number that is not one (which nothing produces, but which would break the
+// order), has none.
+func spendOf(c Cost) (float64, bool) {
+	if c.USD == nil || math.IsNaN(*c.USD) {
+		return 0, false
+	}
+	return *c.USD, true
 }
 
 func composition(total *bucket) *Composition {

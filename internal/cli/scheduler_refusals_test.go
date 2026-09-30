@@ -92,10 +92,12 @@ func TestUninstallRefusalTexts(t *testing.T) {
 // launchctl says otherwise when setup's commit or uninstall goes to stop it. The
 // refusal is wrapped by its caller: setup's commit rolls back, uninstall stops.
 //
-// setup's rollback asks launchctl to start this installation's job again from
-// its plist even when launchd now runs the label from another plist, which
-// launchd refuses (the fake refuses it as launchd does), so the rollback ends
-// incomplete and the record stays. The transcript pins that call sequence.
+// When launchd runs the label from another plist, setup's rollback puts the
+// files back and never asks launchctl to start this installation's job over
+// the other's (launchd would refuse), so the record is removed and the error
+// says the job belongs to another installation. The transcript pins that call
+// sequence. When launchctl cannot say (unknown), the rollback stops and the
+// record stays.
 func TestUnloadRefusalTexts(t *testing.T) {
 	for _, state := range refusedStates {
 		r := newSchedRun(t, true)

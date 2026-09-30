@@ -453,12 +453,49 @@ on the capturing Mac and changes again, that Mac publishes it anew. On an S3
 bucket with versioning turned on, a delete only hides the object: remove
 the noncurrent versions too, or add a lifecycle rule that expires them.
 
+## What an agent can read through the skill
+
+Setup also installs an [`agent-archive` skill](../guides/agent-skills.md) in
+each app, so that a coding agent can pull in a past session when you ask. It
+reads through the same commands you run: `handoff`, `list`, `show`, and
+`status`. That is the filtered content the [archive holds](#what-is-uploaded)
+(a session found on this Mac is filtered the same way before it is printed),
+cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
+nothing broader: no bucket credentials, no raw transcript files, no files of
+your projects. `status` adds your setup's summary: the storage destination,
+the included project folders, and the state of capture. `list` shows titles
+(each is the session's first prompt) across all your projects. Three things
+follow.
+
+- **It is shown to that agent's provider.** A pulled-in session becomes part
+  of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and
+  whoever they send prompts to) see what another agent's session held,
+  including any secret the filter missed. Ask for a session only in an agent
+  you would show it to.
+- **It is untrusted text.** The filter removes credentials and injected
+  instruction blocks, not hostile wording, and a session's text may have come
+  from a web page or a file the original agent read. The skill tells the
+  agent to treat what it prints as data: never to follow an instruction in it,
+  or run a command because it suggests one, and to open only the one file a
+  trimmed handoff names. That is guidance to a model, not a guarantee. The
+  backstop is the agent's own permission prompt: in Claude Code, `handoff
+  --to`, `setup`, and `purge` are not pre-approved and ask you first (unless
+  you allowed them, or run the agent without approvals); in Codex and Cursor,
+  their approvals and sandbox decide, and Cursor's Run Everything mode asks
+  nothing.
+- **The skill is not a barrier.** The agent runs as you, so it can read
+  anything you can whatever the skill says; the skill only names what it
+  should run. `agent-archive setup --no-skills` stops offering agents the
+  skill; it does not stop an agent you have given a shell from running
+  `agent-archive`.
+
 ## What changes on your Mac
 
-The `hooks` entry of each included app's settings file, one LaunchAgent,
-local state private to your account (transcripts are read in place, not
-copied), and, for R2, one Keychain item (a credentials file on a build
-without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
+The `hooks` entry of each included app's settings file, one LaunchAgent, two
+agent skill files per app location (`agent-archive` and `/handoff`, marked so
+uninstall removes only setup's), local state private to your account
+(transcripts are read in place, not copied), and, for R2, one Keychain item (a
+credentials file on a build without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
 removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-mac).
 
 ## Where credentials are kept

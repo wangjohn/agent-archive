@@ -19,6 +19,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -32,61 +34,14 @@ func refreshRun(t *testing.T, env Env, args ...string) (code int, stdout, stderr
 	return code, out.String(), errOut.String()
 }
 
-// launchdCalls records every question and command a test's launchd gets,
-// and answers as a job in state.
-type launchdCalls struct {
-	mu    sync.Mutex
-	state fakeJob
-	calls []string
-}
-
-// fakeJob is the state a fake launchd reports for the collector's job:
-// "loaded", "missing", "unknown", or setupjournal.JobAnotherInstallation.
-type fakeJob string
-
-// recordLaunchd replaces env's launchd with one that records its calls and
-// reports the job in state ("loaded" or "missing"); loading and unloading
-// change the state, as launchd does.
-func recordLaunchd(env *Env, state fakeJob) *launchdCalls {
-	l := &launchdCalls{state: state}
-	env.JobState = func(plist string) string {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.calls = append(l.calls, "state "+filepath.Base(plist))
-		return string(l.state)
-	}
-	env.LoadLaunchAgent = func(plist string) error {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.calls = append(l.calls, "load "+filepath.Base(plist))
-		l.state = "loaded"
-		return nil
-	}
-	env.UnloadLaunchAgent = func(plist string) error {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.calls = append(l.calls, "unload "+filepath.Base(plist))
-		l.state = "missing"
-		return nil
-	}
-	return l
-}
-
-func (l *launchdCalls) all() []string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Clone(l.calls)
-}
-
-// changing is the calls that start, stop, or reload a job (not questions).
-func (l *launchdCalls) changing() []string {
-	var out []string
-	for _, call := range l.all() {
-		if !strings.HasPrefix(call, "state ") {
-			out = append(out, call)
-		}
-	}
-	return out
+// recordLaunchd replaces env's scheduler with one that records its calls and
+// reports every job in state ("loaded" or "missing"); loading and unloading a
+// job change its state, as launchd does.
+func recordLaunchd(t *testing.T, env *Env, state string) *fakeScheduler {
+	t.Helper()
+	sched := newFakeScheduler(t, state)
+	env.Scheduler = sched
+	return sched
 }
 
 // upgradedTo makes env run a new executable, as after an upgrade or a move,
@@ -153,15 +108,15 @@ type refreshFixture struct {
 	env      Env
 	oldExe   string
 	newExe   string
-	launchd  *launchdCalls
+	launchd  *fakeScheduler
 }
 
-func newRefreshFixture(t *testing.T, state fakeJob) *refreshFixture {
+func newRefreshFixture(t *testing.T, state string) *refreshFixture {
 	t.Helper()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	cfg := mustLoadConfig(t, home)
 	f := &refreshFixture{home: home, userHome: userHome, env: env, oldExe: cfg.InstalledExecutable}
-	f.launchd = recordLaunchd(&f.env, state)
+	f.launchd = recordLaunchd(t, &f.env, state)
 	f.newExe = upgradedTo(t, &f.env)
 	return f
 }
@@ -186,7 +141,7 @@ func (f *refreshFixture) wantRunning(t *testing.T, exe string) {
 	}
 	plist, err := os.ReadFile(f.plist())
 	must(t, err)
-	if program, err := hooks.LaunchAgentProgram(plist); err != nil || program != exe {
+	if program, err := launchd.LaunchAgentProgram(plist); err != nil || program != exe {
 		t.Errorf("the plist runs %q (%v), want %s", program, err, exe)
 	}
 	for _, path := range []string{claudeSkillPath(f.userHome), agentsSkillPath(f.userHome)} {
@@ -211,7 +166,7 @@ func (f *refreshFixture) wantRunning(t *testing.T, exe string) {
 func TestRefreshReplacesAStaleSkillAndLeavesAForeignOne(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 	claude, agents := claudeSkillPath(userHome), agentsSkillPath(userHome)
 	current := readText(t, claude)
 	older := strings.Replace(current, "Run exactly this command", "Run this command", 1)
@@ -257,7 +212,7 @@ func TestRefreshReplacesAStaleSkillAndLeavesAForeignOne(t *testing.T) {
 func TestRefreshRefreshesAndRemovesEverySkill(t *testing.T) {
 	t.Parallel()
 	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 	all := append([]string{claudeSkillPath(userHome), agentsSkillPath(userHome)}, archiveSkillPaths(userHome)...)
 	current := map[string]string{}
 	for _, path := range all {
@@ -292,7 +247,7 @@ func TestRefreshRefreshesAndRemovesEverySkill(t *testing.T) {
 func TestRefreshOfACurrentInstallationSaysNothingToRefresh(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 	before := tree(t, home, userHome)
 	for range 2 {
 		code, stdout, stderr := refreshRun(t, env)
@@ -317,7 +272,7 @@ func TestRefreshHonorsTheSkillOptOut(t *testing.T) {
 	written := readText(t, claude)
 	setupYes(t, env, "", 0, "--yes", "--no-skills")
 	wantSkillFiles(t, nil, []string{claude, agents})
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 
 	code, stdout, stderr := refreshRun(t, env)
 	if code != 0 || stdout != "nothing to refresh\n" || stderr != "" {
@@ -373,8 +328,8 @@ func TestRefreshRepairsHooksLeftPointingAtAMovedExecutable(t *testing.T) {
 		t.Fatalf("output\n%q\nwant\n%q", stdout, want)
 	}
 	f.wantRunning(t, f.newExe)
-	plist := filepath.Base(f.plist())
-	if got := f.launchd.changing(); !reflect.DeepEqual(got, []string{"unload " + plist, "load " + plist}) {
+	ref := jobRef(f.plist())
+	if got := f.launchd.changing(); !reflect.DeepEqual(got, []string{"unload " + string(ref), "load " + string(ref)}) {
 		t.Errorf("launchd calls %v", got)
 	}
 	code, stdout, _ = refreshRun(t, f.env)
@@ -389,7 +344,7 @@ func TestRefreshRepairsHooksLeftPointingAtAMovedExecutable(t *testing.T) {
 func TestRefreshReinstallsHooksAnAppLost(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 	settings := filepath.Join(userHome, ".claude", "settings.json")
 	must(t, os.WriteFile(settings, []byte("{\"permissions\":{\"allow\":[\"Read\"]}}\n"), 0600))
 	view := statusViewOf(t, env)
@@ -452,7 +407,7 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
 	plistPath := f.plist()
-	written, err := hooks.LaunchAgent(f.oldExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	written, err := launchd.LaunchAgent(f.oldExe, f.home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	must(t, os.WriteFile(plistPath, written, 0600))
 
@@ -462,15 +417,15 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	}
 	after, err := os.ReadFile(plistPath)
 	must(t, err)
-	environment, err := hooks.LaunchAgentEnvironment(after)
+	environment, err := launchd.LaunchAgentEnvironment(after)
 	must(t, err)
 	if want := map[string]string{"AGENT_ARCHIVE_HOME": f.home, "AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"}; !reflect.DeepEqual(environment, want) {
 		t.Fatalf("plist environment %v, want %v", environment, want)
 	}
-	if program, _ := hooks.LaunchAgentProgram(after); program != f.newExe {
+	if program, _ := launchd.LaunchAgentProgram(after); program != f.newExe {
 		t.Fatalf("the plist runs %s", program)
 	}
-	want, err := hooks.LaunchAgent(f.newExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	want, err := launchd.LaunchAgent(f.newExe, f.home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	if !bytes.Equal(after, want) {
 		t.Fatalf("plist:\n%s\nwant\n%s", after, want)
@@ -579,7 +534,7 @@ func TestRefreshRefusals(t *testing.T) {
 			if homeErr == nil {
 				homeBefore = tree(t, f.home)
 			}
-			f.launchd.calls = nil
+			f.launchd.forget()
 			code, stdout, stderr := refreshRun(t, f.env)
 			if code != 1 || stdout != "" || !strings.Contains(stderr, tc.message) || strings.Count(stderr, "\n") != 1 {
 				t.Fatalf("exit %d\n%q\n%q", code, stdout, stderr)
@@ -703,18 +658,17 @@ func TestRefreshAbsorbsSignalsWhileItChangesFiles(t *testing.T) {
 		}
 	}
 	var duringLoad, duringUnload bool
-	load, unload := f.env.LoadLaunchAgent, f.env.UnloadLaunchAgent
-	f.env.LoadLaunchAgent = func(plist string) error {
+	f.launchd.beforeLoad = func(scheduler.Ref) error {
 		mu.Lock()
 		duringLoad = active
 		mu.Unlock()
-		return load(plist)
+		return nil
 	}
-	f.env.UnloadLaunchAgent = func(plist string) error {
+	f.launchd.beforeUnload = func(scheduler.Ref) error {
 		mu.Lock()
 		duringUnload = active
 		mu.Unlock()
-		return unload(plist)
+		return nil
 	}
 	if code, stdout, stderr := refreshRun(t, f.env); code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
@@ -881,7 +835,7 @@ func TestRefreshFailureRollsBackEveryFile(t *testing.T) {
 	}
 	// The job was not asked to stop, since the files failed first... it is
 	// stopped before they are written and started again by the rollback.
-	if plist, calls := filepath.Base(f.plist()), f.launchd.changing(); !reflect.DeepEqual(calls, []string{"unload " + plist, "load " + plist}) {
+	if ref, calls := jobRef(f.plist()), f.launchd.changing(); !reflect.DeepEqual(calls, []string{"unload " + string(ref), "load " + string(ref)}) {
 		t.Errorf("launchd calls %v", calls)
 	}
 	// With the file writable again, the refresh goes through.
@@ -917,14 +871,10 @@ func TestRefreshFailureWithoutAJobRestartNeverAsksLaunchd(t *testing.T) {
 func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
-	f.env.LoadLaunchAgent = func(plist string) error {
-		f.launchd.mu.Lock()
-		defer f.launchd.mu.Unlock()
-		f.launchd.calls = append(f.launchd.calls, "load "+filepath.Base(plist))
-		if len(f.launchd.calls) == 3 { // state, unload, then the new plist's load
+	f.launchd.beforeLoad = func(scheduler.Ref) error {
+		if len(f.launchd.all()) == 3 { // state, unload, then the new plist's load
 			return errors.New("bootstrap failed")
 		}
-		f.launchd.state = "loaded"
 		return nil
 	}
 	before := tree(t, f.home, f.userHome)
@@ -935,8 +885,8 @@ func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 	if changed := differences(before, tree(t, f.home, f.userHome)); len(changed) != 0 {
 		t.Errorf("a failed refresh left %v changed", changed)
 	}
-	if f.launchd.state != "loaded" {
-		t.Errorf("the job was left %s", f.launchd.state)
+	if state := f.launchd.state(jobRef(f.plist())); state != "loaded" {
+		t.Errorf("the job was left %s", state)
 	}
 }
 
@@ -944,7 +894,7 @@ func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 // stops a refresh that would change the plist, before anything is written.
 func TestRefreshRefusesAPlistChangeItCannotSafelyRestart(t *testing.T) {
 	t.Parallel()
-	for _, state := range []fakeJob{"unknown", setupjournal.JobAnotherInstallation} {
+	for _, state := range []string{"unknown", setupjournal.JobAnotherInstallation} {
 		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, state)
@@ -969,7 +919,7 @@ func TestRefreshRefusesAPlistChangeItCannotSafelyRestart(t *testing.T) {
 // and the journal are scratch that comes and goes).
 func TestRefreshChangesOnlyHooksPlistSkillsAndTheRecordedExecutable(t *testing.T) {
 	t.Parallel()
-	for _, state := range []fakeJob{"loaded", "missing"} {
+	for _, state := range []string{"loaded", "missing"} {
 		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, state)
@@ -1035,7 +985,7 @@ func TestRefreshChangesOnlyHooksPlistSkillsAndTheRecordedExecutable(t *testing.T
 func TestRefreshForAnUnchangedPlistNeverCallsLaunchd(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
-	launchd := recordLaunchd(&env, "loaded")
+	launchd := recordLaunchd(t, &env, "loaded")
 	// Hooks and a skill are stale; the plist is not.
 	claudeSettings := filepath.Join(userHome, ".claude", "settings.json")
 	cfg := mustLoadConfig(t, home)
@@ -1071,7 +1021,7 @@ func TestRefreshUsesTheHookFilesSetupRecorded(t *testing.T) {
 	// The installer's shell has no CLAUDE_CONFIG_DIR.
 	env.LookupEnv = func(string) (string, bool) { return "", false }
 	newExe := upgradedTo(t, &env)
-	recordLaunchd(&env, "missing")
+	recordLaunchd(t, &env, "missing")
 
 	code, stdout, stderr := refreshRun(t, env)
 	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Claude Code hooks") {

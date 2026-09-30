@@ -31,6 +31,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
@@ -133,10 +134,8 @@ type Env struct {
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
 	WorkingDir func() (string, error)
-	// JobState reports loaded, running, missing, or unknown without changing launchd.
-	JobState func(string) string
-	Home     func() (string, error)
-	Now      func() time.Time
+	Home       func() (string, error)
+	Now        func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -166,15 +165,12 @@ type Env struct {
 	// DiscoverApplications performs bounded, read-only installed-version
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
-	// LoadLaunchAgent loads the just-written LaunchAgent plist so scheduled
-	// collection starts without a login/logout cycle. Defaults to shelling
-	// out to launchctl (runLaunchctl).
-	LoadLaunchAgent func(plistPath string) error
-	// UnloadLaunchAgent undoes a successful LoadLaunchAgent: it rolls setup
-	// back if a later step (config.Save) fails after the LaunchAgent was
-	// already loaded, and stops the collector during uninstall. Defaults to
-	// shelling out to launchctl, like LoadLaunchAgent.
-	UnloadLaunchAgent func(plistPath string) error
+	// Scheduler is the background job manager: it reports the collector's job
+	// state, loads the LaunchAgent setup wrote so scheduled collection
+	// starts without a login/logout cycle, and stops it again (rolling setup
+	// back, or during uninstall). Defaults to this system's own, through
+	// newScheduler (launchd on macOS, through launchctl).
+	Scheduler scheduler.Scheduler
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the
@@ -415,20 +411,6 @@ func (e Env) discoverApplications(userHome string) map[string]applicationDiscove
 	return discoverApplications(userHome)
 }
 
-func (e Env) loadLaunchAgent(plistPath string) error {
-	if e.LoadLaunchAgent != nil {
-		return e.LoadLaunchAgent(plistPath)
-	}
-	return loadLaunchAgent(plistPath)
-}
-
-func (e Env) unloadLaunchAgent(plistPath string) error {
-	if e.UnloadLaunchAgent != nil {
-		return e.UnloadLaunchAgent(plistPath)
-	}
-	return unloadLaunchAgent(plistPath)
-}
-
 func (e Env) credentialStore() (credentials.CredentialStore, error) {
 	if e.Credentials != nil {
 		return e.Credentials()
@@ -569,7 +551,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "stats":
-		return runStatsCommand(args[1:], stdout, stderr, env)
+		return runStatsCommand(args[1:], stdin, stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

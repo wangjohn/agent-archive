@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -29,26 +31,12 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 			if err := os.WriteFile(path, []byte(legacyPlist), 0600); err != nil {
 				t.Fatal(err)
 			}
-			states := map[string]string{path: "loaded"}
-			unloaded := false
-			env.JobState = func(p string) string {
-				if s := states[p]; s != "" {
-					return s
-				}
-				return "missing"
-			}
-			env.UnloadLaunchAgent = func(p string) error {
-				states[p] = "missing"
-				if p == path {
-					unloaded = true
-				}
-				return nil
-			}
-			env.LoadLaunchAgent = func(p string) error {
-				if fail && p != path {
+			legacy := jobRef(path)
+			sched := fakeSched(env).set(legacy, "loaded")
+			sched.beforeLoad = func(ref scheduler.Ref) error {
+				if fail && ref != legacy {
 					return errors.New("start failed")
 				}
-				states[p] = "loaded"
 				return nil
 			}
 			want := 0
@@ -56,16 +44,16 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 				want = 1
 			}
 			setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), want)
-			if !unloaded {
+			if !slices.Contains(sched.unloaded(), legacy) {
 				t.Fatal("legacy job not stopped")
 			}
 			data, err := os.ReadFile(path)
 			if fail {
-				if err != nil || string(data) != legacyPlist || states[path] != "loaded" {
-					t.Fatalf("not restored: %s %v %v", data, err, states)
+				if err != nil || string(data) != legacyPlist || sched.state(legacy) != "loaded" {
+					t.Fatalf("not restored: %s %v %v", data, err, sched.state(legacy))
 				}
-			} else if !os.IsNotExist(err) || states[path] != "missing" {
-				t.Fatalf("not retired: %v %v", err, states)
+			} else if !os.IsNotExist(err) || sched.state(legacy) != "missing" {
+				t.Fatalf("not retired: %v %v", err, sched.state(legacy))
 			}
 		})
 	}
@@ -85,14 +73,9 @@ func TestTestInstallationLeavesPrototypeAlone(t *testing.T) {
 	settings := filepath.Join(userHome, ".claude", "settings.json")
 	must(t, os.MkdirAll(filepath.Dir(settings), 0700))
 	must(t, os.WriteFile(settings, []byte(prototype), 0600))
-	env.JobState = func(p string) string {
-		if p == path {
-			return "loaded"
-		}
-		return "missing"
-	}
-	env.UnloadLaunchAgent = func(p string) error {
-		t.Errorf("unloaded %s", p)
+	sched := fakeSched(env).set(jobRef(path), "loaded")
+	sched.beforeUnload = func(ref scheduler.Ref) error {
+		t.Errorf("unloaded %s", ref)
 		return nil
 	}
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", false, true, false, project), 0)

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // vaultHelper is the credential_process program awsFixture's profile runs.
@@ -51,7 +51,7 @@ func collectorPlistEnvironment(t *testing.T, env Env, home, userHome string) (ma
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment, err := hooks.LaunchAgentEnvironment(data)
+	environment, err := launchd.LaunchAgentEnvironment(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 			t.Helper()
 			plistPath := env.installation(home, userHome).collectorPlist()
 			executable, _ := env.executable()
-			plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": configFile})
+			plist, err := launchd.LaunchAgent(executable, home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": configFile})
 			if err != nil {
 				t.Fatal(err)
 			}

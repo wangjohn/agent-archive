@@ -164,6 +164,17 @@ func signalExitCode(sig os.Signal) int {
 	return 130
 }
 
+// draw writes one frame while the screen is up, and nothing once it has been
+// left: a frame that was being drawn as a signal restored the terminal must
+// not land on the normal screen after it.
+func (s *altScreen) draw(frame string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active {
+		terminal.Print(s.out, frame)
+	}
+}
+
 // clears reports whether clear blanks the screen, so a view can be drawn
 // again in place instead of below itself.
 func (s *altScreen) clears() bool {

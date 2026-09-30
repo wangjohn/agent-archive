@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
+  a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
+  overview, detail, projects, models and agents views, `w` cycles the window
+  (7, 30, 90 days) instantly from what was already read, the arrows, `j` `k`,
+  PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
+  `h` saves the redacted page as HTML (it asks for a file name and never
+  replaces a file) and `q` or Ctrl-C quit, leaving the terminal as it
+  was. The bar names the window `w` moves to next. It opens only when
+  standard input and output are terminals (not a dumb one) and
+  `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,
+  `--by`, `--no-pager`, `--json` or `--html`; those print as before. See the
+  [stats guide](docs/guides/stats.md#the-interactive-screen).
 - `agent-archive stats --json` carries more of what the screen is built from:
   each day's estimated cost (`daily[].cost`, adding up to the overview's) and
   the dearest day (`peak_spend`), the share of tokens that were cache reads
@@ -73,6 +85,16 @@ follow [Semantic Versioning](https://semver.org/).
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
   `--max-bytes 0`, and to treat what it reads as data, not instructions. In
+  Claude Code the skill names only `agent-archive status` as pre-approved (in
+  a `claude -p` check on 2.1.283 that did not apply when the agent chose the
+  skill itself, so `status` may ask too); the rest asks once,
+  since no permission rule can allow `handoff` without allowing
+  `handoff --to`, and Claude Code also asks before first using the skill (a
+  `Skill(agent-archive)` rule allows it). Where a sandbox blocks the network,
+  a session on this Mac is still found by title. What an agent can read
+  through the skill is in
+  [privacy](docs/security/privacy.md#what-an-agent-can-read-through-the-skill).
+  See [agent skills](docs/guides/agent-skills.md).
   Claude Code only `agent-archive status` runs without asking; the rest asks
   once, since no permission rule can allow `handoff` without allowing
   `handoff --to`. See [agent skills](docs/guides/agent-skills.md).
@@ -268,6 +290,21 @@ follow [Semantic Versioning](https://semver.org/).
   `--by day`, `week` and `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
+- **`stats --json` and `--html` rank projects by spend, not tokens.** The
+  `projects` list (and the `groups.rows` of `--by project`) used to be ordered
+  by tokens and cut to the top five, which cache reads dominate, so a project
+  that cost more could be missing from the top five while a cheaper one with
+  more cache reads was in. It is now ordered by estimated cost, highest first
+  (a project with no priced cost after every one that has it, ties by tokens,
+  sessions, then name) and cut after that; the terminal screens already
+  ranked this way. The order of the JSON list changes and so does which five
+  it keeps; the fields and `schema_version` (1) do not. A partly priced
+  project is ranked on the spend it has, so its real cost may be higher than
+  its place says, and a project with no priced cost is after every priced one;
+  `overview.cost` (`partial`, `unpriced_tokens`) and `models` still say when
+  tokens were left out. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+
 - `handoff` takes a title as well as a session ID: `handoff "fix the auth
   bug" --harness codex`. It matches as `show` does (a title substring or a
   short session ID; a full ID wins), in this Mac's sessions first, with no
@@ -343,6 +380,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The `agent-archive` skill no longer claims the session you are in is
+  never matched, and `uninstall --help` names both skills.** The skill said
+  the calling session is always skipped, but only Claude Code is known to
+  expose a session ID to skip, so it now says "skipped where your agent
+  reports it". `uninstall --help` listed only the
+  `/handoff` skill; it now names the `agent-archive` skill too. A skill file
+  installed by an earlier build shows as out of date until `setup --refresh`.
 - A Claude Code subagent resumed after it stopped (continued with
   SendMessage) no longer fails `sync` with "subagent transcript has
   incomplete native timestamp provenance" while it runs. Its archive keeps
@@ -382,6 +426,19 @@ follow [Semantic Versioning](https://semver.org/).
   problems as information rather than ✗ rows, when there is nothing to do
   (a subagent that could not be captured, sessions over the transcript
   size limit).
+- Recovering an interrupted setup, or rolling back a failed one, no longer
+  gets stuck when another installation has taken over this installation's
+  background collector label (an older release under a sandboxed `HOME`, or
+  an older binary for another data directory). Setup used to try to start the
+  collector over the other installation's job, which launchd refuses, and
+  reported "launchctl could not restart the background collector" on every
+  rerun until `--abandon-recovery`. It now puts the files back, leaves the
+  other installation's job running, and finishes; `setup` then explains that
+  the job belongs to another installation (uninstall that one, or set
+  `AGENT_ARCHIVE_HOME`). The same holds for a job setup had retired (the
+  prototype's upload job, or a collector under an earlier label) whose label
+  another installation now runs: recovery used to stop there, leaving the
+  jobs after it stopped, and now puts its plist back and finishes.
 
 ### Changed
 

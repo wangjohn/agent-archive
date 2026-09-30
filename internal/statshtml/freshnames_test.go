@@ -23,7 +23,7 @@ var freshNames = []string{
 // freshSessions is an archive of real-looking names: a cache-heavy project
 // with the most tokens, a group of output-heavy projects that cost more per
 // token (the costliest session is in one of them, and some are outside the
-// engine's top few projects by tokens), a fine-tune and a deployment name as
+// engine's top few projects by spend), a fine-tune and a deployment name as
 // models, a plugin's skill, MCP servers, subagents, and Cursor sessions
 // without tokens.
 func freshSessions() []archive.Metadata {

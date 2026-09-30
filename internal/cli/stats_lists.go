@@ -31,7 +31,7 @@ func (p *statsPrinter) projectsPage() [][]string {
 }
 
 func (p *statsPrinter) projectsTable() []string {
-	projects := projectsBySpend(p.s.Projects)
+	projects := p.s.Projects
 	if len(projects) == 0 {
 		return nil
 	}

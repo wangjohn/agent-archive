@@ -143,6 +143,76 @@ linters:
               desc: credentials depends on platform, never the other way round
             - pkg: github.com/wangjohn/agent-archive/internal/hooks
               desc: platform knows nothing of hook files
+        # The scheduler port (types, the interface, the Runner) is pure: it
+        # runs no program, and an adapter runs its tool through the Runner it
+        # is given. TestSchedulerImportBoundary checks the same on every
+        # platform.
+        scheduler-is-pure:
+          files:
+            - "**/internal/scheduler/*.go"
+            - "!$test"
+          deny:
+            - pkg: os/exec
+              desc: the port runs no program; an adapter's Runner does
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: net$
+              desc: the port never touches the network
+            - pkg: net/http
+              desc: the port never touches the network
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: the port never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/hooks
+              desc: the port knows nothing of hook files
+        # An adapter runs its tool only through the scheduler.Runner it is
+        # given (host owns the real one), so a test's fake Runner is all it
+        # can reach, and it imports neither another adapter's chooser nor the
+        # command-line layer.
+        scheduler-adapters-run-through-the-runner:
+          files:
+            - "**/internal/scheduler/launchd/*.go"
+            - "!$test"
+          deny:
+            - pkg: os/exec
+              desc: run the tool through the scheduler.Runner the adapter is given
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: an adapter never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/hooks
+              desc: an adapter knows nothing of hook files
+            - pkg: github.com/wangjohn/agent-archive/internal/scheduler/host
+              desc: host chooses adapters, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli drives the scheduler, never the other way round
+        # host chooses the adapter for the system; cli still speaks launchd's
+        # vocabulary (plist labels, the plist codec) until 5a-3 of
+        # dev/proposals/platform-abstraction.md moves it behind the adapter.
+        # TestOnlyHostImportsAdapters checks the same on every platform.
+        only-host-imports-scheduler-adapters:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/scheduler/host/*.go"
+            - "!**/internal/cli/*.go"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/scheduler/launchd
+              desc: import the port (internal/scheduler); host chooses the adapter
+        # Running a program is limited to the listed packages
+        # (TestOnlyListedPackagesRunPrograms is the same list, on every
+        # platform); a new one is added there and here, with a reason.
+        only-listed-packages-run-programs:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/cli/*.go"
+            - "!**/internal/cursorstore/*.go"
+            - "!**/internal/scheduler/host/*.go"
+            - "!**/internal/termlaunch/*.go"
+            - "!**/internal/testutil/**"
+          deny:
+            - pkg: os/exec
+              desc: a package that runs a program is listed in TestOnlyListedPackagesRunPrograms; run a scheduler's tool through its Runner
         # The statistics engine takes metadata, options and a clock as
         # arguments and returns numbers: it reads no file, runs no program,
         # and uses no network, clock or randomness, and knows only the

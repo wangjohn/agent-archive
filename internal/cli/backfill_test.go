@@ -155,7 +155,7 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 		// The fixture is a Mac: Library folders, Documents/Codex, TCC.
 		OS: platform.Darwin,
 		// status reads the collector's job state; no test may ask launchd.
-		JobState:   func(string) string { return "missing" },
+		Scheduler:  newFakeScheduler(t, "missing"),
 		Interrupts: noInterrupts,
 	}
 	return f

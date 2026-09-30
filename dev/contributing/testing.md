@@ -83,10 +83,12 @@ In Go tests, everything goes through injection:
 
 - `internal/cli` tests build an `Env` (see `testEnv` in `cli_test.go`) with a
   temporary data directory, temporary user and account homes, a fixed clock,
-  no environment variables, and an in-memory bucket. Its launchd, Keychain,
-  and executable fields fail the test unless the test sets them. Replace
-  `runLaunchctl` with `stubLaunchctl` for anything that would load or stop a
-  job.
+  no environment variables, and an in-memory bucket. Its scheduler
+  (`Env.Scheduler`, a `fakeScheduler` that answers every job "missing" and
+  fails the test on a load or stop), Keychain, and executable fields fail the
+  test unless the test sets them; `setupTestEnv` gives it a scheduler that
+  loads and stops jobs like launchd. To drive the real launchd code, set
+  `Env.Scheduler` to nil and replace `runLaunchctl` with `stubLaunchctl`.
 - Isolation in `internal/cli` fails closed. Its `TestMain` points `$HOME` at a
   temporary folder, unsets `AGENT_ARCHIVE_HOME`, `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME` and the AWS configuration variables, and replaces the real
@@ -111,6 +113,14 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
+  the `scheduler.Runner` it is given, so its tests pass a recording Runner and
+  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  tests run a stand-in `launchctl` script found on a temporary `PATH`.
+  `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
+  set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
+  (and, for now, `cli`) imports an adapter; depguard says the same in
+  `.golangci.yml`.
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
@@ -343,6 +353,13 @@ In `internal/hooks`:
 | --- | --- | --- |
 | `FuzzMergeRemove` | any hook file Merge accepts, per harness | merging twice changes nothing; Remove takes out exactly what Merge added |
 | `FuzzCommandDataHome` | any data directory | the hook command reads back the directory it was built with |
+
+In `internal/scheduler/launchd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
+| `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
 
 In `internal/cli`:
 

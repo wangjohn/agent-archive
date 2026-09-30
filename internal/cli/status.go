@@ -27,6 +27,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -921,19 +922,19 @@ type statusBackground struct {
 // the LaunchAgent actually runs.
 func readBackground(view *statusView, cfg config.Config, home, userHome string, env Env) statusBackground {
 	plist := env.installation(home, userHome).installedCollectorPlist()
-	view.Background = env.jobState(plist)
+	view.Background = env.jobState(userHome, plist)
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
 	backgroundProgram, backgroundProblem := "", ""
 	var environmentProblems []string
 	if cfg.Archive.Enabled {
 		if data, err := os.ReadFile(plist); err == nil {
-			if program, err := hooks.LaunchAgentProgram(data); err == nil {
+			if program, err := launchd.LaunchAgentProgram(data); err == nil {
 				backgroundProgram, backgroundProblem = program, executableProblem(program)
 			}
 			// The collector has only the environment its plist sets, which
 			// may no longer match the files and programs the profile needs.
-			if environment, err := hooks.LaunchAgentEnvironment(data); err == nil {
+			if environment, err := launchd.LaunchAgentEnvironment(data); err == nil {
 				environmentProblems = collectorEnvironmentProblems(cfg.Storage, environment, userHome)
 				view.Warnings = append(view.Warnings, environmentProblems...)
 				if drift := env.awsFilesDrift(cfg.Storage, environment, userHome); drift != "" {
@@ -1113,7 +1114,7 @@ func chooseInstallationStep(view *statusView, plist string) {
 		if view.Background == setupjournal.JobAnotherInstallation {
 			// setup refuses to replace that job, so it is not the way out.
 			view.problem = "Another installation's collector has this installation's label"
-			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchd.Label(plist))
 		}
 	}
 }
