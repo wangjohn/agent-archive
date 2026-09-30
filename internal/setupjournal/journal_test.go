@@ -430,3 +430,97 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 		t.Fatalf("lock held: err=%v calls=%v", err, sim.calls)
 	}
 }
+
+// A files-only journal (setup --refresh leaving the job as it is) commits,
+// rolls back, and recovers without launchd being asked anything, even for a
+// loaded job: it neither starts nor stops it.
+func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
+	t.Parallel()
+	// The fake fails every load and unload, and records every question.
+	var asked []string
+	quiet := fakeLaunchd{state: func(plist string) string { asked = append(asked, plist); return "running" }}
+	newJournal := func(t *testing.T) (home string, journal Journal, settings, added string) {
+		t.Helper()
+		home, dir := t.TempDir(), t.TempDir()
+		settings, added = filepath.Join(dir, "settings.json"), filepath.Join(dir, "sub", "SKILL.md")
+		if err := os.WriteFile(settings, []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		journal = Journal{FilesOnly: true, Plist: filepath.Join(dir, "job.plist"), Changes: []hooks.Change{
+			{Path: settings, Before: []byte("old"), After: []byte("new"), Existed: true, Mode: 0o600},
+			{Path: added, After: []byte("skill"), Mode: 0o600},
+		}}
+		return home, journal, settings, added
+	}
+
+	t.Run("commit", func(t *testing.T) {
+		home, journal, settings, added := newJournal(t)
+		if err := Commit(home, journal, quiet); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(settings); string(got) != "new" {
+			t.Errorf("settings: %q", got)
+		}
+		if got, _ := os.ReadFile(added); string(got) != "skill" {
+			t.Errorf("added: %q", got)
+		}
+		if TransactionPending(home) {
+			t.Error("the journal remains")
+		}
+	})
+	t.Run("rollback of a failed write", func(t *testing.T) {
+		home, journal, settings, added := newJournal(t)
+		// The second write fails: its directory cannot be written to.
+		if err := os.Mkdir(filepath.Dir(added), 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Dir(added), 0o700) })
+		err := Commit(home, journal, quiet)
+		if err == nil || !strings.Contains(err.Error(), "previous installation restored") {
+			t.Fatalf("err = %v", err)
+		}
+		if got, _ := os.ReadFile(settings); string(got) != "old" {
+			t.Errorf("settings after rollback: %q", got)
+		}
+		if TransactionPending(home) {
+			t.Error("the journal remains")
+		}
+	})
+	t.Run("recovery of an interrupted transaction", func(t *testing.T) {
+		home, journal, settings, added := newJournal(t)
+		if err := local.Write(JournalPath(home), journal); err != nil {
+			t.Fatal(err)
+		}
+		if err := hooks.Apply(journal.Changes); err != nil {
+			t.Fatal(err)
+		}
+		if err := Recover(home, quiet, noLock); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(settings); string(got) != "old" {
+			t.Errorf("settings after recovery: %q", got)
+		}
+		if _, err := os.Stat(added); !os.IsNotExist(err) {
+			t.Errorf("the added file remains: %v", err)
+		}
+		if TransactionPending(home) {
+			t.Error("the journal remains")
+		}
+	})
+	if len(asked) != 0 {
+		t.Errorf("launchd was asked about %v", asked)
+	}
+}
+
+// files_only is written only when set, so the ordinary transaction's
+// journal keeps its format.
+func TestFilesOnlyIsOmittedFromAnOrdinaryJournal(t *testing.T) {
+	t.Parallel()
+	data, err := json.Marshal(Journal{})
+	if err != nil || strings.Contains(string(data), "files_only") {
+		t.Fatalf("%s %v", data, err)
+	}
+	if data, err = json.Marshal(Journal{FilesOnly: true}); err != nil || !strings.Contains(string(data), `"files_only":true`) {
+		t.Fatalf("%s %v", data, err)
+	}
+}

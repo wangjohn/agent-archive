@@ -368,7 +368,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
 		view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
 		for _, path := range view.AgentSkillsOutOfDate {
-			view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup to refresh it.", skillLabel(path), path))
+			view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup --refresh to refresh it.", skillLabel(path), path))
 		}
 	}
 	for _, p := range cfg.Archive.Projects {
@@ -667,7 +667,7 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		binaryProblem = executableProblem(cfg.InstalledExecutable)
 	}
 	if binaryProblem != "" {
-		view.Warnings = append(view.Warnings, fmt.Sprintf("The agent-archive executable that setup installed at %s is %s; every app hook runs it, so capture has stopped.", cfg.InstalledExecutable, binaryProblem))
+		view.Warnings = append(view.Warnings, fmt.Sprintf("The agent-archive executable that setup installed at %s is %s; every app hook runs it, so capture has stopped. Run agent-archive setup --refresh, from an installed agent-archive, to point the hooks at it.", cfg.InstalledExecutable, binaryProblem))
 	}
 	discovered, err := readApplicationDiscoveries(home)
 	if err != nil {
@@ -900,6 +900,11 @@ func chooseInstallationStep(view *statusView, plist string) {
 				view.problem = appName(app.Name) + " hooks couldn't be checked"
 			}
 			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
+			if app.Hooks != "unknown" {
+				// Missing, incomplete, or running an executable that is gone:
+				// refresh reinstalls what setup saved, with no questions.
+				view.Next = "Run agent-archive setup --refresh to reinstall the hooks for " + appName(app.Name) + "."
+			}
 			if len(app.OtherInstallations) > 0 {
 				// setup refuses to install beside them, so it is not the way out.
 				view.problem = "Another installation's hooks are in " + appName(app.Name)
@@ -1755,7 +1760,7 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, path := range view.AgentSkills {
 		line := displayPath(path, view.userHome)
 		if slices.Contains(view.AgentSkillsOutOfDate, path) {
-			line += " (out of date; run agent-archive setup)"
+			line += " (out of date; run agent-archive setup --refresh)"
 		}
 		terminal.Printf(out, "  %-14s %s\n", skillLabel(path)+":", line)
 	}

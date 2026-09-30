@@ -144,8 +144,11 @@ now and paths under your home folder start with `~`.
   directory of this installation's own, or uninstall the other one.
 - **agent-archive can't run from where setup installed it** means the hooks
   or background collector run an `agent-archive` executable that has since
-  been moved, deleted, or made non-executable. Rerun `agent-archive setup`
-  from the binary's new location.
+  been moved, deleted, or made non-executable. Run
+  `agent-archive setup --refresh` from the binary's new location: it points
+  the hooks, the collector's plist, and the skills at it, asks nothing, and
+  changes no other setting. (A hooks row that says `hooks missing` is
+  repaired the same way.)
 - **The background collector can't load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
   LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that

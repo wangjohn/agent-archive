@@ -15,7 +15,18 @@ follow [Semantic Versioning](https://semver.org/).
   file it did not write, uninstall removes only its own, and
   `status --json` lists them in `agent_skills`. After an upgrade, `status`
   warns about a skill file an earlier release wrote and lists it in
-  `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
+  `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
+- `agent-archive setup --refresh` brings the app hooks, the background
+  collector's plist, and the skill files up to date for the saved settings and
+  the binary you run it from, and changes nothing else. It asks nothing and
+  needs no terminal, prints `nothing to refresh` or what it refreshed, and
+  refuses (exit 1) before setup has finished, while a setup needs recovery,
+  after uninstall, or when another installation's hooks are in the way. It
+  also repairs hooks left pointing at a binary that moved. `install.sh` runs it
+  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  skills; if it fails, the install still succeeds and says how to run it.
+  `status` names it where it reports out-of-date skills, hooks that are
+  missing, or a moved binary.
 - `agent-archive setup --no-skills` (also with `--yes`) installs no agent
   skills and removes the ones setup wrote; a file that is not setup's is left
   alone and named. It is saved, so later setup runs keep the skills off, and

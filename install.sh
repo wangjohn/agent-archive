@@ -8,13 +8,19 @@
 # a damaged download, not a tampered release, since both come from the same
 # place), checks that it is signed with this project's Developer ID (which
 # does catch a binary someone else built), and installs it as
-# `agent-archive`. It never runs setup and never needs sudo.
+# `agent-archive`. It never runs setup and never needs sudo. On a Mac that
+# is already set up (a config.json in the data directory) it then runs
+# `agent-archive setup --refresh`, which asks nothing and changes only the
+# hooks, the background collector's plist, and the skill files, so they name
+# the new binary; if that fails, the install still succeeds.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
 #   AGENT_ARCHIVE_INSTALL_DIR  directory to install into (default: where
 #                              agent-archive already is, else /usr/local/bin
 #                              if writable, else ~/.local/bin)
+#   AGENT_ARCHIVE_HOME         data directory of the installation to refresh
+#                              (default: ~/.local/share/agent-archive)
 #   AGENT_ARCHIVE_DOWNLOAD_URL release download base, for testing only
 #
 # The whole script is one function called on the last line, so a download
@@ -85,6 +91,15 @@ main() {
     fail "installed ${target}, but it failed to run: ${installed_version}"
   say "✓ installed agent-archive ${installed_version} to ${target}"
 
+  # An upgrade of a set-up Mac: the app hooks, the background collector, and
+  # the skills name this binary, so bring them up to date. A fresh install
+  # runs nothing.
+  configured=0
+  if existing_installation; then
+    configured=1
+    refresh_installation
+  fi
+
   case ":${PATH}:" in
     *":${install_dir}:"*) ;;
     *)
@@ -99,10 +114,35 @@ main() {
       say "Open a new terminal after updating your profile."
       ;;
   esac
+  if [ "$configured" = 0 ]; then
+    say ""
+    say "To get started, run:"
+    say ""
+    say "agent-archive setup"
+  fi
+}
+
+# existing_installation succeeds when this Mac already has a completed
+# setup: a settings file in the data directory, AGENT_ARCHIVE_HOME or the
+# default one.
+existing_installation() {
+  [ -f "${AGENT_ARCHIVE_HOME:-${HOME}/.local/share/agent-archive}/config.json" ]
+}
+
+# refresh_installation runs the new binary's `setup --refresh`, which asks
+# nothing, needs no terminal, and changes only the hook files, the collector's
+# plist, and the skill files, and prints what it did. It never runs setup
+# itself, and a failed refresh never fails the install: the binary is
+# installed either way, so it says why and how to try again.
+refresh_installation() {
   say ""
-  say "To get started, run:"
-  say ""
-  say "agent-archive setup"
+  if output="$("$target" setup --refresh </dev/null 2>&1)"; then
+    say "Bringing your existing setup up to date (agent-archive setup --refresh):"
+    printf '%s\n' "$output" | sed 's/^/  /'
+  else
+    printf 'agent-archive install: could not refresh the hooks and skills of your existing setup: %s\n' "$output" >&2
+    printf 'The new agent-archive is installed. To try again, run: %s setup --refresh\n' "$target" >&2
+  fi
 }
 
 detect_arch() {

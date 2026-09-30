@@ -327,19 +327,42 @@ it renames the package.
   and nothing else. It asks no questions, needs no terminal, never touches
   storage, credentials, projects, retention, or the LaunchAgent's job
   state, and exits 0 with "nothing to refresh" when everything is current.
-  It refuses (exit 1, one-line reason) when setup never completed, an
-  interrupted setup needs recovery, or the archive is uninstalled.
-- Reuses `planSetupTransaction`'s hook and skill planning and its journal,
-  so a failure rolls back. Ownership is unchanged.
-- Also repairs hook drift: if `InstalledExecutable` moved (the case
-  `status` reports as "capture has stopped"), refresh points hooks and the
-  LaunchAgent plist at the current binary and records it.
+  It refuses (exit 1, one-line reason, nothing changed) when setup never
+  completed, an interrupted setup needs recovery, the archive is
+  uninstalled, another installation's hooks are in a file it would write,
+  or another installation owns the collector's launchd label. Any flag but
+  `--verbose` is a usage error (exit 2). A paused archive is refreshed like
+  any other, and stays paused: pausing keeps the hooks.
+- It works in `internal/cli/setup_refresh.go` from the saved configuration:
+  hooks go where setup recorded them (`hook_files`), not where this shell's
+  `CLAUDE_CONFIG_DIR` points. It shares setup's skill planning
+  (`planAgentSkills`), its journal, and its collector, hooks, and setup
+  locks, so a failure rolls back. Ownership is unchanged. Only files whose
+  content would change are written, so a current installation writes and
+  asks nothing.
+- The journal gained `FilesOnly` (`files_only`): a transaction of files
+  that neither commits nor rolls back through launchd. Refresh uses it
+  except in one case. The LaunchAgent plist is rewritten only when it runs
+  another executable, keeping its environment (the AWS files and `PATH` the
+  storage check ran with, which the installer's shell may not have), and
+  when that plist belongs to a **loaded** job the ordinary transaction runs
+  (stop, write, start), because launchd runs the definition it loaded, not
+  the file, and a job left on a deleted binary would fail every minute. A
+  job that is not loaded stays unloaded; a job whose state is unknown, or
+  another installation's, refuses.
+- Also repairs hook drift: if `InstalledExecutable` differs from the running
+  executable (the case `status` reports as "capture has stopped"), refresh
+  points hooks, the LaunchAgent plist, and the skills at the running binary
+  and records it, in the same transaction. It applies setup's own guards
+  first: a `go run` or `go test` build, a file in the temporary folder, or
+  one that is missing or not executable is refused.
 - `install.sh`: after installing the binary, if an existing configured
   installation is found, runs `setup --refresh` and prints
   its one-line result. A refresh failure prints the reason and the manual
   command but does not fail the install; a fresh install runs nothing.
   `AGENT_ARCHIVE_HOME` is honored.
-- `status`'s out-of-date line says `setup --refresh`.
+- `status`'s out-of-date skill line, its "capture has stopped" warning, and
+  the next step for missing hooks say `setup --refresh`.
 - Tests: refresh replaces a stale skill and leaves a foreign one; refresh
   with `NoSkills` installs none; refusal without saved config; hook drift
   repair; idempotent second run; rollback on failure; installer-script
@@ -366,8 +389,8 @@ it renames the package.
 Skill text embeds the binary path and flag names, so it must refresh when
 the binary changes:
 
-1. `status` warns "out of date; run `agent-archive setup`" (PR 3, reworded
-   in PR 6).
+1. `status` warns "out of date; run `agent-archive setup --refresh`" (PR 3,
+   reworded in PR 6).
 2. `setup` (re-run) refreshes as part of its normal transaction (#152).
 3. `install.sh` runs `setup --refresh` when it finds an
    existing configured installation (PR 6), so upgrading the binary
