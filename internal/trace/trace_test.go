@@ -2,19 +2,51 @@ package trace
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 // Tests in this package share the process-wide recorder, so none of them
 // runs in parallel.
+
+// tree renders the recording as "indent+label" lines: the offset and
+// timing columns dropped, the indentation kept exactly.
+func tree(t *testing.T) []string {
+	t.Helper()
+	var b strings.Builder
+	Write(&b)
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "agent-archive trace") {
+		t.Fatalf("no trace header:\n%s", b.String())
+	}
+	out := make([]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		// "%9s  " is the offset column; the label ends at the two spaces
+		// before its timing.
+		rest := line[11:]
+		indent := rest[:len(rest)-len(strings.TrimLeft(rest, " "))]
+		label, _, _ := strings.Cut(strings.TrimLeft(rest, " "), "  ")
+		out = append(out, indent+label)
+	}
+	return out
+}
+
+func sameLines(t *testing.T, got, want []string) {
+	t.Helper()
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("trace tree:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
 
 func TestDisabledRecordsNothing(t *testing.T) {
 	span := Start("never")
 	span.Count("n", 1)
 	span.Child("child").End()
 	span.End()
-	if span != nil || Enabled() {
+	if span != nil || StartLeaf("never") != nil || Enabled() {
 		t.Fatal("a span was recorded while tracing was off")
 	}
 	var b strings.Builder
@@ -25,8 +57,8 @@ func TestDisabledRecordsNothing(t *testing.T) {
 }
 
 // Spans made with Start nest under the innermost span that contains them in
-// time; spans made with Child stay under their parent; same-named siblings
-// fold into one line with their summed counts.
+// time, and only that span; spans made with Child stay under their parent;
+// same-named siblings fold into one line with their summed counts.
 func TestWriteNestsFoldsAndCounts(t *testing.T) {
 	disable := Enable()
 	defer disable()
@@ -39,37 +71,70 @@ func TestWriteNestsFoldsAndCounts(t *testing.T) {
 		time.Sleep(time.Millisecond)
 		r.End()
 	}
-	request := Start("request list")
+	request := StartLeaf("request list")
 	time.Sleep(time.Millisecond)
 	request.End()
 	listing.End()
 	after := Start("local activity")
+	time.Sleep(time.Millisecond)
 	after.End()
 	root.End()
 
+	sameLines(t, tree(t), []string{
+		"handoff",
+		"  list metadata",
+		"    range ×3",
+		"    request list",
+		"  local activity",
+	})
 	var b strings.Builder
 	Write(&b)
-	lines := strings.Split(strings.TrimSpace(b.String()), "\n")
-	want := []struct {
-		indent string
-		text   string
-	}{
-		{"", "handoff"},
-		{"  ", "list metadata"},
-		{"    ", "range ×3"},
-		{"    ", "request list"},
-		{"  ", "local activity"},
+	if !strings.Contains(b.String(), "keys 2100") || !strings.Contains(b.String(), "sidecars 662") {
+		t.Fatalf("counts missing:\n%s", b.String())
 	}
-	if len(lines) != len(want)+1 {
-		t.Fatalf("trace has %d lines, want %d:\n%s", len(lines), len(want)+1, b.String())
+}
+
+// Requests running at once overlap, and one that starts later can end
+// sooner. As leaves they stay side by side and fold, instead of nesting
+// inside one another.
+func TestOverlappingLeavesFoldInsteadOfNesting(t *testing.T) {
+	disable := Enable()
+	defer disable()
+	reads := Start("read sidecars")
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		request := StartLeaf("request get")
+		go func() {
+			defer wg.Done()
+			// Later requests finish first.
+			time.Sleep(time.Duration(16-i) * time.Millisecond)
+			request.Count("bytes", 10)
+			request.End()
+		}()
 	}
-	for i, w := range want {
-		if line := lines[i+1]; !strings.Contains(line, "  "+w.indent+w.text+"  ") {
-			t.Errorf("line %d = %q, want %q indented %d", i+1, line, w.text, len(w.indent))
-		}
-	}
-	if !strings.Contains(b.String(), "range ×3") || !strings.Contains(b.String(), "keys 2100") || !strings.Contains(b.String(), "sidecars 662") {
-		t.Fatalf("counts or folding missing:\n%s", b.String())
+	wg.Wait()
+	reads.End()
+	sameLines(t, tree(t), []string{"read sidecars", "  request get ×8"})
+}
+
+// A span never ended (a response body nobody closed) is placed by where it
+// started, marked unfinished, and swallows nothing that follows it.
+func TestUnfinishedSpanHoldsNothing(t *testing.T) {
+	disable := Enable()
+	defer disable()
+	root := Start("list")
+	Start("request get") // never ended
+	time.Sleep(time.Millisecond)
+	later := Start("read sidecars")
+	time.Sleep(time.Millisecond)
+	later.End()
+	root.End()
+	sameLines(t, tree(t), []string{"list", "  request get", "  read sidecars"})
+	var b strings.Builder
+	Write(&b)
+	if !strings.Contains(b.String(), "(unfinished)") {
+		t.Fatalf("an unended span is not marked:\n%s", b.String())
 	}
 }
 

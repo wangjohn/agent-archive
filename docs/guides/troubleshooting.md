@@ -408,8 +408,8 @@ Run the command with `AGENT_ARCHIVE_TRACE=1` to see where its time goes:
 AGENT_ARCHIVE_TRACE=1 agent-archive handoff
 ```
 
-When the command finishes (after you pick or quit, for an interactive one),
-it prints a timing tree on stderr. Each line gives a step's start (as an
+When the command finishes (after you pick or quit, for an interactive one;
+interrupting with Ctrl-C prints nothing), it prints a timing tree on stderr. Each line gives a step's start (as an
 offset from the command's start), how long it took, and counts such as keys
 listed, sidecars read from the local cache or downloaded, and bytes per
 request. Repeated steps, such as listing ranges or requests, fold into one

@@ -66,3 +66,15 @@ func TestTraceOffForInvalidValuesAndInternalCommands(t *testing.T) {
 		t.Fatalf("an internal command traced:\n%s", errOut.String())
 	}
 }
+
+// The root span carries a command's own name, never an unknown word from the
+// command line.
+func TestTraceRootNamesOnlyKnownCommands(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	var out, errOut bytes.Buffer
+	Run([]string{"frobnicate-private-word"}, nil, &out, &errOut, withTrace(env, "1"))
+	_, tree, _ := strings.Cut(errOut.String(), "agent-archive trace")
+	if tree == "" || strings.Contains(tree, "frobnicate") || !strings.Contains(tree, "  command  ") {
+		t.Fatalf("trace for an unknown command:\n%s", errOut.String())
+	}
+}

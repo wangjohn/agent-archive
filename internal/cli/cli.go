@@ -504,6 +504,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 			return 2
 		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			defer startTrace("list", stderr, env)()
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {

@@ -28,6 +28,9 @@ type Span struct {
 	end    time.Time
 	counts map[string]int64
 	order  []string // count names, first-recorded first
+	// leaf spans never contain others: requests, which overlap their
+	// siblings and would otherwise nest inside one another.
+	leaf bool
 	// children are spans made with Child: their parent is explicit, not
 	// inferred from time, since siblings made that way usually overlap.
 	children []*Span
@@ -56,12 +59,19 @@ func Enabled() bool { return active.Load() != nil }
 // written: under the innermost span made with Start that began before it and
 // ended after it. Use it at a package's entry points, where the caller's span
 // is not at hand.
-func Start(name string) *Span {
+func Start(name string) *Span { return start(name, false) }
+
+// StartLeaf is Start for a span that contains no others, such as one of many
+// requests running at once: overlapping siblings made with Start would nest
+// inside one another, but leaves stay side by side and fold into one line.
+func StartLeaf(name string) *Span { return start(name, true) }
+
+func start(name string, leaf bool) *Span {
 	rec := active.Load()
 	if rec == nil {
 		return nil
 	}
-	span := &Span{rec: rec, name: name, start: time.Now()}
+	span := &Span{rec: rec, name: name, start: time.Now(), leaf: leaf}
 	rec.mu.Lock()
 	rec.top = append(rec.top, span)
 	rec.mu.Unlock()
@@ -112,7 +122,9 @@ func (s *Span) End() {
 // Write renders the recording as an indented tree: each span's start offset
 // from Enable, its duration, and its counts. Sibling spans with the same name
 // are folded into one line with how many there were, their total and their
-// longest duration. A span still running is shown up to now.
+// longest duration. A span never ended (a response body nobody closed) is
+// marked unfinished, shown up to now, placed by its start alone, and holds
+// no other span.
 func Write(w io.Writer) {
 	rec := active.Load()
 	if rec == nil {
@@ -142,6 +154,7 @@ func endOf(s *Span, now time.Time) time.Time {
 
 // nest places each span made with Start under the innermost earlier span
 // that contains it in time, then adds the explicit children of every span.
+// Leaves and unfinished spans are placed but never contain anything.
 func nest(top []*Span, now time.Time) []*node {
 	spans := append([]*Span(nil), top...)
 	// Earlier first; of two starting together, the longer one contains the
@@ -156,11 +169,7 @@ func nest(top []*Span, now time.Time) []*node {
 	var open []*node // the chain of containing spans, outermost first
 	for _, span := range spans {
 		n := explicit(span)
-		for len(open) > 0 {
-			parent := open[len(open)-1].span
-			if !span.start.Before(parent.start) && !endOf(span, now).After(endOf(parent, now)) {
-				break
-			}
+		for len(open) > 0 && !contains(open[len(open)-1].span, span, now) {
 			open = open[:len(open)-1]
 		}
 		if len(open) == 0 {
@@ -169,9 +178,23 @@ func nest(top []*Span, now time.Time) []*node {
 			parent := open[len(open)-1]
 			parent.children = append(parent.children, n)
 		}
-		open = append(open, n)
+		if !span.leaf && !span.end.IsZero() {
+			open = append(open, n)
+		}
 	}
 	return roots
+}
+
+// contains reports whether span lies inside parent: it starts no earlier
+// and ends no later, or, never ended, at least starts inside it.
+func contains(parent, span *Span, now time.Time) bool {
+	if span.start.Before(parent.start) {
+		return false
+	}
+	if span.end.IsZero() {
+		return !span.start.After(endOf(parent, now))
+	}
+	return !span.end.After(endOf(parent, now))
 }
 
 func explicit(span *Span) *node {
@@ -201,7 +224,9 @@ func writeLevel(b *strings.Builder, origin time.Time, nodes []*node, depth int, 
 		counts := map[string]int64{}
 		var order []string
 		var children []*node
+		unfinished := false
 		for _, n := range group {
+			unfinished = unfinished || n.span.end.IsZero()
 			d := endOf(n.span, now).Sub(n.span.start)
 			total += d
 			longest = max(longest, d)
@@ -226,6 +251,9 @@ func writeLevel(b *strings.Builder, origin time.Time, nodes []*node, depth int, 
 		detail := ""
 		if len(parts) > 0 {
 			detail = "  · " + strings.Join(parts, ", ")
+		}
+		if unfinished {
+			detail += "  (unfinished)"
 		}
 		fmt.Fprintf(b, "%9s  %s%s  %s%s\n", "+"+millis(first.start.Sub(origin)), strings.Repeat("  ", depth), label, timing, detail)
 		writeLevel(b, origin, children, depth+1, now)

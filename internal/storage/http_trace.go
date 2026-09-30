@@ -21,7 +21,7 @@ func (c tracedClient) Do(request *http.Request) (*http.Response, error) {
 	if !trace.Enabled() {
 		return c.inner.Do(request)
 	}
-	span := trace.Start("request " + operation(request))
+	span := trace.StartLeaf("request " + operation(request))
 	response, err := c.inner.Do(request)
 	if err != nil || response == nil || response.Body == nil {
 		span.End()
