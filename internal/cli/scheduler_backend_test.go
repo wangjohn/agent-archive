@@ -38,9 +38,9 @@ func newLinuxInstall(t *testing.T) *linuxInstall {
 }
 
 // setup runs the real setup command to completion.
-func (l *linuxInstall) setup() string {
+func (l *linuxInstall) setup() {
 	l.t.Helper()
-	return setupRun(l.t, l.env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, l.t.TempDir()), 0)
+	setupRun(l.t, l.env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, l.t.TempDir()), 0)
 }
 
 func (l *linuxInstall) ref() string { return string(l.env.installation(l.home, l.userHome).ref()) }

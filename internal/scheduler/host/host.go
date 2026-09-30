@@ -95,11 +95,14 @@ func Exec(ctx context.Context, name string, args ...string) ([]byte, error) {
 	ownProcessGroup(cmd)
 	// A child that outlives the kill must not keep this waiting on its pipe.
 	cmd.WaitDelay = waitDelay
-	if name == "systemctl" || name == "loginctl" {
+	if talksToUserManager[name] {
 		cmd.Env = managerEnvironment(os.Environ())
 	}
 	return cmd.CombinedOutput()
 }
+
+// talksToUserManager are the programs the systemd adapter runs.
+var talksToUserManager = map[string]bool{"systemctl": true, "loginctl": true}
 
 // managerEnvironment is environ for a program that talks to the user's systemd
 // manager: the variables that say where it is, XDG_RUNTIME_DIR and
@@ -126,7 +129,10 @@ func managerEnvironment(environ []string) []string {
 func Unavailable(name, why string) scheduler.Scheduler { return unavailable{name: name, why: why} }
 
 // unavailable is the scheduler Unavailable makes.
-type unavailable struct{ name, why string }
+type unavailable struct {
+	name string
+	why  string
+}
 
 // unavailableRef is the job's name under a scheduler that cannot be used: there
 // is no adapter to say what a job is called, and nothing is written for it.

@@ -104,7 +104,7 @@ func (m *fakeUserManager) show(ref string) string {
 	case scheduler.Running:
 		return block(ref+".timer", timer, "loaded", "active", "waiting") + "\n" + block(ref+".service", service, "loaded", "activating", "start")
 	case scheduler.AnotherInstallation:
-		other := filepath.Join("/home/someone/.config/systemd/user", ref)
+		other := "/home/someone/.config/systemd/user/" + ref
 		return block(ref+".timer", other+".timer", "loaded", "active", "waiting") + "\n" + block(ref+".service", other+".service", "loaded", "inactive", "dead")
 	case scheduler.Missing, scheduler.Unknown:
 	}
