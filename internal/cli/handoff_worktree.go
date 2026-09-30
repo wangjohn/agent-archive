@@ -170,6 +170,17 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	if slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch) {
 		return "", fmt.Errorf("branch %s already exists; name a new one with --branch NAME", branch)
 	}
+	if op, err := operationInProgress(ctx, env, top); err != nil {
+		return "", err
+	} else if op != "" {
+		// Only the diff against HEAD would be carried, not the operation's
+		// state, so the new agent would see a plain edit instead.
+		return "", fmt.Errorf("a %s is in progress in %s; finish or abort it before using --worktree", op, top)
+	}
+	head, err := git(top, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("--worktree needs a commit to start from: %w", err)
+	}
 	// Read everything to carry before the worktree exists, so a failure
 	// here leaves nothing behind.
 	stash, err := git(top, "stash", "create")
@@ -178,6 +189,11 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	}
 	changed := 0
 	if stash != "" {
+		// The worktree starts where the changes were recorded, even if
+		// another agent in this checkout has committed since.
+		if head, err = git(top, "rev-parse", "--verify", stash+"^1"); err != nil {
+			return "", fmt.Errorf("record uncommitted changes: %w", err)
+		}
 		names, err := env.runGit(ctx, top, "diff", "--name-only", "-z", stash+"^1", stash)
 		if err != nil {
 			return "", fmt.Errorf("list uncommitted changes: %w", err)
@@ -188,7 +204,7 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	if err != nil {
 		return "", fmt.Errorf("list untracked files: %w", err)
 	}
-	if _, err := git(top, "worktree", "add", "-b", branch, path, "HEAD"); err != nil {
+	if _, err := git(top, "worktree", "add", "-b", branch, path, head); err != nil {
 		return "", fmt.Errorf("create worktree: %w", err)
 	}
 	left := func(err error) (string, error) {
@@ -207,6 +223,9 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 		terminal.Printf(stderr, "handoff: warning: did not copy %s into the worktree (not a file or symlink, such as a nested repository)\n", name)
 	}
 	terminal.Printf(stderr, "handoff: created worktree %s on branch %s (carried %d changed and %d untracked files)\n", path, branch, changed, copied)
+	if _, err := os.Lstat(filepath.Join(top, ".gitmodules")); err == nil {
+		terminal.Println(stderr, "handoff: note: submodules are not checked out in the worktree, and changes inside them were not carried (`git submodule update --init` there checks them out)")
+	}
 	launch := filepath.Join(path, filepath.FromSlash(prefix))
 	if info, err := os.Stat(launch); err != nil || !info.IsDir() {
 		// dir was inside an ignored or untracked-only directory.
@@ -214,6 +233,36 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 		return path, nil
 	}
 	return launch, nil
+}
+
+// operationInProgress names a merge, rebase, cherry-pick, or revert under way
+// in the checkout at top, or returns "" when there is none.
+func operationInProgress(ctx context.Context, env worktreeDependencies, top string) (string, error) {
+	ops := []struct{ path, name string }{
+		{"MERGE_HEAD", "merge"}, {"rebase-merge", "rebase"}, {"rebase-apply", "rebase"},
+		{"CHERRY_PICK_HEAD", "cherry-pick"}, {"REVERT_HEAD", "revert"},
+	}
+	args := []string{"rev-parse"}
+	for _, op := range ops {
+		args = append(args, "--git-path", op.path)
+	}
+	out, err := env.runGit(ctx, top, args...)
+	if err != nil {
+		return "", err
+	}
+	paths := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(paths) != len(ops) {
+		return "", fmt.Errorf("git rev-parse --git-path: unexpected output %q", out)
+	}
+	for i, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(top, path)
+		}
+		if _, err := os.Lstat(path); err == nil {
+			return ops[i].name, nil
+		}
+	}
+	return "", nil
 }
 
 // handoffShortID names a session's worktree and default branch: the first 8

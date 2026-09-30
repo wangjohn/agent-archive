@@ -486,3 +486,127 @@ func TestHandoffWorktreeFlagsNeedALaunch(t *testing.T) {
 		}
 	}
 }
+
+// Staged-only changes, deletions, and renames are carried, and neither the
+// checkout's index nor the shared stash stack changes.
+func TestHandoffWorktreeLeavesTheIndexAndStashStackAlone(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	// Someone else's stash entry must stay where it is.
+	writeTestFile(t, filepath.Join(repo, "tracked.txt"), "stashed\n", 0o644)
+	mustGit(t, repo, "stash", "push", "-q", "-m", "theirs")
+	writeTestFile(t, filepath.Join(repo, "staged.txt"), "staged only\n", 0o644)
+	mustGit(t, repo, "add", "staged.txt")
+	mustGit(t, repo, "mv", "tracked.txt", "moved.txt")
+	mustGit(t, repo, "rm", "-q", "sub/inner/keep.txt")
+	state := func() [3]string {
+		return [3]string{mustGit(t, repo, "status", "--porcelain"), mustGit(t, repo, "ls-files", "-s"), mustGit(t, repo, "stash", "list", "--format=%H %gs")}
+	}
+	was := state()
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("index123"), repo, nil, nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now := state(); now != was {
+		t.Fatalf("checkout changed:\n%q\nwas\n%q", now, was)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "staged.txt")); err != nil || string(data) != "staged only\n" {
+		t.Errorf("staged.txt = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "moved.txt")); err != nil || string(data) != "one\n" {
+		t.Errorf("moved.txt = %q, %v", data, err)
+	}
+	for _, gone := range []string{"tracked.txt", "sub/inner/keep.txt"} {
+		if _, err := os.Lstat(filepath.Join(dir, gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s still in the worktree: %v", gone, err)
+		}
+	}
+}
+
+// The worktree starts at the commit the changes were recorded against, even
+// if the checkout's HEAD moves before the worktree is added.
+func TestHandoffWorktreeStartsWhereTheChangesWereRecorded(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	start := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
+	writeTestFile(t, filepath.Join(repo, "tracked.txt"), "two\n", 0o644)
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	env.RunGit = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		out, err := testGit(ctx, dir, args...)
+		if len(args) > 1 && args[0] == "stash" && args[1] == "create" {
+			// Another agent commits in the checkout meanwhile.
+			mustGit(t, repo, "commit", "-q", "--allow-empty", "-m", "meanwhile")
+		}
+		return out, err
+	}
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("race1234"), repo, nil, nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(mustGit(t, dir, "rev-parse", "HEAD")); got != start {
+		t.Fatalf("worktree HEAD = %s, want %s", got, start)
+	}
+}
+
+// A merge under way would arrive as a plain edit without its second parent,
+// so --worktree refuses it before creating anything; so does a repository
+// with no commit.
+func TestHandoffWorktreeRefusesAnOperationInProgress(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	mustGit(t, repo, "checkout", "-q", "-b", "other")
+	writeTestFile(t, filepath.Join(repo, "tracked.txt"), "other\n", 0o644)
+	mustGit(t, repo, "commit", "-q", "-am", "other")
+	mustGit(t, repo, "checkout", "-q", "main")
+	writeTestFile(t, filepath.Join(repo, "staged.txt"), "main\n", 0o644)
+	mustGit(t, repo, "commit", "-q", "-am", "main")
+	mustGit(t, repo, "merge", "-q", "--no-commit", "--no-ff", "other")
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("merge123"), repo, nil, nil, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "a merge is in progress") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Lstat(repo + "-handoff-merge123"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("worktree created during a merge: %v", statErr)
+	}
+
+	empty := filepath.Join(resolvedPath(t, t.TempDir()), "empty")
+	writeTestFile(t, filepath.Join(empty, "a.txt"), "a\n", 0o644)
+	mustGit(t, empty, "init", "-q", "-b", "main")
+	if _, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("empty123"), empty, nil, nil, io.Discard); err == nil || !strings.Contains(err.Error(), "needs a commit") {
+		t.Fatalf("no commit: err=%v", err)
+	}
+}
+
+func TestHandoffWorktreeNotesSubmodules(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepo(t)
+	writeTestFile(t, filepath.Join(repo, ".gitmodules"), "", 0o644)
+	var stderr bytes.Buffer
+	env := worktreeEnv(t, t.TempDir(), time.Now())
+	if _, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("submod12"), repo, nil, nil, &stderr); err != nil || !strings.Contains(stderr.String(), "submodules are not checked out") {
+		t.Fatalf("err=%v stderr=%q", err, stderr.String())
+	}
+}
+
+// A destination that cannot be launched fails before a worktree is made.
+func TestHandoffWorktreeMissingAgentCreatesNothing(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	initTestRepo(t, f.project)
+	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+	f.env.RunGit = testGit
+	f.env.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+		t.Error("launched without an agent")
+		return nil
+	}
+	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "claude", "--worktree")
+	if code == 0 || !strings.Contains(errOut, "could not find") {
+		t.Fatalf("code=%d stderr=%q", code, errOut)
+	}
+	if list := mustGit(t, f.project, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
+		t.Fatalf("worktree created for a missing agent:\n%s", list)
+	}
+}

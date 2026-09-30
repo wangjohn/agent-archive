@@ -61,8 +61,11 @@ Your uncommitted changes and untracked files come along: the changes are
 recorded with `git stash create` and applied in the new worktree, which
 leaves your checkout and your stash list untouched, and untracked files are
 copied with their permissions (symlinks as symlinks). Changes you had staged
-arrive unstaged. Ignored files, such as `.env` or `node_modules`, are not
-copied. Launched from a subdirectory, the agent starts in the same
+arrive unstaged, except new files, which arrive staged. Ignored files, such
+as `.env` or `node_modules`, are not copied, and submodules are neither
+checked out nor carried (run `git submodule update --init` in the
+worktree). A checkout in the middle of a merge, rebase, cherry-pick, or
+revert is refused: finish or abort it first. Launched from a subdirectory, the agent starts in the same
 subdirectory of the worktree. The worktree's path and branch are printed:
 
 ```text

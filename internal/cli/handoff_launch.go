@@ -57,10 +57,6 @@ func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, erro
 // record stays out of process arguments: the agent's prompt only names the
 // file. The arguments after `--` follow the configured arguments for dest.
 func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, opts handoffOptions, home string, stdin io.Reader, stderr io.Writer, env handoffLaunchDependencies) (launchSpec, error) {
-	dir, err := prepareLaunchDir(env, opts, target, dir, stdin, stdin, stderr)
-	if err != nil {
-		return launchSpec{}, err
-	}
 	executable, err := env.executable()
 	if err != nil {
 		return launchSpec{}, fmt.Errorf("executable: %w", err)
@@ -76,7 +72,16 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 		return launchSpec{}, err
 	}
 	prompt := fmt.Sprintf("Read the complete handoff document at %q, then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document.", path)
-	spec, err := buildLaunchSpec(dest, prompt, path, dir, slices.Concat(cfg.Handoff.Args[string(dest)], opts.agentArgs), env)
+	args := slices.Concat(cfg.Handoff.Args[string(dest)], opts.agentArgs)
+	// Build the command before choosing the directory, so a missing agent
+	// or bad arguments fail before a worktree is created.
+	spec, err := buildLaunchSpec(dest, prompt, path, dir, args, env)
+	if err == nil {
+		var launch string
+		if launch, err = prepareLaunchDir(env, opts, target, dir, stdin, stdin, stderr); err == nil && launch != dir {
+			spec, err = buildLaunchSpec(dest, prompt, path, launch, args, env)
+		}
+	}
 	if err != nil {
 		// Nothing will read it. Its directory holds only this copy.
 		_ = os.RemoveAll(filepath.Dir(path))
