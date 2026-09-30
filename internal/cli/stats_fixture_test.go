@@ -35,6 +35,7 @@ type syntheticSession struct {
 	captured    time.Time
 	parent      string
 	origin      archive.SessionOrigin
+	replay      *archive.Replay
 	models      []string
 	turns       int
 	messages    int
@@ -113,7 +114,7 @@ func (s syntheticSession) build() archive.Metadata {
 		ProjectName: s.project, StartedAt: s.captured, CapturedAt: s.captured, MetadataDerivedAt: s.captured,
 		Harness:         archive.Harness{Name: s.harness},
 		Parser:          archive.ParserInfo{Name: s.harness, Version: parser, Status: archive.ParserStatusPartial},
-		ParentSessionID: s.parent, Origin: s.origin,
+		ParentSessionID: s.parent, Origin: s.origin, Replay: s.replay,
 		SourceBundle: archive.SourceReference{Key: "sessions/" + s.harness + "/" + s.id + "/source.jsonl.gz", SHA256: strings.Repeat("a", 64)},
 		Counts:       counts, Models: models, ModelTokens: modelTokens, SkillsUsed: skills, MCPCalls: mcp,
 	}

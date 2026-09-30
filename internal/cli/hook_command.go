@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -54,7 +55,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	if err := capture.HandleEvent(home, *harness, payload, env.now(), capture.WithRepoKey(env.repoKeyResolver()), capture.WithGitHead(env.gitHeadResolver())); err != nil {
+	if err := capture.HandleEvent(home, *harness, payload, env.now(), capture.WithRepoKey(env.repoKeyResolver()), capture.WithGitHead(env.gitHeadResolver()), capture.WithReplay(env.getenv(archive.ReplayEnv))); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 	return 0

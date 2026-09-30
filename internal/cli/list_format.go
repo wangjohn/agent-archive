@@ -85,6 +85,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 		if strings.TrimSpace(m.Title) != "" {
 			title = archive.DisplayLine(m.Title)
 		}
+		if m.IsReplay() {
+			title = "[replay] " + title
+		}
 		rows[i] = listRow{
 			Index:      i + 1,
 			SessionID:  m.SessionID,

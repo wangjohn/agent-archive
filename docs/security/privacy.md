@@ -135,6 +135,11 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   started from. A session that was not in a repository, whose hooks could
   not run git in time, that started before this was recorded, or that
   `backfill` imported, has none, and nothing fills it in later.
+- **Replay marker** (`replay`, in the metadata): only for a session a
+  replay tool ran with `AGENT_ARCHIVE_REPLAY` set in its environment, the
+  tool's run identifier (letters, digits, `.`, `_`, `:`, `-`; any other
+  value marks the session without being recorded). Nothing else is read
+  from the environment.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

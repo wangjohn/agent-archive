@@ -74,6 +74,21 @@ Not observed on 3.21.13, and kept fail-closed:
 the fallback proof, and a payload that names no transcript still proves
 nothing.
 
+## Replay sessions
+
+A session is marked as a replay when `AGENT_ARCHIVE_REPLAY` is set in the
+environment of the hook that registers it ([the design](../../dev/specs/replay-sessions.md)).
+The hook reads its own environment, which it inherits from whatever starts it:
+
+| App | Where the hook's environment comes from | Status |
+| --- | --- | --- |
+| Claude Code | The `claude` process, which runs hooks as its children | `documented` (hooks inherit the agent's environment); not yet observed with a replay runner |
+| Codex | The `codex` process, which runs hooks as its children | `documented`; not yet observed with a replay runner |
+| Cursor | The app (or the Cursor agent CLI) as it was launched: a variable exported in a terminal after the app started does not reach it | `unverified` |
+
+A runner that cannot get the variable to the hooks gets ordinary sessions,
+which `list` then shows as the person's own.
+
 ## Capability states and subagents
 
 `documented` means the vendor exposes the named evidence. `unavailable` means

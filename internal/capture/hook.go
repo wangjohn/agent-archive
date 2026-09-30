@@ -130,6 +130,16 @@ type Option func(*eventOptions)
 type eventOptions struct {
 	repoKey RepoKeyFunc
 	gitHead GitHeadFunc
+	replay  *archive.Replay
+}
+
+// WithReplay marks a session HandleEvent registers as a replay when value,
+// the hook process's archive.ReplayEnv, is set (archive.ParseReplay). The
+// marker is fixed at registration: a continuation neither adds nor removes
+// it, so a replay tool resuming a person's session cannot relabel it, and a
+// person resuming a replay does not make it theirs.
+func WithReplay(value string) Option {
+	return func(o *eventOptions) { o.replay = archive.ParseReplay(value) }
 }
 
 // RepoKeyFunc returns archive.RepoKey of the git repository at a project
@@ -380,7 +390,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	unlock, lockErr := lock(home, lockWait)
 	if lockErr != nil {
 		if errors.Is(lockErr, local.ErrBusy) {
-			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
+			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now, o.replay)
 			if err := recordHookBusy(home, harness, payload, now); err != nil {
 				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, lockErr, errors.Join(queueErr, err))
 			}
@@ -419,7 +429,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 
 	switch kind {
 	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups, o.replay)
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
@@ -433,7 +443,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
 			// A never-seen conversation is registered there, under the
 			// same fresh-start proof a sessionStart would need.
-			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups)
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups, o.replay)
 		} else {
 			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 		}
@@ -450,7 +460,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 				return lookupErr
 			}
 			if !registered {
-				_, err = queueAdmissionIntent(home, harness, kind, payload, now)
+				_, err = queueAdmissionIntent(home, harness, kind, payload, now, o.replay)
 				break
 			}
 		}
@@ -624,11 +634,11 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lookups gitLookups) error {
-	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, lookups)
+func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lookups gitLookups, replay *archive.Replay) error {
+	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, lookups, replay)
 }
 
-func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, lookups gitLookups) error {
+func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, lookups gitLookups, replay *archive.Replay) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := archive.CanonicalHarness(harness) == "cursor"
@@ -722,6 +732,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			ProjectRoot:      root,
 			RepoKey:          lookups.repoKey,
 			StartHead:        lookups.startHead,
+			Replay:           replay,
 			Harness:          observedHarness,
 			TranscriptPath:   transcriptPath,
 			SessionStartedAt: now,

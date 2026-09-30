@@ -23,6 +23,15 @@ follow [Semantic Versioning](https://semver.org/).
   and nothing infers one later. See
   [JSON output](docs/reference/json-output.md#show) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **Replay sessions stay out of your history.** A tool that replays archived
+  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
+  agents it runs; the sessions its runs produce are captured as usual but
+  marked with `replay` in their metadata (with the run ID when it is a plain
+  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
+  them out; `list --replays include|only` and `stats --replays include|only`
+  show them, marked `[replay]` in the table. `show ID` opens one as usual,
+  and `status --json` counts them per app in `replay_sessions`. See
+  [JSON output](docs/reference/json-output.md#replay-sessions).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window

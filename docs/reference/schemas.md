@@ -26,6 +26,8 @@ validate against a fixed version.
   `git_head` is another: the commit the session started on (with a dirty
   flag) and the last one a stop hook saw, as full object names; absent
   when no hook recorded them ([JSON output](json-output.md#show)).
+  `replay` is another: present only for a session a replay tool ran
+  ([JSON output](json-output.md#replay-sessions)).
 
 ## How they are kept honest
 

@@ -66,7 +66,9 @@ const (
 // request or response model, and From and To bound CapturedAt, inclusive.
 // Skill and SkillSHA256 match a skill by name and content hash, in the
 // relationship SkillUsage names. RequireCompleteCoverage keeps only sessions
-// whose parser status is complete and which have no capture gaps.
+// whose parser status is complete and which have no capture gaps. Replays
+// says what to do with sessions a replay tool ran; its zero value includes
+// them, so only a caller that asks hides them.
 type Filter struct {
 	Harness                 string
 	Model                   string
@@ -76,7 +78,22 @@ type Filter struct {
 	To                      time.Time
 	RequireCompleteCoverage bool
 	SkillUsage              SkillUsage
+	Replays                 ReplayFilter
 }
+
+// ReplayFilter selects by whether a session is a replay (archive.Replay).
+type ReplayFilter string
+
+const (
+	// ReplaysIncluded is the zero value: it matches replays and ordinary
+	// sessions alike.
+	ReplaysIncluded ReplayFilter = ""
+	// ReplaysHidden matches only ordinary sessions: what list and stats
+	// show by default.
+	ReplaysHidden ReplayFilter = "hide"
+	// ReplaysOnly matches only replays.
+	ReplaysOnly ReplayFilter = "only"
+)
 
 // Limits bounds how much of a source bundle LoadSource reads: the compressed
 // object (default 32 MiB) and the decompressed stream (default 128 MiB). A
@@ -402,6 +419,13 @@ func matchesCapture(m archive.Metadata, f Filter) bool {
 	}
 	if !f.To.IsZero() && m.CapturedAt.After(f.To) {
 		return false
+	}
+	switch f.Replays {
+	case ReplaysHidden:
+		return !m.IsReplay()
+	case ReplaysOnly:
+		return m.IsReplay()
+	case ReplaysIncluded:
 	}
 	return true
 }

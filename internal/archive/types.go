@@ -354,6 +354,10 @@ type SessionRegistration struct {
 	// registrations, which fall back to comparing Admitted() with the
 	// destination's start.
 	DestinationID string `json:"destination_id,omitempty"`
+	// Replay marks a session a replay tool ran: ReplayEnv was set in the
+	// hook that registered it. Set once, at registration; a subagent copies
+	// its parent's. Nil for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 	// SourceKind is where the collector reads the session from, fixed at
 	// registration: a transcript file ("") or a Cursor database chat.
 	SourceKind SourceKind `json:"source_kind,omitempty"`
@@ -706,6 +710,9 @@ type Metadata struct {
 	Origin          SessionOrigin   `json:"origin,omitempty"`
 	ImportedAt      *time.Time      `json:"imported_at,omitempty"`
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
+	// Replay marks a session a replay tool ran (see ApplyReplay). Omitted
+	// for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 }
 
 // CaptureGapImportedWithoutHookEvidence marks an imported session: no hook

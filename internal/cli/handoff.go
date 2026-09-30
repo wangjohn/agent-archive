@@ -449,7 +449,9 @@ type localHandoffCandidate struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) []localHandoffCandidate {
 	var candidates []localHandoffCandidate
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
+		// A replay never becomes the latest session: it is a replay tool's
+		// run, not where the person left off.
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || reg.Replay != nil || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
 			continue
 		}
 		if r.harness != "" && reg.Harness.Name != r.harness {
@@ -501,7 +503,7 @@ func (r handoffResolver) latestArchive(dir string, now time.Time) (handoffTarget
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("no local session for %s, and the archive could not be opened: %w", dir, err)
 	}
-	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
+	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
 	if err != nil {
 		return handoffTarget{}, err
 	}
@@ -524,7 +526,7 @@ func (r handoffResolver) latestArchive(dir string, now time.Time) (handoffTarget
 func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs, skip map[string]bool) []archive.Metadata {
 	var candidates []archive.Metadata
 	for _, m := range sessions {
-		if projectIDs[m.ProjectID] && !skip[m.NativeSessionID] && (m.Counts.Turns == nil || *m.Counts.Turns != 0) {
+		if projectIDs[m.ProjectID] && !skip[m.NativeSessionID] && !m.IsReplay() && (m.Counts.Turns == nil || *m.Counts.Turns != 0) {
 			candidates = append(candidates, m)
 		}
 	}

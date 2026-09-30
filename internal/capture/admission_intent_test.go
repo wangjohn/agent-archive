@@ -19,7 +19,7 @@ func TestAdmissionIntentReplayIsIdempotentAndExpires(t *testing.T) {
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "/private/native-1.jsonl")
 	for range 2 {
-		queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+		queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
 		if err != nil || !queued {
 			t.Fatalf("queue = %t, %v", queued, err)
 		}
@@ -39,7 +39,7 @@ func TestAdmissionIntentReplayIsIdempotentAndExpires(t *testing.T) {
 		t.Fatalf("remaining intents = %#v, %v", entries, err)
 	}
 
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-expired", "startup", ""), at)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-expired", "startup", ""), at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue expired = %t, %v", queued, err)
 	}
@@ -60,7 +60,7 @@ func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(nested, "native-nested", "startup", ""), at)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(nested, "native-nested", "startup", ""), at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -92,7 +92,7 @@ func TestAdmissionIntentDoesNotMoveToNewDestination(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-old-destination", "startup", ""), at)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-old-destination", "startup", ""), at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -121,7 +121,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "")
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -147,7 +147,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	if err != nil || len(regs) != 0 {
 		t.Fatalf("excluded project registered: %#v, %v", regs, err)
 	}
-	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
 	if err != nil || queued {
 		t.Fatalf("excluded queue = %t, %v", queued, err)
 	}
@@ -164,7 +164,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
 	if queued || err == nil || !strings.Contains(err.Error(), "full") {
 		t.Fatalf("full queue = %t, %v", queued, err)
 	}
@@ -175,7 +175,7 @@ func TestAdmissionIntentDoesNotRewindLaterRegistration(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "")
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -201,7 +201,7 @@ func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
 	// The follow-ups can arrive before a start finishes writing. None may
 	// admit the session, but their path must survive the first collector pass.
 	for _, event := range []string{"afterAgentResponse", "stop"} {
-		queued, err := queueAdmissionIntent(home, "cursor", classifyHookEvent("cursor", event), cursorDesktopPayload(event, conversation, project, transcript), at)
+		queued, err := queueAdmissionIntent(home, "cursor", classifyHookEvent("cursor", event), cursorDesktopPayload(event, conversation, project, transcript), at, nil)
 		if err != nil || !queued {
 			t.Fatalf("queue %s = %t, %v", event, queued, err)
 		}
@@ -209,7 +209,7 @@ func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
 	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
 		t.Fatalf("follow-up admitted session: %#v, %v", regs, err)
 	}
-	queued, err := queueAdmissionIntent(home, "cursor", hookEventTurnStart, cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at)
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventTurnStart, cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue start = %t, %v", queued, err)
 	}
@@ -245,7 +245,7 @@ func TestAdmissionIntentDoesNotAttachPathToDifferentProject(t *testing.T) {
 	}
 	conversation := "5f3c2a10-0000-4000-8000-00000000c789"
 	transcript := cursorTranscriptLocation(t, conversation)
-	queued, err := queueAdmissionIntent(home, "cursor", hookEventResponse, cursorDesktopPayload("afterAgentResponse", conversation, projectA, transcript), at)
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventResponse, cursorDesktopPayload("afterAgentResponse", conversation, projectA, transcript), at, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}

@@ -785,7 +785,7 @@ type browseSessions struct {
 // none match (after saying so), and with code 1 after an error.
 func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdout, stderr io.Writer, harness, command string) (found browseSessions, ok bool, code int) {
 	stopBrowse := startActivity(stdout, "Finding sessions…")
-	shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}, limit: defaultListLimit}, stderr, command)
+	shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}, limit: defaultListLimit}, stderr, command)
 	stopBrowse()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)

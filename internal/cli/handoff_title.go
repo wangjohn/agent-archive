@@ -228,7 +228,7 @@ func (r *handoffQueryResolver) archiveMatches() ([]handoffPickerRow, error) {
 		return nil, err
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, _, _, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, _, _, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness, Replays: reader.ReplaysHidden}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		return nil, err

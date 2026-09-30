@@ -37,6 +37,9 @@ explicitly.
   stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
   current parsers cannot prove non-use. Schema version `3` removed the
   version `2` `unavailable` field; version `4` adds explicit count knowledge.
+- Sessions a replay tool ran (see [replay sessions](#replay-sessions)) are
+  left out unless `--replays include` or `--replays only` is given. With them
+  included, each carries a `replay` object.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
 - `--json` is never auto-paged, even on a terminal.
@@ -163,6 +166,23 @@ directory had checked out, as the session's own hooks recorded it:
   the hook's budget), and for sessions registered before the field existed,
   imported sessions, and subagents. It is never inferred afterwards, and a
   metadata refresh does not add it to older sidecars.
+
+### Replay sessions
+
+A session a replay tool ran carries `replay`, an object with an optional
+`run_id`:
+
+```json
+"replay": {"run_id": "bench-2026-09-30.7"}
+```
+
+The hook that registered the session had `AGENT_ARCHIVE_REPLAY` set in its
+environment; `run_id` is its value when that is 1 to 128 letters, digits,
+`.`, `_`, `:`, or `-` (starting with a letter or digit), and absent
+otherwise. The field is fixed at registration, and a subagent carries its
+parent's. Test for the key, not for `run_id`. `list`, `stats`, and
+`handoff --latest` leave replays out unless asked (`--replays
+include|only` on `list` and `stats`); `show ID` opens one as usual.
 
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
@@ -313,9 +333,10 @@ at the top level. Read the rules below before using a number:
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
   `projects` keeps only the top few of `total_projects`.
-- `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
-  (as `origin`: `hook` or `imported`); a filter that was not given is
-  absent. The document holds counts, model, project, skill and MCP server
+- `filters` echoes `--harness`, `--model`, `--hook-captured`/`--imported`
+  (as `origin`: `hook` or `imported`) and `--replays` (as `replays`:
+  `include` or `only`; replay sessions are left out by default); a filter
+  that was not given is absent. The document holds counts, model, project, skill and MCP server
   names, and one session ID (`highlights.costliest_session`, which `show`
   opens). It never holds prompts, transcript text or paths. An empty archive
   prints a document with zero sessions. Usage errors (exit 2) print no JSON.
@@ -350,7 +371,7 @@ Treat an absent field and `null` the same way.
 | `agent_skills` | The agent skill files (the `/handoff` and `agent-archive` skills) setup installed that are there now (absolute paths; absent when there are none). A file at one of those paths without setup's marker line is the person's own, and one naming another data directory is another installation's; neither is listed. |
 | `agent_skills_out_of_date` | The files in `agent_skills` whose text differs from what this version of `agent-archive` writes (an earlier release wrote them, or the executable moved); `agent-archive setup --refresh` (or `setup`) refreshes them, and status warns about each. Absent when there are none, or when no executable is recorded to compare with. |
 | `agent_skills_disabled` | `true` when the agent skills are turned off (`agent-archive setup --no-skills`); absent otherwise. Setup then installs and refreshes none, and `agent_skills` is empty unless a file of setup's is left over (a restored backup, an interrupted removal): status warns about it, `agent_skills_out_of_date` is absent, and `agent-archive setup` removes it. `agent-archive setup --skills` turns them back on. |
-| `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
+| `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `replay_sessions`: top-level sessions among `sessions` that a replay tool ran (absent when none); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this Mac only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |

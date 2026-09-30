@@ -125,7 +125,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
-		archived, _, _, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
+		archived, _, _, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
 	}
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
@@ -188,7 +188,9 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
-		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
+		// A replay tool's run is not the person's to hand off (see
+		// archive.ReplayEnv); an explicit session ID still reaches it.
+		return !topLevelRegistration(reg) || reg.Replay != nil || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
 	})
 	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase())
 	for _, reg := range regs {

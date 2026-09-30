@@ -30,6 +30,9 @@ type admissionIntent struct {
 	CursorVersion   string    `json:"cursor_version,omitempty"`
 	ComposerMode    string    `json:"composer_mode,omitempty"`
 	ObservedAt      time.Time `json:"observed_at"`
+	// Replay is the start's replay marker (see WithReplay), so a replay
+	// admitted from the queue is still marked.
+	Replay *archive.Replay `json:"replay,omitempty"`
 }
 
 const (
@@ -130,8 +133,11 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 // proven start, or a Cursor response/stop that supplies a valid transcript
 // path. A follow-up can update an existing registration but never admit a new
 // session. The queue lock bounds the count across concurrent hook processes.
-func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
+func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, replay *archive.Replay) (bool, error) {
 	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
+	if start := startsCapture(kind, harness); start {
+		intent.Replay = replay
+	}
 	if err != nil || !queued {
 		return false, err
 	}
@@ -334,7 +340,7 @@ func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, f
 func replayAdmissionAction(home string, store *state.Store, cfg config.Config, intent admissionIntent, payload map[string]any, registered, start, followup bool) error {
 	switch {
 	case !registered && start:
-		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, gitLookups{}); err != nil {
+		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, gitLookups{}, intent.Replay); err != nil {
 			return fmt.Errorf("replay admission intent: %w", err)
 		}
 	case registered && followup:
