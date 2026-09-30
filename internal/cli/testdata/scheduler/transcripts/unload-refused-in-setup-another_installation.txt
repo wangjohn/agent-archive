@@ -4,5 +4,4 @@ print gui/UID/com.agent-archive.collector  |  journal=absent own=present
 print gui/UID/com.agent-archive.collector  |  journal=absent own=present
 print gui/UID/com.agent-archive.collector  |  journal=present own=present
 print gui/UID/com.agent-archive.collector  |  journal=present own=present
-bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=present
-# exit 1, end: journal=present own=present
+# exit 1, end: journal=absent own=present

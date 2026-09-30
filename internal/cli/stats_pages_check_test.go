@@ -124,11 +124,19 @@ func TestStatsScreensAgreeWithJSON(t *testing.T) {
 func checkListScreens(t *testing.T, screen func(string) string, doc statsDocument) {
 	t.Helper()
 	projects, models, agents := screen("projects"), screen("models"), screen("agents")
+	// The screen lists the projects in the document's order, as the engine
+	// ranked them; it lists every project, the document its top few.
+	lastAt := -1
 	for _, p := range doc.Projects {
 		row := lineStarting(projects, projectLabel(p.Name))
 		if row == "" {
 			t.Errorf("the projects screen has no row for %q:\n%s", p.Name, projects)
 			continue
+		}
+		if at := strings.Index(projects, "\n"+row); at < lastAt {
+			t.Errorf("the projects screen lists %q out of the document's order:\n%s", p.Name, projects)
+		} else {
+			lastAt = at
 		}
 		for _, want := range []string{statsfmt.CommaInt(int64(p.Sessions)), tokensText(p.Tokens)} {
 			if !strings.Contains(row, want) {

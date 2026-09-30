@@ -156,7 +156,14 @@ func Restore(home string, journal Journal, launchd Launchd) error {
 	if err := hooks.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
-	if journal.WasLoaded {
+	// A label another installation runs from its own plist is not this
+	// one's to restart: launchd refuses to bootstrap over it, and stopping
+	// it is not ours to do. The files are back and the record is removed
+	// below, so the journal never outlives the point where anything more
+	// can be done for the job. Setup, run again, refuses to install over
+	// the other installation and says what to do (uninstall it, or set
+	// AGENT_ARCHIVE_HOME).
+	if journal.WasLoaded && state != JobAnotherInstallation {
 		if err := launchd.Load(journal.Plist); err != nil {
 			return launchctlBlocked(home, "restart the background collector", err)
 		}
