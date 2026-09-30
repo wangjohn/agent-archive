@@ -14,6 +14,16 @@ follow [Semantic Versioning](https://semver.org/).
   `$handoff`); on a terminal, `agent-archive handoff` picks a session, asks
   where to continue, and starts the agent there. See the
   [handoff guide](docs/guides/handoff.md).
+- Metadata may include, from parser `0.15.0`, `git_activity`: the commits,
+  pushes, and pull requests created or merged that the session's own tool
+  calls confirmed (`git` and `gh` commands, and GitHub MCP tools), each with
+  its time and, when known, the commit SHA, branch, `owner/repo`, pull
+  request number, and a URL. Only work whose result shows it succeeded is
+  recorded, never a failed, rejected, or dry-run attempt. `counts.commits`,
+  `counts.pushes`, `counts.prs_created`, and `counts.prs_merged` count it,
+  and `show` has a `Git` row. Commit messages and pull request text are not
+  kept. Existing sessions gain the fields on the next metadata refresh;
+  nothing is re-uploaded but the metadata.
 - Setup installs the `handoff` skill for Claude Code
   (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
   (`~/.agents/skills/handoff/SKILL.md`). It runs

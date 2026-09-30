@@ -357,6 +357,10 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, workspaceRoot(bundle))
 		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, workspaceRoot(bundle))
 		metadata.ModelTokens = view.ModelTokens
+		var git gitCounts
+		metadata.GitActivity, git = deriveGitActivity(bundle, view.ToolCalls)
+		metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
+		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	metadata.Models = models
