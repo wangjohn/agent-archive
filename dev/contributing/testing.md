@@ -130,8 +130,9 @@ In Go tests, everything goes through injection:
   from the stylesheet itself. `TestStatsPageAgreesWithTheTerminalAndJSON`
   (in `internal/cli`, which may import both) runs the screen, `--json` and
   `--html` over the same archives and compares every table, card and
-  sentence, because the page keeps its own copy of the screen's number
-  formatters. The page goldens are in
+  sentence, because the two lay their numbers out separately (they share
+  `internal/statsfmt`, whose one table pins every formatter, and whose
+  `TestFormattersImportBoundary` keeps it pure). The page goldens are in
   `internal/statshtml/testdata/` (`go test ./internal/statshtml -update`);
   look at a changed page in a browser, light and dark and at phone width,
   before accepting a diff.

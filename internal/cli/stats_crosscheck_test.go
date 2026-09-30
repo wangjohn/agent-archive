@@ -14,15 +14,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/statshtml"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // The three ways to see one run's numbers, the terminal screen, `--json` and
-// `--html`, are formatted by separate code (the page has its own copy of the
-// terminal's number formatters, because internal/statshtml may not import
-// internal/cli). These tests run all three over the same archive and compare
-// what each says, section by section, so the copies cannot drift apart.
+// `--html`, are laid out by separate code (they share only the number formatters in
+// internal/statsfmt, because internal/statshtml may not import internal/cli).
+// These tests run all three over the same archive and compare what each says,
+// section by section, so the layouts cannot drift apart.
 
 // crossScenario is an archive for the cross-check and the flags to run it with.
 type crossScenario struct {
@@ -624,10 +625,10 @@ func checkDaily(t *testing.T, page *node, doc statsDocument) {
 		case d.Tokens == nil && d.Sessions > 0:
 			tokens = "unknown"
 		case d.Tokens != nil:
-			tokens = tokenCount(*d.Tokens)
+			tokens = statsfmt.TokenCount(*d.Tokens)
 			peak = max(peak, *d.Tokens)
 		}
-		want := []string{label, commaInt(int64(d.Sessions)), tokens}
+		want := []string{label, statsfmt.CommaInt(int64(d.Sessions)), tokens}
 		if strings.Join(rows[i], "|") != strings.Join(want, "|") {
 			t.Errorf("day %s: chart table %q, JSON says %q", d.Date, rows[i], want)
 		}
@@ -636,8 +637,8 @@ func checkDaily(t *testing.T, page *node, doc statsDocument) {
 		if doc.Peak.Tokens != peak {
 			t.Errorf("JSON peak %d is not the busiest day's %d", doc.Peak.Tokens, peak)
 		}
-		if peak > 0 && !strings.Contains(squash(sec.byClass("text", "peak-label")[0].visible()), "Peak "+tokenCount(peak)) {
-			t.Errorf("the chart's peak label does not say %s", tokenCount(peak))
+		if peak > 0 && !strings.Contains(squash(sec.byClass("text", "peak-label")[0].visible()), "Peak "+statsfmt.TokenCount(peak)) {
+			t.Errorf("the chart's peak label does not say %s", statsfmt.TokenCount(peak))
 		}
 	}
 }

@@ -106,10 +106,10 @@ func (f *statsHTMLFlags) toStdout() bool { return f.html && f.output == "" }
 // anything is created, so a failure leaves no file behind.
 func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, filters statsFilters, now time.Time, emptyMessage string) int {
 	page, err := statshtml.Render(computed, statshtml.Options{
-		GeneratedAt:         now,
+		GeneratedAt:  now,
 		IncludeNames: f.includeNames,
-		Filters:             statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
-		EmptyMessage:        emptyMessage,
+		Filters:      statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
+		EmptyMessage: emptyMessage,
 	})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -207,7 +208,7 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 		style := activityStyle(stdout)
 		stopReading = style.spinLabelEvery(stdout, func() string {
 			if n := total.Load(); n > 0 {
-				return fmt.Sprintf("Reading sessions… %s of %s", commaInt(done.Load()), commaInt(n))
+				return fmt.Sprintf("Reading sessions… %s of %s", statsfmt.CommaInt(done.Load()), statsfmt.CommaInt(n))
 			}
 			return "Reading sessions…"
 		}, spinnerInterval).stop

@@ -9,13 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/stats"
-)
-
-// maxShownTokens and maxShownMoney are where a number is shown as a bound: a
-// saturated sum, not a measurement.
-const (
-	maxShownTokens = 1e15
-	maxShownMoney  = 1e12
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 )
 
 // nameLimit is how many characters of a project, model, skill or MCP server
@@ -47,121 +41,12 @@ func clean(name string) string {
 	return text
 }
 
-// commaInt is n with thousands separators: 3,204.
-func commaInt(n int64) string {
-	sign := ""
-	if n < 0 {
-		sign, n = "-", -n
-	}
-	digits := strconv.FormatInt(n, 10)
-	var b strings.Builder
-	for i, r := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(r)
-	}
-	return sign + b.String()
-}
-
-// tokenCount is a token total in its shortest form: 812, 4.9K, 61M, 1.2B.
-func tokenCount(n int64) string {
-	if n >= maxShownTokens {
-		return ">999T"
-	}
-	units := []struct {
-		size   float64
-		suffix string
-	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
-	value := float64(n)
-	larger := ""
-	for _, u := range units {
-		if value >= u.size {
-			v := value / u.size
-			if v < 9.95 {
-				return strings.TrimSuffix(strconv.FormatFloat(v, 'f', 1, 64), ".0") + u.suffix
-			}
-			rounded := math.Round(v)
-			if rounded >= 1000 {
-				// 999.6K reads as 1M, not 1000K.
-				if larger == "" {
-					return ">999T"
-				}
-				return "1" + larger
-			}
-			return strconv.FormatFloat(rounded, 'f', 0, 64) + u.suffix
-		}
-		larger = u.suffix
-	}
-	return strconv.FormatInt(n, 10)
-}
-
-// money is an amount of currency; an amount from ten up has no cents unless
-// precise.
-func money(currency string, amount float64, precise bool) string {
-	symbol := "$"
-	if currency != "" && currency != "USD" {
-		symbol = clean(currency) + " "
-	}
-	if math.IsNaN(amount) {
-		return "n/a"
-	}
-	if amount >= maxShownMoney {
-		return symbol + ">999B"
-	}
-	if !precise && amount >= 10 {
-		return symbol + commaInt(int64(math.Round(amount)))
-	}
-	whole, cents, _ := strings.Cut(strconv.FormatFloat(amount, 'f', 2, 64), ".")
-	n, _ := strconv.ParseInt(whole, 10, 64)
-	return symbol + commaInt(n) + "." + cents
-}
-
-// percent is a share (0 to 1) as a whole percentage, "<1%" for a nonzero
-// share under half a percent.
-func percent(share float64) string {
-	if !finite(share) {
-		return "n/a"
-	}
-	if share > 0 && share < 0.005 {
-		return "<1%"
-	}
-	return strconv.FormatFloat(math.Round(share*100), 'f', 0, 64) + "%"
-}
-
-// ratePercent is a rate (0 to 1) with one decimal under ten percent.
-func ratePercent(rate float64) string {
-	if !finite(rate) {
-		return "n/a"
-	}
-	if rate > 0 && rate < 0.1 {
-		return strconv.FormatFloat(rate*100, 'f', 1, 64) + "%"
-	}
-	return percent(rate)
-}
-
 // plural is "1 session" or "3 sessions".
 func plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
-}
-
-// ordinal is 1st, 2nd, 3rd, 4th.
-func ordinal(n int) string {
-	suffix := "th"
-	if n%100 < 11 || n%100 > 13 {
-		switch n % 10 {
-		case 1:
-			suffix = "st"
-		case 2:
-			suffix = "nd"
-		case 3:
-			suffix = "rd"
-		}
-	}
-	return strconv.Itoa(n) + suffix
 }
 
 // pct is a share (0 to 1) as an SVG length in percent, clamped to the range
@@ -210,7 +95,7 @@ func (f *costFlags) costText(currency string, usd *float64, approximate, partial
 	if usd == nil {
 		return "unpriced"
 	}
-	text := money(currency, *usd, precise)
+	text := statsfmt.Money(currency, *usd, precise)
 	if approximate {
 		text = "~" + text
 		f.approx = true
@@ -239,9 +124,9 @@ func deltaText(m stats.Measure) (glyph, spoken string) {
 	p := math.Round(*m.ChangePct)
 	switch {
 	case p > 0:
-		return "▲ " + commaInt(int64(p)) + "%", "up " + commaInt(int64(p)) + " percent"
+		return "▲ " + statsfmt.CommaInt(int64(p)) + "%", "up " + statsfmt.CommaInt(int64(p)) + " percent"
 	case p < 0:
-		return "▼ " + commaInt(int64(-p)) + "%", "down " + commaInt(int64(-p)) + " percent"
+		return "▼ " + statsfmt.CommaInt(int64(-p)) + "%", "down " + statsfmt.CommaInt(int64(-p)) + " percent"
 	}
 	return "no change", "no change"
 }
@@ -250,21 +135,21 @@ func measureCount(m stats.Measure) string {
 	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
-	return commaInt(int64(math.Round(*m.Value)))
+	return statsfmt.CommaInt(int64(math.Round(*m.Value)))
 }
 
 func measureTokens(m stats.Measure) string {
 	if m.Value == nil || !finite(*m.Value) {
 		return "unknown"
 	}
-	return tokenCount(int64(math.Round(*m.Value)))
+	return statsfmt.TokenCount(int64(math.Round(*m.Value)))
 }
 
 func ordinalHeaviest(rank int) string {
 	if rank <= 1 {
 		return "heaviest"
 	}
-	return ordinal(rank) + "-heaviest"
+	return statsfmt.Ordinal(rank) + "-heaviest"
 }
 
 // driversText says what likely made the costliest session costly.
@@ -277,7 +162,7 @@ func driversText(c *stats.CostliestSession) string {
 		parts = append(parts, plural(c.Subagents, "subagent"))
 	}
 	if slices.Contains(c.Drivers, stats.DriverLowCacheHit) && c.CacheHitRate != nil {
-		parts = append(parts, percent(*c.CacheHitRate)+" cache hit")
+		parts = append(parts, statsfmt.Percent(*c.CacheHitRate)+" cache hit")
 	}
 	return strings.Join(parts, ", ")
 }

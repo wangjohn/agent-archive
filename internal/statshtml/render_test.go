@@ -148,7 +148,7 @@ func TestHostileNamesAreInertText(t *testing.T) {
 			for _, reveal := range []bool{true, false} {
 				out := render(t, s, Options{
 					IncludeNames: reveal,
-					Filters:             Filters{Harness: payload, Model: payload, Origin: payload},
+					Filters:      Filters{Harness: payload, Model: payload, Origin: payload},
 				})
 				assertInert(t, string(out), payload)
 			}
@@ -427,8 +427,9 @@ func TestRendererImportBoundary(t *testing.T) {
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
 			path != "github.com/wangjohn/agent-archive/internal/archive" &&
-			path != "github.com/wangjohn/agent-archive/internal/stats" {
-			t.Errorf("internal/statshtml reaches %s; only internal/stats and internal/archive are allowed", path)
+			path != "github.com/wangjohn/agent-archive/internal/stats" &&
+			path != "github.com/wangjohn/agent-archive/internal/statsfmt" {
+			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt and internal/archive are allowed", path)
 		}
 	}
 }

@@ -22,6 +22,7 @@ import (
 	_ "embed" // the page template and stylesheet are compiled in
 
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 )
 
 //go:embed page.html.tmpl
@@ -155,10 +156,10 @@ func (b *builder) header(p *page, window string) {
 	}
 	sessions := plural(s.Coverage.Sessions, "session")
 	if s.Coverage.Sessions != 1 {
-		sessions = commaInt(int64(s.Coverage.Sessions)) + " sessions"
+		sessions = statsfmt.CommaInt(int64(s.Coverage.Sessions)) + " sessions"
 	}
 	if s.Coverage.SessionsWithTokens != s.Coverage.Sessions {
-		sessions += fmt.Sprintf(" (%s with token data)", commaInt(int64(s.Coverage.SessionsWithTokens)))
+		sessions += fmt.Sprintf(" (%s with token data)", statsfmt.CommaInt(int64(s.Coverage.SessionsWithTokens)))
 	}
 	p.Subtitle = []string{window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents, sessions}
 	f := b.opts.Filters
@@ -234,12 +235,12 @@ func (b *builder) agents() *barTable {
 	for _, a := range b.s.Agents {
 		tokens, cost := "unknown", "n/a"
 		if a.Tokens != nil {
-			tokens = tokenCount(*a.Tokens)
+			tokens = statsfmt.TokenCount(*a.Tokens)
 			cost = b.cost.costText(b.s.Prices.Currency, a.Cost.USD, a.Cost.Approximate, a.Cost.Partial, false)
 		}
 		t.Rows = append(t.Rows, barRow{
 			Label: clean(a.Label), Pct: pct(a.SessionShare),
-			Cells: []string{commaInt(int64(a.Sessions)) + " (" + percent(a.SessionShare) + ")", tokens, cost},
+			Cells: []string{statsfmt.CommaInt(int64(a.Sessions)) + " (" + statsfmt.Percent(a.SessionShare) + ")", tokens, cost},
 		})
 	}
 	t.BarNote = "Bars show each agent's share of sessions."
@@ -274,14 +275,14 @@ func (b *builder) models() *barTable {
 func (b *builder) modelRow(r stats.ModelRow) barRow {
 	label := clean(r.Label)
 	if !r.Priced || r.Cost.USD == nil {
-		return barRow{Label: label, Pct: "0%", Cells: []string{"unpriced", tokenCount(r.Tokens) + " tokens"}}
+		return barRow{Label: label, Pct: "0%", Cells: []string{"unpriced", statsfmt.TokenCount(r.Tokens) + " tokens"}}
 	}
 	share := 0.0
 	if r.CostShare != nil {
 		share = *r.CostShare
 	}
 	cost := b.cost.costText(b.s.Prices.Currency, r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
-	return barRow{Label: label, Pct: pct(share), Cells: []string{cost, percent(share)}}
+	return barRow{Label: label, Pct: pct(share), Cells: []string{cost, statsfmt.Percent(share)}}
 }
 
 func (b *builder) projects() *barTable {
@@ -302,12 +303,12 @@ func (b *builder) projects() *barTable {
 		}
 		tokens, cost := "unknown", "n/a"
 		if r.Tokens != nil {
-			tokens = tokenCount(*r.Tokens)
+			tokens = statsfmt.TokenCount(*r.Tokens)
 			cost = b.cost.costText(b.s.Prices.Currency, r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
 		}
 		t.Rows = append(t.Rows, barRow{
 			Label: b.names.project(r.Name), Pct: pct(share),
-			Cells: []string{commaInt(int64(r.Sessions)), tokens, cost},
+			Cells: []string{statsfmt.CommaInt(int64(r.Sessions)), tokens, cost},
 		})
 	}
 	t.BarNote = "Bars show sessions."
@@ -358,13 +359,13 @@ func (b *builder) groups() *barTable {
 		}
 		prompts, tokens, cost := "unknown", "unknown", "n/a"
 		if r.Prompts != nil {
-			prompts = commaInt(*r.Prompts)
+			prompts = statsfmt.CommaInt(*r.Prompts)
 		}
 		if r.Tokens != nil {
-			tokens = tokenCount(*r.Tokens)
+			tokens = statsfmt.TokenCount(*r.Tokens)
 			cost = b.cost.costText(b.s.Prices.Currency, r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
 		}
-		t.Rows = append(t.Rows, barRow{Label: label, Cells: []string{commaInt(int64(r.Sessions)), prompts, tokens, cost}})
+		t.Rows = append(t.Rows, barRow{Label: label, Cells: []string{statsfmt.CommaInt(int64(r.Sessions)), prompts, tokens, cost}})
 	}
 	return t
 }
@@ -393,7 +394,7 @@ func (b *builder) highlights() []highlight {
 		out = append(out, highlight{"Costliest session", text})
 	}
 	if t := h.ToolErrors; t != nil {
-		text := fmt.Sprintf("%s of %s tool results flagged as errors, %s measured", ratePercent(t.Rate), commaInt(t.Results), plural(t.Sessions, "session"))
+		text := fmt.Sprintf("%s of %s tool results flagged as errors, %s measured", statsfmt.RatePercent(t.Rate), statsfmt.CommaInt(t.Results), plural(t.Sessions, "session"))
 		if t.UnknownSessions > 0 {
 			text += fmt.Sprintf(" (%d do not record them)", t.UnknownSessions)
 		}
@@ -425,7 +426,7 @@ func (b *builder) footer(p *page) {
 	lines = append(lines, scope)
 	if s.Coverage.Sessions > 0 {
 		lines = append(lines, joinSentences(
-			fmt.Sprintf("Token data: %s of %s.", commaInt(int64(s.Coverage.SessionsWithTokens)), plural(s.Coverage.Sessions, "session")),
+			fmt.Sprintf("Token data: %s of %s.", statsfmt.CommaInt(int64(s.Coverage.SessionsWithTokens)), plural(s.Coverage.Sessions, "session")),
 			subagentNote(s.Coverage),
 			fmt.Sprintf("Days are counted in %s; sessions are placed by when they were captured.", plain(s.Window.Timezone)),
 		))

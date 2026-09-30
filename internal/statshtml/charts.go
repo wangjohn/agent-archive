@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 )
 
 // Geometry of the daily chart, in pixels. The chart's width is the page's, so
@@ -95,11 +96,11 @@ func (b *builder) daily() (*dailyChart, string) {
 		}
 		c.Bars = append(c.Bars, bar)
 		if bk.hasPeak && s.Peak != nil {
-			c.PeakLabel = peakLabel(i, slot, barTop, "Peak "+tokenCount(s.Peak.Tokens)+" · "+dayLabel(s.Peak.Date, s.Window.Days))
+			c.PeakLabel = peakLabel(i, slot, barTop, "Peak "+statsfmt.TokenCount(s.Peak.Tokens)+" · "+dayLabel(s.Peak.Date, s.Window.Days))
 			c.Summary = fmt.Sprintf("Tokens by day, %s to %s. Peak %s tokens on %s.", dayLabel(s.Window.FirstDay, s.Window.Days),
-				dayLabel(s.Window.LastDay, s.Window.Days), tokenCount(s.Peak.Tokens), dayLabel(s.Peak.Date, s.Window.Days))
+				dayLabel(s.Window.LastDay, s.Window.Days), statsfmt.TokenCount(s.Peak.Tokens), dayLabel(s.Peak.Date, s.Window.Days))
 		}
-		c.Rows = append(c.Rows, dayRow{Label: bucketLabel(bk, s.Window.Days), Sessions: commaInt(int64(bk.sessions)), Tokens: bucketTokens(bk)})
+		c.Rows = append(c.Rows, dayRow{Label: bucketLabel(bk, s.Window.Days), Sessions: statsfmt.CommaInt(int64(bk.sessions)), Tokens: bucketTokens(bk)})
 	}
 	if c.Summary == "" {
 		c.Summary = fmt.Sprintf("Tokens by day, %s to %s.", dayLabel(s.Window.FirstDay, s.Window.Days), dayLabel(s.Window.LastDay, s.Window.Days))
@@ -127,7 +128,7 @@ func bucketTokens(bk bucket) string {
 		}
 		return "unknown"
 	}
-	return tokenCount(bk.tokens)
+	return statsfmt.TokenCount(bk.tokens)
 }
 
 // bucketTitle is the tooltip of a bar: the day (or run of days), its tokens and
@@ -140,9 +141,9 @@ func (b *builder) bucketTitle(bk bucket, per int) string {
 	case !bk.known:
 		return label + " · " + plural(bk.sessions, "session") + " · token count unknown"
 	case per > 1:
-		return label + " · busiest day " + tokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
+		return label + " · busiest day " + statsfmt.TokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
 	}
-	return label + " · " + tokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
+	return label + " · " + statsfmt.TokenCount(bk.tokens) + " tokens · " + plural(bk.sessions, "session")
 }
 
 // peakLabel places the peak's direct label above its bar, kept inside the
@@ -234,7 +235,7 @@ func arcGeometry(share, start, circ float64) arc {
 	}
 	angle := (start+length/2)/circ*2*math.Pi - math.Pi/2
 	return arc{
-		dash: dash, offset: offset, hasText: true, text: percent(share),
+		dash: dash, offset: offset, hasText: true, text: statsfmt.Percent(share),
 		textX: num(donutCenter + donutRadius*math.Cos(angle)), textY: num(donutCenter + donutRadius*math.Sin(angle)),
 	}
 }
@@ -246,7 +247,7 @@ func (b *builder) tokens() *tokenSection {
 	if c == nil || c.Total == 0 {
 		return nil
 	}
-	t := &tokenSection{Total: tokenCount(c.Total)}
+	t := &tokenSection{Total: statsfmt.TokenCount(c.Total)}
 	parts := []struct {
 		label string
 		seg   stats.Segment
@@ -257,18 +258,18 @@ func (b *builder) tokens() *tokenSection {
 		length := part.seg.Share * circ
 		g := arcGeometry(part.seg.Share, start, circ)
 		t.Segments = append(t.Segments, segment{
-			Class: "seg" + strconv.Itoa(i+1), Label: part.label, Tokens: tokenCount(part.seg.Tokens), Share: percent(part.seg.Share),
-			Speak: fmt.Sprintf("%s: %s, %s of tokens", part.label, tokenCount(part.seg.Tokens), percent(part.seg.Share)),
+			Class: "seg" + strconv.Itoa(i+1), Label: part.label, Tokens: statsfmt.TokenCount(part.seg.Tokens), Share: statsfmt.Percent(part.seg.Share),
+			Speak: fmt.Sprintf("%s: %s, %s of tokens", part.label, statsfmt.TokenCount(part.seg.Tokens), statsfmt.Percent(part.seg.Share)),
 			Dash:  g.dash, Offset: g.offset, HasText: g.hasText, Text: g.text, TextX: g.textX, TextY: g.textY,
 		})
 		start += length
 	}
 	if c.ReasoningOfOutput != nil && *c.ReasoningOfOutput > 0 {
-		t.Reasoning = "Output includes " + tokenCount(*c.ReasoningOfOutput) + " reasoning tokens."
+		t.Reasoning = "Output includes " + statsfmt.TokenCount(*c.ReasoningOfOutput) + " reasoning tokens."
 	}
 	if sub := b.s.Subagents; sub != nil {
 		t.Subagents = &subagentRow{
-			Text: fmt.Sprintf("%s of tokens (%s) in %s", percent(sub.Share), tokenCount(sub.Tokens), plural(sub.Sessions, "session")),
+			Text: fmt.Sprintf("%s of tokens (%s) in %s", statsfmt.Percent(sub.Share), statsfmt.TokenCount(sub.Tokens), plural(sub.Sessions, "session")),
 			Pct:  pct(sub.Share),
 		}
 	}
@@ -302,5 +303,5 @@ func callCount(n int64) string {
 	if n == 1 {
 		return "1 call"
 	}
-	return commaInt(n) + " calls"
+	return statsfmt.CommaInt(n) + " calls"
 }
