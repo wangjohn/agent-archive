@@ -52,3 +52,34 @@ func TestExecReturnsCombinedOutput(t *testing.T) {
 		t.Errorf("output %q lacks a stream", got)
 	}
 }
+
+// systemctl and loginctl run with the environment that reaches the user's
+// manager (XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS passed on) and colors off,
+// whatever this process's own SYSTEMD_COLORS says; launchctl's environment is
+// left alone.
+func TestExecPassesTheManagerEnvironmentToSystemctl(t *testing.T) {
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"$XDG_RUNTIME_DIR|$DBUS_SESSION_BUS_ADDRESS|$SYSTEMD_COLORS\"\n"
+	for _, name := range []string{"systemctl", "loginctl", "launchctl"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/4242")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/4242/bus")
+	t.Setenv("SYSTEMD_COLORS", "true")
+	for name, want := range map[string]string{
+		"systemctl": "/run/user/4242|unix:path=/run/user/4242/bus|0",
+		"loginctl":  "/run/user/4242|unix:path=/run/user/4242/bus|0",
+		"launchctl": "/run/user/4242|unix:path=/run/user/4242/bus|true",
+	} {
+		out, err := Exec(context.Background(), name)
+		if err != nil {
+			t.Fatalf("%s: %v: %s", name, err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != want {
+			t.Errorf("%s ran with %q, want %q", name, got, want)
+		}
+	}
+}

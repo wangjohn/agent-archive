@@ -8,20 +8,22 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
-// newScheduler is the scheduler a nil Env.Scheduler means: this system's own
-// (host.Default), made when a command needs it, and making it runs nothing.
-// It is a variable so that tests fail closed: isolateProcessForTesting
-// replaces it with one whose launchctl stops the test, so a test that builds a
-// bare Env{} can never reach the developer's real launchd (or, on Linux, its
-// systemd). A test that means to drive launchd's own code stubs launchctl with
-// stubLaunchctl.
-var newScheduler = host.Default
+// newScheduler makes the scheduler a nil Env.Scheduler means, by the name of a
+// backend (config.Config.BackgroundBackend; "" is this system's own, which is
+// what a configuration that records none means): host.Lookup, made when a
+// command needs it, and making it runs nothing. It is a variable so that tests
+// fail closed: isolateProcessForTesting replaces it with one whose launchctl
+// stops the test, so a test that builds a bare Env{} can never reach the
+// developer's real launchd (or, on Linux, its systemd). A test that means to
+// drive launchd's own code stubs launchctl with stubLaunchctl.
+var newScheduler = host.Lookup
 
 // collectorJob is the background collector as a scheduler defines it: the
 // executable running `_collect` every minute, and once at load, for the data
@@ -71,12 +73,56 @@ func problemOf(status scheduler.Status) scheduler.Problem {
 // jobActive is whether a job is loaded, whether or not it is running now.
 func jobActive(state scheduler.JobState) bool { return state.Active() }
 
-// scheduler is e's job scheduler: Env.Scheduler, or this system's own.
+// scheduler is e's job scheduler: Env.Scheduler, or the backend the
+// installation's own configuration records, or, for a command that is
+// choosing one (setup), this system's own.
 func (e Env) scheduler() scheduler.Scheduler {
 	if e.Scheduler != nil {
 		return e.Scheduler
 	}
-	return newScheduler()
+	if e.choosesBackend {
+		return e.namedScheduler("")
+	}
+	return e.namedScheduler(e.recordedBackend())
+}
+
+// choosingBackend is e for a command that picks the scheduler an installation
+// runs under, rather than addressing the one it already has: setup, which uses
+// this system's own and records it (see prepareSetupConfig), whatever an
+// earlier configuration recorded. A recorded backend this system cannot use
+// can have no job here to retire: its manager is another system's.
+func (e Env) choosingBackend() Env {
+	e.choosesBackend = true
+	return e
+}
+
+// recordedBackend is the backend name config.json records, "" when it records
+// none or cannot be read (every command that needs the configuration reports
+// that itself). It is read when asked, since setup and uninstall keep the field
+// as they rewrite the file.
+func (e Env) recordedBackend() string {
+	home, err := e.readHome()
+	if err != nil {
+		return ""
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		return ""
+	}
+	return cfg.BackgroundBackend
+}
+
+// namedScheduler is the scheduler called name (see newScheduler). A backend
+// this system cannot use is not replaced by another: it is a scheduler that
+// says nothing and changes nothing, and its problem says why, so status reports
+// the job unknown and uninstall refuses (or, with --skip-scheduler, goes on
+// without verifying the job stopped).
+func (e Env) namedScheduler(name string) scheduler.Scheduler {
+	s, err := newScheduler(name)
+	if err != nil {
+		return host.Unavailable(name, err.Error())
+	}
+	return s
 }
 
 // userSite is the site of the user home userHome, spelled as the scheduler's
@@ -109,10 +155,11 @@ func (e Env) jobDefinition(userHome string, ref scheduler.Ref) scheduler.Status 
 }
 
 // backends is the schedulers as internal/setupjournal drives them, by the name
-// a journal records: e's own, which every command uses, so a test's stand-in
-// (and TestMain's failing launchctl) applies there too. A journal that names
-// another backend is refused rather than driven through this one: its jobs are
-// not this scheduler's to stop or start.
+// a journal records: the adapter that name means (newScheduler), or, when a
+// test stands in with Env.Scheduler, that one, so its stand-in (and TestMain's
+// failing launchctl) applies there too. A journal that names a backend this
+// system cannot use is refused rather than driven through another: its jobs
+// are not that scheduler's to stop or start.
 //
 // setupjournal names each job by the definition it recorded, and a journal is
 // recovered by whichever setup runs next for its data directory, perhaps with
@@ -123,9 +170,15 @@ func (e Env) jobDefinition(userHome string, ref scheduler.Ref) scheduler.Status 
 // job of the same name elsewhere.
 func (e Env) backends() setupjournal.Backends {
 	return func(name string) (scheduler.Scheduler, error) {
-		s := e.scheduler()
-		if s.Name() != name {
-			return nil, fmt.Errorf("the interrupted setup used the %s scheduler, and this system's is %s; its jobs were left as they are", name, s.Name())
+		if e.Scheduler != nil {
+			if e.Scheduler.Name() != name {
+				return nil, fmt.Errorf("the interrupted setup used the %s scheduler, and this system's is %s; its jobs were left as they are", name, e.Scheduler.Name())
+			}
+			return e.Scheduler, nil
+		}
+		s, err := newScheduler(name)
+		if err != nil {
+			return nil, fmt.Errorf("the interrupted setup used the %s scheduler, and this system's is %s; its jobs were left as they are", name, e.namedScheduler("").Name())
 		}
 		return s, nil
 	}
