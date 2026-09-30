@@ -200,7 +200,8 @@ A TITLE substring or short SESSION_ID matches as it does for show, in this
 Mac's sessions first (no network), then the archive's; a full SESSION_ID
 wins. Quote a title of several words. Several matches on a terminal open the
 picker on them; without one they are listed on stderr and the command exits 1,
-never guessing. A title skips the agent session running the command, unless --to.
+never guessing. A title skips the agent session running the command, unless
+--to is given.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor

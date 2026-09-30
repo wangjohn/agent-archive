@@ -110,6 +110,24 @@ func TestHandoffTitleSkipsTheCallingSession(t *testing.T) {
 	}
 }
 
+// A registration whose transcript is gone offers nothing to title from, so the
+// session is found in the archive, once, and read from there; with no
+// archived copy there is no match, not an error about the transcript.
+func TestHandoffTitleWithAStaleRegistration(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	must(t, os.Remove(filepath.Join(f.project, "codex.jsonl")))
+	must(t, os.Remove(filepath.Join(f.project, "native-new.jsonl")))
+	out, errOut, code := runHandoff(t, f.env, "flaky widget")
+	if code != 0 || !strings.Contains(out, "source: archive") || !strings.Contains(out, "flaky widget") {
+		t.Fatalf("archived: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	out, errOut, code = runHandoff(t, f.env, "not uploaded")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no session matches") {
+		t.Fatalf("not archived: code=%d stdout=%q stderr=%s", code, out, errOut)
+	}
+}
+
 // A registration that spells its harness as an alias ("claude-code") is the
 // same app as --harness claude, for an ID as for a title.
 func TestHandoffHarnessAliasInARegistration(t *testing.T) {
