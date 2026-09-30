@@ -25,11 +25,12 @@ the sidecar.
 Confirmed 2026-09-30:
 
 1. **`list` hides subagents too.** Its table and browser show top-level
-   sessions only, like the picker. A parent carries a `· N subagents` hint,
+   sessions only, like the picker; bare `show` does too, since it shares the
+   browser. A parent carries a `· N subagents` hint,
    and a subagent is reached by searching. `list --json` keeps every row
    ([§1](#1-top-level-sessions-only)).
 2. **Default to this repository, with a fallback to all projects, and make
-   the scope easy to change.** The picker, `list`, and title search all start
+   the scope easy to change.** The browser (`show`, `list`, `handoff`) and title search all start
    from the working directory's repository. When nothing there matches, they
    fall back to all projects and say so. `a` toggles the scope on screen, and
    `--all-projects` and `--project` change it on the command line
@@ -43,6 +44,11 @@ Confirmed 2026-09-30:
    ([§6](#6-subagent-descriptions)).
 5. **The live marker `●` reuses `activeSourceWindow` (2 minutes)**, so the
    dot and handoff's shared-checkout question agree ([§7](#7-rows)).
+6. **Every session chooser is one component.** Bare `show`, `list`, and
+   `handoff`, and every place they ask the person to pick one session, use
+   the same browser. That includes `show --json` with no ID, and an
+   ambiguous `show "<words>"` or `handoff "<words>"`. Differences are
+   parameters, not separate code ([§5](#5-one-browser-filter-as-you-type)).
 
 ## Problem
 
@@ -91,11 +97,16 @@ Measured on the owner's Mac on 2026-09-30 (662 registrations: 653 Claude,
    the same on every row. Grouping by project (`GroupByProject`) does
    nothing with one project. It also splits one repository's checkouts,
    because `ProjectID` hashes the checkout path.
-4. **No way to type what you remember.** The picker is the line-mode
-   `pickBrowseRow`. It takes a number or an ID, and never filters by text.
-   The alt-screen key browser that `list` and `show` use has no filter
-   either. `list` cannot search at all; its help says to use `handoff` for
-   that.
+4. **No way to type what you remember, and two choosers.** `list` and bare
+   `show` run the alt-screen key browser (`runSessionBrowser`). The handoff
+   picker, `show --json` with no ID, and an ambiguous `show "<words>"` or
+   `handoff "<words>"` run the older line-mode chooser (`pickBrowseRow` and
+   `pickBrowseSession`). The two look and behave differently: one is a
+   full-screen table with keys, the other a printed table with a prompt.
+   Neither filters by text; both take only a number or an ID. `list` cannot
+   search at all; its help says to use `handoff` for that. `show "<words>"`
+   and `handoff "<words>"` match through `matchSessionsByQuery`, but print
+   ambiguous matches in different formats.
 5. **Agents search one field.** `handoff "<words>"` matches the whole query
    as a substring of the title, or an ID prefix. "hand off my Linux support
    session" works only if the first prompt happens to contain "linux
@@ -104,18 +115,20 @@ Measured on the owner's Mac on 2026-09-30 (662 registrations: 653 Claude,
 
 ## Goals
 
-1. The picker and `list` show only top-level sessions. Subagents are found
+1. The browser (bare `show`, `list`, and `handoff`) shows only top-level
+   sessions. Subagents are found
    by searching, and are shown under their parent.
 2. Every row is labeled with the name the person saw in their agent, when
    the harness has one. The first prompt is the fallback.
 3. Run inside a repository, the picker, `list`, and title search look at
    that repository's sessions first, across all its checkouts and worktrees.
    One key or one flag widens or moves the scope.
-4. A person can type a few words, a PR number, or a branch name to narrow
-   either screen as they type.
-5. One matcher serves the browser's filter, `handoff "<words>"`, and `list
-   "<words>"`, so a person and an agent get the same answer from the same
-   words.
+4. Choosing a session looks and works the same in `show`, `list`, and
+   `handoff`: one browser, one set of keys. A person can type a few words, a
+   PR number, or a branch name to narrow it as they type.
+5. One matcher serves the browser's filter, `handoff "<words>"`, `show
+   "<words>"`, and `list "<words>"`, so a person and an agent get the same
+   answer from the same words.
 6. Nothing added leaves the privacy filter's guarantees: every new field
    comes from filtered records.
 
@@ -140,8 +153,8 @@ Measured on the owner's Mac on 2026-09-30 (662 registrations: 653 Claude,
 drops subagent registrations. `total` and the footer count only what can be
 offered.
 
-`list`'s table and browser drop subagents the same way, before `--limit`
-applies. `--limit 50` therefore means 50 top-level sessions. The footer adds
+`list`'s table and the browser (so bare `show` too) drop subagents the same
+way, before `--limit` applies. `--limit 50` therefore means 50 top-level sessions. The footer adds
 how many were hidden: `42 sessions (318 subagent sessions hidden; search to
 find one)`.
 
@@ -211,7 +224,8 @@ cut by display width, and published ones by runes.
 
 ### 3. Scope: this repository first
 
-The picker, `list`, and title search find a *scope* from the working
+The browser (`show`, `list`, `handoff`) and title search find a *scope*
+from the working
 directory:
 
 1. The repository key of the directory (`gitremote.Resolver.Key`, the same
@@ -227,7 +241,7 @@ directory:
 **Changing the scope.** Every way below is named on screen, so none has to
 be remembered:
 
-- **`a` on screen.** In the picker and `list`'s browser, `a` (typed alone,
+- **`a` on screen.** In the browser, whatever command opened it, `a` (typed alone,
   like `n`, `p` and `q`) toggles between the scope and all projects. The
   heading always names what is shown and the other choice: `agent-archive ·
   42 sessions · a all projects`, or `All projects · 104 sessions · a
@@ -242,8 +256,8 @@ be remembered:
 - **Project names are a search field** ([§4](#4-one-matcher)), so `handoff
   "personal_website blog"` reaches another project without a flag.
 
-**Fallback.** When the scope holds nothing to show, the picker and `list`
-open on all projects, and the heading says `Nothing in agent-archive ·
+**Fallback.** When the scope holds nothing to show, the browser opens on
+all projects, and the heading says `Nothing in agent-archive ·
 showing all projects`.
 
 Title search, in `handoff "<words>"` and `list "<words>"`, looks in scope
@@ -299,8 +313,12 @@ Callers:
   applies the §3 tiers, then `--harness`, `--since`, and the other filters,
   then `--limit`. Interactive, it opens the browser with the query already in
   the `/` filter, so the person can edit it. Piped, it prints the table.
-  With `--json`, it prints the document. `show`'s resolver keeps its own
-  rules.
+  With `--json`, it prints the document.
+- `show "<words>"`: `resolveShowQuery` replaces `matchSessionsByQuery` with
+  the matcher and the §3 tiers. Its direct reads are unchanged: an exact
+  full ID is still read without listing. Several matches open the browser
+  on a terminal. Without one, they print the same candidate table as
+  `handoff`, with `Next: agent-archive show <ID>`.
 
 When `handoff "<words>"` matches several sessions without a terminal, the
 table gains the columns an agent needs to tell rows apart, and ends with the
@@ -319,25 +337,51 @@ A subagent row is labeled `subagent of <parent short ID>`.
 
 ### 5. One browser, filter as you type
 
-The picker and `list` become one component: the alt-screen key browser that
-`list` and `show` use today (`browserKeys`), with a line-mode fallback when
-no key terminal can be opened. The two differ in:
+Every place a person chooses a session runs one component. It is the
+alt-screen key browser that `list` and bare `show` use today
+(`runSessionBrowser`, `browserKeys`), with one line-mode fallback for when no
+key terminal can be opened. It replaces `pickBrowseSession` and
+`pickBrowseRow`, whose separate line-mode loop goes away except as that
+fallback.
 
-- the action Enter takes: hand off, or show
-- the heading's verb: `Hand off ·` or none
-- `list` keeping the ID column
+The callers differ only in three parameters: where rows come from, what
+Enter does, and the heading's verb.
 
-Everything else is the same code:
+| Caller | Rows | Enter | Heading |
+|---|---|---|---|
+| `list` | archive | show the details, then back to the list (browse) | none |
+| `show` (no ID) | archive | the same as `list` (browse) | none |
+| `show --json` (no ID) | archive | return the session; print its JSON (pick one) | `Show ·` |
+| `show "<words>"`, several matches | the matches | show the details (browse) | `"words" matches N ·` |
+| `handoff` (no selector) | local and archive, merged as today | return the session to hand off (pick one) | `Hand off ·` |
+| `handoff "<words>"`, several matches | the matches | the same as `handoff` (pick one) | `Hand off · "words" matches N ·` |
+
+```go
+// browserMode is what Enter does with the chosen row.
+type browserMode int // browseSessions: show details and return; pickSession: return the row
+type browserSpec struct { Mode browserMode; Verb string; Rows []listRow; Query string }
+```
+
+Everything else is the same code for every caller:
 
 - the rows, their formatter (§7), and the subagent folding
 - the scope heading and `a`
-- `/` and the line-mode filter
+- `/`, the highlight, and the line-mode filter
 - the matcher (§4)
+- paging, scrolling, and fitting to the window (#149)
 
-The handoff picker moves from `pickBrowseRow`'s line mode to the key browser.
-`handoffSelectDependencies` gains `openKeyTerminal` and `interrupts`. Every
-prompt after the picker (destination, active source) keeps reading through
-the shared answers reader, as `prepareLaunchDir` requires.
+Rows keep their own sources: `list` and `show` read the archive, and
+`handoff` also offers this Mac's sessions that are not uploaded yet. Making
+`list` and `show` offer local sessions is out of scope. `list`'s ID column
+is a column rule (§7), not a browser difference.
+
+The handoff picker, `show --json`, and the two ambiguous-query pickers move
+from line mode to the key browser. Their dependency interfaces gain
+`openKeyTerminal` and `interrupts`, which `sessionBrowserDependencies`
+already has. Every prompt after the handoff picker (destination, active
+source) keeps reading through the shared answers reader, as
+`prepareLaunchDir` requires. The browser must hand back the terminal with no
+typed-ahead input lost.
 
 **Key mode.** `/` opens a filter line at the bottom, as in `less`. Rows
 narrow as each character is typed. While filtering:
@@ -384,7 +428,7 @@ names.
 
 ### 7. Rows
 
-For the picker and `list`:
+For every browser caller (§5):
 
 - **Title:** `DisplayTitle`.
 - **PR column:** `#213`, from `LatestPR`. Shown only when some row on screen
@@ -433,7 +477,7 @@ Change these here first.
 | PR 3 `internal/archive` | `Metadata.Name string` (`json:"name,omitempty"`), `Metadata.Branch string` (`json:"branch,omitempty"`), `Metadata.PullRequests []PullRequestLink` (`json:"pull_requests,omitempty"`); `type PullRequestLink struct { Repository string; Number int; URL string }`; `type Labels struct { Name, Title, Branch string; PullRequests []PullRequestLink }`; `SessionLabels(bundle SourceBundle) (Labels, bool)`; `DisplayTitle(m Metadata) string`; `LatestPR(m Metadata) (PullRequestLink, bool)`; `MaxPullRequests = 20` |
 | PR 4 `internal/cli` | `type sessionScope struct { Label string; RepoKey string; Dir string; ProjectIDs []string; All bool }`; `scopeFor(env scopeDependencies, project string, allProjects bool) (sessionScope, error)`; `(sessionScope).contains(m archive.Metadata, reg *archive.SessionRegistration) bool`; `listDocument.Scope *listScope` (`json:"scope,omitempty"`) |
 | PR 5 `internal/cli` | `sessionQuery`, `parseSessionQuery`, `(sessionQuery).matches`, `type sessionFields struct { Name, Title, Branch, Project, Harness, SessionID string; PRs []int }`, `fieldsOf(m archive.Metadata, project string) sessionFields`; `listRow.Children int` |
-| PR 6 `internal/cli` | `listRow.Depth int`, `listRow.Live bool`; `sessionPicker.filter string`; `type browserAction` (`show` or `hand off`) chosen by the caller |
+| PR 6 `internal/cli` | `listRow.Depth int`, `listRow.Live bool`; `sessionPicker.filter string`; `type browserMode`, `type browserSpec` (§5); `runBrowser(env sessionBrowserDependencies, spec browserSpec, …) (listRow, bool, int)`, which replaces `pickBrowseSession` and `pickBrowseRow` and backs `runSessionBrowser` |
 
 ## PR breakdown
 
@@ -445,7 +489,7 @@ Change these here first.
 | 3 | parser 0.17.0: `name`, `branch`, `pull_requests`; `SessionLabels`; rows show `DisplayTitle` | 2 | 4 |
 | 4 | scope for picker, `list`, and title search; `a`, `--all-projects`, `--project`; rows (PR column, hidden constant columns, `●`) | 1 | 2, 3 |
 | 5 | one matcher; search tiers; `list "<words>"`; `list` hides subagents with the `· N subagents` hint; candidate table; skill text | 3 + 4 | — |
-| 6 | one browser for picker and `list`; `/` filter; line-mode filter; subagents under parents | 5 | 7 |
+| 6 | one browser for `show`, `list`, `handoff`, and every ambiguous-query chooser; `/` filter; line-mode filter; subagents under parents | 5 | 7 |
 | 7 | filter 14: subagent descriptions from `.meta.json` | 3 | 6 |
 | 8 | docs (handoff and list guides, CLI reference, agent-skills guide) and live check | all | — |
 
@@ -508,16 +552,18 @@ Tests:
 - outside any project, every session shows
 - `--project` takes a directory or a name, and is refused with
   `--all-projects`
-- `a` toggles in both screens
+- `a` toggles in the browser, whichever command opened it
 - an empty scope falls back and says so
 - `list --json` carries `scope`
 - columns are hidden when constant
 - `●` follows `activeSourceWindow`
 - goldens `testdata/browse/handoff-scoped.txt` and `list-scoped.txt`
 
-### PR 5 — one matcher (~500 lines + tests)
+### PR 5 — one matcher (~550 lines + tests)
 
-- `sessionQuery`; `handoffQueryResolver` and `list` use the tiers of §3.
+- `sessionQuery`; `handoffQueryResolver`, `resolveShowQuery`, and `list` use
+  the tiers of §3, and `matchSessionsByQuery` is removed.
+- `show "<words>"` without a terminal prints the shared candidate table.
 - `list` accepts a positional query, with help and `cli_reference_test`
   updated.
 - `list`'s table and browser drop subagents before `--limit`, show the
@@ -540,19 +586,25 @@ Tests:
 - `list "<words>" --json` keeps the document shape
 - skill template golden
 
-### PR 6 — one browser, filter as you type (~500 lines + tests)
+### PR 6 — one browser, filter as you type (~600 lines + tests)
 
-The picker and `list` run one browser, parameterized by its action. The
-handoff picker opens it when `openKeyTerminal` succeeds. The PR adds:
+`runBrowser` takes a `browserSpec` and backs every caller in the §5 table.
+`runSessionBrowser` becomes its browse mode; `pickBrowseSession` and
+`pickBrowseRow` are removed, and their callers pass a spec. The PR adds:
 
 - `/`, the highlight, and Esc
 - the line-mode filter
 - `list "<words>"` opening with the filter filled in
 - subagents indented under matching parents
 
-Tests:
+A test lists every caller in the §5 table and checks that each reaches
+`runBrowser`, so a new chooser cannot quietly grow its own loop. Tests:
 
-- key-mode filter narrows and Enter acts on the highlight, in both screens
+- each caller in the §5 table opens the key browser on a terminal and the
+  line-mode fallback without one, with the heading and Enter action its row
+  gives
+- key-mode filter narrows and Enter acts on the highlight, in browse and
+  pick-one modes
 - numbers keep their unfiltered values
 - line-mode words filter and an empty answer clears
 - a subagent match shows its parent
@@ -577,11 +629,12 @@ the filter, which emits one `subagent-meta` record. Backfill's
 Update the handoff guide, `list` in the CLI reference, and the agent-skills
 guide. Live check on the owner's Mac:
 
-- the picker and `list` from inside agent-archive open on this repository
-  with native names
+- bare `show`, `list`, and `handoff` from inside agent-archive open the same
+  browser on this repository with native names
+- an ambiguous `show "flaky"` and `handoff "flaky"` open that browser too
 - `a` shows all projects, and `list --project personal_website` shows that
   project
-- `/linux` finds the Linux session in both screens
+- `/linux` finds the Linux session from `show`, `list`, and `handoff`
 - `/208` finds the PR-208 reviewer under its parent
 - from Claude Code, "hand off my flaky retention test session to Codex"
   resolves without asking
