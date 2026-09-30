@@ -19,16 +19,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// refreshRefusal is why setup --refresh changed nothing: it ran before
+// refreshRefusalError is why setup --refresh changed nothing: it ran before
 // anything was written, so the message ends by saying so.
-type refreshRefusal struct{ err error }
+type refreshRefusalError struct{ err error }
 
-func (r *refreshRefusal) Error() string { return r.err.Error() }
+func (r *refreshRefusalError) Error() string { return r.err.Error() }
 
-func (r *refreshRefusal) Unwrap() error { return r.err }
+func (r *refreshRefusalError) Unwrap() error { return r.err }
 
 func refuse(format string, args ...any) error {
-	return &refreshRefusal{err: fmt.Errorf(format, args...)}
+	return &refreshRefusalError{err: fmt.Errorf(format, args...)}
 }
 
 // refreshPlan is what setup --refresh will change, and how to say so.
@@ -65,7 +65,7 @@ func (p refreshPlan) empty() bool { return len(p.journal.Changes) == 0 }
 func runSetupRefresh(out, errOut io.Writer, env Env, verbose bool) int {
 	plan, userHome, err := refreshSetup(env)
 	if err != nil {
-		var refused *refreshRefusal
+		var refused *refreshRefusalError
 		if errors.As(err, &refused) {
 			err = fmt.Errorf("%w. Nothing was changed", err)
 		}
@@ -188,7 +188,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// a shell that lacks the CLAUDE_CONFIG_DIR or CODEX_HOME setup saw.
 	files := env.installedHookFiles(userHome, cfg)
 	if problems := in.otherInstallationProblems(files, cfg.Harnesses); len(problems) > 0 {
-		return plan, &refreshRefusal{err: &otherInstallationError{problems: problems}}
+		return plan, &refreshRefusalError{err: &otherInstallationError{problems: problems}}
 	}
 	hookChanges, err := hooks.Plan(files, in.hook(exe), cfg.Harnesses)
 	if err != nil {

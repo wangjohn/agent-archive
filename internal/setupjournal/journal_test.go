@@ -437,8 +437,10 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 	t.Parallel()
 	// The fake fails every load and unload, and records every question.
-	var asked []string
-	quiet := fakeLaunchd{state: func(plist string) string { asked = append(asked, plist); return "running" }}
+	newQuiet := func() (launchd fakeLaunchd, asked func() []string) {
+		var questions []string
+		return fakeLaunchd{state: func(plist string) string { questions = append(questions, plist); return "running" }}, func() []string { return questions }
+	}
 	newJournal := func(t *testing.T) (home string, journal Journal, settings, added string) {
 		t.Helper()
 		home, dir := t.TempDir(), t.TempDir()
@@ -454,6 +456,13 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 	}
 
 	t.Run("commit", func(t *testing.T) {
+		t.Parallel()
+		quiet, asked := newQuiet()
+		defer func() {
+			if got := asked(); len(got) != 0 {
+				t.Errorf("launchd was asked about %v", got)
+			}
+		}()
 		home, journal, settings, added := newJournal(t)
 		if err := Commit(home, journal, quiet); err != nil {
 			t.Fatal(err)
@@ -469,6 +478,13 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 		}
 	})
 	t.Run("rollback of a failed write", func(t *testing.T) {
+		t.Parallel()
+		quiet, asked := newQuiet()
+		defer func() {
+			if got := asked(); len(got) != 0 {
+				t.Errorf("launchd was asked about %v", got)
+			}
+		}()
 		home, journal, settings, added := newJournal(t)
 		// The second write fails: its directory cannot be written to.
 		if err := os.Mkdir(filepath.Dir(added), 0o500); err != nil {
@@ -487,6 +503,13 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 		}
 	})
 	t.Run("recovery of an interrupted transaction", func(t *testing.T) {
+		t.Parallel()
+		quiet, asked := newQuiet()
+		defer func() {
+			if got := asked(); len(got) != 0 {
+				t.Errorf("launchd was asked about %v", got)
+			}
+		}()
 		home, journal, settings, added := newJournal(t)
 		if err := local.Write(JournalPath(home), journal); err != nil {
 			t.Fatal(err)
@@ -507,20 +530,28 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 			t.Error("the journal remains")
 		}
 	})
-	if len(asked) != 0 {
-		t.Errorf("launchd was asked about %v", asked)
-	}
 }
 
 // files_only is written only when set, so the ordinary transaction's
 // journal keeps its format.
 func TestFilesOnlyIsOmittedFromAnOrdinaryJournal(t *testing.T) {
 	t.Parallel()
-	data, err := json.Marshal(Journal{})
-	if err != nil || strings.Contains(string(data), "files_only") {
-		t.Fatalf("%s %v", data, err)
+	path := filepath.Join(t.TempDir(), "setup-transaction.json")
+	written := func(journal Journal) string {
+		t.Helper()
+		if err := local.Write(path, journal); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
 	}
-	if data, err = json.Marshal(Journal{FilesOnly: true}); err != nil || !strings.Contains(string(data), `"files_only":true`) {
-		t.Fatalf("%s %v", data, err)
+	if got := written(Journal{}); strings.Contains(got, "files_only") {
+		t.Fatalf("an ordinary journal names files_only: %s", got)
+	}
+	if got := written(Journal{FilesOnly: true}); !strings.Contains(got, `"files_only": true`) {
+		t.Fatalf("a files-only journal does not: %s", got)
 	}
 }

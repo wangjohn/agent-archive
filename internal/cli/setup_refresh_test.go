@@ -36,20 +36,24 @@ func refreshRun(t *testing.T, env Env, args ...string) (code int, stdout, stderr
 // and answers as a job in state.
 type launchdCalls struct {
 	mu    sync.Mutex
-	state string
+	state fakeJob
 	calls []string
 }
+
+// fakeJob is the state a fake launchd reports for the collector's job:
+// "loaded", "missing", "unknown", or setupjournal.JobAnotherInstallation.
+type fakeJob string
 
 // recordLaunchd replaces env's launchd with one that records its calls and
 // reports the job in state ("loaded" or "missing"); loading and unloading
 // change the state, as launchd does.
-func recordLaunchd(env *Env, state string) *launchdCalls {
+func recordLaunchd(env *Env, state fakeJob) *launchdCalls {
 	l := &launchdCalls{state: state}
 	env.JobState = func(plist string) string {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		l.calls = append(l.calls, "state "+filepath.Base(plist))
-		return l.state
+		return string(l.state)
 	}
 	env.LoadLaunchAgent = func(plist string) error {
 		l.mu.Lock()
@@ -144,13 +148,15 @@ func differences(before, after map[string]string) []string {
 // An upgrade fixture: a set-up installation (Codex and Claude Code, every
 // skill file) whose executable then changes.
 type refreshFixture struct {
-	home, userHome string
-	env            Env
-	oldExe, newExe string
-	launchd        *launchdCalls
+	home     string
+	userHome string
+	env      Env
+	oldExe   string
+	newExe   string
+	launchd  *launchdCalls
 }
 
-func newRefreshFixture(t *testing.T, state string) *refreshFixture {
+func newRefreshFixture(t *testing.T, state fakeJob) *refreshFixture {
 	t.Helper()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	cfg := mustLoadConfig(t, home)
@@ -385,6 +391,24 @@ func TestRefreshLeavesAnUnloadedJobUnloaded(t *testing.T) {
 	}
 }
 
+// A collector plist that is gone is not written again: creating it is
+// setup's. The hooks and skills are still refreshed.
+func TestRefreshDoesNotCreateAMissingPlist(t *testing.T) {
+	t.Parallel()
+	f := newRefreshFixture(t, "missing")
+	must(t, os.Remove(f.plist()))
+	code, stdout, stderr := refreshRun(t, f.env)
+	if code != 0 || stderr != "" || strings.Contains(stdout, "collector") || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks and 2 skill files;") {
+		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	if _, err := os.Stat(f.plist()); !os.IsNotExist(err) {
+		t.Errorf("refresh wrote the plist: %v", err)
+	}
+	if calls := f.launchd.all(); len(calls) != 0 {
+		t.Errorf("launchd: %v", calls)
+	}
+}
+
 // Only the executable in the LaunchAgent plist changes: the environment
 // setup gave it (the AWS files its storage check used) stays as it is, even
 // when this shell has none.
@@ -430,15 +454,20 @@ func TestRefreshRefusesAnExecutableThatIsNotTheInstalledBinary(t *testing.T) {
 		message string
 	}{
 		{"go run build", func(t *testing.T, f *refreshFixture) (string, error) {
+			t.Helper()
 			return writeExecutable(t, filepath.Join(t.TempDir(), "go-build3141592", "b001", "exe", "agent-archive")), nil
 		}, "is a temporary build (from go run or go test)"},
 		{"temporary folder", func(t *testing.T, f *refreshFixture) (string, error) {
+			t.Helper()
 			temp := t.TempDir()
 			f.env.TempDir = func() string { return temp }
 			return writeExecutable(t, filepath.Join(temp, "agent-archive")), nil
 		}, "is in the temporary folder"},
 		{"not executable", func(*testing.T, *refreshFixture) (string, error) { return notExecutable, nil }, "is not executable"},
-		{"missing", func(t *testing.T, _ *refreshFixture) (string, error) { return filepath.Join(t.TempDir(), "gone"), nil }, "is missing"},
+		{"missing", func(t *testing.T, _ *refreshFixture) (string, error) {
+			t.Helper()
+			return filepath.Join(t.TempDir(), "gone"), nil
+		}, "is missing"},
 		{"unknown", func(*testing.T, *refreshFixture) (string, error) { return "", errors.New("no executable") }, "cannot find the running agent-archive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -482,13 +511,16 @@ func TestRefreshRefusals(t *testing.T) {
 		message string
 	}{
 		{"setup never ran", func(t *testing.T, f *refreshFixture) {
+			t.Helper()
 			must(t, os.RemoveAll(f.home))
 			must(t, os.Remove(f.plist()))
 		}, "not set up yet; run `agent-archive setup` first"},
 		{"setup recovery is pending", func(t *testing.T, f *refreshFixture) {
+			t.Helper()
 			must(t, os.WriteFile(setupjournal.JournalPath(f.home), []byte("{}"), 0600))
 		}, "setup was interrupted and needs recovery"},
 		{"uninstalled", func(t *testing.T, f *refreshFixture) {
+			t.Helper()
 			env := f.env
 			env.IsTerminal = func(any) bool { return true }
 			var out, errOut bytes.Buffer
@@ -497,6 +529,7 @@ func TestRefreshRefusals(t *testing.T) {
 			}
 		}, "integrations are not installed"},
 		{"unreadable settings", func(t *testing.T, f *refreshFixture) {
+			t.Helper()
 			must(t, os.WriteFile(filepath.Join(f.home, "config.json"), []byte("{not json"), 0600))
 		}, "cannot be read"},
 	} {
@@ -774,8 +807,8 @@ func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 // stops a refresh that would change the plist, before anything is written.
 func TestRefreshRefusesAPlistChangeItCannotSafelyRestart(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"unknown", setupjournal.JobAnotherInstallation} {
-		t.Run(state, func(t *testing.T) {
+	for _, state := range []fakeJob{"unknown", setupjournal.JobAnotherInstallation} {
+		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, state)
 			before := tree(t, f.home, f.userHome)
@@ -799,8 +832,8 @@ func TestRefreshRefusesAPlistChangeItCannotSafelyRestart(t *testing.T) {
 // and the journal are scratch that comes and goes).
 func TestRefreshChangesOnlyHooksPlistSkillsAndTheRecordedExecutable(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"loaded", "missing"} {
-		t.Run(state, func(t *testing.T) {
+	for _, state := range []fakeJob{"loaded", "missing"} {
+		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
 			f := newRefreshFixture(t, state)
 			// Work in the data directory, and files of the person's own next to
