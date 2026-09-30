@@ -20,7 +20,7 @@ type installation struct {
 	// accountHome is the account's own home directory from the user
 	// database, which a sandbox that only overrides $HOME does not change.
 	accountHome string
-	// definer is the scheduler that names this installation's job, made when
+	// sched is the scheduler that names this installation's job, made when
 	// asked (making one runs nothing, but most callers never need it).
 	sched func() scheduler.Scheduler
 }
