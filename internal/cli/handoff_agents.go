@@ -51,9 +51,9 @@ var handoffSessionEnv = func() []string {
 		"CODEX_VERSION",
 		cursorAgentEnv,
 	}
-	for _, key := range currentSessionEnv {
-		if !slices.Contains(names, key) {
-			names = append(names, key)
+	for _, v := range currentSessionEnv {
+		if !slices.Contains(names, v.key) {
+			names = append(names, v.key)
 		}
 	}
 	return names

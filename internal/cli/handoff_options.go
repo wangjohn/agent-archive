@@ -67,8 +67,10 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		}
 	}
 	switch {
-	case selectors == 0 && (!interactive || *to != ""):
-		return usageError("name a session ID, --latest, or --file PATH; run on a terminal to pick a session")
+	// With --to the command decides after parsing: the calling agent's own
+	// session, else the picker on a terminal (runHandoffCommand).
+	case selectors == 0 && !interactive && *to == "":
+		return usageError(noSelectorMessage)
 	case selectors > 1:
 		return usageError("a session ID, --latest, and --file are mutually exclusive")
 	case *file != "" && *harness == "":
@@ -82,7 +84,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	case len(agentArgs) > 0 && *to == "":
 		return usageError("arguments after -- go to the launched agent; name it with --to")
 	}
-	if message := validateHandoffLaunchOptions(*to, *output, *format, *source, *noPreamble); message != "" {
+	if message := validateHandoffLaunchOptions(*to, *output, *format, *noPreamble); message != "" {
 		return usageError(message)
 	}
 	canonical, ok := harnessFlag(*harness)
@@ -103,9 +105,6 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if *file != "" && *source == "archive" {
 		return usageError("--file reads a local transcript; --source archive does not apply")
 	}
-	if *to != "" {
-		*source = "local"
-	}
 	// The ID names local files and bucket keys; only the characters archive
 	// session IDs are made of are accepted, so it cannot reach outside them.
 	if sessionID != "" {
@@ -118,7 +117,15 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, agentArgs: agentArgs}, true
 }
 
-func validateHandoffLaunchOptions(to, output, format, source string, noPreamble bool) string {
+// noSelectorMessage is the usage error for a handoff with nothing selected
+// and no terminal to pick on.
+const noSelectorMessage = "name a session ID, --latest, or --file PATH; run on a terminal to pick a session"
+
+// noCurrentSessionMessage is noSelectorMessage for --to, which can also take
+// the agent session it runs in.
+const noCurrentSessionMessage = "name a session ID, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
+
+func validateHandoffLaunchOptions(to, output, format string, noPreamble bool) string {
 	switch {
 	case to != "" && handoffDestination(to) != handoffDestinationClaude && handoffDestination(to) != handoffDestinationCodex && handoffDestination(to) != handoffDestinationCursor:
 		return "--to must be claude, codex, or cursor"
@@ -128,8 +135,6 @@ func validateHandoffLaunchOptions(to, output, format, source string, noPreamble 
 		return "--to requires markdown format"
 	case to != "" && noPreamble:
 		return "--to includes the receiving-agent preamble"
-	case to != "" && source == "archive":
-		return "--to works only with local sessions; --source archive is unavailable"
 	default:
 		return ""
 	}

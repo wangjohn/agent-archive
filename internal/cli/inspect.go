@@ -379,7 +379,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	transcript := fs.Bool("transcript", false, "also download and verify the source bundle, and print the conversation (this prints transcript content)")
 	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
 	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
-	noPager := fs.Bool("no-pager", false, "print a transcript directly; do not page through $PAGER")
+	noPager := fs.Bool("no-pager", false, "print the summary or transcript directly; do not page through $PAGER")
 	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "with --transcript, the output limit in bytes; 0 means no limit")
 	jsonOut := fs.Bool("json", false, "print the metadata sidecar as JSON (with --transcript, also the normalized view)")
 	// Flags may follow SESSION_ID too (`show SESSION_ID --transcript`).
@@ -479,7 +479,13 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
 		}
-		renderSessionSummary(stdout, view, summary)
+		if err := withPager(ctx, stdout, stderr, env, *noPager, func(w io.Writer) error {
+			renderSessionSummary(w, view, summary)
+			return nil
+		}); err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 

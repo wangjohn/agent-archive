@@ -75,7 +75,12 @@ type showQueryDependencies interface {
 type pagerDependencies interface {
 	interactive(any) bool
 	lookupEnv(string) (string, bool)
-	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
+	runPager(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
+	lessVersion(string) (int, bool)
+	// interrupts and exit let withPager leave Ctrl-C to the pager and
+	// stop it on other signals.
+	interrupts() (<-chan os.Signal, func())
+	exit(int)
 }
 
 type handoffResolverDependencies interface {

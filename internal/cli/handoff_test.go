@@ -122,7 +122,6 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 		{"abc", "--project", "/tmp"},
 		{"abc", "--force"},
 		{"abc", "--to", "gemini"},
-		{"abc", "--to", "codex", "--source", "archive"},
 		{"abc", "--to", "codex", "--output", "x.md"},
 		{"abc", "--to", "codex", "--format", "json"},
 		{"abc", "--to", "codex", "--no-preamble"},

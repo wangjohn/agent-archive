@@ -227,6 +227,45 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 	return sig, nil
 }
 
+// ReadLastUpdated reads each chat's lastUpdatedAt (Unix milliseconds, the
+// Signature's LastUpdatedAt) in one read of the database, in place as Read
+// does, so ordering many chats by activity opens it once. Only composerData
+// rows are read. A chat that is missing, unreadable, or has no positive
+// lastUpdatedAt is left out.
+func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (map[string]int64, error) {
+	out := map[string]int64{}
+	if len(composerIDs) == 0 {
+		return out, nil
+	}
+	err := Read(ctx, dbPath, Options{}, func(ctx context.Context, db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }() // a read-only transaction; nothing to undo
+		for _, id := range composerIDs {
+			if id == "" {
+				continue
+			}
+			value, err := composerRow(ctx, tx, id)
+			if errors.Is(err, ErrComposerNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if sig, _, err := decodeHeaders(value); err == nil && sig.LastUpdatedAt > 0 {
+				out[id] = sig.LastUpdatedAt
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // readCopy reads the Reader's snapshot. The copy is this process's own and
 // nothing writes it, so immutable is exact, and it opens no side file even
 // though the copy's header still says WAL.

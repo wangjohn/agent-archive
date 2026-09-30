@@ -54,11 +54,18 @@ type handoffTarget struct {
 }
 
 // currentSessionEnv names environment variables an agent sets for the commands
-// it runs, holding its own native session ID. `--latest` skips that session:
-// run from inside an agent, the newest session is always the one asking.
+// it runs, holding its own native session ID, and the harness that sets each.
+// `--latest` skips that session: run from inside an agent, the newest session
+// is always the one asking. `--to` with no selector hands it off instead.
 // CLAUDE_CODE_SESSION_ID is observed in Claude Code; CODEX_THREAD_ID is read
 // if present but has not been observed.
-var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
+var currentSessionEnv = []struct {
+	key     string
+	harness string
+}{
+	{"CLAUDE_CODE_SESSION_ID", archive.HarnessClaude},
+	{"CODEX_THREAD_ID", archive.HarnessCodex},
+}
 
 var errHandoffNotSetUp = errors.New("handoff not set up")
 
@@ -72,26 +79,15 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	if !ok {
 		return 2
 	}
-	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		store, cfg, found, err := openReadOnlyStore(env)
-		if err != nil {
-			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-			return 1
-		}
-		if !found {
-			terminal.Println(stderr, notSetUpMessage)
-			return 1
-		}
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, opts.harness, "handoff", "hand off")
-		if code != 0 || !selected {
-			return code
-		}
-		opts.sessionID, opts.harness = row.SessionID, row.HarnessKey
-	}
 	home, err := env.readHome()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
 		return 1
+	}
+	if opts.sessionID == "" && !opts.latest && opts.file == "" {
+		if code, done := chooseHandoffSession(&opts, home, interactive, stdin, stdout, stderr, env); done {
+			return code
+		}
 	}
 	target, err := resolveHandoffTarget(opts, home, stderr, env)
 	if err != nil {
@@ -272,8 +268,8 @@ var errNotRegisteredHere = errors.New("no session registered on this machine")
 // running inside, if it says.
 func currentSessions(env currentSessionDependencies) map[string]bool {
 	ids := map[string]bool{}
-	for _, key := range currentSessionEnv {
-		if value, ok := env.lookupEnv(key); ok && strings.TrimSpace(value) != "" {
+	for _, v := range currentSessionEnv {
+		if value, ok := env.lookupEnv(v.key); ok && strings.TrimSpace(value) != "" {
 			ids[strings.TrimSpace(value)] = true
 		}
 	}
@@ -293,19 +289,30 @@ func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTa
 // hasPrompt reports whether a bundle holds anything the person said, so
 // `--latest` passes over a session that has only just started.
 func hasPrompt(bundle archive.SourceBundle) bool {
+	_, ok := firstPrompt(bundle)
+	return ok
+}
+
+// sessionTitleWidth is how many columns firstPrompt keeps, as the archive's
+// metadata title does.
+const sessionTitleWidth = 72
+
+// firstPrompt is hasPrompt with a one-line preview of the first prompt, when
+// the transcript's structure shows one (a Cursor text transcript's does not).
+func firstPrompt(bundle archive.SourceBundle) (title string, ok bool) {
 	if len(bundle.NativeText) > 0 {
-		return true
+		return "", true
 	}
 	view, err := archive.ParseNormalized(bundle)
 	if err != nil {
-		return false
+		return "", false
 	}
 	for _, turn := range view.Turns {
 		if turn.Kind == archive.TurnKindHumanPrompt {
-			return true
+			return ellipsize(strings.Join(strings.Fields(turn.Text), " "), sessionTitleWidth), true
 		}
 	}
-	return false
+	return "", false
 }
 
 type handoffResolver struct {

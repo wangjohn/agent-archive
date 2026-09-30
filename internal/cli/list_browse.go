@@ -231,11 +231,16 @@ func endOfInput(err error) (browseAction, error) {
 // selects a row (ok=true), quits or input ends (ok=false), or an error occurs.
 func pickBrowseSession(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (row listRow, ok bool, err error) {
 	format.Numbered = true
-	rows := formatSessionRows(sessions, format)
+	return pickBrowseRow(p, stdout, formatSessionRows(sessions, format), totalMatched, truncated, format, action)
+}
+
+// pickBrowseRow is pickBrowseSession for rows already built, which handoff
+// annotates with sessions not yet uploaded. format.Numbered must be set.
+func pickBrowseRow(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (row listRow, ok bool, err error) {
 	if err := printSessionTable(stdout, rows, format); err != nil {
 		return listRow{}, false, err
 	}
-	printListFooter(stdout, len(sessions), totalMatched, truncated)
+	printListFooter(stdout, len(rows), totalMatched, truncated, format.NarrowHint)
 	if len(rows) == 0 {
 		return listRow{}, false, nil
 	}
@@ -330,7 +335,7 @@ func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectSt
 	return shown, totalMatched, truncated, nil
 }
 
-// browseSessions is the newest sessions bare show and handoff offer, with
+// browseSessions is the newest sessions bare show offers, with
 // the format to list them in.
 type browseSessions struct {
 	sessions     []archive.Metadata
@@ -357,7 +362,8 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 	return browseSessions{sessions: shown, totalMatched: totalMatched, truncated: truncated, format: format}, true, 0
 }
 
-// selectArchivedSession is handoff's (and `show --json`'s) one-shot picker.
+// selectArchivedSession is `show --json`'s one-shot picker; handoff's also
+// lists local sessions (selectHandoffSession).
 // It returns selected=false when the archive is empty or the user quits.
 func selectArchivedSession(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, action string) (row listRow, selected bool, code int) {
 	found, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, command)

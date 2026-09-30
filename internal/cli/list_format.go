@@ -45,6 +45,7 @@ type listFormatOptions struct {
 	GroupByProject bool
 	Projects       map[string]string // project_id → display label (basename)
 	Style          textStyle
+	NarrowHint     string // the truncation footer's advice; "" for list's flags
 }
 
 // formatSessionRows builds display rows for sessions. Short IDs are unique
@@ -165,14 +166,20 @@ func projectLabels(cfg config.Config) map[string]string {
 	return labels
 }
 
-// printListFooter writes the trailing count / truncation line.
-func printListFooter(w io.Writer, shown, totalMatched int, truncated bool) {
+// printListFooter writes the trailing count / truncation line. narrowHint
+// replaces the advice for a command without --limit and --since.
+func printListFooter(w io.Writer, shown, totalMatched int, truncated bool, narrowHint string) {
 	if truncated {
-		if totalMatched < 0 {
+		switch {
+		case totalMatched < 0 && narrowHint != "":
+			terminal.Printf(w, "Showing %d or more session(s). %s\n", shown, narrowHint)
+		case totalMatched < 0:
 			terminal.Printf(w, "Showing %d or more session(s). Use --limit 0 for an exact count, or narrow with --since / --harness.\n", shown)
-			return
+		case narrowHint != "":
+			terminal.Printf(w, "Showing %d of %d session(s). %s\n", shown, totalMatched, narrowHint)
+		default:
+			terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", shown, totalMatched)
 		}
-		terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", shown, totalMatched)
 		return
 	}
 	terminal.Printf(w, "%d session(s).\n", shown)
@@ -184,6 +191,6 @@ func printListTable(w io.Writer, sessions []archive.Metadata, totalMatched int, 
 	if err := printSessionTable(w, rows, opts); err != nil {
 		return err
 	}
-	printListFooter(w, len(sessions), totalMatched, truncated)
+	printListFooter(w, len(sessions), totalMatched, truncated, opts.NarrowHint)
 	return nil
 }
