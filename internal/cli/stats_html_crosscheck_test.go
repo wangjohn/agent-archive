@@ -163,15 +163,15 @@ func checkPageHero(t *testing.T, page *node, doc statsDocument) {
 	}
 	sessions := "unknown"
 	if o.Sessions.Value != nil {
-		sessions = statsfmt.CommaInt(int64(math.Round(*o.Sessions.Value)))
+		sessions = statsfmt.CommaInt(statsfmt.RoundInt(*o.Sessions.Value))
 	}
 	tokens := "unknown"
 	if o.Tokens.Value != nil {
-		tokens = statsfmt.TokenCount(int64(math.Round(*o.Tokens.Value)))
+		tokens = statsfmt.TokenCount(statsfmt.RoundInt(*o.Tokens.Value))
 	}
 	var prompts, cache []string
 	if o.Prompts.Value != nil {
-		prompts = []string{countOf(int(math.Round(*o.Prompts.Value)), "prompt")}
+		prompts = []string{countOf(int(statsfmt.RoundInt(*o.Prompts.Value)), "prompt")}
 	}
 	switch {
 	case o.Tokens.Value == nil:
