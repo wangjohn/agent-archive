@@ -248,10 +248,11 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --view overview|detail|projects|models|agents
                                  Which screen to print (default overview):
                                  detail has the streaks, tool errors, token
-                                 breakdown, every skill and MCP server and the
-                                 notes on what the numbers rest on; projects,
-                                 models and agents list every one. Not with
-                                 --json or --html
+                                 breakdown, up to 40 skills and MCP servers
+                                 and the notes on what the numbers rest on;
+                                 projects and models list up to 500 rows,
+                                 agents every agent. Not with --json or
+                                 --html
   --detail                       The same as --view detail. Not with --view
   --days N                       Window of N calendar days ending today
                                  (default 30; up to 3660)
@@ -262,7 +263,7 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --by day|week|month|project    Also break the window down that way:
                                  project is --view projects, and day, week
                                  and month add a table to --view detail
-                                 (--json has the rows for all four)
+                                 (with --json, groups.rows has every row)
   --harness codex|claude|cursor  Only this application
   --model NAME                   Only sessions that used this model (their
                                  other models count too)
