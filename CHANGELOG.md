@@ -21,6 +21,19 @@ follow [Semantic Versioning](https://semver.org/).
   list price from a dated price table, unpriced models are left out and
   flagged, and what an agent does not record (Cursor's tokens) reads
   "unknown", never zero. See [stats](docs/guides/stats.md).
+- `agent-archive stats --html` writes the same numbers as one self-contained
+  web page: a chart of tokens by day with its peak, overview cards, agents,
+  cost by model, top projects, a donut of what used your tokens, highlights,
+  and the scope, coverage and price-table notes. It is a single file with
+  inline styles and SVG, no script and no request to anything else; it
+  follows your light or dark setting, prints, and reads on a phone. Give
+  `--output FILE` to save it (mode 0600; an existing file is kept unless
+  `--force`; the file is written in one step, never half), or redirect
+  standard output. It holds counts and names only, never prompts, paths or
+  session IDs, and names each project, skill and MCP server, and each model
+  the built-in price table does not list (a fine-tune id, a custom deployment), "project A",
+  "skill A", "MCP server A", "model A" and so on unless you pass
+  `--include-names`, so the page can be shared. See [stats](docs/guides/stats.md#share-it-as-a-web-page).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known
   for Codex), `model_tokens` (token counts split by model, so a session that

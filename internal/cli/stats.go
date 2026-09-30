@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/stats"
+	"github.com/wangjohn/agent-archive/internal/statsfmt"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -70,8 +71,12 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the numbers")
+	htmlFlags := addStatsHTMLFlags(fs)
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if code := htmlFlags.validate(fs, *jsonOut, env.isTerminal(stdout)); code != 0 {
+		return code
 	}
 	daysSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -118,7 +123,8 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	listed, code := readStatsSessions(stdout, stderr, env, store, opts, *jsonOut)
+	// The page on standard output carries nothing but the page: no spinner.
+	listed, code := readStatsSessions(stdout, stderr, env, store, opts, *jsonOut || htmlFlags.toStdout())
 	if code != 0 {
 		return code
 	}
@@ -137,6 +143,9 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return printJSON(stdout, stderr, statsDocument{
 			Version: statsSchemaVersion, GeneratedAt: now, Filters: filters, Stats: computed,
 		})
+	}
+	if htmlFlags.html {
+		return htmlFlags.write(stdout, stderr, computed, filters, now, statsEmptyMessage(computed, filters, len(sessions) > 0))
 	}
 	if computed.Coverage.Sessions == 0 {
 		terminal.Println(stdout, newStatsView(stdout, env).wrap(statsEmptyMessage(computed, filters, len(sessions) > 0)))
@@ -199,7 +208,7 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 		style := activityStyle(stdout)
 		stopReading = style.spinLabelEvery(stdout, func() string {
 			if n := total.Load(); n > 0 {
-				return fmt.Sprintf("Reading sessions… %s of %s", commaInt(done.Load()), commaInt(n))
+				return fmt.Sprintf("Reading sessions… %s of %s", statsfmt.CommaInt(done.Load()), statsfmt.CommaInt(n))
 			}
 			return "Reading sessions…"
 		}, spinnerInterval).stop
