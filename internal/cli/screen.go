@@ -45,6 +45,10 @@ type altScreen struct {
 	// it to stop.
 	stopPager func()
 	pending   os.Signal
+	// restoreInput, when set, gives the terminal its line input back as
+	// the screen is left, on every way out: quitting, an error, a panic,
+	// or a signal.
+	restoreInput func()
 }
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
@@ -167,11 +171,22 @@ func (s *altScreen) clear() {
 	}
 }
 
+// restoreOnLeave has leave call restore, before it returns to the normal
+// screen.
+func (s *altScreen) restoreOnLeave(restore func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restoreInput = restore
+}
+
 // leave returns to the normal screen, where the terminal shows what it
-// showed before the browser started.
+// showed before the browser started, and restores line input.
 func (s *altScreen) leave() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.restoreInput != nil {
+		s.restoreInput()
+	}
 	if !s.active {
 		return
 	}

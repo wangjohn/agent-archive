@@ -40,12 +40,14 @@ type sessionSelectionDependencies interface {
 
 // sessionBrowserDependencies is what the interactive session browser uses:
 // the pager for transcripts and the details, the window's size, and
-// interrupts so it can restore the screen before it exits.
+// interrupts so it can restore the screen before it exits, and stdin read
+// a key at a time on a terminal.
 type sessionBrowserDependencies interface {
 	pagerDependencies
 	terminalSizeDependencies
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
+	openKeyTerminal(io.Reader) (keyTerminal, bool)
 }
 
 type listCommandDependencies interface {

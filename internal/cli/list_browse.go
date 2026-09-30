@@ -54,6 +54,9 @@ type sessionBrowser struct {
 	format  listFormatOptions
 	noPager bool
 	screen  *altScreen
+	// keys, when set, reads the list and the details a key at a time; nil
+	// reads lines.
+	keys *keyInput
 	// list is the session table, which keeps its page between visits.
 	list *sessionPicker
 	// last is the session whose details were shown last, printed to the
@@ -70,11 +73,16 @@ func runSessionBrowser(env sessionBrowserDependencies, p *prompter, stdout, stde
 	if screen.clears() {
 		redraw = screen.clear
 	}
-	list := &sessionPicker{env: env, clear: redraw}
-	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: format, noPager: noPager, screen: screen, list: list}
+	keys := browserKeys(env, p, screen)
 	// Deferred as well, so not even a panic leaves the terminal on the
-	// alternate screen; leave does nothing the second time.
-	defer b.screen.leave()
+	// alternate screen, or without echo; leave and close do nothing the
+	// second time.
+	defer screen.leave()
+	if keys != nil {
+		defer keys.close()
+	}
+	list := &sessionPicker{env: env, clear: redraw, keys: keys}
+	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: format, noPager: noPager, screen: screen, keys: keys, list: list}
 	err := b.run(sessions, totalMatched, truncated)
 	b.screen.leave()
 	if err != nil {
@@ -110,6 +118,9 @@ func (b *sessionBrowser) run(sessions []archive.Metadata, totalMatched int, trun
 
 // details shows one session's summary and reads what to do next.
 func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, error) {
+	if b.keys != nil {
+		return b.detailsKeys(view, row)
+	}
 	var notice browseNotice
 	for {
 		b.screen.clear()
@@ -145,9 +156,9 @@ func (n browseNotice) print(stdout, stderr io.Writer) {
 }
 
 // oneRow cuts text to one terminal row width columns wide, ending a cut
-// with "…".
+// with "…". A width of 0 or less (unknown) cuts nothing.
 func oneRow(text string, width int) string {
-	if visibleWidth(text) <= width {
+	if width <= 0 || visibleWidth(text) <= width {
 		return text
 	}
 	return truncateVisible(text, width-1) + "…"
@@ -317,6 +328,10 @@ func (b *sessionBrowser) transcript(row listRow) (action browseAction, failure s
 // stops the pager, then the browser restores the screen and exits.
 func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 	b.screen.clear()
+	if b.keys != nil {
+		// The pager reads the terminal in the modes it had.
+		b.keys.suspend()
+	}
 	restoreTerminal := saveTerminalState(b.prompt.source)
 	pagerCtx, stopPager := context.WithCancel(context.Background())
 	b.screen.startPaging(stopPager)
@@ -335,6 +350,11 @@ func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 	if err != nil {
 		return browseQuit, err
 	}
+	if b.keys != nil {
+		if err := b.keys.resume(); err != nil {
+			return browseQuit, err
+		}
+	}
 	if paged && waited {
 		b.screen.reenter()
 		return browseRedraw, nil
@@ -350,6 +370,9 @@ func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 }
 
 func (b *sessionBrowser) transcriptPrompt() (browseAction, error) {
+	if b.keys != nil {
+		return b.transcriptKeys()
+	}
 	for {
 		terminal.Println(b.stdout)
 		answer, err := b.prompt.line(b.prompt.promptText("[Enter/b] back to details  [q] quit", false, nil, -1, ": "))
@@ -417,16 +440,23 @@ const minPickerPageRows = 3
 // ID can be typed from any page.
 type sessionPicker struct {
 	env terminalSizeDependencies
+	// keys, when set, reads the list a key at a time: it scrolls instead
+	// of turning pages (see pickKeys).
+	keys *keyInput
 	// clear, when set, blanks the screen before another page is drawn. A
 	// message then replaces the blank line above the prompt of a redrawn
 	// page, instead of being printed below the prompt.
 	clear func()
 	// start is the position, in the table's top-to-bottom order, of the
-	// first row of the page shown. It survives returning to the list.
+	// first row of the page shown, or, reading keys, of the first row the
+	// list is scrolled to. It survives returning to the list.
 	start int
 	// cache is the last split into pages, reused while the terminal's size
 	// and the table stay the same.
 	cache *pickerPages
+	// bottom is the scroll position of the last screen, reused while the
+	// terminal's size and the table stay the same.
+	bottom *pickerBottom
 	// rendered counts the rows drawn to measure pages, which tests bound.
 	rendered int
 }
@@ -449,6 +479,9 @@ type pickerPages struct {
 }
 
 func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+	if l.keys != nil {
+		return l.pickKeys(p, stdout, sessions, totalMatched, truncated, format, action)
+	}
 	format.Numbered = true
 	rows := formatSessionRows(sessions, format)
 	groups := sessionTableGroups(rows, format)
@@ -575,10 +608,7 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 		return all
 	}
 	tableLines := func(pg pickerPage) int {
-		l.rendered += pg.end - pg.start
-		var buf bytes.Buffer
-		_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
-		return displayLines(buf.String(), width)
+		return l.tableLines(groups, format, pg, width)
 	}
 	// Below the table: the footer, a blank line, and the prompt.
 	chrome := displayLines(footer, width) + 1 + displayLines(question, width)
@@ -607,6 +637,15 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 		start += rows
 	}
 	return pages
+}
+
+// tableLines is how many terminal rows the table's rows pg take, with
+// their headings, on a terminal width columns wide.
+func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormatOptions, pg pickerPage, width int) int {
+	l.rendered += pg.end - pg.start
+	var buf bytes.Buffer
+	_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
+	return displayLines(buf.String(), width)
 }
 
 // pageLine says which page of how many is shown, and how to reach the

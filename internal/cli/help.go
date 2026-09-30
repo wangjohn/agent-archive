@@ -128,7 +128,8 @@ Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Piped or --json output is
+transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
+wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
 never interactive. On a terminal without interactive stdin, text is paged
 through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
