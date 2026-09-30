@@ -542,8 +542,7 @@ func (p *statsPrinter) noteText(n stats.Note) string {
 }
 
 func (p *statsPrinter) costliestText(n stats.Note) string {
-	// The costliest of one session is all of it: nothing to look at.
-	if n.Cost == nil || n.Cost.USD == nil || p.s.Coverage.Sessions <= 1 {
+	if n.Cost == nil || n.Cost.USD == nil {
 		return ""
 	}
 	parts := []string{"Costliest session " + p.estimate(*n.Cost.USD)}

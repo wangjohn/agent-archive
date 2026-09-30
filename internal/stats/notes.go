@@ -16,7 +16,8 @@ const (
 	// the window's tokens. It carries Share, Tokens and Runs.
 	NoteSubagentShare NoteKind = "subagent_share"
 	// NoteCostliestSession says one session cost CostliestNoteMinShare or more
-	// of the window's priced spend, and more than CostliestNoteMinCost. It
+	// of the window's priced spend, and more than CostliestNoteMinCost, in a
+	// window of more than one session (the costliest of one is all of it). It
 	// carries Cost, CostShare, Project, Subagents and Drivers; the session
 	// itself is Highlights.CostliestSession.
 	NoteCostliestSession NoteKind = "costliest_session"
@@ -86,7 +87,7 @@ func headsUp(cov Coverage, total *bucket, sub *SubagentShare, costliest *Costlie
 	if n := subagentNote(cov, sub); n != nil {
 		notes = append(notes, *n)
 	}
-	if n := costliestNote(total, costliest); n != nil {
+	if n := costliestNote(cov, total, costliest); n != nil {
 		notes = append(notes, *n)
 	}
 	if n := unmeteredNote(cov); n != nil {
@@ -109,8 +110,10 @@ func subagentNote(cov Coverage, sub *SubagentShare) *Note {
 	return &Note{Kind: NoteSubagentShare, Share: &share, Tokens: &tokens, Runs: &runs}
 }
 
-func costliestNote(total *bucket, best *CostliestSession) *Note {
-	if best == nil || best.Cost.USD == nil || !total.cost.priced || total.cost.usd <= 0 {
+func costliestNote(cov Coverage, total *bucket, best *CostliestSession) *Note {
+	// The costliest of one session is all of it: nothing to look at, so a
+	// window of one session has no such note.
+	if cov.Sessions <= 1 || best == nil || best.Cost.USD == nil || !total.cost.priced || total.cost.usd <= 0 {
 		return nil
 	}
 	cost := *best.Cost.USD

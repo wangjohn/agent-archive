@@ -95,8 +95,8 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   when there is data for it.
 - **Heads up** is up to three things worth a look, in this order: subagents
   using a quarter or more of your tokens (a subagent run is counted as a run,
-  never as a session), one session costing a tenth or more of your spend and
-  what likely made it costly, sessions with no token data, and a cache hit
+  never as a session), one session costing a tenth or more of your spend (with
+  more than one session in the window) and what likely made it costly, sessions with no token data, and a cache hit
   rate under 60%.
 
 The colors are the terminal's own 16 (so they follow your theme): Claude Code
@@ -303,7 +303,7 @@ script can chart or check them: each `daily` entry has that day's estimated
 dearest day, `overview.cache_share` is the part of your tokens that were
 cache reads, and `heads_up` lists up to three things worth a second look
 (subagents using a quarter or more of your tokens, one session costing a tenth
-or more of your spend, sessions with no token data, a low cache-hit rate) as
+or more of your spend when the window has more than one session, sessions with no token data, a low cache-hit rate) as
 data, in that order of priority. A skill that a plugin provides is listed once
 as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
 and `skills` keeps the recorded names. Every field, rule and threshold is in
