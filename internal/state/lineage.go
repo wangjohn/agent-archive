@@ -138,41 +138,70 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // publishes that evidence. A session the collector no longer publishes is
 // forgotten regardless: its work would never be done.
 //
-// A non-nil removal is recorded (see RecordRemoval) under the same lock,
-// after that recheck and before anything is forgotten: a session kept alive
-// gets no record, and a record that cannot be written leaves the session
-// registered, so the caller's next attempt retries both.
+// A non-nil removal is recorded (see RecordRemoval) before anything is
+// forgotten, so a record that cannot be written leaves the session
+// registered and the caller's next attempt retries both. It is written
+// before the request lock is taken, not under it: the record is a durable
+// write, whose syncs can take seconds on a busy Mac, and a hook waits only
+// a second for that lock on the user's turn. A session the locked recheck
+// keeps alive has the record taken back, so it gets none. Until then, or
+// after a crash in between, the record sits beside a registration, where
+// nothing reads it: backfill consults removal records only for sessions
+// that are not registered.
 func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	// Unlocked, this check only spares a session that already has work a
+	// record written and taken back; the one under the lock decides.
+	if deferForWork {
+		if work, err := s.hasWork(archiveSessionID); err != nil || work {
+			return false, err
+		}
+	}
+	takeBack := func() error { return nil }
+	if removal != nil {
+		if takeBack, err = s.recordRemovalRevocably(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+			return false, err
+		}
+		if s.afterRemovalRecord != nil {
+			s.afterRemovalRecord()
+		}
+	}
+	started, err := s.forgetIdleLocked(archiveSessionID, nativeSessionID, deferForWork)
+	if !started {
+		// Nothing of the session is gone. A ForgetSession that failed part
+		// way keeps its record: the session may be unregistered already.
+		return false, errors.Join(err, takeBack())
+	}
+	return err == nil, err
+}
+
+// forgetIdleLocked is the part of ForgetIdleSession done under the request
+// lock: the recheck, then ForgetSession. started reports whether
+// ForgetSession was called.
+func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, deferForWork bool) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
 	if deferForWork {
-		_, requested, err := s.LoadRequest(archiveSessionID)
-		if err != nil {
-			return false, err
-		}
-		pending, err := s.HasPending(archiveSessionID)
-		if err != nil {
-			return false, err
-		}
-		if requested || pending {
-			return false, nil
-		}
-	}
-	if removal != nil {
-		if err := s.RecordRemoval(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+		if work, err := s.hasWork(archiveSessionID); err != nil || work {
 			return false, err
 		}
 	}
-	if err := s.ForgetSession(archiveSessionID, nativeSessionID); err != nil {
-		return false, err
+	return true, s.ForgetSession(archiveSessionID, nativeSessionID)
+}
+
+// hasWork reports whether a session has a request or a pending publication:
+// work the collector will do.
+func (s *Store) hasWork(archiveSessionID string) (bool, error) {
+	_, requested, err := s.LoadRequest(archiveSessionID)
+	if err != nil || requested {
+		return requested, err
 	}
-	return true, nil
+	return s.HasPending(archiveSessionID)
 }
 
 // orphanDirs are the directories whose files outlive a registration that is

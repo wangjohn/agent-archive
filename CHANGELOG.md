@@ -361,6 +361,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A hook that fires while a retention sweep is expiring its session no
+  longer fails with "another collector or setup is running" on a busy Mac,
+  leaving the session to expire without that turn. Retention wrote the
+  session's removal record while holding the lock the hook waits a second
+  for, and that write's disk syncs could take longer; it now writes the
+  record first and holds the lock only to recheck and forget the session.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

@@ -73,3 +73,87 @@ func TestSaveRequestForAForgottenSessionLeavesNoOrphan(t *testing.T) {
 		t.Fatalf("an orphan request was written: %v", err)
 	}
 }
+
+// The removal record is a durable write, whose syncs can outlast the second
+// a hook waits for the request lock, so ForgetIdleSession writes it before
+// taking that lock. A hook that arrives meanwhile finds the lock free, its
+// request keeps the session, and the record goes back to what it was: none,
+// or the one an earlier removal of the native session left.
+//
+// Regression: the record was written under the lock, and on a loaded machine
+// a concurrent hook's request failed with ErrBusy.
+func TestForgetIdleSessionWritesTheRemovalRecordOutsideTheRequestLock(t *testing.T) {
+	at := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	earlier := at.Add(-time.Hour)
+	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: at}
+	for _, tc := range []struct {
+		name     string
+		previous *RemovalRecord
+	}{
+		{"no earlier record", nil},
+		{"an earlier record", &RemovalRecord{Harness: "codex", Reason: RemovalReasonUndo, At: earlier}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := newTestStore(t)
+			reg := registration(t)
+			if err := local.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			if tc.previous != nil {
+				if err := local.RecordRemoval(tc.previous.Harness, reg.NativeSessionID, tc.previous.Reason, tc.previous.At); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var hookErr error
+			local.afterRemovalRecord = func() {
+				unlock, err := local.lockRequest(reg.ArchiveSessionID)
+				if err != nil {
+					hookErr = err
+					return
+				}
+				unlock()
+				hookErr = local.SaveRequest(reg.ArchiveSessionID, "stop", at)
+			}
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal)
+			if hookErr != nil {
+				t.Fatalf("the hook could not write its request while the record was written: %v", hookErr)
+			}
+			if err != nil || forgotten {
+				t.Fatalf("forgotten=%t err=%v, want the session kept", forgotten, err)
+			}
+			if _, registered, _ := local.LoadRegistration(reg.ArchiveSessionID); !registered {
+				t.Fatal("the session was forgotten over the hook's request")
+			}
+			record, found, err := local.Removal("codex", reg.NativeSessionID)
+			switch {
+			case err != nil:
+				t.Fatal(err)
+			case tc.previous == nil && found:
+				t.Fatalf("a kept session has a removal record: %#v", record)
+			case tc.previous != nil && (!found || record.Reason != tc.previous.Reason || !record.At.Equal(tc.previous.At)):
+				t.Fatalf("record=%#v found=%t, want the earlier %#v back", record, found, *tc.previous)
+			}
+
+			// With the hook's request handled, the next attempt forgets it.
+			local.afterRemovalRecord = nil
+			if _, err := local.CompleteRequest(reg.ArchiveSessionID, mustRequestToken(t, local, reg.ArchiveSessionID)); err != nil {
+				t.Fatal(err)
+			}
+			if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
+				t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
+			}
+			if record, found, err := local.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != RemovalReasonRetention || !record.At.Equal(at) {
+				t.Fatalf("record=%#v found=%t err=%v", record, found, err)
+			}
+		})
+	}
+}
+
+func mustRequestToken(t *testing.T, local *Store, id string) string {
+	t.Helper()
+	req, found, err := local.LoadRequest(id)
+	if err != nil || !found {
+		t.Fatalf("request: found=%t err=%v", found, err)
+	}
+	return req.Token
+}

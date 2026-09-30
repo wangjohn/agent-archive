@@ -69,6 +69,38 @@ func (s *Store) RecordRemoval(harness, nativeSessionID string, reason RemovalRea
 	return nil
 }
 
+// recordRemovalRevocably is RecordRemoval, returning the function that
+// takes the record back: it restores the record it replaced, if there was
+// one, and removes it otherwise. The callers that write removal records,
+// retention and backfill undo, hold collector.lock, so no other record
+// replaces this one before it is taken back.
+func (s *Store) recordRemovalRevocably(harness, nativeSessionID string, reason RemovalReason, at time.Time) (takeBack func() error, err error) {
+	path := removalPath(s.home, harness, nativeSessionID)
+	previous, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		takeBack = func() error {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("take back removal record: %w", err)
+			}
+			return nil
+		}
+	case err != nil:
+		return nil, fmt.Errorf("read removal record: %w", err)
+	default:
+		takeBack = func() error {
+			if err := local.WriteBytes(path, previous); err != nil {
+				return fmt.Errorf("restore removal record: %w", err)
+			}
+			return nil
+		}
+	}
+	if err := s.RecordRemoval(harness, nativeSessionID, reason, at); err != nil {
+		return nil, err
+	}
+	return takeBack, nil
+}
+
 // Removal reports the record for a native session, if any.
 func (s *Store) Removal(harness, nativeSessionID string) (RemovalRecord, bool, error) {
 	if strings.TrimSpace(harness) == "" || strings.TrimSpace(nativeSessionID) == "" {
