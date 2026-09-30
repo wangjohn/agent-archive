@@ -76,8 +76,12 @@ func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.") {
-		t.Fatalf("status does not explain unknown trust:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "  ! Codex   hooks installed   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {
+		t.Fatalf("status does not say how to approve the hooks:\n%s", stdout.String())
+	}
+	stdout.Reset()
+	if code := runStatusCommand([]string{"--verbose"}, &stdout, &stderr, env); code != 0 || !strings.Contains(stdout.String(), "Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.") {
+		t.Fatalf("status --verbose does not explain unknown trust:\n%s", stdout.String())
 	}
 	stdout.Reset()
 	if code := runStatusCommand([]string{"--json"}, &stdout, &stderr, env); code != 0 || !strings.Contains(stdout.String(), `"trust": "unknown"`) {

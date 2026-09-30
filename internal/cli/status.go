@@ -21,6 +21,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -85,9 +86,55 @@ type appStatus struct {
 	OtherInstallations []string `json:"other_installations,omitempty"`
 	Name               string   `json:"name"`
 	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
-	State           string    `json:"state"`
-	Sessions        int       `json:"sessions"`
-	LastPublishedAt time.Time `json:"last_published_at,omitzero"`
+	State string `json:"state"`
+	// Sessions counts the app's sessions its hooks registered, subagents
+	// included; SubagentSessions counts the subagents among them.
+	Sessions         int `json:"sessions"`
+	SubagentSessions int `json:"subagent_sessions"`
+	// ImportedSessions counts the app's top-level sessions agent-archive
+	// backfill imported that the configuration publishes (AcceptSession).
+	ImportedSessions int `json:"imported_sessions"`
+	// UploadingSessions counts the app's top-level sessions, captured or
+	// imported, with work not yet published (state.Outstanding's Pending)
+	// that is not a recorded capture gap; Uploading lists them.
+	UploadingSessions int                `json:"uploading_sessions"`
+	Uploading         []uploadingSession `json:"uploading"`
+	// WaitingForTranscriptSessions counts the app's top-level sessions
+	// that are pending only because no transcript was ever written for
+	// them (state.Outstanding's WaitingForTranscript), such as a Cursor
+	// chat with transcripts turned off; they are not uploading.
+	WaitingForTranscriptSessions int       `json:"waiting_for_transcript_sessions"`
+	LastPublishedAt              time.Time `json:"last_published_at,omitzero"`
+	// importedWithIssues counts the app's imports with a capture gap or a
+	// failed last scan, which the app's own gaps leave out.
+	importedWithIssues int
+	// otherProjects counts sessions whose project has no configured pair
+	// (a configuration without projects), for status APP's project table.
+	otherProjects []projectCaptureStatus
+}
+
+// uploadingState is how far an uploading session has got, as status --json
+// reports it.
+type uploadingState string
+
+const (
+	// uploadingPending: published before, with newer work not yet published.
+	uploadingPending uploadingState = "uploading"
+	// uploadingFirst: never published yet.
+	uploadingFirst uploadingState = "first_upload"
+	// uploadingFailing: the last pass recorded an issue for the session
+	// (Issue names its kind).
+	uploadingFailing uploadingState = "failing"
+)
+
+// uploadingSession is one top-level session with work not yet published.
+type uploadingSession struct {
+	StartedAt        time.Time      `json:"started_at"`
+	ArchiveSessionID string         `json:"archive_session_id"`
+	Project          string         `json:"project"`
+	State            uploadingState `json:"state"`
+	Issue            string         `json:"issue,omitempty"`
+	Imported         bool           `json:"imported,omitempty"`
 }
 
 type projectCaptureStatus struct {
@@ -103,6 +150,11 @@ type projectCaptureStatus struct {
 	VerifiedSessions  int       `json:"verified_sessions"`
 	VerificationState string    `json:"verification_state"`
 	VerifiedAt        time.Time `json:"verified_at,omitzero"`
+	// sessions, imported and uploading count the project's top-level
+	// sessions as the app's counts of the same names do, for status APP.
+	sessions  int
+	imported  int
+	uploading int
 }
 
 type statusView struct {
@@ -163,14 +215,32 @@ type statusView struct {
 	// userHome is the home folder readStatus resolved, for the text status
 	// to show paths under it as ~; empty before setup.
 	userHome string
+	// lastErrorProblem is the problem chooseNextStep derived from the last
+	// pass's errors, and lastErrorByIssue whether it came from the kinds of
+	// the failed sessions (issueHeadline). While problem is still it, the
+	// headline states those errors and the Storage section need not repeat
+	// them.
+	lastErrorProblem string
+	lastErrorByIssue bool
+	// importedApps are apps whose sessions were imported without hooks
+	// (config.ImportedHarnesses), with their import counts.
+	importedApps []appStatus
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
-	if !fs.parseFlagsOnly(args) {
+	appArg, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
+	}
+	app := strings.ToLower(appArg)
+	if appArg != "" && !slices.Contains(allHarnesses, app) {
+		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(allHarnesses, ", "))
+	}
+	if app != "" && *jsonOut {
+		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")
 	}
 	view, err := readStatus(env)
 	if err != nil {
@@ -189,7 +259,11 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
-	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose})
+	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
+	if app != "" {
+		return printAppStatus(stdout, stderr, view, app, sc)
+	}
+	printStatus(stdout, view, sc)
 	return 0
 }
 
@@ -283,6 +357,14 @@ func readStatus(env Env) (view statusView, err error) {
 	view.Collector.ExpiredSubagents = state.CarryExpiredSubagents(view.Collector.ExpiredSubagents, nil, env.now())
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
+	}
+	for _, name := range cfg.ImportedHarnesses {
+		if len(cfg.Harnesses) == 0 || slices.Contains(cfg.Harnesses, name) {
+			continue
+		}
+		if app := sessions.appStatus(name, cfg, home, view.Collector.SessionIssues); app.ImportedSessions > 0 {
+			view.importedApps = append(view.importedApps, app)
+		}
 	}
 	userHome, err := env.userHomeDir()
 	if err != nil {
@@ -395,6 +477,8 @@ type statusSessions struct {
 	store *state.Store
 	regs  []archive.SessionRegistration
 	skip  func(id string, err error)
+	// owed is what each accepted or imported session still owes.
+	owed map[string]state.Outstanding
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -456,13 +540,13 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
 // project and overall, from hook observation to read-back verification.
 func (s statusSessions) appStatus(name string, cfg config.Config, home string, issues map[string]string) appStatus {
-	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified"}
+	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified", Uploading: []uploadingSession{}}
 	pairIndex := map[string]int{}
 	for _, project := range cfg.Archive.Projects {
 		if !project.Included {
@@ -481,12 +565,48 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		})
 	}
 	var readBackIssue verificationOutcome
+	others := map[string]int{}
+	// project is where a session's counts go: its configured pair, or a
+	// row of its own when no configured project owns its root.
+	project := func(root string) *projectCaptureStatus {
+		if position, found := pairIndex[root]; found {
+			return &app.Projects[position]
+		}
+		position, found := others[root]
+		if !found {
+			position = len(app.otherProjects)
+			others[root] = position
+			app.otherProjects = append(app.otherProjects, projectCaptureStatus{ProjectRoot: root, VerificationState: "not_verified"})
+		}
+		return &app.otherProjects[position]
+	}
 	for _, reg := range s.regs {
-		// An import is not evidence that this app's hooks work: it
-		// never counts toward the app's sessions, hook observation,
-		// or verification. The Imported line reports it instead.
-		if reg.Imported() || reg.Harness.Name != name || !cfg.AcceptSession(reg) {
+		// A session is the app's when the app registered it and the
+		// configuration publishes it now (AcceptSession), as the
+		// collector decides.
+		if reg.Harness.Name != name || !cfg.AcceptSession(reg) {
 			continue
+		}
+		if reg.Imported() {
+			// An import is not evidence that this app's hooks work: it
+			// never counts toward the app's sessions, hook observation,
+			// or verification, only toward its imports and uploads.
+			// Subagents go with their parent.
+			if reg.ParentSessionID == "" {
+				app.ImportedSessions++
+				project(reg.ProjectRoot).imported++
+				if s.owed[reg.ArchiveSessionID].Blocked || issues[reg.ArchiveSessionID] != "" {
+					app.importedWithIssues++
+				}
+				s.addUploading(&app, project(reg.ProjectRoot), reg, issues)
+			}
+			continue
+		}
+		if reg.ParentSessionID != "" {
+			app.SubagentSessions++
+		} else {
+			project(reg.ProjectRoot).sessions++
+			s.addUploading(&app, project(reg.ProjectRoot), reg, issues)
 		}
 		// AcceptSession only admits a root without a configured pair
 		// under its legacy branch (no projects configured at all). The
@@ -499,7 +619,55 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		s.addSession(&app, pair, reg, cfg, home, issues, &readBackIssue)
 	}
 	finishReadBack(&app, readBackIssue)
+	sortUploading(app.Uploading)
 	return app
+}
+
+// addUploading lists a top-level session of app, and counts it for its
+// project, when it has work not yet published: state.Outstanding's Pending,
+// the definition every pending count uses, less a recorded capture gap,
+// which the app's gaps report instead.
+func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStatus, reg archive.SessionRegistration, issues map[string]string) {
+	o, found := s.owed[reg.ArchiveSessionID]
+	if !found || !o.Pending() || o.Blocked {
+		return
+	}
+	if o.WaitingForTranscript {
+		// Nothing of it can be uploaded until the app writes a transcript,
+		// which a Cursor chat with transcripts turned off never does.
+		app.WaitingForTranscriptSessions++
+		return
+	}
+	session := uploadingSession{
+		ArchiveSessionID: reg.ArchiveSessionID, Project: reg.ProjectRoot, StartedAt: reg.SessionStartedAt,
+		State: uploadingPending, Imported: reg.Imported(),
+	}
+	switch issue := issues[reg.ArchiveSessionID]; {
+	case issue != "":
+		session.State, session.Issue = uploadingFailing, issue
+	case !o.Published:
+		session.State = uploadingFirst
+	}
+	app.Uploading = append(app.Uploading, session)
+	app.UploadingSessions++
+	project.uploading++
+}
+
+// sortUploading puts failing sessions first, then the most recently
+// started.
+func sortUploading(sessions []uploadingSession) {
+	slices.SortStableFunc(sessions, func(a, b uploadingSession) int {
+		if a.State != b.State && (a.State == uploadingFailing || b.State == uploadingFailing) {
+			if a.State == uploadingFailing {
+				return -1
+			}
+			return 1
+		}
+		if started := b.StartedAt.Compare(a.StartedAt); started != 0 {
+			return started
+		}
+		return strings.Compare(a.ArchiveSessionID, b.ArchiveSessionID)
+	})
 }
 
 // addSession adds one accepted session's evidence to app and to its project
@@ -815,10 +983,11 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 			view.State = "Needs attention"
 			view.problem = problem
 			view.Next = next
+			view.lastErrorProblem, view.lastErrorByIssue = problem, true
 		}
 	default:
 		view.State = "Needs attention"
-		view.problem = "The last sync failed"
+		view.problem = generalSyncProblem
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
 		// A Keychain failure has one specific fix; status.json keeps only
 		// the error text, so it is recognized from that.
@@ -829,6 +998,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 			view.problem = "The background collector couldn't get AWS credentials"
 			view.Next = "The background collector couldn't get credentials from your AWS profile's credential_process. It runs without most of your shell's environment: if the helper needs a setting the collector doesn't get (see Environment variables in the configuration reference), put it in the helper's own configuration; if it needs you to unlock it or sign in, do that. Check with agent-archive sync, then run agent-archive setup again from a shell where it works."
 		}
+		view.lastErrorProblem = view.problem
 	}
 	if len(background.environmentProblems) > 0 {
 		view.State = "Needs attention"
@@ -1042,7 +1212,7 @@ func statusCode(label string) string {
 
 // statusScreen is what the text status is drawn with: the output's style,
 // the clock times are shown relative to, the home folder shown as ~, and
-// whether to add the Details section (status --verbose).
+// whether to add the rows and Details section status --verbose adds.
 type statusScreen struct {
 	style   textStyle
 	now     time.Time
@@ -1050,17 +1220,19 @@ type statusScreen struct {
 	verbose bool
 }
 
+// uploadingRowsShown is how many uploading sessions the default status
+// lists under an app; status APP lists them all.
+const uploadingRowsShown = 5
+
 // printStatus writes the text status: the overall state, what to do about
 // it, the Capture and Storage sections, and anything else worth knowing.
-// Codes, exact times and raw errors are left to the Details section that
-// status --verbose adds, and to status --json.
+// Its length does not grow with the number of projects: per-project rows,
+// the included projects, skill evidence and the Imported line are left to
+// status --verbose, which also adds the Details section with the codes,
+// exact times and raw errors, and to status --json.
 func printStatus(out io.Writer, view statusView, sc statusScreen) {
 	s := sc.style
-	terminal.Printf(out, "%s  %s\n", s.bold("Agent Archive"), sc.stateLabel(view.State))
-	if view.State != "Ready" {
-		terminal.Println(out)
-		sc.printNextStep(out, view)
-	}
+	sc.printHeader(out, view)
 	if !view.configured {
 		return
 	}
@@ -1068,29 +1240,76 @@ func printStatus(out io.Writer, view statusView, sc statusScreen) {
 	sc.printRows(out, sc.captureRows(view))
 	terminal.Printf(out, "\n%s\n", s.bold("Storage"))
 	sc.printRows(out, sc.storageRows(view))
-	if notes := sc.noteRows(view); len(notes) > 0 {
-		terminal.Printf(out, "\n%s\n", s.bold("Notes"))
-		sc.printRows(out, notes)
-	}
+	sc.printNotes(out, view)
 	if sc.verbose {
 		terminal.Printf(out, "\n%s\n", s.bold("Details"))
 		printStatusDetails(out, view)
 	}
 	terminal.Println(out)
-	if view.State == "Ready" {
-		for i, line := range sc.proseLines(view.Next) {
-			lead := s.dim("Next:") + " "
-			if i > 0 {
-				lead = "      "
-			}
-			terminal.Println(out, s.hang(lead, line))
-		}
-	}
 	if sc.verbose {
+		// The short screen leaves out the tip a Ready status has in place
+		// of a problem; --verbose keeps it.
+		if view.State == "Ready" {
+			for i, line := range sc.proseLines(view.Next) {
+				lead := s.dim("Next:") + " "
+				if i > 0 {
+					lead = "      "
+				}
+				terminal.Println(out, s.hang(lead, line))
+			}
+		}
 		terminal.Printf(out, "%s %s\n", s.dim("As JSON:"), s.cmd("agent-archive status --json"))
 		return
 	}
-	terminal.Printf(out, "%s %s\n", s.dim("Details:"), s.cmd("agent-archive status --verbose"))
+	commands := []string{"agent-archive status --verbose"}
+	if app := footerApp(view); app != "" {
+		commands = append(commands, "agent-archive status "+app)
+	}
+	sc.printFooter(out, commands...)
+}
+
+// printFooter writes the commands that show more, each as typed, on one
+// dim line, or one per line when the terminal is too narrow for that.
+func (sc statusScreen) printFooter(out io.Writer, commands ...string) {
+	line := "More: " + strings.Join(commands, " · ")
+	if sc.style.width > 0 && visibleWidth(line) > sc.style.width {
+		line = "More: " + strings.Join(commands, "\n      ")
+	}
+	for text := range strings.SplitSeq(line, "\n") {
+		terminal.Println(out, sc.style.dim(text))
+	}
+}
+
+// printHeader writes the overall state and, unless all is well, the one
+// thing to do now.
+func (sc statusScreen) printHeader(out io.Writer, view statusView) {
+	terminal.Printf(out, "%s  %s\n", sc.style.bold("Agent Archive"), sc.stateLabel(view.State))
+	if view.State != "Ready" {
+		terminal.Println(out)
+		sc.printNextStep(out, view)
+	}
+}
+
+// printNotes writes the Notes section, when there is anything in it.
+func (sc statusScreen) printNotes(out io.Writer, view statusView) {
+	if notes := sc.noteRows(view); len(notes) > 0 {
+		terminal.Printf(out, "\n%s\n", sc.style.bold("Notes"))
+		sc.printRows(out, notes)
+	}
+}
+
+// footerApp is the app the footer suggests status APP for: the first with
+// sessions, else the first configured, or "" with none.
+func footerApp(view statusView) string {
+	for _, app := range view.Apps {
+		if app.Sessions > 0 || app.ImportedSessions > 0 {
+			return app.Name
+		}
+	}
+	if len(view.Apps) > 0 {
+		return view.Apps[0].Name
+	}
+	return ""
 }
 
 // stateLabel is the overall state after a dot, green when all is well and
@@ -1111,10 +1330,11 @@ func (sc statusScreen) stateLabel(state string) string {
 // how to fix it.
 func (sc statusScreen) printNextStep(out io.Writer, view statusView) {
 	indent := "    "
-	if view.problem == "" {
+	problem, _ := sc.headline(view)
+	if problem == "" {
 		indent = "  "
 	} else {
-		terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", sc.tilde(view.problem)))
+		terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", sc.tilde(problem)))
 	}
 	for _, line := range sc.proseLines(view.Next) {
 		terminal.Println(out, sc.style.hang(indent, line))
@@ -1187,15 +1407,32 @@ func (sc statusScreen) printRows(out io.Writer, rows []statusRow) {
 	}
 }
 
-// captureRows are the Capture section: one row per app, then what capture
-// skipped, the included projects, and imports.
+// captureRows are the Capture section: one row per app, with the sessions
+// it is uploading under it, then what capture skipped and apps whose
+// sessions were only imported. status --verbose adds the included
+// projects, skill evidence and imports.
 func (sc statusScreen) captureRows(view statusView) []statusRow {
 	var rows []statusRow
 	for _, app := range view.Apps {
-		rows = append(rows, sc.appRow(app))
+		rows = append(rows, sc.appRow(app, uploadingRowsShown))
+	}
+	if len(view.Apps) == 0 {
+		// A configuration without apps (an older one written by hand):
+		// the collector still publishes what is registered.
+		text := "No apps selected"
+		if n := view.Collector.PendingCount; n > 0 {
+			text += fmt.Sprintf(" · %d pending", n)
+		}
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{text}})
+	}
+	for _, app := range view.importedApps {
+		rows = append(rows, sc.importedAppRow(app, uploadingRowsShown))
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
 		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s skipped a session in %s %s: %s", appName(diagnostic.Harness), sc.path(diagnostic.ProjectRoot), relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
+	}
+	if !sc.verbose {
+		return rows
 	}
 	projects := "none included"
 	if len(view.Projects) > 0 {
@@ -1211,7 +1448,7 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Agent skills: turned off; " + sc.style.cmd("agent-archive setup --skills") + " turns them on"}})
 	}
 	if view.ImportedSessions > 0 {
-		imported := fmt.Sprintf("Imported: %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
+		imported := fmt.Sprintf("Imported (all destinations): %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
 			imported += fmt.Sprintf(", %d with a capture gap or failed scan", view.ImportedWithIssues)
 		}
@@ -1223,52 +1460,56 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	return rows
 }
 
-// appRow is one app's capture: its hooks, how far its sessions have got,
-// and anything that needs a closer look.
-func (sc statusScreen) appRow(app appStatus) statusRow {
+// appRow is one app's capture: its version and hooks, how many sessions it
+// has captured, imported and is uploading, the uploading sessions (at most
+// limit of them, or all when limit is 0), and anything that needs a closer
+// look.
+func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	s := sc.style
 	name := appName(app.Name)
-	if app.InstalledVersion != "" {
-		name += " " + app.InstalledVersion
+	if version := displayVersion(app.InstalledVersion); version != "" {
+		name += " " + version
 	}
-	row := statusRow{mark: s.okMark(), cells: []string{name, hooksLabel(app.Hooks)}}
+	row := statusRow{mark: s.okMark(), cells: []string{name, hooksLabel(app.Hooks)}, detail: appCounts(app)}
+	hint := ""
+	if _, ok := hookApproval[app.Name]; ok && app.Hooks == "installed" && !app.HookObserved {
+		hint = "Approve the archive hooks with " + s.cmd("/hooks") + " in " + appName(app.Name) + "."
+		if sc.verbose {
+			hint = fmt.Sprintf(hookApproval[app.Name], s.cmd("/hooks"))
+		}
+		// Installed, but whether they run is up to the app until a session
+		// shows they do: not yet "on".
+		row.cells[1] = "hooks installed"
+	}
+	freshStart := app.Capabilities.FreshStart.State == capabilityUnavailable
 	switch {
 	case app.Hooks == hooksBroken:
 		row.mark = s.failMark()
 	case app.Hooks != "installed", app.readBackFailure.Attempts > 0:
 		row.mark = s.warnMark()
+	case app.Sessions == 0 && (hint != "" || freshStart):
+		// Nothing captured yet, and something the user can do about it.
+		row.mark = s.warnMark()
 	}
-	//lint:ignore LV1001 an app's state is an open-ended label (appStatus.State); statusCode maps it to the stable code
-	switch app.State {
-	case "published; source verified":
-		row.detail = plural(app.PublishedSessions, "session") + " archived, verified " + relativeAge(sc.now, app.VerifiedAt)
-	case "published; read-back pending":
-		row.detail = "uploaded, read-back pending"
-		if !app.VerifiedAt.IsZero() {
-			row.detail += " (" + readBackProgress(app) + ")"
-		}
-	case "captured locally":
-		row.detail = "captured, not uploaded yet"
-	case "hook observed; waiting for capture":
-		row.detail = "session seen, not captured yet"
-	default:
-		row.detail = "waiting for first session"
+	if hint != "" {
+		row.notes = append(row.notes, statusNote{text: hint})
 	}
-	if approve, ok := hookApproval[app.Name]; ok && app.Hooks == "installed" && !app.HookObserved {
-		row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf(approve, s.cmd("/hooks"))})
-	}
-	if app.Capabilities.FreshStart.State == capabilityUnavailable {
+	if freshStart {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
 	}
-	if len(app.Projects) > 1 && !app.ReadBackVerified {
-		for _, pair := range app.Projects {
-			mark := sc.info()
-			if pair.ReadBackVerified {
-				mark = s.okMark()
+	if sc.verbose {
+		row.notes = append(row.notes, statusNote{sc.info(), appProgress(sc.now, app)})
+		if len(app.Projects) > 1 && !app.ReadBackVerified {
+			for _, pair := range app.Projects {
+				mark := sc.info()
+				if pair.ReadBackVerified {
+					mark = s.okMark()
+				}
+				row.notes = append(row.notes, statusNote{mark, sc.path(pair.ProjectRoot) + ": " + pairProgress(pair)})
 			}
-			row.notes = append(row.notes, statusNote{mark, sc.path(pair.ProjectRoot) + ": " + pairProgress(pair)})
 		}
 	}
+	row.notes = append(row.notes, sc.uploadingNotes(app, limit)...)
 	if failure := app.readBackFailure; failure.Attempts > 0 {
 		row.notes = append(row.notes, statusNote{s.warnMark(), sc.readBackFailure(failure)})
 	}
@@ -1279,10 +1520,171 @@ func (sc statusScreen) appRow(app appStatus) statusRow {
 	case supportReasonVersionSourceMismatch:
 		row.notes = append(row.notes, statusNote{sc.info(), "The installed version and the sessions' versions are numbered differently, so they can't be compared."})
 	}
-	if len(app.CaptureGaps) > 0 {
-		row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf("%s with a capture gap (%s recorded; details in status --json)", plural(app.SessionsWithCaptureGaps, "session"), plural(len(app.CaptureGaps), "gap"))})
-	}
+	row.notes = append(row.notes, sc.gapNotes(app)...)
 	return row
+}
+
+// importedAppRow is an app whose sessions were imported but whose hooks
+// were never set up: its imports, and the ones it is uploading.
+func (sc statusScreen) importedAppRow(app appStatus, limit int) statusRow {
+	// Its hooks were never set up, so there are no sessions of its own to
+	// count.
+	row := statusRow{mark: sc.info(), cells: []string{appName(app.Name), "imported only"}, detail: strings.TrimPrefix(appCounts(app), "no sessions yet · ")}
+	row.notes = append(row.notes, sc.uploadingNotes(app, limit)...)
+	row.notes = append(row.notes, sc.gapNotes(app)...)
+	return row
+}
+
+// gapNotes count an app's sessions and imports with capture gaps; status
+// --json has the gaps themselves.
+func (sc statusScreen) gapNotes(app appStatus) []statusNote {
+	var notes []statusNote
+	if n := app.WaitingForTranscriptSessions; n > 0 {
+		unit := "session"
+		if app.Name == "cursor" {
+			unit = "chat"
+		}
+		text := plural(n, unit) + " have no transcript yet"
+		if n == 1 {
+			text = "1 " + unit + " has no transcript yet"
+		}
+		if app.Name == "cursor" {
+			text += " (a chat with transcripts turned off in Cursor never gets one)"
+		}
+		notes = append(notes, statusNote{sc.info(), text})
+	}
+	if len(app.CaptureGaps) > 0 {
+		text := plural(app.SessionsWithCaptureGaps, "session") + " have capture gaps"
+		if app.SessionsWithCaptureGaps == 1 {
+			text = "1 session has capture gaps"
+		}
+		if sc.verbose {
+			text = fmt.Sprintf("%s with a capture gap (%s recorded; details in status --json)", plural(app.SessionsWithCaptureGaps, "session"), plural(len(app.CaptureGaps), "gap"))
+		}
+		notes = append(notes, statusNote{sc.info(), text})
+	}
+	if n := app.importedWithIssues; n > 0 {
+		text := fmt.Sprintf("%d imported sessions have a capture gap or failed scan", n)
+		if n == 1 {
+			text = "1 imported session has a capture gap or failed scan"
+		}
+		notes = append(notes, statusNote{sc.info(), text})
+	}
+	return notes
+}
+
+// appCounts words how many top-level sessions an app's hooks captured (and
+// their subagents), how many it imported, and how many it is uploading.
+func appCounts(app appStatus) string {
+	sessions := app.Sessions - app.SubagentSessions
+	parts := []string{"no sessions yet"}
+	if app.Sessions > 0 {
+		parts[0] = plural(sessions, "session")
+		if app.SubagentSessions > 0 {
+			parts[0] += " (+" + plural(app.SubagentSessions, "subagent") + ")"
+		}
+	}
+	if app.ImportedSessions > 0 {
+		parts = append(parts, fmt.Sprintf("%d imported", app.ImportedSessions))
+	}
+	if app.UploadingSessions > 0 {
+		parts = append(parts, fmt.Sprintf("%d uploading", app.UploadingSessions))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// appProgress words how far an app's captured sessions have got, as status
+// --verbose shows it under the app.
+func appProgress(now time.Time, app appStatus) string {
+	//lint:ignore LV1001 an app's state is an open-ended label (appStatus.State); statusCode maps it to the stable code
+	switch app.State {
+	case "published; source verified":
+		return plural(app.PublishedSessions, "session") + " archived, verified " + relativeAge(now, app.VerifiedAt)
+	case "published; read-back pending":
+		if !app.VerifiedAt.IsZero() {
+			return "uploaded, read-back pending (" + readBackProgress(app) + ")"
+		}
+		return "uploaded, read-back pending"
+	case "captured locally":
+		return "captured, not uploaded yet"
+	case "hook observed; waiting for capture":
+		return "session seen, not captured yet"
+	}
+	return "waiting for first session"
+}
+
+// displayVersion is an installed version as the app line shows it: the
+// version number alone, without the program name some apps print around
+// it ("codex-cli 0.155.0", "2.1.283 (Claude Code)").
+func displayVersion(version string) string {
+	for field := range strings.FieldsSeq(version) {
+		if field[0] >= '0' && field[0] <= '9' {
+			return field
+		}
+	}
+	return version
+}
+
+// uploadingNotes are the lines under an app for the sessions it is
+// uploading: each one's project and start, and only what is unusual about
+// it. After limit of them (none when 0), a line counts the rest.
+func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
+	shown := app.Uploading
+	if limit > 0 && len(shown) > limit {
+		shown = shown[:limit]
+	}
+	width := 0
+	for _, session := range shown {
+		width = max(width, visibleWidth(sc.path(session.Project)))
+	}
+	notes := make([]statusNote, 0, len(shown)+1)
+	for _, session := range shown {
+		project := sc.path(session.Project)
+		text := project + strings.Repeat(" ", width-visibleWidth(project)+3) + sc.started(session.StartedAt)
+		mark := " "
+		switch session.State {
+		case uploadingFailing:
+			mark = sc.style.warnMark()
+			text += "   " + issueWhat(session.Issue)
+		case uploadingFirst:
+			text += "   waiting for its first upload"
+		case uploadingPending:
+			// The usual state: nothing to add.
+		}
+		notes = append(notes, statusNote{mark, text})
+	}
+	if rest := len(app.Uploading) - len(shown); rest > 0 {
+		notes = append(notes, statusNote{" ", fmt.Sprintf("… and %d more (agent-archive status %s)", rest, app.Name)})
+	}
+	return notes
+}
+
+// issueWhat words a session's issue kind, as the last error does after a
+// count.
+func issueWhat(code string) string {
+	label, ok := issueLabels[code]
+	if !ok {
+		label = issueLabels[issueCaptureFailed]
+	}
+	return label.what
+}
+
+// started is when a session started, in the clock's time zone: the time
+// today, the day otherwise.
+func (sc statusScreen) started(t time.Time) string {
+	if t.IsZero() {
+		return "start unknown"
+	}
+	local := t.In(sc.now.Location())
+	year, month, day := local.Date()
+	nowYear, nowMonth, nowDay := sc.now.Date()
+	switch {
+	case year == nowYear && month == nowMonth && day == nowDay:
+		return "started " + local.Format("15:04")
+	case year == nowYear:
+		return "started " + local.Format("Jan 2")
+	}
+	return "started " + local.Format("Jan 2 2006")
 }
 
 // hookApproval explains, for an app that runs new hooks only once the user
@@ -1300,6 +1702,8 @@ func hooksLabel(state string) string {
 		return "hooks missing"
 	case "unknown":
 		return "hooks not checked"
+	case "installed":
+		return "hooks on"
 	}
 	return "hooks " + state
 }
@@ -1337,30 +1741,177 @@ func (sc statusScreen) readBackFailure(failure verificationEvidence) string {
 	return fmt.Sprintf("%s (%s, %s so far)", text, retry, plural(failure.Attempts, "attempt"))
 }
 
-// storageRows are the Storage section: the destination, the bucket's
-// privacy, the background collector, the last error, and uploads.
+// storageRows are the Storage section: the destination with its last
+// upload, the background collector, the bucket's privacy, and the last
+// pass's errors the headline does not already state. status --verbose adds
+// every error, when access was checked, and the pending count.
 func (sc statusScreen) storageRows(view statusView) []statusRow {
 	var rows []statusRow
+	privacy := statusRow{}
 	if view.Storage != "" {
-		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
+		destination := sc.destinationRow(view)
+		private := view.PrivacyEvidence.State == "verified_private"
+		if destination.mark == sc.style.okMark() && !sc.verbose && (private || !view.Collector.LastPublishedAt.IsZero()) {
+			// When it was checked matters less than when it last worked.
+			destination.detail = "reachable"
+		}
+		if failed, ok := lastPassStorageDetail(view); ok && destination.mark == sc.style.okMark() {
+			// The headline says the last pass failed on storage; an older
+			// successful check must not say it is fine.
+			destination.mark, destination.detail = sc.style.warnMark(), failed
+		}
+		if private && !sc.verbose {
+			destination.detail += " · bucket private"
+		} else {
+			privacy = sc.privacyRow(view.PrivacyEvidence)
+		}
+		if !view.Collector.LastPublishedAt.IsZero() {
+			destination.detail += " · uploaded " + relativeAge(sc.now, view.Collector.LastPublishedAt)
+		}
+		rows = append(rows, destination)
 	}
 	rows = append(rows, sc.backgroundRow(view))
+	if privacy.mark != "" {
+		rows = append(rows, privacy)
+	}
 	// Problems with nothing to do (see issueHeadline) are information, not
 	// failures.
 	mark, quiet := sc.style.failMark(), false
 	if problem, _, ok := issueHeadline(view.Collector); ok && problem == "" {
 		mark, quiet = sc.info(), true
 	}
-	for _, text := range lastErrorRows(view.Collector) {
+	_, stated := sc.headline(view)
+	for i, text := range lastErrorRows(view.Collector) {
+		if stated[i] && !sc.verbose {
+			continue
+		}
 		if quiet {
 			text = "Last pass: " + strings.TrimPrefix(text, "Last error: ")
 		}
 		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
-	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
-	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
+	if sc.verbose {
+		uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
+	}
 	return rows
 }
+
+// headline is the problem status leads with, and which of lastErrorRows it
+// states, so the Storage section need not repeat them: while the problem is
+// the one chooseNextStep derived from the last pass's errors, a headline
+// from the failed sessions' kinds states their summary (not the size-limit
+// notice beside it), and the general storage headline states a lone error,
+// whose cause it then names. Several errors under the general headline are
+// each still shown.
+func (sc statusScreen) headline(view statusView) (problem string, stated map[int]bool) {
+	problem, stated = view.problem, map[int]bool{}
+	if problem == "" || problem != view.lastErrorProblem {
+		return problem, stated
+	}
+	rows := lastErrorRows(view.Collector)
+	if view.lastErrorByIssue {
+		// The headline names one kind. The summary says no more only when
+		// that is the one kind with a headline; other kinds with nothing
+		// to do add nothing the user must act on.
+		if len(headlineIssueCodes(view.Collector.IssueCounts)) != 1 {
+			return problem, stated
+		}
+		for i, recorded := range view.Collector.LastErrors {
+			if !collector.IsSizeLimitProblem(recorded) {
+				stated[i] = true
+			}
+		}
+		return problem, stated
+	}
+	if len(rows) != 1 {
+		return problem, stated
+	}
+	stated[0] = true
+	if problem == generalSyncProblem {
+		cause, raw := strings.CutPrefix(rows[0], "Last error: ")
+		if !raw {
+			// A plain cause (storageErrorCause) reads on after the colon.
+			cause = strings.ToLower(cause[:1]) + cause[1:]
+		}
+		problem += ": " + cause
+	}
+	return problem, stated
+}
+
+// headlineIssueCodes are the issue codes of the last pass that have a
+// headline of their own (issueLabel.headline), each counted at least once.
+func headlineIssueCodes(counts map[string]int) []string {
+	var codes []string
+	for _, code := range issueCodes {
+		if counts[code] > 0 && issueLabels[code].headline != "" {
+			codes = append(codes, code)
+		}
+	}
+	return codes
+}
+
+// lastPassStorageDetail words, for the destination row, what the last
+// pass's storage failure was, while the headline is the one derived from
+// it: the destination was not reachable as the collector's health last
+// recorded, so the row must not say it is. ok is false otherwise, and for
+// a failure that is not recognizably about storage (a retention clock hold,
+// which proves storage answered; a local file; a read-back check): the
+// general headline covers those too, but they say nothing against storage.
+func lastPassStorageDetail(view statusView) (detail string, ok bool) {
+	if view.problem == "" || view.problem != view.lastErrorProblem || view.lastErrorByIssue {
+		return "", false
+	}
+	recorded := view.Collector.LastErrors
+	if len(recorded) == 0 && view.Collector.LastError != "" {
+		recorded = strings.Split(view.Collector.LastError, "; ")
+	}
+	for _, problem := range recorded {
+		switch storageErrorCause(problem) {
+		case "Storage refused access":
+			return "refused access on the last pass", true
+		case "Storage didn't accept the credentials":
+			return "didn't accept the credentials on the last pass", true
+		case "The bucket doesn't exist":
+			return "bucket not found on the last pass", true
+		case "The bucket is in a different region":
+			return "bucket in a different region on the last pass", true
+		}
+	}
+	for _, problem := range recorded {
+		if strings.Contains(problem, backgroundCredentialProcessFailure) || credentials.RecoveryActionForMessage(problem) != "" {
+			return "couldn't get credentials on the last pass", true
+		}
+	}
+	if slices.ContainsFunc(recorded, storageProblem) {
+		return "unreachable on the last pass", true
+	}
+	return "", false
+}
+
+// storageProblem reports whether a problem the collector recorded as text is
+// about reaching storage: a call to S3 failed, storage could not be opened,
+// the collector's own storage access check failed, or the network did.
+func storageProblem(text string) bool {
+	for _, match := range recordedOperationService.FindAllStringSubmatch(text, -1) {
+		if match[1] == s3.ServiceID {
+			return true
+		}
+	}
+	if strings.Contains(text, "open storage: ") || strings.Contains(text, "background storage access failed") {
+		return true
+	}
+	for _, network := range []string{"dial tcp", "no such host", "connection refused", "connection reset", "i/o timeout", "network is unreachable", "TLS handshake timeout"} {
+		if strings.Contains(text, network) {
+			return true
+		}
+	}
+	return false
+}
+
+// generalSyncProblem is the headline for a failed pass whose errors say
+// nothing more specific.
+const generalSyncProblem = "The last sync failed"
 
 // destinationRow is where sessions go, and whether storage was last found
 // reachable with the configured credentials.
@@ -1458,7 +2009,38 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 	case "storage_configuration_changed":
 		detail = "storage settings changed since the last check"
 	}
+	if !sc.verbose {
+		return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: sc.shortPrivacyReason(report)}
+	}
 	return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: detail, notes: []statusNote{review}}
+}
+
+// shortPrivacyReason is why bucket privacy isn't verified, in a few words,
+// for the short status. Only when this Mac can't inspect the bucket at all
+// does the provider's guidance (checking public access by hand) fix it, so
+// only then is its link added; --verbose always has it.
+func (sc statusScreen) shortPrivacyReason(report storage.PrivacyReport) string {
+	see := ""
+	if report.GuidanceURL != "" {
+		see = "; see " + report.GuidanceURL
+	}
+	//lint:ignore LV1001 storage.PrivacyReport.Reason is an untyped string owned by package storage
+	switch report.Reason {
+	case "inspection_unavailable":
+		return "this storage can't be inspected" + see
+	case "r2_management_credentials_not_configured":
+		return "R2 object credentials can't inspect it" + see
+	case "public_access_controls_not_fully_verified":
+		return "some settings couldn't be read"
+	case "inspection_stale":
+		if report.CheckedAt != nil && report.CheckedAt.After(sc.now) {
+			return "last check dated in the future"
+		}
+		return "not checked in over a day"
+	case "storage_configuration_changed":
+		return "not checked since storage changed"
+	}
+	return "not checked yet"
 }
 
 // backgroundRow is the background collector: whether launchd runs it, and

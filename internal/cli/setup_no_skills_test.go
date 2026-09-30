@@ -345,11 +345,16 @@ func TestStatusSaysSkillsAreTurnedOff(t *testing.T) {
 		t.Fatal("status mentions agent skills while they are on")
 	}
 	setupYes(t, env, "", 0, "--yes", "--no-skills")
-	if got := statusText(); !strings.Contains(got, "Agent skills: turned off; agent-archive setup --skills turns them on") {
-		t.Errorf("status does not say the skills are off:\n%s", got)
+	// The short status keeps to problems; the setting is with the others
+	// (projects, skill evidence) under --verbose, and in its details.
+	if got := statusText(); strings.Contains(got, "Agent skills") {
+		t.Errorf("the short status mentions a chosen setting:\n%s", got)
 	}
-	if got := statusText("--verbose"); !strings.Contains(got, "Agent skills:  turned off") {
-		t.Errorf("status --verbose details lack the line:\n%s", got)
+	got := statusText("--verbose")
+	for _, want := range []string{"Agent skills: turned off; agent-archive setup --skills turns them on", "Agent skills:  turned off"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status --verbose lacks %q:\n%s", want, got)
+		}
 	}
 }
 

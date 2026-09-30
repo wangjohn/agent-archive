@@ -5,17 +5,13 @@ Agent Archive  ● Waiting for capture
     Review hook approval in Codex, then start a new session in ~/src/web-app.
 
 Capture
-  ✓ Codex   hooks installed   waiting for first session
-    · Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.
-  · Projects: ~/src/web-app
-  · Skill evidence: metadata
+  ! Codex   hooks installed   no sessions yet
+    Approve the archive hooks with /hooks in Codex.
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
-  ! Bucket privacy not verified        this storage can't be inspected
-    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Background collector on            no scan yet
-  · Last upload: never · 0 pending
+  ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
-Details: agent-archive status --verbose
+More: agent-archive status --verbose · agent-archive status codex
 [exit 0]
