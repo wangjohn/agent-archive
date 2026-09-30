@@ -1,22 +1,17 @@
 $ agent-archive status
 \e[1mAgent Archive\e[0m  \e[33m● Needs attention\e[0m
 
-  \e[33m!\e[0m The last sync failed
+  \e[33m!\e[0m The last sync failed: storage refused access
     Check storage access and run \e[36magent-archive sync\e[0m.
     To change credentials, run \e[36magent-archive setup\e[0m and choose storage.
 
 \e[1mCapture\e[0m
-  \e[32m✓\e[0m Codex   hooks installed   \e[2m1 session archived, verified just now\e[0m
-  \e[2m·\e[0m Projects: ~/src/web-app
-  \e[2m·\e[0m Skill evidence: metadata
+  \e[32m✓\e[0m Codex   hooks on   \e[2m1 session\e[0m
 
 \e[1mStorage\e[0m
-  \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
-  \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected\e[0m
-    Check public access: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[33m!\e[0m s3://team-archive/agent-archive/   \e[2mrefused access on the last pass · uploaded just now\e[0m
   \e[32m✓\e[0m Background collector on            \e[2mlast scan just now\e[0m
-  \e[31m✗\e[0m Storage refused access
-  \e[2m·\e[0m Last upload: just now · 0 pending
+  \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
 
-\e[2mDetails:\e[0m \e[36magent-archive status --verbose\e[0m
+\e[2mMore: agent-archive status --verbose · agent-archive status codex\e[0m
 [exit 0]

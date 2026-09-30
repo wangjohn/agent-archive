@@ -1,0 +1,23 @@
+Agent Archive  ● Needs attention
+
+  ! The last sync failed: storage refused access
+    Check storage access and run agent-archive sync.
+    To change credentials, run agent-archive setup and choose storage.
+
+Capture
+  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
+      ~/agent-archive   started 11:12   waiting for its first upload
+      ~/agent-archive   started 11:04
+      ~/styleprofile    started 09:24
+    · 17 sessions have capture gaps
+  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
+      ~/personal_website   started 11:40
+  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
+    Approve the archive hooks with /hooks in Codex.
+
+Storage
+  ! r2://agent-archive/agent-archive/   refused access on the last pass · uploaded 2 minutes ago
+  ✓ Background collector on             last scan 1 minute ago
+  ! Bucket privacy not verified         R2 object credentials can't inspect it; see https://developers.cloudflare.com/r2/buckets/public-buckets/
+
+More: agent-archive status --verbose · agent-archive status claude
