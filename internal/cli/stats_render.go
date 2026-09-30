@@ -61,17 +61,20 @@ type statsGlyphs struct {
 	spark [8]string
 	// sparkUnknown marks a day whose spend is unknown.
 	sparkUnknown string
-	bullet       string
-	up           string
-	down         string
-	sep          string
-	ellipsis     string
+	// moreBelow marks a screen with more below it, in the key bar.
+	moreBelow string
+	bullet    string
+	up        string
+	down      string
+	sep       string
+	ellipsis  string
 }
 
 var unicodeGlyphs = statsGlyphs{
 	block:        "█",
 	spark:        [8]string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"},
 	sparkUnknown: "·",
+	moreBelow:    "↓",
 	bullet:       "●",
 	up:           "▲",
 	down:         "▼",
@@ -83,6 +86,7 @@ var asciiGlyphs = statsGlyphs{
 	block:        "#",
 	spark:        [8]string{"_", ".", ":", "-", "=", "+", "*", "#"},
 	sparkUnknown: "?",
+	moreBelow:    "v",
 	bullet:       "*",
 	up:           "+",
 	down:         "-",
@@ -126,6 +130,9 @@ type statsView struct {
 	width   int
 	glyphs  statsGlyphs
 	filters statsFilters
+	// interactive is set for the screen that has a key bar of its own: the
+	// footer then leaves out the flags that name the other views.
+	interactive bool
 }
 
 // statsWidthOutput is an output that says its own width; the stats goldens
@@ -380,6 +387,9 @@ func (p *statsPrinter) footer(hints ...string) []string {
 	note := "Estimated at list price, not a bill."
 	if p.partialSpend() {
 		note += " + leaves out models with no price."
+	}
+	if p.v.interactive {
+		hints = nil
 	}
 	joined := strings.Join(hints, " "+p.g.sep+" ")
 	if joined == "" {

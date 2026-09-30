@@ -361,8 +361,15 @@ subagent's tokens count with its session. Sessions are placed by capture
 time, so imported sessions appear on the day they were imported.
 Two columns of bars from 80 terminal columns, one column from 60, a compact
 table below that. Color on a color terminal (16 ANSI colors; NO_COLOR turns it
-off). Text is paged through $PAGER unless --no-pager. Not a terminal: no
-color, full layout.
+off). Not a terminal: no color, full layout.
+On a terminal (stdin and stdout) it opens an interactive screen, unless
+--view, --detail, --by, --no-pager, --json or --html is given, or
+AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents, or TERM is
+dumb: o d p m a switch views, w cycles the window (7d, 30d, 90d, or --days and
+--since as a custom one; the bar shows the next) without reading again,
+arrows, j, k, PgUp, PgDn, space, Home and End scroll, h saves the redacted
+page as HTML (it asks for a file name and never replaces one), ? lists the
+keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --view overview|detail|projects|models|agents
                                  Which screen to print (default overview):
                                  detail has the streaks, tool errors, token

@@ -24,6 +24,14 @@ func browserKeys(env sessionBrowserDependencies, p *prompter, screen *altScreen)
 	if !ok {
 		return nil
 	}
+	return attachKeys(term, screen)
+}
+
+// attachKeys turns key mode on for term and ties it to screen: Ctrl-Z shows
+// the normal screen while the process is stopped, and leaving the screen,
+// however it ends, restores line input. It returns nil when key mode cannot
+// be turned on.
+func attachKeys(term keyTerminal, screen *altScreen) *keyInput {
 	keys := startKeys(term)
 	if keys != nil {
 		keys.hide, keys.show = screen.hide, screen.reenter
