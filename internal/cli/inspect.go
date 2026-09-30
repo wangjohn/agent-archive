@@ -83,8 +83,13 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	verbose := fs.Bool("verbose", false, "show full session IDs, absolute times, origin, parser, and all models/skills")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
+	allProjects := fs.Bool("all-projects", false, "list every project's sessions, not only the current repository's")
+	project := fs.String("project", "", "list this project's sessions: a directory, or a project name (default: the current directory's repository)")
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if *project != "" && *allProjects {
+		return fs.usageError("--project and --all-projects cannot be used together: --project lists one project, --all-projects lists every project")
 	}
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
@@ -110,6 +115,16 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 			return 1
 		}
 	}
+	scope, err := scopeFor(env, *project, *allProjects)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return 1
+	}
+	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
+	// The index lists the newest sessions of every project. A scope is
+	// applied before --limit, so it reads them all; so does a browser that
+	// may switch to the scope.
+	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || scope.Label != "" && browsing
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
@@ -117,47 +132,84 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		stopList = func() {}
 	}
 	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")}
-	var listed reader.RecentResult
-	if opts.limit > 0 && !opts.imported && !opts.hookCaptured {
-		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, opts.limit, listOpts)
-	} else {
-		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	listLimit := opts.limit
+	if full {
+		listLimit = 0
 	}
+	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
-	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
-	if !opts.imported && !opts.hookCaptured && listed.Complete {
-		totalMatched = listed.TotalMatched
-		truncated = totalMatched > len(shown)
-	} else if !listed.Complete {
-		totalMatched = -1
-		truncated = true
+	// view is what a scope lists: its sessions, how many there are, and
+	// whether --limit cut them.
+	view := func(s sessionScope) (shown []archive.Metadata, totalMatched int, truncated bool) {
+		if full {
+			return applyListLimit(s.filter(sessions), opts.limit)
+		}
+		shown, totalMatched, truncated = applyListLimit(sessions, opts.limit)
+		if !listed.Complete {
+			return shown, -1, true
+		}
+		return shown, listed.TotalMatched, listed.TotalMatched > len(shown)
 	}
 	if opts.jsonOut {
-		return printJSON(stdout, stderr, newListDocument(shown, opts.limit, totalMatched, truncated))
-	}
-	if len(shown) == 0 {
-		terminal.Println(stdout, "No archived sessions match.")
-		return 0
+		doc := listJSON(scope, sessions, full, opts.limit, view)
+		return printJSON(stdout, stderr, doc)
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
-		GroupByProject: true,
+		GroupByProject: true, Numbered: browsing,
 	}
-	if browseInteractive(env, stdin, stdout) {
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, shown, totalMatched, truncated, format, opts.noPager, "list")
+	choices := newScopeChoices(scope, format, func(s sessionScope) scopeView {
+		shown, totalMatched, truncated := view(s)
+		return scopeView{rows: formatSessionRows(shown, format), total: totalMatched, truncated: truncated}
+	})
+	choices.plain = !browsing
+	if len(choices.shown().rows) == 0 {
+		terminal.Println(stdout, "No archived sessions match.")
+		return 0
+	}
+	if browsing {
+		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, choices, opts.noPager, "list")
 	}
 	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		return printListTable(w, shown, totalMatched, truncated, format)
+		return printListTable(w, choices.shown())
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// listJSON builds the `list --json` document for a scope. Its rows are the
+// scope's sessions, or every session when the scope is off or holds none (and
+// the scope object says which).
+func listJSON(scope sessionScope, sessions []archive.Metadata, full bool, limit int, view func(sessionScope) ([]archive.Metadata, int, bool)) listDocument {
+	shown, totalMatched, truncated := view(scope)
+	doc := listScope{Label: scope.Label, AllProjects: scope.All}
+	if scope.narrowed() {
+		if len(shown) == 0 {
+			doc.FellBack, doc.AllProjects = true, true
+			shown, totalMatched, truncated = view(scope.everything())
+		} else {
+			doc.OutsideMatches = len(sessions) - len(scope.filter(sessions))
+		}
+	}
+	if full && scope.Label != "" {
+		names := make([]string, 0, len(sessions))
+		for _, m := range scope.only().filter(sessions) {
+			names = append(names, m.ProjectName)
+		}
+		doc.Label = scope.only().relabeled(names).Label
+	}
+	out := newListDocument(shown, limit, totalMatched, truncated)
+	if scope.Label != "" {
+		out.Scope = &doc
+	}
+	return out
 }
 
 // listFlagValues holds the parsed list flags before validation.
@@ -316,6 +368,9 @@ type listDocument struct {
 	TotalMatched      *int               `json:"total_matched,omitempty"`
 	TotalMatchedKnown bool               `json:"total_matched_known"`
 	Truncated         bool               `json:"truncated,omitempty"`
+	// Scope says what part of the archive the listing looked at; absent when
+	// the working directory is in no project. Added within schema version 4.
+	Scope *listScope `json:"scope,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left
@@ -443,11 +498,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 			}
 			return printJSON(stdout, stderr, view)
 		}
-		browse, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, *harness, "show")
+		choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, *harness, "show")
 		if !ok {
 			return code
 		}
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, browse.sessions, browse.totalMatched, browse.truncated, browse.format, *noPager, "show")
+		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, choices, *noPager, "show")
 	}
 
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects)

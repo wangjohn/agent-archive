@@ -561,19 +561,7 @@ func pathForms(path string) []string {
 // projectIDs returns the archive project IDs dir can belong to: the
 // configured project whose root contains it, and dir's own ID.
 func (r handoffResolver) projectIDs(dir string) map[string]bool {
-	ids := map[string]bool{}
-	for _, form := range pathForms(dir) {
-		ids[archive.ProjectID(form)] = true
-	}
-	for _, project := range r.cfg.Archive.Projects {
-		if project.Root != "" && sameProject(project.Root, dir) {
-			ids[archive.ProjectID(project.Root)] = true
-			if project.ProjectID != "" {
-				ids[project.ProjectID] = true
-			}
-		}
-	}
-	return ids
+	return archiveProjectIDs(r.cfg, dir)
 }
 
 func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {

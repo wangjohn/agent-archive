@@ -1,0 +1,266 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+)
+
+// scopeDependencies is what finding a scope reads: the working directory,
+// the lookup of a directory's repository key, and (through the data
+// directory) the configured projects.
+type scopeDependencies interface {
+	workingDir() (string, error)
+	repoKeyResolver() func(root string) string
+	readHome() (string, error)
+}
+
+// sessionScope is the part of the archive a browser, `list`, or a title
+// search looks at first: one repository, or one project by name. The zero
+// value, and any scope with All set, holds every session.
+type sessionScope struct {
+	// Label names the scope for a person ("agent-archive"). Empty when the
+	// working directory is in no project, which leaves nothing to narrow to.
+	Label string
+	// RepoKey is the repository key of Dir (archive.RepoKey of its origin
+	// remote), which spans checkouts, worktrees, and machines. Empty with no
+	// origin remote.
+	RepoKey string
+	// Dir is the directory the scope was made from; empty for a scope named
+	// with --project NAME.
+	Dir string
+	// ProjectIDs are the archive project IDs Dir can belong to, or that the
+	// configured projects named Label have.
+	ProjectIDs []string
+	// All is set when the scope is not applied: every session is in it.
+	All bool
+}
+
+// scopeFor finds the scope of project, or of the working directory when
+// project is empty: a directory, or a project's name (matched to
+// project_name and the configured project labels, case-insensitively and
+// exactly). The directory's repository key is looked up once. A directory in
+// no project (no origin remote, and inside no configured project) has no
+// scope: Label is empty and every session is in it. allProjects keeps the
+// scope's label and key but sets All, so a browser can still offer to narrow
+// to it. The key comes from git under gitremote.Timeout, and is "" when git
+// cannot answer in time. project and allProjects together are the caller's usage error.
+func scopeFor(env scopeDependencies, project string, allProjects bool) (sessionScope, error) {
+	home, err := env.readHome()
+	if err != nil {
+		return sessionScope{}, fmt.Errorf("resolve home: %w", err)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		return sessionScope{}, fmt.Errorf("load config: %w", err)
+	}
+	dir, named := "", false
+	if project != "" {
+		if dir, named, err = projectArgument(project); err != nil {
+			return sessionScope{}, err
+		}
+		if named {
+			return nameScope(cfg, project, allProjects), nil
+		}
+	} else {
+		var ok bool
+		if dir, ok = workingDirOrNone(env); !ok {
+			return sessionScope{All: true}, nil
+		}
+	}
+	key := env.repoKeyResolver()(dir)
+	root, configured := configuredRoot(cfg, dir)
+	if key == "" && !configured {
+		return sessionScope{All: true}, nil
+	}
+	label := filepath.Base(dir)
+	if configured {
+		label = filepath.Base(root)
+	}
+	ids := make([]string, 0, 4)
+	for id := range archiveProjectIDs(cfg, dir) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return sessionScope{Label: label, RepoKey: key, Dir: dir, ProjectIDs: ids, All: allProjects}, nil
+}
+
+// workingDirOrNone is the working directory, cleaned; ok is false when there
+// is none (it was removed, say), which leaves no scope to find.
+func workingDirOrNone(env workingDirDependencies) (string, bool) {
+	dir, err := env.workingDir()
+	if err != nil || dir == "" {
+		return "", false
+	}
+	return filepath.Clean(dir), true
+}
+
+// projectArgument reads a --project value: an existing directory (returned
+// absolute), or else a project's name.
+func projectArgument(value string) (dir string, named bool, err error) {
+	info, statErr := os.Stat(value)
+	if statErr != nil || !info.IsDir() {
+		return "", true, nil
+	}
+	abs, err := filepath.Abs(value)
+	if err != nil {
+		return "", false, fmt.Errorf("--project %s: %w", value, err)
+	}
+	return filepath.Clean(abs), false, nil
+}
+
+// nameScope is the scope of the projects called name: sessions whose project
+// name is name, or that belong to a configured project labelled name.
+func nameScope(cfg config.Config, name string, all bool) sessionScope {
+	var ids []string
+	for id, label := range projectLabels(cfg) {
+		if strings.EqualFold(label, name) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return sessionScope{Label: name, ProjectIDs: ids, All: all}
+}
+
+// configuredRoot is the root of the deepest configured project holding dir.
+func configuredRoot(cfg config.Config, dir string) (string, bool) {
+	best := ""
+	for _, p := range cfg.Archive.Projects {
+		if p.Root != "" && sameProject(p.Root, dir) && len(p.Root) > len(best) {
+			best = p.Root
+		}
+	}
+	return best, best != ""
+}
+
+// archiveProjectIDs returns the archive project IDs dir can belong to: the
+// configured project whose root contains it, and dir's own ID.
+func archiveProjectIDs(cfg config.Config, dir string) map[string]bool {
+	ids := map[string]bool{}
+	for _, form := range pathForms(dir) {
+		ids[archive.ProjectID(form)] = true
+	}
+	for _, project := range cfg.Archive.Projects {
+		if project.Root != "" && sameProject(project.Root, dir) {
+			ids[archive.ProjectID(project.Root)] = true
+			if project.ProjectID != "" {
+				ids[project.ProjectID] = true
+			}
+		}
+	}
+	return ids
+}
+
+// narrowed reports whether the scope cuts anything: it names a project and
+// is not turned off.
+func (s sessionScope) narrowed() bool { return s.Label != "" && !s.All }
+
+// only returns the scope applied (All off), and everything the scope with
+// All on.
+func (s sessionScope) only() sessionScope {
+	s.All = false
+	return s
+}
+
+func (s sessionScope) everything() sessionScope {
+	s.All = true
+	return s
+}
+
+// contains reports whether a session is in the scope. m is its metadata
+// (archived, or built from its transcript), and reg its registration on this
+// machine, or nil. A session is in a repository's scope when its repository
+// key is the scope's. With no key on either side (no origin remote, or an
+// older session) it is in scope by path, as `--latest` decides: a local
+// session when its project root contains the scope's directory, an archived
+// one when its project ID is one the directory can have. A scope named with
+// --project NAME holds the sessions of projects with that name.
+func (s sessionScope) contains(m archive.Metadata, reg *archive.SessionRegistration) bool {
+	if s.All || s.Label == "" {
+		return true
+	}
+	key := m.RepoKey
+	if reg != nil && reg.RepoKey != "" {
+		key = reg.RepoKey
+	}
+	switch {
+	case s.RepoKey != "" && key != "":
+		return s.RepoKey == key
+	case s.Dir == "":
+		return s.hasName(m, reg)
+	case reg != nil && reg.ProjectRoot != "":
+		return sameProject(reg.ProjectRoot, s.Dir)
+	}
+	return m.ProjectID != "" && slices.Contains(s.ProjectIDs, m.ProjectID)
+}
+
+// hasName reports whether a session's project is the one the scope names.
+func (s sessionScope) hasName(m archive.Metadata, reg *archive.SessionRegistration) bool {
+	switch {
+	case m.ProjectName != "" && strings.EqualFold(m.ProjectName, s.Label):
+		return true
+	case m.ProjectID != "" && slices.Contains(s.ProjectIDs, m.ProjectID):
+		return true
+	case reg != nil && reg.ProjectRoot != "":
+		return strings.EqualFold(filepath.Base(filepath.Clean(reg.ProjectRoot)), s.Label)
+	}
+	return false
+}
+
+// filter keeps the sessions in the scope, in order.
+func (s sessionScope) filter(sessions []archive.Metadata) []archive.Metadata {
+	if s.All || s.Label == "" {
+		return sessions
+	}
+	return slices.DeleteFunc(slices.Clone(sessions), func(m archive.Metadata) bool { return !s.contains(m, nil) })
+}
+
+// relabeled names a scope made from a directory after the project its
+// sessions have, when it would otherwise be named for the directory: run in a
+// worktree called pr4 of agent-archive, the scope reads agent-archive. names
+// are the project names of the sessions in scope.
+func (s sessionScope) relabeled(names []string) sessionScope {
+	if s.Dir == "" || s.Label != filepath.Base(s.Dir) {
+		return s
+	}
+	counts := map[string]int{}
+	best := ""
+	for _, name := range names {
+		if name == "" || name == "-" {
+			continue
+		}
+		counts[name]++
+		if counts[name] > counts[best] || counts[name] == counts[best] && name < best {
+			best = name
+		}
+	}
+	if best != "" {
+		s.Label = best
+	}
+	return s
+}
+
+// listScope is the `scope` object of `list --json`: what the listing looked
+// at, so a script knows when the working directory narrowed it.
+type listScope struct {
+	// Label is the scope's name, or "All projects".
+	Label string `json:"label"`
+	// AllProjects is set when no scope was applied: --all-projects, the
+	// scope's listing having nothing, or the toggle.
+	AllProjects bool `json:"all_projects"`
+	// FellBack is set when the scope held nothing, and the listing shows all
+	// projects instead.
+	FellBack bool `json:"fell_back"`
+	// OutsideMatches is how many more sessions match the same filters outside
+	// the scope; 0 when all projects are listed.
+	OutsideMatches int `json:"outside_matches"`
+}
+
+// allProjectsLabel names the view with no scope.
+const allProjectsLabel = "All projects"
