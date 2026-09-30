@@ -169,13 +169,24 @@ func nest(top []*Span, now time.Time) []*node {
 	var open []*node // the chain of containing spans, outermost first
 	for _, span := range spans {
 		n := explicit(span)
-		for len(open) > 0 && !contains(open[len(open)-1].span, span, now) {
+		// Spans come in start order, so one that ended before this one
+		// starts can hold nothing from here on.
+		for len(open) > 0 && endOf(open[len(open)-1].span, now).Before(span.start) {
 			open = open[:len(open)-1]
 		}
-		if len(open) == 0 {
+		// The innermost open span containing this one. One that only
+		// overlaps it (a request outliving its caller) stays open for the
+		// spans after it.
+		var parent *node
+		for k := len(open) - 1; k >= 0; k-- {
+			if contains(open[k].span, span, now) {
+				parent = open[k]
+				break
+			}
+		}
+		if parent == nil {
 			roots = append(roots, n)
 		} else {
-			parent := open[len(open)-1]
 			parent.children = append(parent.children, n)
 		}
 		if !span.leaf && !span.end.IsZero() {

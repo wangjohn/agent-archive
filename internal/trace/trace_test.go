@@ -138,6 +138,50 @@ func TestUnfinishedSpanHoldsNothing(t *testing.T) {
 	}
 }
 
+// at builds an ended span by hand, at offsets in milliseconds.
+func at(rec *recorder, name string, start, end int, leaf bool) *Span {
+	base := time.Unix(0, 0)
+	var ended time.Time
+	if end >= 0 {
+		ended = base.Add(time.Duration(end) * time.Millisecond)
+	}
+	return &Span{rec: rec, name: name, leaf: leaf, start: base.Add(time.Duration(start) * time.Millisecond), end: ended}
+}
+
+func labels(nodes []*node, depth int) []string {
+	var out []string
+	for _, n := range nodes {
+		out = append(out, strings.Repeat("  ", depth)+n.span.name)
+		out = append(out, labels(n.children, depth+1)...)
+	}
+	return out
+}
+
+// Placement cases timing alone decides, with exact timestamps.
+func TestNestPlacement(t *testing.T) {
+	rec := &recorder{}
+	now := time.Unix(0, 0).Add(time.Hour)
+	for _, c := range []struct {
+		name  string
+		spans []*Span
+		want  []string
+	}{
+		{"of two starting together, the longer contains the shorter, whatever the order they were made in",
+			[]*Span{at(rec, "inner", 0, 5, false), at(rec, "outer", 0, 10, false)},
+			[]string{"outer", "  inner"}},
+		{"a request outliving its caller doesn't close the caller to the spans after it",
+			[]*Span{at(rec, "root", 0, 100, false), at(rec, "list objects", 10, 50, false), at(rec, "request list", 11, 60, true), at(rec, "plan", 20, 30, false)},
+			[]string{"root", "  list objects", "    plan", "  request list"}},
+		{"an unfinished span is not placed under a sibling that ended before it started",
+			[]*Span{at(rec, "root", 0, 100, false), at(rec, "done", 10, 20, false), at(rec, "open", 30, -1, false), at(rec, "after", 40, 50, false)},
+			[]string{"root", "  done", "  open", "  after"}},
+	} {
+		if got := labels(nest(c.spans, now), 0); strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+			t.Errorf("%s:\n%s\nwant:\n%s", c.name, strings.Join(got, "\n"), strings.Join(c.want, "\n"))
+		}
+	}
+}
+
 func TestEndTwiceKeepsTheFirstEnd(t *testing.T) {
 	disable := Enable()
 	defer disable()
