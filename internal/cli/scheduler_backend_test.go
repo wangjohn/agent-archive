@@ -298,6 +298,28 @@ func TestSetupChoosesThisSystemsSchedulerAndOtherCommandsTheRecordedOne(t *testi
 	}
 }
 
+// The setup command itself chooses: over a configuration that records a
+// backend this system cannot use (one copied from a Mac and hand-edited, say),
+// it asks for this system's own scheduler alone, defines and loads the job
+// through it, and overwrites the record.
+func TestSetupOverARecordThisSystemCannotUseRecordsItsOwn(t *testing.T) {
+	l := newLinuxInstall(t)
+	must(t, os.MkdirAll(l.home, 0o700))
+	must(t, config.Save(l.home, config.Config{BackgroundBackend: "launchd"}))
+	asked := l.asksFor(t)
+	l.setup()
+	// "" while it plans, and "systemd" as its journal names the job's backend.
+	if names := asked.names; len(names) == 0 || slices.ContainsFunc(names, func(name string) bool { return name != "" && name != "systemd" }) {
+		t.Errorf("setup asked for %q, want this system's own alone", names)
+	}
+	if got := mustLoadConfig(t, l.home).BackgroundBackend; got != "systemd" {
+		t.Errorf("setup left background_backend %q, want systemd", got)
+	}
+	if got := l.manager.held(l.ref()); got != scheduler.Loaded {
+		t.Errorf("the manager holds the job as %q, want loaded", got)
+	}
+}
+
 // A backend that is recorded but that this system cannot use is not replaced
 // by another: status reports the job unknown, and what to do; it is never
 // asked about through a scheduler that was not the job's.

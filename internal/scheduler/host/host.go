@@ -55,11 +55,14 @@ func New(system platform.OS, run scheduler.Runner) scheduler.Scheduler {
 // launchd on macOS and systemd on Linux, for all time. A name this build has
 // no adapter for, or one whose manager this system does not have (launchd on
 // Linux), is an error: a job it made is not one this system can ask about.
+// The system's own name is its own scheduler, "none" on a system without an
+// adapter included, so what setup records there reads back as what it was.
 func Named(system platform.OS, name string, run scheduler.Runner) (scheduler.Scheduler, error) {
-	switch {
-	case name == "", name == launchdName && system == platform.Darwin, name == systemdName && system == platform.Linux:
-		return New(system, run), nil
-	case name == launchdName, name == systemdName:
+	own := New(system, run)
+	switch name {
+	case "", own.Name():
+		return own, nil
+	case launchdName, systemdName, noneName:
 		return nil, fmt.Errorf("the %s scheduler is not available on this system (%s)", name, system)
 	}
 	return nil, fmt.Errorf("this agent-archive does not know a %q scheduler", name)

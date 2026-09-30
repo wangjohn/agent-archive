@@ -141,6 +141,8 @@ func TestNamedResolvesARecordedBackend(t *testing.T) {
 		{platform.Linux, "", "systemd"},
 		{platform.Linux, "systemd", "systemd"},
 		{platform.Unknown, "", "none"},
+		{platform.Unknown, "none", "none"},
+		{platform.Linux, "none", ""},
 		{platform.Darwin, "systemd", ""},
 		{platform.Linux, "launchd", ""},
 		{platform.Unknown, "launchd", ""},
