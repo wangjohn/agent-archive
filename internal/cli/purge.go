@@ -117,6 +117,11 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	if name == "" {
 		return fs.usageError("a PLAN path is required")
 	}
+	// The digest is typed at a prompt that reads standard input whether or
+	// not it is a terminal, so an agent's shell would wait there for it.
+	if mode, _ := env.nonInteractive(); mode.on && !*yes {
+		return purgeError(stderr, fmt.Errorf("confirming a purge needs a person to type the digest. Nothing was changed. Run again with --yes to delete without asking, only when the person asked for the deletion. Prompts are off because %s; to be asked here anyway, run with %s=0", mode.reason, envNonInteractive))
+	}
 	home, err := env.readHome()
 	if err != nil {
 		return purgeError(stderr, err)
@@ -162,14 +167,8 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 		return purgeError(stderr, errors.New("pause this Mac and every other uploading Mac before purge apply"))
 	}
 	if !*yes {
-		terminal.Printf(stdout, "Delete %d unreferenced sources from %s/%s? Type %s to continue: ", len(plan.Candidates), plan.Bucket, plan.Prefix, plan.Digest[:12])
-		answer, err := bufio.NewReader(stdin).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return purgeError(stderr, err)
-		}
-		if strings.TrimSpace(answer) != plan.Digest[:12] {
-			terminal.Println(stderr, "Purge cancelled.")
-			return 1
+		if code, confirmed := confirmPurge(plan, stdin, stdout, stderr); !confirmed {
+			return code
 		}
 	}
 	store, err := env.openStore(cfg)
@@ -204,6 +203,21 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	}
 	terminal.Printf(stdout, "Deleted %d unreferenced sources. Report: %s\n", len(report.Deleted), reportPath)
 	return 0
+}
+
+// confirmPurge asks for the first twelve characters of the plan's digest.
+// When it is not confirmed, code is the exit status to return.
+func confirmPurge(plan purge.Plan, stdin io.Reader, stdout, stderr io.Writer) (code int, confirmed bool) {
+	terminal.Printf(stdout, "Delete %d unreferenced sources from %s/%s? Type %s to continue: ", len(plan.Candidates), plan.Bucket, plan.Prefix, plan.Digest[:12])
+	answer, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return purgeError(stderr, err), false
+	}
+	if strings.TrimSpace(answer) != plan.Digest[:12] {
+		terminal.Println(stderr, "Purge cancelled.")
+		return 1, false
+	}
+	return 0, true
 }
 
 func purgeError(stderr io.Writer, err error) int {

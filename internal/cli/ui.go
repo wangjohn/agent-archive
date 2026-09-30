@@ -239,14 +239,17 @@ func (s textStyle) spin(out io.Writer, label string) *spinner {
 }
 
 func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *spinner {
+	return s.spinLabelEvery(out, func() string { return label }, every)
+}
+
+// spinLabelEvery is spinEvery for a label that changes while it runs (a
+// count of what is done): label is asked for on every frame, from the
+// spinner's goroutine, and must be safe for that. A frame that is shorter
+// than the last is padded so nothing of the last is left behind.
+func (s textStyle) spinLabelEvery(out io.Writer, label func() string, every time.Duration) *spinner {
 	sp := &spinner{}
 	if !s.live {
 		return sp
-	}
-	// A label wider than the terminal would wrap, and "\r" could not take
-	// the spinner's line back.
-	if s.width > 2 {
-		label = truncateVisible(label, s.width-3)
 	}
 	sp.done = make(chan struct{})
 	sp.finished = make(chan struct{})
@@ -254,8 +257,17 @@ func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *
 		defer close(sp.finished)
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
+		lastWidth := 0
 		for frame := 0; ; frame++ {
-			terminal.Printf(out, "\r%s %s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), label)
+			text := label()
+			// A label wider than the terminal would wrap, and "\r" could not
+			// take the spinner's line back.
+			if s.width > 2 {
+				text = truncateVisible(text, s.width-3)
+			}
+			width := visibleWidth(text)
+			terminal.Printf(out, "\r%s %s%s", s.dim(spinnerFrames[frame%len(spinnerFrames)]), text, strings.Repeat(" ", max(lastWidth-width, 0)))
+			lastWidth = width
 			select {
 			case <-sp.done:
 				terminal.Print(out, "\r\x1b[K")

@@ -75,7 +75,52 @@ func FuzzFilterJSONL(f *testing.F) {
 			}
 		}
 		renderFuzzedHandoff(t, adapter, filtered)
+		checkFuzzedMetadata(t, adapter, filtered)
 	})
+}
+
+// checkFuzzedMetadata derives the metadata of a filtered transcript and
+// checks the token accounting: every count and every per-model count is a
+// whole number from 0 to maxTokenCount, at most MaxMCPCalls servers are
+// listed, and, unless a count saturated, the per-model counts add up to the
+// session's.
+func checkFuzzedMetadata(t *testing.T, adapter Adapter, filtered FilteredTranscript) {
+	t.Helper()
+	reg := registration()
+	reg.Harness = Harness{Name: adapter.Name()}
+	bundle, err := NewSourceBundle(reg, adapter, filtered, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), nil)
+	if err != nil {
+		return
+	}
+	metadata, err := BuildMetadata(bundle, "machine", time.Unix(1, 0), time.Unix(3, 0), SourceReference{Key: "k", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
+	if err != nil {
+		return
+	}
+	saturated := false
+	check := func(label string, counts ...*int) {
+		for _, count := range counts {
+			if count == nil {
+				continue
+			}
+			if *count < 0 || *count > maxTokenCount {
+				t.Fatalf("%s = %d, outside 0..2^53", label, *count)
+			}
+			saturated = saturated || *count == maxTokenCount
+		}
+	}
+	for _, field := range tokenFieldsOf(metadata.Counts) {
+		check("counts."+field.name, field.total)
+		for _, entry := range metadata.ModelTokens {
+			check("model_tokens."+field.name, field.model(entry))
+		}
+	}
+	check("counts.tool_errors", metadata.Counts.ToolErrors)
+	if len(metadata.MCPCalls) > MaxMCPCalls {
+		t.Fatalf("%d MCP servers listed", len(metadata.MCPCalls))
+	}
+	if !saturated {
+		assertModelTokensSum(t, "fuzz", metadata)
+	}
 }
 
 // renderFuzzedHandoff builds and renders the handoff of a filtered

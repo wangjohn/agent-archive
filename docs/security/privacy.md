@@ -93,8 +93,10 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   the app and its version, the app's own session ID, capture times and the
   session's last record time, counts (including how many distinct files were
   edited, never which), models, skills used, the names of the ten most-called
-  tools (MCP tool names included) with their call counts, and the capture gaps the filter recorded (the names
-  of omitted fields, never their values).
+  tools (MCP tool names included) with their call counts, the MCP servers
+  called and how often, token counts (in total and per model), and the
+  capture gaps the filter recorded (the names of omitted fields, never their
+  values).
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
@@ -125,9 +127,10 @@ and uploaded with the session.
   and other context Cursor attaches to a message.
 - **Claude Code's `toolUseResult`**, which duplicates the tool result already
   kept.
-- **Your credentials.** R2 secrets are in the macOS Keychain; S3 credentials
-  stay in your AWS profile. Neither appears in files, arguments, logs, or
-  the bucket.
+- **Your credentials.** On macOS, R2 secrets are in the Keychain; S3
+  credentials stay in your AWS profile. Neither appears in files, arguments,
+  logs, or the bucket. See [Where credentials are kept](#where-credentials-are-kept)
+  for a build with no Keychain.
 
 Recognizable secrets inside kept text are replaced with `[REDACTED]` (see
 [value-level redaction](../../dev/specs/privacy-filter.md#value-level-redaction)). Each omission and
@@ -390,8 +393,47 @@ the noncurrent versions too, or add a lifecycle rule that expires them.
 
 The `hooks` entry of each included app's settings file, one LaunchAgent,
 local state private to your account (transcripts are read in place, not
-copied), and, for R2, one Keychain item. The full list, and what uninstall
+copied), and, for R2, one Keychain item (a credentials file on a build
+without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
 removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-mac).
+
+## Where credentials are kept
+
+What follows is how the code stores an R2 secret; it is not a statement about
+which platforms are supported.
+
+- **macOS build:** the login Keychain, under the service `agent-archive`. The
+  secret is never written to a file.
+- **A build for another platform (Linux), which has no Keychain:** the secret
+  is stored **on disk**, in a file per credential, `<data directory>/credentials/<reference>.json`,
+  created with mode 0600 in a folder with mode 0700 (the data directory is
+  `~/.local/share/agent-archive` or `AGENT_ARCHIVE_HOME`). It is written to a
+  temporary file that is created 0600 and renamed into place, so it is never
+  readable by others, even briefly. agent-archive **refuses to read** the
+  file, and to save into the folder, when the file or the folder is
+  accessible by group or others, is a symbolic link, is owned by another
+  user, or is not a regular file or folder; the error names the path and the
+  `chmod` that fixes it. Root, and anyone who can read your files as you
+  (a backup, another process of yours), can still read the file: it is
+  protected from other accounts, not encrypted. The file is not uploaded,
+  is not in `status` or error output, and is removed by
+  `uninstall --delete-local-data`.
+- **Better on Linux: an S3 profile.** S3 credentials stay in your AWS
+  shared credentials or SSO configuration, which can be short-lived or
+  role-based, and agent-archive stores no secret of its own. Prefer it to the
+  credentials file where you can.
+- **Containers and services: environment variables.** Where no credentials
+  file exists for the reference, agent-archive reads the R2 key from
+  `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`
+  (the variables `setup --yes` reads), which suits a container's
+  configuration or a service's `EnvironmentFile`. The fallback applies to a
+  process that has those variables: a scheduled collector does not inherit
+  an interactive shell's variables, so `setup` never counts an exported key
+  as stored; it saves the key to the credentials file, where the collector
+  finds it. The fallback is read only:
+  agent-archive never writes or deletes an environment credential. A
+  credentials file that exists but is refused for its permissions is an
+  error; it is never skipped in favor of the environment.
 
 ## Filter rules
 

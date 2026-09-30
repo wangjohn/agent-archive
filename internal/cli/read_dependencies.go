@@ -22,7 +22,7 @@ type metadataCacheDependencies interface {
 }
 
 type sessionBrowseDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 }
 
 type sessionSelectionDependencies interface {
@@ -46,6 +46,19 @@ type listCommandDependencies interface {
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
+// statsCommandDependencies is what `stats` uses: list's store and cache, the
+// pager, and the environment for the character set.
+type statsCommandDependencies interface {
+	readOnlyStoreDependencies
+	pagerDependencies
+	// isTerminal is whether stdout is a terminal, whatever the agent switch
+	// says: stats --html never fills one with markup.
+	isTerminal(any) bool
+	interrupts() (<-chan os.Signal, func())
+	now() time.Time
+	newCommandFlags(string, io.Writer) *commandFlags
+}
+
 type showCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
@@ -60,7 +73,7 @@ type showQueryDependencies interface {
 }
 
 type pagerDependencies interface {
-	isTerminal(any) bool
+	interactive(any) bool
 	lookupEnv(string) (string, bool)
 	runPager(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
 	lessVersion(string) (int, bool)

@@ -64,6 +64,7 @@ find none say so without creating the data directory.
 
 ```sh
 agent-archive status
+agent-archive status claude
 agent-archive status --verbose
 agent-archive status --json
 ```
@@ -75,33 +76,60 @@ the one thing to fix, with each command to run on its own line:
 ```text
 Agent Archive  ● Needs attention
 
-  ! The last sync failed
+  ! The last sync failed: storage refused access
     Check storage access and run agent-archive sync.
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Codex   hooks installed   1 session archived, verified just now
-  · Projects: ~/src/web-app
+  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
+      ~/agent-archive   started 11:12   waiting for its first upload
+      ~/agent-archive   started 11:04
+      ~/styleprofile    started 09:24
+    · 17 sessions have capture gaps
+  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
+      ~/personal_website   started 11:40
+  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
+    Approve the archive hooks with /hooks in Codex.
 
 Storage
-  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
-  ! Bucket privacy not verified        this storage can't be inspected
-    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Background collector on            last scan just now
-  ✗ Storage refused access
-  · Last upload: just now · 0 pending
+  ! r2://agent-archive/agent-archive/   refused access on the last pass · uploaded 2 minutes ago
+  ✓ Background collector on             last scan 1 minute ago
+  ! Bucket privacy not verified         R2 object credentials can't inspect it; see https://developers.cloudflare.com/r2/buckets/public-buckets/
 
-Details: agent-archive status --verbose
+More: agent-archive status --verbose · agent-archive status claude
 ```
 
-**Capture** has a row per app, then the included projects and any imports.
-**Storage** has a row each for the destination, bucket privacy, the
-background collector, the last sync's error if it failed, and uploads. ✓ is
-fine, ! needs you, ✗ is blocked, and · is information. Times are relative to
-now and paths under your home folder start with `~`.
+**Capture** has a row per app: its version and hooks, then how many
+sessions its hooks captured (subagents counted apart), how many
+`agent-archive backfill` imported, and how many are uploading, that is,
+have work not yet in the bucket. Under it is each uploading session's
+project and when it started, at most five (`status APP` lists all); only
+something unusual is added: **waiting for its first upload** for a session
+never uploaded, and a ! row with the kind of failure for a session the last
+pass could not update. A session whose transcript can no longer be captured
+is counted under capture gaps instead, and a Cursor chat that never got a
+transcript (transcripts turned off) on a line of its own. **hooks on** means
+the app's hooks are installed; **hooks installed** means they are, but the
+app runs them only once you approve them, and no session has shown that it
+does yet. **Storage** has a row each for the
+destination with the last upload (! when the last pass failed on storage),
+the background collector, bucket privacy (with the provider's guidance
+when this Mac can't inspect the bucket),
+and any error of the last sync that the line at the top doesn't already
+state. ✓ is fine, ! needs you, ✗ is blocked, and · is information. Times are
+relative to now and paths under your home folder start with `~`. The screen
+stays the same length however many projects you include.
 
-- **`status --verbose`** prints the same screen and then a **Details**
-  section with what is behind each row: the state codes, exact times (UTC),
+- **`status APP`** (`claude`, `codex` or `cursor`) shows one app in full:
+  its row, every uploading session, and a table of its projects with the
+  sessions each captured, imported and is uploading, and how far read-back
+  has got, then the same Storage section as `status`.
+- **`status --verbose`** adds what the short screen leaves out: each app's
+  upload and read-back progress, a row per project, the included projects,
+  skill evidence, the imports line, why bucket privacy couldn't be
+  verified, when storage access was last checked, every error of the last
+  pass, and the pending count. Then a **Details** section has what is
+  behind each row: the state codes, exact times (UTC),
   full paths, each app's installed version and support, each project's
   verification state, read-back evidence and retries, the bucket privacy
   check's reason code and guidance, and each problem of the last pass as
@@ -114,7 +142,10 @@ now and paths under your home folder start with `~`.
 - **Before setup**, status shows only that setup is needed (`--json`:
   background `missing`, authentication `not_configured`).
 - **A failed sync** shows each problem the last pass recorded on a ✗ row of
-  its own in the Storage section, with its cause when the storage provider
+  its own in the Storage section, unless the line at the top already says
+  it: a lone storage failure is named there ("The last sync failed: storage
+  refused access"), and `status --verbose` still shows its row. Its cause is
+  named when the storage provider
   refused the request: **Storage refused access** (the credentials aren't
   allowed to list, read, write and delete in the bucket),
   **Storage didn't accept the credentials** (an expired or unknown key),
@@ -214,6 +245,21 @@ Check that setup includes **Codex** and the project where the session runs (`age
 ## No Cursor session
 
 Check that setup includes **Cursor** and the project where the Agent chat runs (`agent-archive status --verbose` shows both). Start a **new Agent chat** in that project and send its first prompt; continuing an older chat does not establish a fresh start, and `/clear` is not the Cursor path. Run `agent-archive sync` and check the Cursor Capture row. If it shows local capture but no verified archive, use the Storage and read-back details under [reading status](#reading-status). If no session was seen, check the hook state and capture diagnostics in `status --verbose`. A chat with transcripts disabled can register but has no transcript to upload; see [session eligibility](../reference/session-eligibility.md#cursor).
+
+## No picker or prompt in an agent's terminal
+
+If `list` prints a table instead of opening the browser, bare `show` or
+`handoff` says to name a session, or `setup`, `uninstall`, `backfill`, or `purge apply`
+refuses with "Prompts are off because ...", agent-archive believes a coding
+agent is running it: `AGENT_ARCHIVE_NONINTERACTIVE` is set, or
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is (a terminal
+opened from inside an agent can inherit them). Nothing was changed. Check
+with `env | grep -E 'AGENT_ARCHIVE_NONINTERACTIVE|CLAUDE_CODE_SESSION_ID|CODEX_THREAD_ID|CURSOR_AGENT'`.
+To be asked anyway, run the command as
+`AGENT_ARCHIVE_NONINTERACTIVE=0 agent-archive ...`, or `unset` the variable.
+`--yes` skips a confirmation without it. `agent-archive: AGENT_ARCHIVE_NONINTERACTIVE="..."
+is not a valid setting` means the value is not one of 1/true/yes/on or
+0/false/no/off; fix or unset it.
 
 ## An interrupted setup
 

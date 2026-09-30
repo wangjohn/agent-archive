@@ -79,6 +79,7 @@ var commandGuides = map[string]string{
 	"resume":           "[Everyday commands](../guides/troubleshooting.md#everyday-commands)",
 	"list":             "[Inspect the archive](../guides/list-and-show.md); `--json` in [JSON output](json-output.md)",
 	"show":             "[Inspect the archive](../guides/list-and-show.md)",
+	"stats":            "[See your usage](../guides/stats.md); `--json` in [JSON output](json-output.md)",
 	"feedback":         "[Feedback](../guides/list-and-show.md#feedback)",
 	"backfill":         "[Import existing sessions](../guides/backfill.md)",
 	"backfill history": "[Import existing sessions](../guides/backfill.md)",
