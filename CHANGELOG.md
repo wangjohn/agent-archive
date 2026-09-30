@@ -35,7 +35,9 @@ follow [Semantic Versioning](https://semver.org/).
   beside the checkout, on a new branch (`handoff/<id>`, or `--branch NAME`),
   with your uncommitted changes (staged ones arrive unstaged) and untracked,
   not ignored, files carried over. Your checkout and stash list are left as
-  they were. Without `--worktree`, handing off a session active in the last
+  they were. On a terminal `--to` may be left out: the agent chosen at the
+  prompt starts in the worktree, and printing, copying, or writing the
+  handoff creates none. Without `--worktree`, handing off a session active in the last
   2 minutes in the same checkout asks on a terminal whether to continue
   there, cancel, or use a worktree, and warns otherwise.
 - `show --transcript` prints a session's conversation to read: each prompt,
