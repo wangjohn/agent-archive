@@ -117,7 +117,8 @@ In Go tests, everything goes through injection:
   the `scheduler.Runner` it is given, so its tests pass a recording Runner and
   cannot reach launchd. It passes `schedulertest.RunConformance`, the suite
   every scheduler adapter must (the state matrix, refusing to stop what another
-  installation owns with typed errors, an idempotent unload, `Plan`'s purity and
+  installation owns with typed errors, an idempotent unload, loads and unloads
+  that a cancelled context does not stop, `Plan`'s purity and
   recorded output, the `Plan` to `Inspect` and refresh round trips, no
   credential in a definition, `Installed` listing the installation's own job
   first and its earlier jobs after), over a fake `launchctl` that prints the
