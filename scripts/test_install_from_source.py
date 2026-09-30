@@ -104,52 +104,81 @@ class InstallFromSourceTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not a regular file", result.stderr)
 
-    def test_unsigned_without_identity_warns(self):
+    def auto(self):
+        return dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="auto")
+
+    def test_signing_is_opt_in(self):
+        self.identities('  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n')
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("signed ad hoc", result.stderr)
         self.assertEqual(self.codesign_calls(), [])
 
-    def test_signs_with_developer_id_and_release_identifier(self):
+    def test_opt_out_is_quiet(self):
+        result = self.run_script(env=dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="-"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.codesign_calls(), [])
+
+    def test_auto_without_identity_warns(self):
+        result = self.run_script(env=self.auto())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("found no code signing identity", result.stderr)
+        self.assertEqual(self.codesign_calls(), [])
+
+    def test_auto_signs_with_developer_id_and_release_identifier(self):
         self.identities(
             '  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (XYZ)"\n'
             '  2) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n'
             '     2 valid identities found\n')
-        result = self.run_script()
+        result = self.run_script(env=self.auto())
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("ad hoc", result.stderr)
+        self.assertEqual(result.stderr, "")
         [call] = self.codesign_calls()
+        self.assertIn("--timestamp=none", call)
         self.assertIn("--sign BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", call)
         self.assertIn("--identifier agent-archive-darwin-amd64", call)
 
-    def test_falls_back_to_any_valid_identity(self):
+    def test_auto_falls_back_to_any_valid_identity(self):
         self.identities('  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (XYZ)"\n'
                         '     1 valid identities found\n')
-        result = self.run_script()
+        result = self.run_script(env=self.auto())
         self.assertEqual(result.returncode, 0, result.stderr)
         [call] = self.codesign_calls()
         self.assertIn("--sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", call)
 
-    def test_identity_override_and_opt_out(self):
-        self.identities('  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n')
+    def test_named_identity(self):
         result = self.run_script(env=dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="My Cert"))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--sign My Cert", self.codesign_calls()[0])
-        result = self.run_script(env=dict(self.env, AGENT_ARCHIVE_SIGN_IDENTITY="-"))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(self.codesign_calls()), 1)
+        [call] = self.codesign_calls()
+        self.assertIn("--sign My Cert", call)
 
-    def test_signing_failure_keeps_existing_binary(self):
+    def test_signing_failure_falls_back_to_ad_hoc(self):
         target = self.root / "bin" / "agent-archive"
         target.parent.mkdir()
         executable(target, "#!/bin/sh\necho old\n")
         self.identities('  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Developer ID Application: Someone (ABC)"\n')
         executable(self.shims / "codesign", "#!/bin/sh\nexit 1\n")
-        result = self.run_script("--destination", str(target))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("AGENT_ARCHIVE_SIGN_IDENTITY=-", result.stderr)
-        self.assertEqual(subprocess.check_output([target], text=True), "old\n")
+        result = self.run_script("--destination", str(target), env=self.auto())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("stays signed ad hoc", result.stderr)
+        self.assertEqual(subprocess.check_output([target], text=True), "dev-test-commit\n")
 
+
+class ReleaseAssetNameTest(unittest.TestCase):
+    """Dev builds are signed with a release's identifier only while every
+    place that names a release binary agrees with release_asset_name."""
+
+    def test_names_agree(self):
+        root = SCRIPT.parent.parent
+        names = subprocess.check_output(
+            ["bash", "-c", 'source "$1"; release_asset_name amd64; echo; release_asset_name arm64',
+             "-", str(SCRIPT.with_name("local-signing.sh"))], text=True).split()
+        self.assertEqual(names, ["agent-archive-darwin-amd64", "agent-archive-darwin-arm64"])
+        release = (root / ".github/workflows/release.yml").read_text()
+        self.assertIn("for binary in " + " ".join(f"dist/{n}" for n in names) + "; do", release)
+        self.assertIn('identifier="$(basename "$binary")"', release)
+        self.assertIn('asset="agent-archive-darwin-${arch}"', (root / "install.sh").read_text())
 
 if __name__ == "__main__":
     unittest.main()

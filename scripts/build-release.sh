@@ -10,6 +10,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=local-signing.sh
+source scripts/local-signing.sh
 
 version="${VERSION:-dev}"
 out_dir="dist"
@@ -19,14 +21,17 @@ mkdir -p "$out_dir"
 ldflags="-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=${version}"
 
 for arch in amd64 arm64; do
-  binary="$out_dir/agent-archive-darwin-${arch}"
+  binary="$out_dir/$(release_asset_name "$arch")"
   echo "building $binary (version=${version})"
   GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/agent-archive
+  # Only with AGENT_ARCHIVE_SIGN_IDENTITY set, for a local build; the release
+  # workflow leaves it unset and signs with its Developer ID afterwards.
+  sign_local_build "$binary" "$(release_asset_name "$arch")"
 done
 
 (
   cd "$out_dir"
-  shasum -a 256 agent-archive-darwin-amd64 agent-archive-darwin-arm64 > SHA256SUMS
+  shasum -a 256 "$(release_asset_name amd64)" "$(release_asset_name arm64)" > SHA256SUMS
 )
 
 echo "built:"

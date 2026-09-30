@@ -73,6 +73,8 @@ esac
 [[ ! -e "$destination" || -f "$destination" ]] || fail "destination is not a regular file: $destination"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck source=local-signing.sh
+source "$repo_root/scripts/local-signing.sh"
 install_dir="$(dirname "$destination")"
 mkdir -p "$install_dir"
 [[ -w "$install_dir" ]] || fail "destination directory is not writable: $install_dir"
@@ -94,26 +96,12 @@ printf 'Building %s for darwin/%s...\n' "$repo_root" "$arch"
     -o "$binary" ./cmd/agent-archive
 )
 
-# Sign with a stable identity, so a Keychain "Always Allow" survives rebuilds.
-# The Go linker signs ad hoc, and an ad hoc binary is identified to the
-# Keychain by its hash alone: every rebuild is a new program and is asked
-# again. A certificate identity plus a fixed identifier is not. The
-# identifier is the one a release binary carries (its download name), so a
-# Keychain item that already trusts the release trusts these builds too.
-# AGENT_ARCHIVE_SIGN_IDENTITY picks an identity by name or SHA-1 hash;
-# "-" keeps the ad hoc signature.
-identity="${AGENT_ARCHIVE_SIGN_IDENTITY-}"
-if [[ -z "$identity" ]]; then
-  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-  identity="$(sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) "Developer ID Application: .*/\1/p' <<<"$identities" | head -n 1)"
-  [[ -n "$identity" ]] || identity="$(sed -nE 's/^ *[0-9]+\) ([0-9A-F]{40}) ".*/\1/p' <<<"$identities" | head -n 1)"
+# See local-signing.sh: opt-in signing keeps Keychain approval across rebuilds.
+if [[ -z "${AGENT_ARCHIVE_SIGN_IDENTITY:-}" ]]; then
+  printf 'Note: this build is signed ad hoc, so macOS asks again for Keychain access after\n' >&2
+  printf 'every rebuild. To sign it instead, see docs/getting-started/install.md.\n' >&2
 fi
-if [[ -z "$identity" || "$identity" == - ]]; then
-  printf 'Note: no code signing identity found, so this build is signed ad hoc and macOS\n' >&2
-  printf 'asks again for Keychain access after every rebuild. See docs/getting-started/install.md.\n' >&2
-elif ! codesign --force --sign "$identity" --identifier "agent-archive-darwin-$arch" "$binary"; then
-  fail "could not sign the build with identity $identity (set AGENT_ARCHIVE_SIGN_IDENTITY=- to skip signing)"
-fi
+sign_local_build "$binary" "$(release_asset_name "$arch")"
 
 version="$("$binary" --version)" || fail 'the new binary failed its version check'
 [[ "$version" == dev-* ]] || fail "expected a dev version, got: $version"

@@ -163,7 +163,7 @@ jobs:
             # The Keychain trusts a binary by identifier and team, so an
             # "Always Allow" given to one release holds for the next only
             # while this identifier stays the same. It is pinned here, not
-            # left to the file name, and install-from-source.sh signs
+            # left to codesign, and scripts/local-signing.sh signs opted-in
             # development builds with it too.
             identifier="$(basename "$binary")"
             codesign --force --options runtime --timestamp \
