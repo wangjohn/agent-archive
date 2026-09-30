@@ -116,15 +116,24 @@ func TestPublicationNeverCarriesAnythingButARepoKey(t *testing.T) {
 	}
 }
 
+// A sidecar from any earlier parser gains repo_key, once: 0.13.0 predates the
+// token fields, 0.15.0 is the last parser before repo_key.
 func TestParserUpgradeGivesAnOldSidecarItsRepoKeyOnce(t *testing.T) {
+	for _, oldVersion := range []string{"0.13.0", "0.15.0"} {
+		t.Run(oldVersion, func(t *testing.T) { checkOldSidecarGainsRepoKey(t, oldVersion) })
+	}
+}
+
+func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
+	t.Helper()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
 	now := reg.RegisteredAt.Add(time.Hour)
-	// The sidecar as parser 0.13.0 wrote it: no repo_key.
-	old := Options{MachineID: "machine", ParserVersion: "0.13.0", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
-	if before := publishOnce(t, local, remote, reg, &old); before.RepoKey != "" || before.Parser.Version != "0.13.0" {
+	// The sidecar as an earlier parser wrote it: no repo_key.
+	old := Options{MachineID: "machine", ParserVersion: oldVersion, RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	if before := publishOnce(t, local, remote, reg, &old); before.RepoKey != "" || before.Parser.Version != oldVersion {
 		t.Fatalf("setup: old sidecar = %+v", before)
 	}
 

@@ -19,7 +19,7 @@ validate against a fixed version.
   a later version may add one, and older sidecars may carry retired ones.
 - A change that removes or redefines a field bumps the document's
   `schema_version` (see [versions](../../dev/maintainers/versions.md)); adding an optional field
-  does not. `repo_key`, added in parser `0.15.0`, is such a field: `repo-`
+  does not. `repo_key`, added in parser `0.16.0`, is such a field: `repo-`
   and 16 lowercase hex digits (a hash of the normalized git `origin`; never
   the address). It is absent when the project had no `origin` or was gone
   when the metadata was derived. See [privacy](../security/privacy.md).

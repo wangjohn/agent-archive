@@ -36,8 +36,15 @@ type Options struct {
 	// PriceTable prices tokens. The zero value means DefaultPriceTable.
 	PriceTable PriceTable
 	// TopN is how many rows top projects, skills and MCP servers keep.
-	// 0 means DefaultTopN.
+	// 0 means DefaultTopN. AllRows overrides it.
 	TopN int
+	// AllRows returns every project, skill and MCP server the window has,
+	// whatever TopN says, for the views that list them all. The Total counts
+	// (TotalProjects, TotalSkills, TotalDisplaySkills, MCP.TotalServers)
+	// say how many there are either way. It is a separate switch rather than
+	// a negative TopN so a zero or negative TopN keeps meaning the default.
+	// Models are never cut, so it does not change them.
+	AllRows bool
 	// By, when set, fills Stats.Groups with the window broken down by day,
 	// week, month or project.
 	By Grouping
@@ -68,10 +75,27 @@ const (
 	// LowCacheHitRate is the cache-hit rate below which a session's cache use
 	// is named a driver, provided it read or wrote at least
 	// LowCacheMinInputTokens input-side tokens (a tiny session's rate says
-	// nothing).
+	// nothing). The heads-up note NoteLowCacheHit uses the same two numbers
+	// for the whole window.
 	LowCacheHitRate = 0.6
 	// LowCacheMinInputTokens is the input-side token floor for LowCacheHitRate.
 	LowCacheMinInputTokens = 50_000
+)
+
+// Thresholds behind Stats.HeadsUp. SubagentShareThreshold (above) is the
+// subagent note's, applied to the window's tokens, and LowCacheHitRate with
+// LowCacheMinInputTokens is the cache note's.
+const (
+	// MaxHeadsUp is the most notes Stats.HeadsUp holds: the highest priority
+	// ones, when more apply.
+	MaxHeadsUp = 3
+	// CostliestNoteMinShare is the share of the window's priced spend the
+	// costliest session must reach to be worth a note.
+	CostliestNoteMinShare = 0.10
+	// CostliestNoteMinCost is the least the costliest session must have cost,
+	// in the price table's currency, to be worth a note: when everything is
+	// cheap, a large share of it is not news. The cost must exceed it.
+	CostliestNoteMinCost = 1.0
 )
 
 // Driver codes for CostliestSession.Drivers.
@@ -92,8 +116,9 @@ const MCPScope = "Claude Code and Cursor only; Codex MCP calls are not recorded.
 // Stats is everything `agent-archive stats` shows, computed by Compute from
 // session metadata. It marshals to JSON. Throughout, a null (nil pointer) is
 // unknown, never zero: it means no session in scope reported the number. A
-// section or field marked omitempty (Peak, Composition, Subagents, Skills,
-// MCP, Groups, each Highlights entry, and PriceInfo's optional fields) is left
+// section or field marked omitempty (Peak, PeakSpend, Composition, Subagents,
+// Skills, DisplaySkills, MCP, Groups, each Highlights entry, PriceInfo's
+// optional fields, and the fields of a Note that its kind does not use) is left
 // out of the JSON when it has nothing to show, not sent as null; every other
 // key is always present, and every other list is [] when empty, never null.
 // Numbers are never NaN or infinite, which JSON cannot carry: a value that
@@ -108,15 +133,18 @@ const MCPScope = "Claude Code and Cursor only; Codex MCP calls are not recorded.
 // A subagent whose parent is not in the input (an orphan) is counted as a
 // session of its own and reported in Coverage.OrphanSubagents.
 type Stats struct {
-	Window   Window     `json:"window"`
-	Prices   PriceInfo  `json:"prices"`
-	Coverage Coverage   `json:"coverage"`
-	Daily    []Day      `json:"daily"`
-	Peak     *Peak      `json:"peak,omitempty"`
-	Overview Overview   `json:"overview"`
-	Agents   []Agent    `json:"agents"`
-	Models   []ModelRow `json:"models"`
-	Projects []Project  `json:"projects"`
+	Window   Window    `json:"window"`
+	Prices   PriceInfo `json:"prices"`
+	Coverage Coverage  `json:"coverage"`
+	Daily    []Day     `json:"daily"`
+	Peak     *Peak     `json:"peak,omitempty"`
+	// PeakSpend is the day with the highest estimated cost. Nil when no day
+	// had a priced cost above zero.
+	PeakSpend *PeakSpend `json:"peak_spend,omitempty"`
+	Overview  Overview   `json:"overview"`
+	Agents    []Agent    `json:"agents"`
+	Models    []ModelRow `json:"models"`
+	Projects  []Project  `json:"projects"`
 	// TotalProjects is how many distinct projects the window has; Projects
 	// keeps the top few.
 	TotalProjects int `json:"total_projects"`
@@ -125,12 +153,28 @@ type Stats struct {
 	Composition *Composition `json:"composition,omitempty"`
 	// Subagents is the tokens subagent sessions used. Nil when none did.
 	Subagents *SubagentShare `json:"subagents,omitempty"`
-	// Skills are the skills sessions used, by number of sessions.
+	// Skills are the skills sessions used, by number of sessions, under the
+	// names the sessions recorded (a plugin's skill is "plugin:skill").
 	Skills []Skill `json:"skills,omitempty"`
+	// DisplaySkills is the same skills for showing to a person: a plugin
+	// prefix is stripped from each name (SkillDisplayName), and skills that
+	// then share a name are one row, counted in the sessions that used any of
+	// them (a session that used both counts once). Skills keeps the recorded
+	// names; nothing else in the document changes with this.
+	DisplaySkills []Skill `json:"display_skills,omitempty"`
+	// TotalSkills is how many distinct recorded skill names the window has,
+	// and TotalDisplaySkills how many distinct display names; Skills and
+	// DisplaySkills keep the top few unless Options.AllRows is set.
+	TotalSkills        int `json:"total_skills"`
+	TotalDisplaySkills int `json:"total_display_skills"`
 	// MCP are the MCP servers sessions called, by number of calls. Nil when
 	// none were.
 	MCP        *MCP       `json:"mcp,omitempty"`
 	Highlights Highlights `json:"highlights"`
+	// HeadsUp is what deserves the reader's attention, at most MaxHeadsUp
+	// notes in priority order (see Note). [] when nothing does. Each note is
+	// data only; the words are the renderer's.
+	HeadsUp []Note `json:"heads_up"`
 	// Groups is the window broken down as Options.By asked, nil without it.
 	Groups *Groups `json:"groups,omitempty"`
 }
@@ -201,12 +245,28 @@ type Day struct {
 	// Tokens is the day's token total: 0 on a day without sessions, null on
 	// a day whose sessions report no token counts.
 	Tokens *int64 `json:"tokens"`
+	// Cost is the day's estimated cost, priced as the overall cost is and
+	// placed in the day the same way tokens are (a subagent's cost is on its
+	// parent's day). usd is 0 on a day without sessions and null on a day
+	// with nothing priced (sessions that report no tokens, or only tokens of
+	// models the price table lacks, which partial and unpriced_tokens then
+	// say). The days' costs add up to the overview's.
+	Cost Cost `json:"cost"`
 }
 
 // Peak is the day with the most tokens (the earliest, on a tie).
 type Peak struct {
 	Date   string `json:"date"`
 	Tokens int64  `json:"tokens"`
+}
+
+// PeakSpend is the day with the highest estimated cost (the earliest, on a
+// tie).
+type PeakSpend struct {
+	Date string `json:"date"`
+	// USD is the cost, in the price table's currency (the field keeps its
+	// historical name, as Cost.USD does).
+	USD float64 `json:"usd"`
 }
 
 // Measure is one overview number, the previous period's, and the change.
@@ -235,6 +295,11 @@ type Overview struct {
 	Tokens     Measure     `json:"tokens"`
 	Cost       CostMeasure `json:"cost"`
 	ActiveDays Measure     `json:"active_days"`
+	// CacheShare is the part of all the window's tokens that were cache reads
+	// (0 to 1), which is most of them in a long session. Null when no session
+	// reports token counts, or none reports cache counts (a missing count is
+	// not a zero share).
+	CacheShare *float64 `json:"cache_share"`
 	// DaysInWindow is Window.Days, for "24/30".
 	DaysInWindow int `json:"days_in_window"`
 	// CurrentStreak is the run of consecutive active days ending today, or
@@ -349,8 +414,11 @@ type Skill struct {
 // MCP lists the MCP servers called, by number of calls.
 type MCP struct {
 	// Scope says which agents the counts cover (MCPScope).
-	Scope   string      `json:"scope"`
-	Servers []MCPServer `json:"servers"`
+	Scope string `json:"scope"`
+	// TotalServers is how many servers were called; Servers keeps the top few
+	// unless Options.AllRows is set.
+	TotalServers int         `json:"total_servers"`
+	Servers      []MCPServer `json:"servers"`
 }
 
 // MCPServer is one MCP server's call count.

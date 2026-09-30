@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `agent-archive stats --json` carries more of what the screen is built from:
+  each day's estimated cost (`daily[].cost`, adding up to the overview's) and
+  the dearest day (`peak_spend`), the share of tokens that were cache reads
+  (`overview.cache_share`), up to three prioritized `heads_up` notes as data
+  (subagents using a quarter or more of the tokens, one session costing a
+  tenth or more of the spend, sessions without token data, a low cache-hit
+  rate), and `display_skills`, which lists a plugin's skill once under its
+  bare name, with `total_skills`, `total_display_skills` and
+  `mcp.total_servers` counting every row. Existing fields and the screen and
+  page are unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
 - **Handoff without copying.** Continuing a session in another coding agent
   is one step: inside Claude Code, `/handoff codex` opens Codex in a new
   terminal tab or window with the session as its context (in Codex, ask for
@@ -32,6 +42,12 @@ follow [Semantic Versioning](https://semver.org/).
   only its own, and `status --json` lists them in `agent_skills`. After an
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
+- `agent-archive setup --no-skills` (also with `--yes`) installs no agent
+  skills and removes the ones setup wrote; a file that is not setup's is left
+  alone and named. It is saved, so later setup runs keep the skills off, and
+  `agent-archive setup --skills` turns them back on. `status` says when they
+  are turned off (`agent_skills_disabled` in `--json`). Setup now says in one
+  line how to opt out.
 - Sessions in a git repository now carry a `repo_key` in their metadata: a
   hash of the repository's `origin` address (credentials, scheme, port, and
   `.git` removed, so SSH and HTTPS clones of one repository agree), which
@@ -163,7 +179,7 @@ follow [Semantic Versioning](https://semver.org/).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). They arrive with parser `0.13.0`; this release ships `0.15.0`,
+  paths). They arrive with parser `0.13.0`; this release ships `0.16.0`,
   so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
@@ -202,6 +218,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `handoff` takes a title as well as a session ID: `handoff "fix the auth
+  bug" --harness codex`. It matches as `show` does (a title substring or a
+  short session ID; a full ID wins), in this Mac's sessions first, with no
+  network, then in the archive. Only the title (the first prompt) is
+  matched, never the rest of the conversation; a session on this Mac has its
+  title read from its transcript file, which stays on the Mac. Several
+  matches (the newest 20 are shown) open the picker on them on a terminal;
+  without one they are listed on stderr with exit code 1 instead of
+  guessing. Run from inside a Claude Code or Codex session, a title never
+  matches that session itself (as `--latest` skips it).
+  `handoff` no longer rejects an argument that is not shaped like a session
+  ID up front; one that matches nothing says so and points to `list`.
 - `handoff --latest` now finds sessions from your other computers even when
   the repository is at a different path. A session matches the current
   directory by path or by repository (the `origin` remote, so SSH and HTTPS

@@ -165,12 +165,15 @@ untrimmed output. See [list and show](../guides/list-and-show.md#size).
   "window": { "days": 30, "timezone": "America/Los_Angeles", "first_day": "2026-08-31", "last_day": "2026-09-29", "...": "from, to, previous_from, previous_to" },
   "prices": { "version": "2026-09.2", "as_of": "2026-09-29", "currency": "USD", "...": "sources, notes, overridden" },
   "coverage": { "sessions": 412, "sessions_with_tokens": 371, "unknown_tokens_by_agent": { "cursor": 41 }, "...": "" },
-  "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000 } ],
+  "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000, "cost": { "usd": 41.2, "partial": false, "unpriced_tokens": 0, "approximate": false } } ],
   "peak": { "date": "2026-09-17", "tokens": 4900000 },
-  "overview": { "sessions": { "value": 412, "previous": 349, "change_pct": 18.05 }, "...": "prompts, tokens, cost, active_days, streaks" },
+  "peak_spend": { "date": "2026-09-27", "usd": 2910.4 },
+  "overview": { "sessions": { "value": 412, "previous": 349, "change_pct": 18.05 }, "cache_share": 0.97, "...": "prompts, tokens, cost, active_days, streaks" },
   "agents": [], "models": [], "projects": [], "total_projects": 12,
-  "composition": {}, "subagents": {}, "skills": [], "mcp": {},
+  "composition": {}, "subagents": {},
+  "skills": [], "display_skills": [], "total_skills": 9, "total_display_skills": 8, "mcp": {},
   "highlights": {},
+  "heads_up": [ { "kind": "subagent_share", "share": 0.77, "tokens": 7700000000, "runs": 497 } ],
   "groups": { "by": "project", "rows": [] }
 }
 ```
@@ -220,6 +223,41 @@ at the top level. Read the rules below before using a number:
 - **Skills** are counted in sessions that used them, not calls. **MCP**
   servers are counted in calls, and `mcp.scope` says which agents that
   covers (Claude Code and Cursor; Codex MCP calls are not recorded).
+- **Spend by day.** Each `daily` entry has a `cost` in the same shape as
+  every other cost, priced as the overall cost is from that day's sessions
+  and placed the way tokens are (a subagent's cost is on its parent's day).
+  A day without sessions costs a known `0`; a day whose sessions record no
+  tokens (Cursor), or whose tokens are all of models the price table lacks,
+  has `usd: null`, and `partial` with `unpriced_tokens` says the second.
+  The days' `usd` add up to `overview.cost.value` (to within floating-point
+  rounding). `peak_spend` is the day
+  with the highest priced cost (the earliest on a tie), left out when no day
+  cost more than zero; `peak` is still the day with the most tokens.
+- **`overview.cache_share`** is the part of all tokens that were cache reads
+  (0 to 1), or `null` when no session reports token counts or none reports
+  cache counts; when it is present it equals `composition.cache_read.share`.
+- **Top lists.** `projects`, `skills` and `mcp.servers` keep the top few rows
+  (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
+  there are. `models` lists every model family. `display_skills` is `skills`
+  for showing to a person: a plugin prefix is stripped from each name
+  (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
+  that then share a name are one row, counted in the sessions that used any
+  of them (a session that used both counts once); `total_display_skills` is
+  its length before the cut. `skills` keeps the names as recorded.
+- **`heads_up`** is what deserves a second look, at most three notes in
+  priority order, `[]` when nothing does. Each note is data only, with a
+  `kind` that says which fields it has; the words are the reader's:
+
+  | `kind` | Applies when | Fields |
+  | --- | --- | --- |
+  | `subagent_share` | subagents used 25% or more of the window's tokens | `share` (0 to 1), `tokens`, `runs` (subagent runs rolled into their parents, which are not sessions of their own) |
+  | `costliest_session` | the costliest session cost at least 10% of the priced spend and more than 1 (in the price table's currency) | `cost` (as `highlights.costliest_session.cost`), `cost_share`, `project` (left out when the session has none), `subagents` (runs it had), `drivers` (as in `highlights.costliest_session`, but left out, not `[]`, when there are none) |
+  | `unmetered_sessions` | any session reports no token counts | `sessions`, `by_agent` (`harness`, `label`, `sessions`; most sessions first) |
+  | `low_cache_hit` | the window's cache-hit rate is under 60%, over at least 50,000 input-side tokens | `hit_rate`, `input_tokens` |
+
+  When more than three apply, the first three in this order are kept. The
+  session behind `costliest_session` is `highlights.costliest_session`, which
+  holds its ID.
 - **`highlights.tool_errors`** is the share of tool results the app flagged
   as errors (this includes calls the user rejected or interrupted), over the
   `sessions` that record it; there is no per-tool breakdown.
@@ -264,6 +302,7 @@ Treat an absent field and `null` the same way.
 | `applications[]` | Per app: hook state (`installed`, `missing or incomplete`, `broken`, or `unknown` when the hook file could not be read or no executable is recorded to check the hooks against; `warnings` then names the file), `other_installations` (the data directories of other agent-archive installations whose hooks are in the same hook file; this installation never changes them, and setup won't install beside them), installed version and its support (`verified_by_capture` once a session from that version was read back, else `unverified`), capture evidence (`configured`, `hook_observed`, `captured_locally`, `published`, `read_back_verified`, with counts), `sessions_with_capture_gaps`, observed app and adapter versions, and per-project breakdowns. |
 | `agent_skills` | The agent skill files (the `/handoff` skill) setup installed that are there now (absolute paths; absent when there are none). A file at one of those paths without setup's marker line is the person's own, and one naming another data directory is another installation's; neither is listed. |
 | `agent_skills_out_of_date` | The files in `agent_skills` whose text differs from what this version of `agent-archive` writes (an earlier release wrote them, or the executable moved); `agent-archive setup` refreshes them, and status warns about each. Absent when there are none, or when no executable is recorded to compare with. |
+| `agent_skills_disabled` | `true` when the agent skills are turned off (`agent-archive setup --no-skills`); absent otherwise. Setup then installs and refreshes none, and `agent_skills` is empty unless a file of setup's is left over (a restored backup, an interrupted removal): status warns about it, `agent_skills_out_of_date` is absent, and `agent-archive setup` removes it. `agent-archive setup --skills` turns them back on. |
 | `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this Mac only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |

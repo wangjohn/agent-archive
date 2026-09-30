@@ -60,6 +60,7 @@ Enter 1-3 [\e[1m1\e[0m] ›
 
 Configuration saved.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
+To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 Looking for past sessions in these projects… 2 found.
 \e[1mImport the 2 past sessions from these projects?\e[0m [\e[1mY\e[0m/n] › 
