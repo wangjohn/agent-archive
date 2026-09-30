@@ -389,8 +389,8 @@ func (e Env) xdgDrift(environment map[string]string) []string {
 		return nil
 	}
 	purpose := map[string]string{
-		"XDG_CONFIG_HOME": "look for Cursor's chat database",
-		"XDG_CACHE_HOME":  "keep the temporary copies they read of it",
+		"XDG_CONFIG_HOME": "look for Cursor's chat database in different places",
+		"XDG_CACHE_HOME":  "keep the temporary copies they read Cursor's chat database from in different places",
 	}
 	var drift []string
 	for _, name := range collectorXDGDirs {
@@ -399,7 +399,7 @@ func (e Env) xdgDrift(environment map[string]string) []string {
 		if shell == collector {
 			continue
 		}
-		drift = append(drift, fmt.Sprintf("This shell's %s is %s and the background collector's is %s, so they %s in different places. The collector uses what setup recorded; if this shell's is the right one, run agent-archive setup again from here.",
+		drift = append(drift, fmt.Sprintf("This shell's %s is %s and the background collector's is %s, so they %s. The collector uses what setup recorded; if this shell's is the right one, run agent-archive setup again from here.",
 			name, xdgOrUnset(shell), xdgOrUnset(collector), purpose[name]))
 	}
 	return drift
