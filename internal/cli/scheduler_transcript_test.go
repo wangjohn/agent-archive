@@ -167,3 +167,28 @@ func TestUninstallLaunchctlSequence(t *testing.T) {
 	}
 	r.checkTranscript("uninstall-loaded", "uninstall with own and two earlier-label collectors, two loaded", code)
 }
+
+// The job stopped on its own between the check and the stop (launchd no longer
+// has it when setup's commit or uninstall goes to stop it): nothing is booted
+// out, and setup and uninstall carry on as if it had been stopped.
+func TestJobGoneBeforeTheStopLaunchctlSequence(t *testing.T) {
+	r := newSchedRun(t, true)
+	r.install()
+	r.probe("own", r.own(), nil)
+	r.answers[r.ownLabel()] = []launchdAnswer{answerLoaded, answerLoaded, answerMissing}
+	code, out := r.setup()
+	if code != 0 {
+		t.Fatalf("setup: exit %d\n%s", code, out)
+	}
+	r.checkTranscript("setup-job-gone-before-the-stop", "setup whose loaded job is gone when the commit stops it", code)
+
+	r = newSchedRun(t, true)
+	r.install()
+	r.probe("own", r.own(), nil)
+	r.answers[r.ownLabel()] = []launchdAnswer{answerLoaded, answerMissing}
+	code, out = r.run("uninstall", "--yes")
+	if code != 0 {
+		t.Fatalf("uninstall: exit %d\n%s", code, out)
+	}
+	r.checkTranscript("uninstall-job-gone-before-the-stop", "uninstall whose loaded job is gone when it stops it", code)
+}
