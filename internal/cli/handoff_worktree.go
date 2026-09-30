@@ -136,15 +136,11 @@ func isCallingAgent(env currentSessionDependencies, reg archive.SessionRegistrat
 // removed, since it may by then hold copies of someone's work.
 func createHandoffWorktree(env worktreeDependencies, branch string, target handoffTarget, dir string, stderr io.Writer) (string, error) {
 	ctx := context.Background()
-	git := func(dir string, args ...string) (string, error) {
-		out, err := env.runGit(ctx, dir, args...)
-		return strings.TrimSpace(string(out)), err
-	}
-	top, err := git(dir, "rev-parse", "--show-toplevel")
+	top, err := gitText(ctx, env, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("--worktree needs a git checkout, and %s is not in one: %w", dir, err)
 	}
-	prefix, err := git(dir, "rev-parse", "--show-prefix")
+	prefix, err := gitText(ctx, env, dir, "rev-parse", "--show-prefix")
 	if err != nil {
 		return "", err
 	}
@@ -152,27 +148,9 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	if branch == "" {
 		branch = "handoff/" + short
 	}
-	// check-ref-format --branch also expands forms such as @{-1}; only a
-	// name it returns unchanged is taken as given. It accepts "@", which is
-	// HEAD's shorthand, and older versions accept a leading "-".
-	if branch == "@" || strings.HasPrefix(branch, "-") {
-		return "", fmt.Errorf("%q is not a valid branch name", branch)
-	}
-	if checked, err := git(top, "check-ref-format", "--branch", branch); err != nil || checked != branch {
-		return "", fmt.Errorf("%q is not a valid branch name", branch)
-	}
 	path := top + "-handoff-" + short
-	if _, err := os.Lstat(path); err == nil {
-		return "", fmt.Errorf("%s already exists; remove it (`git worktree remove %s` if it is an earlier handoff's worktree) and retry", path, path)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	if err := checkWorktreeTarget(ctx, env, top, branch, path); err != nil {
 		return "", err
-	}
-	refs, err := git(top, "for-each-ref", "--format=%(refname)", "refs/heads/"+branch)
-	if err != nil {
-		return "", err
-	}
-	if slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch) {
-		return "", fmt.Errorf("branch %s already exists; name a new one with --branch NAME", branch)
 	}
 	op, err := operationInProgress(ctx, env, top)
 	if err != nil {
@@ -183,61 +161,31 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 		// state, so the new agent would see a plain edit instead.
 		return "", fmt.Errorf("a %s is in progress in %s; finish or abort it before using --worktree", op, top)
 	}
-	// `git stash create` cannot record intent-to-add (`git add -N`)
-	// entries, and fails with a message that does not say which.
-	intent, err := env.runGit(ctx, top, "diff", "--name-only", "--diff-filter=A", "-z")
-	if err != nil {
-		return "", fmt.Errorf("list uncommitted changes: %w", err)
-	}
-	if names := splitNul(intent); len(names) > 0 {
-		return "", fmt.Errorf("--worktree cannot carry files added with `git add -N` (%s); stage them with `git add`, or undo with `git reset -- <file>`, and retry", strings.Join(names, ", "))
-	}
-	head, err := git(top, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return "", fmt.Errorf("--worktree needs a commit to start from: %w", err)
-	}
 	// Read everything to carry before the worktree exists, so a failure
 	// here leaves nothing behind.
-	stash, err := git(top, "stash", "create")
+	carry, err := readWorktreeCarry(ctx, env, top)
 	if err != nil {
-		return "", fmt.Errorf("record uncommitted changes: %w", err)
+		return "", err
 	}
-	changed := 0
-	if stash != "" {
-		// The worktree starts where the changes were recorded, even if
-		// another agent in this checkout has committed since.
-		if head, err = git(top, "rev-parse", "--verify", stash+"^1"); err != nil {
-			return "", fmt.Errorf("record uncommitted changes: %w", err)
-		}
-		names, err := env.runGit(ctx, top, "diff", "--name-only", "-z", stash+"^1", stash)
-		if err != nil {
-			return "", fmt.Errorf("list uncommitted changes: %w", err)
-		}
-		changed = len(splitNul(names))
-	}
-	listed, err := env.runGit(ctx, top, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return "", fmt.Errorf("list untracked files: %w", err)
-	}
-	if _, err := git(top, "worktree", "add", "-b", branch, path, head); err != nil {
+	if _, err := gitText(ctx, env, top, "worktree", "add", "-b", branch, path, carry.head); err != nil {
 		return "", fmt.Errorf("create worktree: %w", err)
 	}
 	left := func(err error) (string, error) {
 		return "", fmt.Errorf("created worktree %s on branch %s, but could not carry this checkout's changes into it: %w; the worktree is left in place for you to inspect or remove (`git worktree remove --force %s`)", path, branch, err, path)
 	}
-	if stash != "" {
-		if _, err := git(path, "stash", "apply", stash); err != nil {
+	if carry.stash != "" {
+		if _, err := gitText(ctx, env, path, "stash", "apply", carry.stash); err != nil {
 			return left(err)
 		}
 	}
-	copied, skipped, err := copyUntracked(top, path, splitNul(listed))
+	copied, skipped, err := copyUntracked(top, path, carry.untracked)
 	if err != nil {
 		return left(err)
 	}
 	for _, name := range skipped {
 		terminal.Printf(stderr, "handoff: warning: did not copy %s into the worktree (not a file or symlink, such as a nested repository)\n", name)
 	}
-	terminal.Printf(stderr, "handoff: created worktree %s on branch %s (carried %d changed and %d untracked files)\n", path, branch, changed, copied)
+	terminal.Printf(stderr, "handoff: created worktree %s on branch %s (carried %d changed and %d untracked files)\n", path, branch, carry.changed, copied)
 	if op == "bisect" {
 		// Bisecting leaves the working tree as it is, so its changes carry;
 		// the bisect itself stays in this checkout.
@@ -253,6 +201,89 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	// dir was inside an ignored or untracked-only directory.
 	terminal.Printf(stderr, "handoff: %s is not in the worktree; starting at its top level\n", prefix)
 	return path, nil
+}
+
+// gitText runs git in dir and returns its output without surrounding space.
+func gitText(ctx context.Context, env worktreeDependencies, dir string, args ...string) (string, error) {
+	out, err := env.runGit(ctx, dir, args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+// checkWorktreeTarget refuses a branch name git would not take as given, and
+// a worktree path or branch that already exists.
+func checkWorktreeTarget(ctx context.Context, env worktreeDependencies, top, branch, path string) error {
+	// check-ref-format --branch also expands forms such as @{-1}; only a
+	// name it returns unchanged is taken as given. It accepts "@", which is
+	// HEAD's shorthand, and older versions accept a leading "-".
+	if branch == "@" || strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("%q is not a valid branch name", branch)
+	}
+	if checked, err := gitText(ctx, env, top, "check-ref-format", "--branch", branch); err != nil || checked != branch {
+		return fmt.Errorf("%q is not a valid branch name", branch)
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%s already exists; remove it (`git worktree remove %s` if it is an earlier handoff's worktree) and retry", path, path)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	refs, err := gitText(ctx, env, top, "for-each-ref", "--format=%(refname)", "refs/heads/"+branch)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(strings.Split(refs, "\n"), "refs/heads/"+branch) {
+		return fmt.Errorf("branch %s already exists; name a new one with --branch NAME", branch)
+	}
+	return nil
+}
+
+// worktreeCarry is what a new worktree carries from the checkout: the
+// commit it starts at, the stash commit holding uncommitted changes ("" when
+// there are none) and how many files those touch, and the untracked files.
+type worktreeCarry struct {
+	head      string
+	stash     string
+	changed   int
+	untracked []string
+}
+
+// readWorktreeCarry records the checkout at top's uncommitted changes and
+// lists its untracked (not ignored) files, changing nothing in it.
+func readWorktreeCarry(ctx context.Context, env worktreeDependencies, top string) (worktreeCarry, error) {
+	// `git stash create` cannot record intent-to-add (`git add -N`)
+	// entries, and fails with a message that does not say which.
+	intent, err := env.runGit(ctx, top, "diff", "--name-only", "--diff-filter=A", "-z")
+	if err != nil {
+		return worktreeCarry{}, fmt.Errorf("list uncommitted changes: %w", err)
+	}
+	if names := splitNul(intent); len(names) > 0 {
+		return worktreeCarry{}, fmt.Errorf("--worktree cannot carry files added with `git add -N` (%s); stage them with `git add`, or undo with `git reset -- <file>`, and retry", strings.Join(names, ", "))
+	}
+	head, err := gitText(ctx, env, top, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return worktreeCarry{}, fmt.Errorf("--worktree needs a commit to start from: %w", err)
+	}
+	stash, err := gitText(ctx, env, top, "stash", "create")
+	if err != nil {
+		return worktreeCarry{}, fmt.Errorf("record uncommitted changes: %w", err)
+	}
+	changed := 0
+	if stash != "" {
+		// The worktree starts where the changes were recorded, even if
+		// another agent in this checkout has committed since.
+		if head, err = gitText(ctx, env, top, "rev-parse", "--verify", stash+"^1"); err != nil {
+			return worktreeCarry{}, fmt.Errorf("record uncommitted changes: %w", err)
+		}
+		names, err := env.runGit(ctx, top, "diff", "--name-only", "-z", stash+"^1", stash)
+		if err != nil {
+			return worktreeCarry{}, fmt.Errorf("list uncommitted changes: %w", err)
+		}
+		changed = len(splitNul(names))
+	}
+	listed, err := env.runGit(ctx, top, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return worktreeCarry{}, fmt.Errorf("list untracked files: %w", err)
+	}
+	return worktreeCarry{head: head, stash: stash, changed: changed, untracked: splitNul(listed)}, nil
 }
 
 // operationInProgress names a merge, rebase, `git am`, cherry-pick, revert, or
