@@ -309,7 +309,9 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 
 // ListRange lists the objects under relativePrefix in the key range (after,
 // through] (see RangeLister). The provider starts at after through
-// ListObjectsV2's StartAfter, and paging stops at the first page that passes
+// ListObjectsV2's StartAfter, sent on the first request only (later pages
+// carry just the continuation token, since not every S3-compatible provider
+// is known to accept both), and paging stops at the first page that passes
 // through. The range is also enforced here, key by key, so a provider that
 // ignored StartAfter (or a start key it could not be given) would cost extra
 // pages but never return a key twice across ranges.
@@ -325,10 +327,10 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 	if key, err := s.key(after); after != "" && err == nil {
 		start = aws.String(key)
 	}
-	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start})
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start}
 	var objects []Object
-	for pager.HasMorePages() {
-		page, pageErr := pager.NextPage(ctx)
+	for {
+		page, pageErr := s.client.ListObjectsV2(ctx, input)
 		if pageErr != nil {
 			return nil, pageErr
 		}
@@ -350,8 +352,15 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 				LastModified: aws.ToTime(item.LastModified),
 			})
 		}
+		if !aws.ToBool(page.IsTruncated) {
+			return objects, nil
+		}
+		token := aws.ToString(page.NextContinuationToken)
+		if token == "" {
+			return nil, errors.New("list page is truncated without continuation token")
+		}
+		input = &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), ContinuationToken: aws.String(token)}
 	}
-	return objects, nil
 }
 
 func (s *S3Store) keyForList(relativePrefix string) (string, error) {

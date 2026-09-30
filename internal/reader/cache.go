@@ -171,10 +171,11 @@ func writeCacheFile(path string, data []byte) error {
 	return os.Rename(f.Name(), path)
 }
 
-// evictUnlisted removes every cached sidecar under listPrefix which the
-// listing did not return. Entries outside listPrefix belong to a listing this
-// one did not cover (another harness) and are left alone.
-func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object) {
+// evictUnlisted removes every cached entry among known (keys, read before
+// the listing) which the listing did not return. Entries outside the
+// listing's prefix were never in known: they belong to a listing this one
+// did not cover (another harness) and are left alone.
+func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
@@ -182,31 +183,18 @@ func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object
 	for _, object := range listed {
 		present[object.Key] = true
 	}
-	entries, err := os.ReadDir(c.dir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		raw, err := hex.DecodeString(strings.TrimSuffix(name, ".json"))
-		if err != nil {
-			// Not a name this cache writes; it cannot be one of ours to keep.
-			_ = os.Remove(filepath.Join(c.dir, name))
-			continue
-		}
-		key := string(raw)
-		if strings.HasPrefix(key, listPrefix) && !present[key] {
-			_ = os.Remove(filepath.Join(c.dir, name))
+	for _, key := range known {
+		if !present[key] {
+			_ = os.Remove(filepath.Join(c.dir, hex.EncodeToString([]byte(key))+".json"))
 		}
 	}
 }
 
-// keys returns the object keys of the sidecars cached under listPrefix, in
-// no particular order. A listing plans its ranges from them (planRanges);
-// like everything else about the cache, a missing or unreadable directory is
+// keys returns the object keys cached under listPrefix, in no particular
+// order: what one listing plans its ranges from (planRanges) and later
+// evicts from (evictUnlisted), so the directory is read once per listing.
+// A file whose name this cache never writes is removed on the way. Like
+// everything else about the cache, a missing or unreadable directory is
 // just no keys.
 func (c *MetadataCache) keys(listPrefix string) []string {
 	if c == nil {
@@ -224,9 +212,11 @@ func (c *MetadataCache) keys(listPrefix string) []string {
 		}
 		raw, err := hex.DecodeString(strings.TrimSuffix(name, ".json"))
 		if err != nil {
+			// Not a name this cache writes; it cannot be one of ours to keep.
+			_ = os.Remove(filepath.Join(c.dir, name))
 			continue
 		}
-		if key := string(raw); isMetadataKey(key) && strings.HasPrefix(key, listPrefix) {
+		if key := string(raw); strings.HasPrefix(key, listPrefix) {
 			keys = append(keys, key)
 		}
 	}
