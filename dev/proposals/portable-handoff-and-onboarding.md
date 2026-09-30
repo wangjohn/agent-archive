@@ -204,7 +204,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 
 ## Part 3. Linux support (persistent capture)
 
-> **Update 2026-09-30.** PRs 5 to 7 below (scheduler refactor, systemd backend, terminology) are re-planned around a single platform seam in [platform-abstraction.md](platform-abstraction.md), which supersedes sections 3c to 3e and the PR list here. PRs 1 to 4 stand.
+> **Update 2026-09-30.** PRs 5 to 7 below (scheduler refactor, systemd backend, terminology) are re-planned around one scheduler port and one OS value in [platform-abstraction.md](platform-abstraction.md), which supersedes sections 3c to 3e and the PR list here. PRs 1 to 4 stand.
 
 ### Scope
 
