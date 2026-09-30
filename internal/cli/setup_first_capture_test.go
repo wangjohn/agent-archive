@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -38,10 +40,12 @@ func TestOfferFirstCaptureAsksNothingWhenItCannotGuessBoth(t *testing.T) {
 }
 
 // The repository setup was run from heads the project list, unless it is too
-// broad to archive on one Enter: the home folder, a folder holding it, or the
-// temporary folder or anything in it, however far up the repository is. Then
-// there is no current project, and nothing is pre-selected.
-func TestCurrentProjectIsNeverTheHomeAncestorOfItOrTheTempDir(t *testing.T) {
+// broad to archive on one Enter: the home folder or a folder holding it, or a
+// temporary folder or a folder holding one, however far up the repository
+// is. Then there is no current project, nothing is pre-selected, and the
+// refusal says why. A repository inside a temporary folder is an ordinary
+// project, as backfill treats it.
+func TestCurrentProjectRefusesOnlyBroadFolders(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
@@ -51,45 +55,113 @@ func TestCurrentProjectIsNeverTheHomeAncestorOfItOrTheTempDir(t *testing.T) {
 		cwd string
 		// want is the project's folder under the root, or "" for none.
 		want string
+		// refusal is what the one-line refusal must contain, or "" for none.
+		refusal string
 	}{
-		{"home folder", []string{"home"}, "home", ""},
-		{"inside the home folder, repository above it", []string{"."}, "home/src/app", ""},
-		{"folder holding home", []string{"."}, ".", ""},
-		{"temporary folder", []string{"tmp"}, "tmp", ""},
-		{"inside the temporary folder", []string{"tmp/scratch/app"}, "tmp/scratch/app", ""},
-		{"ordinary repository", []string{"work/app"}, "work/app/pkg", "work/app"},
-		{"no repository", nil, "work/app", ""},
+		{"home folder", []string{"home"}, "home", "", "as a project: it is your home folder. Enter the projects you want."},
+		{"inside the home folder, repository above it", []string{"."}, "home/src/app", "", "as a project: it holds your home folder."},
+		{"folder holding home", []string{"."}, ".", "", "as a project: it holds your home folder."},
+		{"temporary folder", []string{"var/tmp"}, "var/tmp", "", "as a project: it is a temporary folder."},
+		{"folder holding a temporary folder", []string{"var"}, "var/tmp/x", "", "as a project: it holds a temporary folder."},
+		{"repository inside a temporary folder", []string{"var/tmp/x"}, "var/tmp/x", "var/tmp/x", ""},
+		{"ordinary repository", []string{"work/app"}, "work/app/pkg", "work/app", ""},
+		{"no repository", nil, "work/app", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			must(t, err)
 			at := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
-			for _, dir := range []string{"home/src/app", "tmp/scratch/app", "work/app/pkg"} {
+			for _, dir := range []string{"home/src/app", "var/tmp/x", "work/app/pkg"} {
 				must(t, os.MkdirAll(at(dir), 0o700))
 			}
 			for _, dir := range tc.gitAt {
 				must(t, os.MkdirAll(filepath.Join(at(dir), ".git"), 0o700))
 			}
-			env := Env{WorkingDir: func() (string, error) { return at(tc.cwd), nil }, TempDir: func() string { return at("tmp") }}
+			env := Env{WorkingDir: func() (string, error) { return at(tc.cwd), nil }, BackfillTempDirs: []string{at("var/tmp")}}
 			want := ""
 			if tc.want != "" {
 				want = at(tc.want)
 			}
-			if got := currentProject(env, at("home")); got != want {
+			got, refused := currentProject(env, at("home"))
+			if got != want {
 				t.Fatalf("currentProject = %q, want %q", got, want)
+			}
+			if (tc.refusal == "") != (refused == "") || !strings.Contains(refused, tc.refusal) || (refused != "" && !strings.HasPrefix(refused, "Not offering ")) {
+				t.Fatalf("refusal = %q, want one containing %q", refused, tc.refusal)
 			}
 		})
 	}
 }
 
-// A folder next to the home folder or the temporary folder, not holding or
-// inside them, is not broad.
+// The refusal names the folder from ~ and what to do.
+func TestCurrentProjectRefusalNamesTheFolder(t *testing.T) {
+	t.Parallel()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	must(t, os.MkdirAll(filepath.Join(home, ".git"), 0o700))
+	env := Env{WorkingDir: func() (string, error) { return home, nil }, BackfillTempDirs: []string{}}
+	_, refused := currentProject(env, home)
+	if want := "Not offering ~ as a project: it is your home folder. Enter the projects you want."; refused != want {
+		t.Fatalf("refusal = %q, want %q", refused, want)
+	}
+}
+
+// Setup's temporary folders are backfill's: the defaults and $TMPDIR, from
+// one list, so a repository at /tmp/x or /private/tmp/x is treated alike on
+// macOS and Linux.
+func TestSetupAndBackfillShareOneTempFolderList(t *testing.T) {
+	t.Parallel()
+	env := Env{LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
+	temps := env.backfillTempDirs()
+	for _, want := range append(append([]string(nil), backfill.DefaultTempDirs...), "/scratch/tmp") {
+		if !slices.Contains(temps, want) {
+			t.Fatalf("temporary folders %v lack %s", temps, want)
+		}
+	}
+	if got := env.backfillEnvironment("/Users/alex", config.Config{}).TempDirs; !slices.Equal(got, temps) {
+		t.Fatalf("backfill's list %v differs from setup's %v", got, temps)
+	}
+	for _, dir := range []string{"/tmp", "/private/tmp", "/scratch/tmp"} {
+		if broadFolder(dir, "/Users/alex", temps) == "" {
+			t.Errorf("%s is not refused as a temporary folder", dir)
+		}
+	}
+	if broadFolder("/tmp/x", "/Users/alex", temps) != "" {
+		t.Error("a repository inside a temporary folder was refused")
+	}
+}
+
+// On a case-insensitive volume a folder spelled with another case is the
+// same folder: a home folder <base>/Home holding a .git is still refused
+// when setup runs from <base>/home. Skipped where the file system tells the
+// two apart.
+func TestBroadFolderIgnoresCaseOnCaseInsensitiveVolumes(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	home := filepath.Join(root, "Home")
+	must(t, os.MkdirAll(filepath.Join(home, ".git"), 0o700))
+	other := filepath.Join(root, "home")
+	if _, err := os.Stat(other); err != nil {
+		t.Skip("the file system tells Home and home apart")
+	}
+	if reason := broadFolder(other, home, nil); reason != "it is your home folder" {
+		t.Fatalf("reason = %q", reason)
+	}
+	env := Env{WorkingDir: func() (string, error) { return other, nil }, BackfillTempDirs: []string{}}
+	if got, refused := currentProject(env, home); got != "" || refused == "" {
+		t.Fatalf("currentProject = %q, refused %q", got, refused)
+	}
+}
+
+// A folder next to the home folder or a temporary folder, neither holding
+// nor being one, is not broad.
 func TestBroadFolderIgnoresNeighbors(t *testing.T) {
 	t.Parallel()
 	for _, dir := range []string{"/Users/alex/src/app", "/Users/alexandra", "/private/var/folders/xy/Tools/app"} {
-		if broadFolder(dir, "/Users/alex", "/private/var/folders/xy/T") {
-			t.Errorf("broadFolder(%s) = true", dir)
+		if reason := broadFolder(dir, "/Users/alex", []string{"/private/var/folders/xy/T"}); reason != "" {
+			t.Errorf("broadFolder(%s) = %q", dir, reason)
 		}
 	}
 }
@@ -107,8 +179,7 @@ func TestOfferFirstCaptureGuessesTheCurrentProject(t *testing.T) {
 }
 
 // Folders are compared with their symlinks resolved, as project roots are
-// saved: a temporary folder reached through a link is still the temporary
-// folder.
+// saved: a temporary folder reached through a link is still that folder.
 func TestBroadFolderResolvesSymlinks(t *testing.T) {
 	t.Parallel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -117,11 +188,37 @@ func TestBroadFolderResolvesSymlinks(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(target, "app"), 0o700))
 	link := filepath.Join(root, "link")
 	must(t, os.Symlink(target, link))
-	if !broadFolder(filepath.Join(target, "app"), "/Users/alex", link) {
-		t.Fatal("a folder inside the temporary folder, named through a link, was taken for ordinary")
+	if broadFolder(target, "/Users/alex", []string{link}) == "" {
+		t.Fatal("a temporary folder, named through a link, was taken for ordinary")
 	}
-	if !broadFolder(link, filepath.Join(target, "app"), "/nowhere") {
+	if broadFolder(link, filepath.Join(target, "app"), nil) == "" {
 		t.Fatal("a link to a folder holding the home folder was taken for ordinary")
+	}
+}
+
+// chooseCapture keeps a refused folder out of the project list by itself,
+// not only through the first-run question: with apps already chosen, so that
+// question is not asked, a home folder that is a repository is not
+// pre-selected and its refusal is printed.
+func TestChooseCaptureDoesNotPreselectABroadFolder(t *testing.T) {
+	t.Parallel()
+	userHome, project := t.TempDir(), t.TempDir()
+	must(t, os.Mkdir(filepath.Join(userHome, ".git"), 0o700))
+	env := setupTestEnv(t, t.TempDir(), userHome, newFakeKeychain(), time.Now())
+	env.WorkingDir = func() (string, error) { return userHome, nil }
+	env.DetectHarnesses = func(string) []string { return []string{"claude"} }
+	cfg := config.Config{Harnesses: []string{"claude"}}
+	var out bytes.Buffer
+	// Keep the apps, then name the project.
+	p := newPrompter(strings.NewReader("\n"+project+"\n\n"), &out)
+	must(t, chooseCapture(p, &cfg, userHome, env, nil))
+	resolved, err := filepath.EvalSymlinks(project)
+	must(t, err)
+	if len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != resolved {
+		t.Fatalf("projects = %+v\n%s", cfg.Archive.Projects, &out)
+	}
+	if !strings.Contains(out.String(), "Not offering ~ as a project: it is your home folder.") {
+		t.Fatalf("the refusal was not printed:\n%s", &out)
 	}
 }
 
@@ -229,4 +326,37 @@ func TestSetupResumeAndReconfigureSkipTheCombinedQuestion(t *testing.T) {
 			t.Fatalf("reconfiguring did not ask the separate questions:\n%s", out)
 		}
 	})
+}
+
+// The review's hint about Edit a setting is for the first pass: once the
+// person has used the edit menu it would only be stale, so the second pass
+// leaves it out.
+func TestReviewHintIsNotRepeatedAfterAnEdit(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "claude")
+	f.inWebApp(t)
+	out := f.setupOutput("", "2", "work", "2", "edit", "retention", "30", "")
+	if n := strings.Count(out, "\n  Edit a setting adds projects, drops apps"); n != 1 {
+		t.Fatalf("the review showed the hint %d times, want once (before the edit):\n%s", n, out)
+	}
+	if cfg, found, err := config.Load(f.home); err != nil || !found || cfg.RetentionDays != 30 {
+		t.Fatalf("the edit was not saved: %+v %v", cfg, err)
+	}
+}
+
+// A new capture choice starts without the last one's hint.
+func TestChooseCaptureClearsTheReviewHint(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	env := setupTestEnv(t, t.TempDir(), userHome, newFakeKeychain(), time.Now())
+	env.DetectHarnesses = func(string) []string { return []string{"claude"} }
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("\n"+t.TempDir()+"\n\n"), &out)
+	p.reviewHint = "stale"
+	cfg := config.Config{Harnesses: []string{"claude"}}
+	must(t, chooseCapture(p, &cfg, userHome, env, nil))
+	if p.reviewHint != "" {
+		t.Fatalf("hint kept: %q", p.reviewHint)
+	}
 }

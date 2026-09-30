@@ -52,9 +52,14 @@ it asks one question for both: "Archive Codex and Claude Code sessions in
 retention is the default 90 days. If your apps have sessions in other
 projects, setup says how many; the review at the end repeats that "Edit a
 setting" adds projects, drops apps, or changes retention. Decline to answer
-the questions below instead. A repository that is your home folder, holds it,
-or is in the temporary folder is never offered this way (and is not
-pre-selected below either): setup asks for the projects instead.
+the questions below instead. A repository that is your home folder or holds
+it (a dotfiles checkout, say), or that is one of the temporary folders
+backfill skips (`/tmp`, `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds
+one, is too broad to archive on one Enter: setup says so in one line, offers
+no project, pre-selects none below either, and asks for the projects. A
+repository inside a temporary folder, such as `/tmp/x`, is an ordinary project.
+While it reads your apps' history for the count of other projects, setup
+shows "Looking for your other projects...".
 
 Otherwise setup offers the apps it finds together: "Include Codex and Claude
 Code?" Accept to continue, or decline to choose apps individually. If no apps are

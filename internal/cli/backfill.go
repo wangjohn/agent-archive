@@ -664,11 +664,10 @@ func configFingerprint(cfg config.Config) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// backfillEnvironment is what planning reads: the user's home, the
-// temporary directories, and the clock. Files are read from the real file
-// system, and Cursor's database is opened read-only to count the chats only
-// it holds.
-func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
+// backfillTempDirs are the temporary folders backfill skips sessions from,
+// and setup will not offer as a project: the defaults and $TMPDIR, or the
+// list a test sets.
+func (e Env) backfillTempDirs() []string {
 	temps := e.BackfillTempDirs
 	if temps == nil {
 		temps = append([]string(nil), backfill.DefaultTempDirs...)
@@ -676,6 +675,15 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 			temps = append(temps, strings.TrimSpace(tmp))
 		}
 	}
+	return temps
+}
+
+// backfillEnvironment is what planning reads: the user's home, the
+// temporary directories, and the clock. Files are read from the real file
+// system, and Cursor's database is opened read-only to count the chats only
+// it holds.
+func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
+	temps := e.backfillTempDirs()
 	claude, codex := e.appSessionDirs(userHome, cfg)
 	return backfill.Environment{
 		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
