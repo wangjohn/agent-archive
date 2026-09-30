@@ -38,6 +38,8 @@ const testTempPrefix = "agent-archive-cli-test-"
 //     Keychain's wording on every runner, Linux CI included. A test of the
 //     other platform's wording sets it to "linux" (useCredentialGOOS).
 //
+//   - less: detectLessVersion panics. Set Env.LessVersion (testEnv does).
+//
 //   - $HOME and the variables that move app and data directories: HOME is a
 //     fresh temporary directory, and AGENT_ARCHIVE_HOME, CLAUDE_CONFIG_DIR,
 //     CODEX_HOME and the AWS configuration variables are unset, so
@@ -91,6 +93,9 @@ func isolateProcessForTesting() func() {
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
+	detectLessVersion = func(string) (int, bool) {
+		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
+	}
 	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 }
 
@@ -110,6 +115,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("launchctl print", func() { launchdJobState("/nonexistent/com.agent-archive.collector.plist") })
 	panics("launchctl bootstrap", func() { _ = loadLaunchAgent("/nonexistent/x.plist") })
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
+	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {
 		_, _ = Env{}.openStore(config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}})
 	})

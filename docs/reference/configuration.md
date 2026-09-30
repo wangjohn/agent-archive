@@ -49,6 +49,7 @@ consistent with each other.
 | `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session, and they turn `AGENT_ARCHIVE_NONINTERACTIVE` on. |
 | `CURSOR_AGENT` | Set by Cursor's agent for commands it runs; turns `AGENT_ARCHIVE_NONINTERACTIVE` on. |
 | `NO_COLOR` | Disables colored output. |
+| `AGENT_ARCHIVE_PAGER`, `PAGER` | The pager for long output on a terminal (`list`, `show`, `status`, `purge plan`); `AGENT_ARCHIVE_PAGER` wins. Empty or `cat` disables paging. With neither set, or one set to a bare `less`, `less` with mouse-wheel scrolling and key hints. Any other pager runs as given, with `LESS=FRX` and `LV=-c` added when those are unset ([Scrolling](../guides/list-and-show.md#scrolling)). |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
 
 Nothing else from your shell reaches the background collector. An S3 profile

@@ -188,11 +188,17 @@ type Env struct {
 	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
 	// the file descriptor.
 	IsTerminal func(any) bool
-	// RunPager runs a pager command with stdin as its input and stdout/
-	// stderr as its output, until it exits or ctx is cancelled. list and
-	// show use it for text listings and transcripts. Defaults to `sh -c
-	// command`. Tests set it so a listing never spawns less.
-	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// RunPager runs a pager command with environment ("NAME=value") added
+	// to the process's own, stdin as its input and stdout/stderr as its
+	// output, until it exits or ctx is cancelled. list, show, status, and
+	// purge plan use it for long text. Defaults to `sh -c command`. Tests
+	// set it so a listing never spawns less.
+	RunPager func(ctx context.Context, command string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LessVersion reports the version of program (less on PATH, or a path
+	// to it), which chooses the default pager's options; known is false
+	// when it cannot be told. Defaults to running `program --version` once
+	// per process and program.
+	LessVersion func(program string) (version int, known bool)
 	// LaunchHandoff runs a local coding-agent CLI with a short prompt naming
 	// the private handoff file. Tests replace it to avoid starting an agent.
 	LaunchHandoff func(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error
