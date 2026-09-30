@@ -1,7 +1,7 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-not started. Where this plan and the code differ once packages merge, the
+PR 1 in review. Where this plan and the code differ once packages merge, the
 code is the reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
