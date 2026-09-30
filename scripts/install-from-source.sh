@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build this checkout for the current Mac and install a persistent dev binary.
+# It also builds for Linux (CGO_ENABLED=0), which is not yet a supported platform.
 set -euo pipefail
 
 usage() {
@@ -43,19 +44,38 @@ while (($#)); do
   shift
 done
 
-[[ "$(uname -s)" == Darwin ]] || fail 'macOS is required'
+case "$(uname -s)" in
+  Darwin) goos=darwin ;;
+  Linux) goos=linux ;;
+  *) fail 'macOS or Linux is required' ;;
+esac
 command -v go >/dev/null 2>&1 || fail 'Go is required (see go.mod for the toolchain version)'
 
-case "$(uname -m)" in
-  arm64|aarch64) arch=arm64 ;;
-  x86_64)
-    if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then
-      arch=arm64
-    else
-      arch=amd64
-    fi
+case "$goos" in
+  darwin)
+    case "$(uname -m)" in
+      arm64|aarch64) arch=arm64 ;;
+      x86_64)
+        if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then
+          arch=arm64
+        else
+          arch=amd64
+        fi
+        ;;
+      *) fail 'unsupported Mac architecture' ;;
+    esac
+    # The macOS build uses cgo (the Keychain).
+    cgo=1
     ;;
-  *) fail 'unsupported Mac architecture' ;;
+  linux)
+    case "$(uname -m)" in
+      x86_64|amd64) arch=amd64 ;;
+      aarch64|arm64) arch=arm64 ;;
+      *) fail "unsupported Linux architecture: $(uname -m)" ;;
+    esac
+    # Release builds for Linux are static and need no C toolchain.
+    cgo=0
+    ;;
 esac
 
 case "$mode" in
@@ -86,10 +106,10 @@ cleanup() {
 trap cleanup EXIT
 
 binary="$build_dir/agent-archive"
-printf 'Building %s for darwin/%s...\n' "$repo_root" "$arch"
+printf 'Building %s for %s/%s...\n' "$repo_root" "$goos" "$arch"
 (
   cd "$repo_root"
-  GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 go build -trimpath \
+  GOOS="$goos" GOARCH="$arch" CGO_ENABLED="$cgo" go build -trimpath \
     -ldflags '-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=dev' \
     -o "$binary" ./cmd/agent-archive
 )
@@ -97,7 +117,8 @@ version="$("$binary" --version)" || fail 'the new binary failed its version chec
 [[ "$version" == dev-* ]] || fail "expected a dev version, got: $version"
 
 # Rename a fully built file over the destination. Copying onto a running
-# Mach-O executable in place can make macOS kill it at launch.
+# executable in place can make macOS kill it at launch (and fails with
+# "text file busy" on Linux).
 staged="$(mktemp "$install_dir/.agent-archive.install.XXXXXXXX")"
 cp "$binary" "$staged"
 chmod 755 "$staged"

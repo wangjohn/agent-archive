@@ -78,7 +78,7 @@ type collectorEnvironmentSource interface {
 // through a source_profile chain, the command it runs (aws-vault, 1Password's
 // op, granted) runs helpers of its own through PATH, and a profile can gain a
 // credential_process after setup without setup running again. A PATH names
-// directories, never secrets. R2's credentials come from the Keychain in
+// directories, never secrets. R2's credentials come from the credential store in
 // process, so an R2 collector needs nothing more.
 func (e Env) collectorEnvironment(storage credentials.Config) map[string]string {
 	return buildCollectorEnvironment(e, storage)

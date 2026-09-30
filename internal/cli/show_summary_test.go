@@ -310,7 +310,7 @@ func TestShowTranscriptPages(t *testing.T) {
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(&out) }
 	var paged []string
-	env.RunPager = func(_ context.Context, command string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, in io.Reader, _, _ io.Writer) error {
 		text, err := io.ReadAll(in)
 		paged = append(paged, command+"\n"+string(text))
 		return err
@@ -318,7 +318,7 @@ func TestShowTranscriptPages(t *testing.T) {
 	if code := Run([]string{"show", id, "--transcript"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if len(paged) != 1 || !strings.HasPrefix(paged[0], defaultPager+"\n") || !strings.Contains(paged[0], "visible") || out.Len() != 0 {
+	if len(paged) != 1 || !strings.HasPrefix(paged[0], "less -FRX --mouse --wheel-lines=3 ") || !strings.Contains(paged[0], "visible") || out.Len() != 0 {
 		t.Fatalf("paged=%q out=%q", paged, out.String())
 	}
 	if code := Run([]string{"show", id, "--transcript", "--no-pager"}, nil, &out, &errOut, env); code != 0 {

@@ -9,8 +9,8 @@ a session.
 # title (first filtered prompt preview), relative time, harness, project,
 # and short ID. Metadata only, never full transcript text. On an interactive
 # terminal, pick a numbered row to see that session's summary (see below).
-# Otherwise the table is paged through $PAGER (or less); use --no-pager to
-# print directly.
+# Otherwise the table is paged through $PAGER (or less; see Scrolling below);
+# use --no-pager to print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
@@ -97,14 +97,41 @@ When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a
 session's summary replace each other instead of piling up:
 
-- Enter a row number or short SESSION_ID to see that session's summary.
+- The browser reads each key as you press it; there is no need to press
+  Enter after a command.
+- Type a row number or short SESSION_ID and press Enter to see that
+  session's summary. What you type shows at the prompt; Backspace edits it
+  and Esc clears it. Row numbers are those of the whole list, so any listed
+  number or short ID works wherever the list is scrolled (in the list
+  grouped by project, the numbers on screen need not be consecutive).
+- A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
+  row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
+  the top and bottom. A status line below it says where you are (`Top`, a
+  percentage, `Bottom`, or `All` when the whole list fits), for example
+  `Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit`. A
+  project scrolled into keeps its heading at the top, marked
+  `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
 - In the summary, `t` opens its transcript through the pager (quit the pager
-  to come back), Enter or `b` returns to the list, and `q` quits. `less`
-  keeps even a one-screen transcript open until you press `q`; after another
-  pager, press Enter to return to the summary.
-- `q` (or an empty answer at the list, or Ctrl-D) quits from anywhere. The
-  last summary you viewed is printed to the normal screen as the browser
-  closes, so its ID stays in your scrollback.
+  to come back), `b`, Enter, or Backspace return to the list, and `q`
+  quits. `less` keeps even a one-screen transcript open until you press
+  `q`; after another pager, press Enter to return to the summary.
+- A summary taller than the window scrolls the same way, with a line such
+  as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
+  summary through the pager, as `t` does the transcript.
+- `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
+  anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
+  to the normal screen as the browser closes, so its ID stays in your
+  scrollback.
+- Wherever else a session is picked from a list (the handoff picker, bare
+  `show --json`, and a `show` query that matches more than one session),
+  you type an answer and press Enter. A list taller than the window is
+  shown a page at a time there, with a line such as
+  `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p` move
+  between pages, and a project whose sessions started on the previous page
+  is headed again, marked `(continued)`. The browser reads lines the same
+  way when its input is not a terminal; there, a summary taller than the
+  window is cut with `… N more lines`, and without a pager `m` prints the
+  lines left out.
 
 Bare `show --transcript` is a usage error: pick a session with `show` and
 press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker
@@ -162,8 +189,9 @@ each stretch of the agent's replies and tool calls starts with the app's
 name (`Claude Code ›`), so you can tell who is speaking without color. Edit
 bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
-lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
-paged like `list`; `--no-pager` prints it directly. `--transcript --json`
+lines; it does not combine with `--json`, which has every retained result. On a terminal the summary and
+the transcript are paged like `list` (see [Scrolling](#scrolling));
+`--no-pager` prints them directly. `--transcript --json`
 prints the sidecar and then the normalized view (turns, tool calls, tool
 results, and hook-reported final messages) as JSON. `--normalized`, its
 former name, still works and prints a deprecation note on stderr. If the
@@ -215,6 +243,42 @@ step, the header, or the sidecar alone, prints a warning on stderr and as much
 as it can. Nothing here prompts, and without a terminal nothing is paged.
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.
+
+## Scrolling
+
+On a terminal, anything longer than a screen goes through a pager: the
+`list` table outside the browser, `show SESSION_ID`'s summary, a transcript,
+`status`, and `purge plan`. Piped or redirected output, and `--json`, are
+never paged; `--no-pager` prints directly on a terminal too.
+
+With no pager set, or with the pager set to a bare `less` (as oh-my-zsh
+does), Agent Archive runs `less` its own way: it quits at once when the text
+fits on one screen and otherwise shows the keys on its last line:
+
+```text
+lines 1-48 of 1210 - arrows/space scroll, / search, q quit
+```
+
+- The mouse wheel, arrow keys, space and `b` (page down and up), and `g` and
+  `G` (top and bottom) scroll; `/` searches, `n` finds the next match; `q`
+  quits. From the session browser, `q` goes back to the summary.
+- With `less` 551 or later (macOS ships a newer one), the wheel scrolls the
+  text, three lines at a time, and the text stays on the screen after `q`.
+  Because `less` then reads the mouse, hold Option while dragging to select
+  text in iTerm2 (Shift in most other terminals; in Terminal, turn off View
+  > Allow Mouse Reporting).
+- `less` 530 to 550 shows the text on the terminal's alternate screen,
+  where the terminal turns the wheel into arrow keys, and clears it on `q`.
+- An older `less` keeps the text on the normal screen, where the wheel may
+  scroll the terminal instead. A `less` that doesn't report its version
+  (BusyBox's) runs as `less -FR`, without key hints.
+
+To use another pager, set `AGENT_ARCHIVE_PAGER` (or `PAGER`), for example
+`AGENT_ARCHIVE_PAGER='less -R'`. It runs as given, without the key hints or
+mouse options, with two additions as git makes them: `LESS=FRX` when `LESS`
+is not set, and `LV=-c` when `LV` is not set. From the session browser, a
+plain `less` command also gets `-+F`, so a short transcript waits for `q`.
+Set either variable to `cat`, or to nothing, to never page.
 
 ## Model and setting keys
 

@@ -23,20 +23,31 @@ type metadataCacheDependencies interface {
 
 type sessionBrowseDependencies interface {
 	interactive(any) bool
+	terminalSizeDependencies
+}
+
+// terminalSizeDependencies is what the session pickers and browser read
+// before each redraw to fit the window.
+type terminalSizeDependencies interface {
+	terminalSize(io.Writer) (width, height int, ok bool)
 }
 
 type sessionSelectionDependencies interface {
 	metadataCacheDependencies
+	terminalSizeDependencies
 	now() time.Time
 }
 
 // sessionBrowserDependencies is what the interactive session browser uses:
-// the pager for transcripts, and interrupts so it can restore the screen
-// before it exits.
+// the pager for transcripts and the details, the window's size, and
+// interrupts so it can restore the screen before it exits, and stdin read
+// a key at a time on a terminal.
 type sessionBrowserDependencies interface {
 	pagerDependencies
+	terminalSizeDependencies
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
+	openKeyTerminal(io.Reader) (keyTerminal, bool)
 }
 
 type listCommandDependencies interface {
@@ -75,7 +86,12 @@ type showQueryDependencies interface {
 type pagerDependencies interface {
 	interactive(any) bool
 	lookupEnv(string) (string, bool)
-	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
+	runPager(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
+	lessVersion(string) (int, bool)
+	// interrupts and exit let withPager leave Ctrl-C to the pager and
+	// stop it on other signals.
+	interrupts() (<-chan os.Signal, func())
+	exit(int)
 }
 
 type handoffResolverDependencies interface {
@@ -107,7 +123,19 @@ type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	sessionBrowseDependencies
+	handoffLaunchDependencies
+}
+
+type launchSpecDependencies interface {
+	lookPath(string) (string, error)
+	environ() []string
+}
+
+type handoffLaunchDependencies interface {
+	launchSpecDependencies
 	executable() (string, error)
 	tempDir() string
-	launchHandoff(string, string, string, io.Reader, io.Writer, io.Writer) error
+	workingDir() (string, error)
+	now() time.Time
+	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
 }
