@@ -38,6 +38,9 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 	if topN <= 0 {
 		topN = DefaultTopN
 	}
+	if opts.AllRows {
+		topN = math.MaxInt
+	}
 	table := opts.PriceTable
 	if table.Version == "" && len(table.Models) == 0 {
 		table = DefaultPriceTable()
@@ -87,13 +90,17 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 		prevDays[u.day] = true
 	}
 
-	dailySeries, peak := daily(perDay, first)
+	dailySeries, peak, peakSpend := daily(perDay, first)
 	topProjects, projectCount := projects(current, topN)
 	modelRows := models(current, prices)
 	var grouped *Groups
 	if opts.By != GroupNone {
 		grouped = groups(current, opts.By)
 	}
+	subagents := subagentShare(current, total)
+	highlighted := highlights(current, units, perDay, first, modelRows, now, loc)
+	cov := coverage(current)
+	skillLists := skills(current, topN)
 	out := Stats{
 		Window: Window{
 			Days: days, Timezone: loc.String(),
@@ -105,20 +112,26 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 			Version: table.Version, AsOf: table.AsOf, Currency: table.Currency, Sources: table.Sources,
 			Notes: table.Notes, Overridden: table.Overridden,
 		},
-		Coverage:      coverage(current),
+		Coverage:      cov,
 		Daily:         dailySeries,
 		Peak:          peak,
+		PeakSpend:     peakSpend,
 		Overview:      overview(total, prev, active, len(prevDays), days),
 		Agents:        agents(current, total),
 		Models:        modelRows,
 		Projects:      topProjects,
 		TotalProjects: projectCount,
 		Composition:   composition(total),
-		Subagents:     subagentShare(current, total),
-		Skills:        skills(current, topN),
+		Subagents:     subagents,
+		Skills:        skillLists.recorded,
+		DisplaySkills: skillLists.display,
 		MCP:           mcpServers(current, topN),
-		Highlights:    highlights(current, units, perDay, first, modelRows, now, loc),
+		Highlights:    highlighted,
+		HeadsUp:       headsUp(cov, total, subagents, highlighted.CostliestSession),
 		Groups:        grouped,
+
+		TotalSkills:        skillLists.recordedTotal,
+		TotalDisplaySkills: skillLists.displayTotal,
 	}
 	return out
 }
@@ -151,23 +164,29 @@ func coverage(current []*unit) Coverage {
 	return cov
 }
 
-func daily(perDay []bucket, first int) ([]Day, *Peak) {
+func daily(perDay []bucket, first int) ([]Day, *Peak, *PeakSpend) {
 	out := make([]Day, len(perDay))
 	var peak *Peak
+	var peakSpend *PeakSpend
 	for i := range perDay {
 		b := &perDay[i]
 		date := dateString(first + i)
 		tokens := b.tokenTotal()
+		cost := b.cost.cost()
 		if b.sessions == 0 {
-			zero := int64(0)
-			tokens = &zero
+			// A day without sessions cost nothing: a known zero, as its tokens.
+			zeroTokens, zeroCost := int64(0), 0.0
+			tokens, cost.USD = &zeroTokens, &zeroCost
 		}
-		out[i] = Day{Date: date, Sessions: b.sessions, Tokens: tokens}
+		out[i] = Day{Date: date, Sessions: b.sessions, Tokens: tokens, Cost: cost}
 		if tokens != nil && *tokens > 0 && (peak == nil || *tokens > peak.Tokens) {
 			peak = &Peak{Date: date, Tokens: *tokens}
 		}
+		if cost.USD != nil && *cost.USD > 0 && (peakSpend == nil || *cost.USD > peakSpend.USD) {
+			peakSpend = &PeakSpend{Date: date, USD: *cost.USD}
+		}
 	}
-	return out, peak
+	return out, peak, peakSpend
 }
 
 func floatPtr[T int | int64](p *T) *float64 {
@@ -190,6 +209,17 @@ func measure(value, previous *float64) Measure {
 	return Measure{Value: value, Previous: previous, ChangePct: change}
 }
 
+// cacheShare is cache reads over every token of the bucket, nil when no
+// session reported tokens or none reported cache counts.
+func cacheShare(b *bucket) *float64 {
+	all := b.tokens.total()
+	if b.dataSessions == 0 || !b.tokens.cacheKnown || all <= 0 {
+		return nil
+	}
+	s := float64(b.tokens.read) / float64(all)
+	return &s
+}
+
 func overview(cur, prev *bucket, active []bool, prevActive, days int) Overview {
 	countF := func(n int) *float64 { v := float64(n); return &v }
 	activeCount := 0
@@ -205,6 +235,7 @@ func overview(cur, prev *bucket, active []bool, prevActive, days int) Overview {
 		Prompts:    measure(floatPtr(cur.promptTotal()), floatPtr(prev.promptTotal())),
 		Tokens:     measure(floatPtr(cur.tokenTotal()), floatPtr(prev.tokenTotal())),
 		ActiveDays: measure(countF(activeCount), countF(prevActive)),
+		CacheShare: cacheShare(cur),
 		Cost: CostMeasure{
 			Measure: measure(costCur.USD, costPrev.USD),
 			Partial: costCur.Partial, Approximate: costCur.Approximate, UnpricedTokens: costCur.UnpricedTokens,
@@ -423,13 +454,41 @@ func subagentShare(current []*unit, total *bucket) *SubagentShare {
 	return &SubagentShare{Sessions: sessions, Tokens: tokens, Share: share(tokens, total.tokens.total())}
 }
 
-func skills(current []*unit, topN int) []Skill {
-	counts := map[string]int{}
+// skillLists is the skills sessions used, under the names they recorded and
+// under their display names, each cut to the top few with the full count.
+type skillLists struct {
+	recorded      []Skill
+	recordedTotal int
+	display       []Skill
+	displayTotal  int
+}
+
+// skills counts, per skill name, the sessions that used it. The display list
+// merges names that are the same skill once a plugin prefix is stripped, and
+// counts a session that used several of them once, so it is counted from the
+// sessions rather than added up from the recorded counts.
+func skills(current []*unit, topN int) skillLists {
+	recorded := map[string]int{}
+	display := map[string]int{}
 	for _, u := range current {
+		shown := map[string]struct{}{}
 		for name := range u.skills {
-			counts[name]++
+			recorded[name]++
+			shown[SkillDisplayName(name)] = struct{}{}
+		}
+		for name := range shown {
+			display[name]++
 		}
 	}
+	return skillLists{
+		recorded: topSkills(recorded, topN), recordedTotal: len(recorded),
+		display: topSkills(display, topN), displayTotal: len(display),
+	}
+}
+
+// topSkills is the topN skills with the most sessions, the first by name on a
+// tie; nil when there are none.
+func topSkills(counts map[string]int, topN int) []Skill {
 	out := make([]Skill, 0, len(counts))
 	for _, name := range sortedKeys(counts) {
 		out = append(out, Skill{Name: name, Sessions: counts[name]})
@@ -464,5 +523,5 @@ func mcpServers(current []*unit, topN int) *MCP {
 	if len(servers) > topN {
 		servers = servers[:topN]
 	}
-	return &MCP{Scope: MCPScope, Servers: servers}
+	return &MCP{Scope: MCPScope, TotalServers: len(calls), Servers: servers}
 }
