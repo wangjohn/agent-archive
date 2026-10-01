@@ -393,6 +393,45 @@ exit 0
                     self.assertEqual(len(self.attempts()), 2, result.stderr)
                     self.assertIn('Metadata reappeared', result.stderr)
 
+    def test_recovery_preserves_observed_metadata_absence(self):
+        for shell in self.shells:
+            for outcome in ('reappeared', 'absent', 'unselected'):
+                with self.subTest(shell=shell, outcome=outcome):
+                    bucket = self.build()
+                    before = self.keys(bucket)
+                    directory = 'codex/bbbb' if outcome == 'unselected' else 'claude/aaaa'
+                    tail = r'''
+original=$purge_dir
+rm "$FAKE_S3/my-archive-bucket/agent-archive/sessions/''' + directory + r'''/metadata.json"
+purge_apply && exit 91
+'''
+                    if outcome == 'unselected':
+                        tail += 'purge_resume "$original" && exit 92\nexit 0\n'
+                    else:
+                        tail += 'purge_resume "$original" || exit 92\nrecovery=$purge_dir\n'
+                        if outcome == 'reappeared':
+                            tail += r'''
+cp "$original/meta.1" "$FAKE_S3/my-archive-bucket/agent-archive/sessions/claude/aaaa/metadata.json"
+purge_resume "$recovery" && purge_apply && exit 93
+exit 0
+'''
+                        else:
+                            tail += 'purge_apply\n'
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'machine'], tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if outcome == 'absent':
+                        self.assertEqual(len(self.attempts()), 5)
+                        self.assertEqual(self.keys(bucket), [k for k in before if not any(
+                            k.startswith('agent-archive/sessions/' + d + '/')
+                            for d in ('claude/aaaa', 'cursor/dddd'))])
+                    else:
+                        self.assertEqual(self.attempts(), [])
+                        expected = before if outcome == 'reappeared' else [k for k in before
+                            if k != 'agent-archive/sessions/codex/bbbb/metadata.json']
+                        self.assertEqual(self.keys(bucket), expected)
+                        self.assertIn('Metadata reappeared' if outcome == 'reappeared'
+                                      else 'Unselected metadata disappeared', result.stderr)
+
     def test_progress_failure_and_repeated_recovery(self):
         for shell in self.shells:
             with self.subTest(shell=shell):

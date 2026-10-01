@@ -616,6 +616,9 @@ purge_resume() {
       printf '%s\n' "$meta" >> "$purge_dir/metas" || return 1
     elif ! jq -e --arg m "$meta" '.targets|index($m)' "$purge_dir/manifest.json" >/dev/null; then
       echo "Unselected metadata disappeared; nothing deleted." >&2; return 1
+    else
+      # An observed absence is lineage history even without a local delete record.
+      printf '%s\n' "$meta" >> "$purge_dir/tombstones" || return 1
     fi
   done < "$purge_dir/original.metas"
   # Preserve original metadata-first order; never discover new ownership.
