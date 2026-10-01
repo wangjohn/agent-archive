@@ -820,7 +820,8 @@ guide. Live check on the owner's Mac:
   signature that lets an unchanged session skip a read is the transcript's
   size and modification time only, so a `.meta.json` that appears or changes
   beside a transcript that does not change is not noticed until the transcript
-  changes or a filter, adapter, or parser version changes. A subagent is
+  changes or a filter or adapter version changes (a parser version alone
+  re-derives metadata from the retained snapshot, not the file). A subagent is
   registered when its `SubagentStop` fires, or when backfill finds it, so
   the file is normally there at the first read; one captured before it was
   written and never rescanned stays without a name.

@@ -73,10 +73,10 @@ transcript's own (filter 14):
 - The file is optional. One that is missing, unreadable, not a regular file,
   over 16 KB, not a JSON object, or without a usable description changes
   nothing and records no gap.
-- The record is written only when the transcript has records of its own: it
-  does not make an empty or unrecognized transcript look captured, and it
-  carries no timestamp, session, or agent identity, so it changes none of
-  the transcript's.
+- The record, and any gap about it, is written only when the transcript has
+  records of its own: it does not make an empty or unrecognized transcript
+  look captured, and it carries no timestamp, session, or agent identity, so
+  it changes none of the transcript's.
 - A transcript holds one. A `subagent-meta` record in the transcript itself
   (the one a retained snapshot carries when it is filtered again) is rebuilt
   from its `description` alone, other keys named in `unknown_field_omitted`;
@@ -89,7 +89,8 @@ transcript's own (filter 14):
   the file replaces, not evidence of the transcript. The file is read when
   the transcript is, so a `.meta.json` that appears or changes beside a
   transcript that does not change is picked up when the transcript next
-  changes, or when a new filter or parser version re-reads the session.
+  changes, or when a new filter or adapter version re-reads the session (a
+  new parser version alone re-derives metadata from the retained snapshot).
 
 ### Tool-argument deny list
 

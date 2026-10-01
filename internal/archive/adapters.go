@@ -668,12 +668,17 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	}
 	// A transcript holds one subagent-meta record: the lead when there is one,
 	// else the first the transcript itself holds (a retained snapshot filtered
-	// again).
+	// again). The lead's gaps are held back with it, and reported only when
+	// it belongs to a transcript with records of its own.
 	var meta subagentMetaSlot
 	var leadRecord []byte
+	var leadGaps []CaptureGap
 	if lead != nil && format == "claude-jsonl" {
+		holdGap := func(code string, _ int, detail string) {
+			leadGaps = append(leadGaps, CaptureGap{Code: code, Detail: detail})
+		}
 		var err error
-		if leadRecord, err = meta.filter(lead, 0, addGap, omittedKeys.add); err != nil {
+		if leadRecord, err = meta.filter(lead, 0, holdGap, omittedKeys.add); err != nil {
 			return FilteredTranscript{}, err
 		}
 	}
@@ -751,7 +756,12 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat
 	}
-	result.retainFirst(leadRecord)
+	if len(result.Records) > 0 {
+		for _, gap := range leadGaps {
+			addGap(gap.Code, 0, gap.Detail)
+		}
+		result.retainFirst(leadRecord)
+	}
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}

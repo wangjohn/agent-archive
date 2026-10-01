@@ -271,21 +271,28 @@ func TestFilterV14SubagentMetaWithoutADescriptionIsDropped(t *testing.T) {
 
 // The record neither fills an empty transcript nor makes an unrecognized one
 // acceptable: the collector waits for a subagent's first record, and refuses
-// a file with none the filter knows.
+// a file with none the filter knows. A description it does not write leaves
+// no gap either: the output is the transcript's alone.
 func TestFilterV14MetaFileAloneNeverMakesATranscript(t *testing.T) {
 	t.Parallel()
-	meta := []byte(`{"description":"Find the retention tests"}`)
+	meta := []byte(`{"description":"Find the retention tests password=SYNTHETICSUBAGENTPW"}`)
 	empty, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(""), meta)
-	if err != nil || len(empty.Records) != 0 || empty.Boundary.RetainedRecords != 0 {
+	if err != nil || len(empty.Records) != 0 || empty.Boundary.RetainedRecords != 0 || len(empty.Gaps) != 0 {
 		t.Fatalf("empty transcript: %+v, %v", empty, err)
 	}
 	if _, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"nothing-we-know"}`+"\n"), meta); !errors.Is(err, ErrUnsafeSourceFormat) {
 		t.Fatalf("unrecognized transcript: err = %v, want ErrUnsafeSourceFormat", err)
 	}
-	// Records that are all dropped leave no records to put it before.
-	dropped, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"system","subtype":"x","content":"hidden"}`+"\n"), meta)
-	if err == nil && len(dropped.Records) != 0 {
-		t.Fatalf("records = %q", dropped.Records)
+	// Records that are all dropped leave no records to put it before, and
+	// the description's redaction is not reported for a record not kept.
+	untitled := `{"type":"custom-title","sessionId":"native-parent"}` + "\n"
+	plain, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(untitled))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropped, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(untitled), meta)
+	if err != nil || len(dropped.Records) != 0 || !reflect.DeepEqual(dropped, plain) {
+		t.Fatalf("all records dropped: %+v, want %+v (err %v)", dropped, plain, err)
 	}
 }
 

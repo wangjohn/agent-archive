@@ -303,7 +303,7 @@ follow [Semantic Versioning](https://semver.org/).
   description ("find the retention tests"), which Claude Code keeps in a
   `agent-<id>.meta.json` file beside the subagent's transcript. That
   description is now kept, with the subagent's session, and is its name in
-  `list`, `show`, and the handoff picker. It passes the same redaction as your
+  `list` and `show`. It passes the same redaction as your
   prompts and is cut to 512 bytes. Nothing else in that file is kept (the
   path of a worktree, for one), and a subagent with no such file, or one that
   cannot be read, is archived as before. The next sync re-reads and

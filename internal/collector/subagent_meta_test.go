@@ -209,9 +209,10 @@ func TestSubagentDescriptionChangeIsNotARewrite(t *testing.T) {
 	}
 }
 
-// An imported subagent (backfill registers its transcript as a candidate with
-// an imported parent) is filtered with its .meta.json like a hook-reported
-// one: the collector's registration carries the parent either way.
+// An imported subagent (backfill saves its transcript as a candidate of an
+// imported parent) is filtered with its .meta.json and published with its
+// description like a hook-reported one: the collector's registration carries
+// the parent either way.
 func TestImportedSubagentIsPublishedWithItsDescription(t *testing.T) {
 	f := newNamedSubagentFixture(t)
 	f.writeMeta(syntheticMeta)
@@ -220,22 +221,63 @@ func TestImportedSubagentIsPublishedWithItsDescription(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal(err)
 	}
-	candidate := state.SubagentCandidate{
+	parent.Origin, parent.AdmittedAt, parent.StartedAtSource = archive.SessionOriginImport, f.start, archive.StartedAtSourceTranscript
+	parent.ImportBatch = archive.NewImportBatch("2026-09-21-1")
+	if err := f.local.SaveRegistration(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.local.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent",
 		ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 		Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: f.childPath,
 		ObservedAt: f.start.Add(3 * time.Minute), Origin: archive.SessionOriginImport,
-	}
-	reg := assembleSubagentRegistration(parent, candidate)
-	if reg.ParentSessionID != "parent" || reg.TranscriptPath != f.childPath {
-		t.Fatalf("registration = %+v", reg)
-	}
-	filtered, _, err := filterTranscript(archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered.Records) != 2 || !bytes.HasPrefix(filtered.Records[0], []byte(`{"description":"Find the retention tests password=[REDACTED]","type":"subagent-meta"}`)) {
-		t.Fatalf("records = %q", filtered.Records)
+	if result := f.run(4); !slices.Contains(result.Published, "child") {
+		t.Fatalf("result=%#v", result)
+	}
+	if child, found, err := f.local.LoadRegistration("child"); err != nil || !found || !child.Imported() || child.ParentSessionID != "parent" {
+		t.Fatalf("child registration = %+v (found %v, err %v)", child, found, err)
+	}
+	metadata := fetchMetadata(t, f.remote, "claude", "child")
+	if metadata.Name != "Find the retention tests password=[REDACTED]" {
+		t.Fatalf("name = %q", metadata.Name)
+	}
+	if records := f.childBundle().NativeRecords; len(records) != 2 || records[0]["type"] != "subagent-meta" {
+		t.Fatalf("records = %#v", records)
+	}
+}
+
+// A subagent archived before filter 14 gets its description from the upgrade
+// alone: its transcript has not changed, but the new filter reads it again
+// with the .meta.json, republishes it with the name, and keeps its capture
+// time, without taking the new first record for a rewrite.
+func TestFilterUpgradePublishesTheDescriptionOfAnUnchangedSubagent(t *testing.T) {
+	f := newNamedSubagentFixture(t)
+	f.write(2)
+	f.stop(3)
+	f.run(4)
+	before := fetchMetadata(t, f.remote, "claude", "child")
+	if before.Name != "" {
+		t.Fatalf("name before the upgrade = %q", before.Name)
+	}
+	f.writeMeta(syntheticMeta)
+	simulateFilterUpgradeOf(t, f.local, "child")
+	if result := f.run(10); !slices.Contains(result.Published, "child") {
+		t.Fatalf("the upgrade did not republish the subagent: %#v", result)
+	}
+	metadata := fetchMetadata(t, f.remote, "claude", "child")
+	if metadata.Name != "Find the retention tests password=[REDACTED]" || metadata.FilterVersion != archive.FilterVersion {
+		t.Fatalf("name %q, filter %q", metadata.Name, metadata.FilterVersion)
+	}
+	if !metadata.CapturedAt.Equal(before.CapturedAt) {
+		t.Errorf("captured_at = %s, want the unchanged transcript's %s", metadata.CapturedAt, before.CapturedAt)
+	}
+	for _, gap := range metadata.CaptureGaps {
+		if gap.Code == "transcript_rewritten" {
+			t.Errorf("the description was taken for a rewrite: %#v", gap)
+		}
 	}
 }
 
