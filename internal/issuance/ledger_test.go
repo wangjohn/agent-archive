@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
 func TestLedgerRejectsCorruptAndSymlinkedSlots(t *testing.T) {
@@ -62,6 +63,14 @@ func TestLedgerImmutableIdentityAndStateValidation(t *testing.T) {
 	if slot.Validate() != nil {
 		t.Fatal("complete spare refused")
 	}
+	slot.State = SecretIntent
+	if err = Save(home, slot); err != nil {
+		t.Fatal(err)
+	}
+	slot.State = Spare
+	if err = Save(home, slot); err != nil {
+		t.Fatal(err)
+	}
 	slot.State = DeliveryIntent
 	if slot.Validate() == nil {
 		t.Fatal("delivery intent without pairing accepted")
@@ -69,6 +78,11 @@ func TestLedgerImmutableIdentityAndStateValidation(t *testing.T) {
 	slot.PairingID = strings.Repeat("f", 32)
 	slot.Label = "laptop"
 	slot.ExpiresAt = time.Now().Add(time.Hour)
+	slot.State = Reserved
+	if err = Save(home, slot); err != nil {
+		t.Fatal(err)
+	}
+	slot.State = DeliveryIntent
 	if err = Save(home, slot); err != nil {
 		t.Fatal(err)
 	}

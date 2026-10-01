@@ -139,10 +139,7 @@ func (p Payload) validateStorage() error {
 	} else if s.AWSProfile == "" || !safeText(s.AWSProfile) || p.AccessKeyID != "" || p.SecretAccessKey != "" || s.R2Account != "" || s.R2Endpoint != "" {
 		return bad
 	}
-	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 1 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
-		return bad
-	}
-	return nil
+	return p.validateCaptureAndLocation()
 }
 
 func (p Payload) validateApplications() error {
@@ -221,6 +218,15 @@ func (p Payload) validateProvenance() error {
 			return bad
 		}
 	} else if p.SlotID != "" || (p.Kind != "" && p.Kind != config.MachineAssignmentAWSProfile) {
+		return bad
+	}
+	return nil
+}
+
+func (p Payload) validateCaptureAndLocation() error {
+	bad := invalidSettings()
+	s := p.Storage
+	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 1 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
 		return bad
 	}
 	return nil

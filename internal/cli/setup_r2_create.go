@@ -112,14 +112,15 @@ const (
 
 // r2Creator is one run of guided creation.
 type r2Creator struct {
-	slot     *issuance.Slot
-	home     string
-	issuerID string
-	p        *prompter
-	env      Env
-	api      cloudflare.API
-	account  string
-	bucket   cloudflare.BucketSpec
+	keyStorage *credentials.Config
+	slot       *issuance.Slot
+	home       string
+	issuerID   string
+	p          *prompter
+	env        Env
+	api        cloudflare.API
+	account    string
+	bucket     cloudflare.BucketSpec
 	// tokenFromEnv is whether the bootstrap token came from
 	// CLOUDFLARE_API_TOKEN rather than the prompt.
 	tokenFromEnv bool
@@ -906,6 +907,9 @@ func (c *r2Creator) wait(ctx context.Context, d time.Duration) {
 func (c *r2Creator) checkKey(ctx context.Context, key credentials.R2Credentials) error {
 	p := c.p
 	cfg := c.storageConfig()
+	if c.keyStorage != nil {
+		cfg = *c.keyStorage
+	}
 	var err error
 	for attempt := 1; attempt <= r2VerifyAttempts; attempt++ {
 		if err = c.env.verifyR2Key(ctx, cfg, key); err == nil {

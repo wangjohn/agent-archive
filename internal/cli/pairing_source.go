@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +49,7 @@ func pairingInvocation(args []string) bool {
 
 func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
 	fs := env.newCommandFlags("machines add", errOut)
-	spares := fs.Int("spares", -1, "save target unused dedicated R2 keys, 0..5 (default 2)")
+	spares := fs.Int("spares", 2, "save target unused dedicated R2 keys, 0..5 (default 2)")
 	name := fs.String("name", "", "new machine name")
 	share := fs.Bool("share-key", false, "explicitly share this R2 key (beta; cannot revoke the recipient independently)")
 	expires := fs.Duration("expires", 15*time.Minute, "pairing expiry, 5m through 24h")
@@ -58,7 +59,13 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if *spares < -1 || *spares > 5 || *expires < 5*time.Minute || *expires > 24*time.Hour || (*yes && *name == "") || (*file != "" && *printBundle) {
+	sparesSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "spares" {
+			sparesSet = true
+		}
+	})
+	if *spares < 0 || *spares > 5 || *expires < 5*time.Minute || *expires > 24*time.Hour || (*yes && *name == "") || (*file != "" && *printBundle) {
 		return fs.usageError("use expiry 5m..24h, --name with --yes, and one of --print or --file")
 	}
 	if err := pairingAgentRefusal(env); err != nil {
@@ -91,6 +98,9 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	if err != nil {
 		terminal.Println(errOut, "cannot prepare portable settings: "+err.Error())
 		return 1
+	}
+	if !sparesSet {
+		*spares = -1
 	}
 	return executePairingAdd(home, cfg, payload, p, env, out, errOut, pairingAddOptions{name: *name, share: *share, spares: *spares, yes: *yes, printBundle: *printBundle, file: *file})
 }
@@ -152,6 +162,11 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 			}
 		}()
 		terminal.Println(out, "Dedicated key checked; independent slot retained in issuance ledger.")
+		if slot.Origin == issuance.Precreated {
+			if refs, e := spareRefs(home, cfg); e == nil {
+				terminal.Printf(out, "Used a spare; %d eligible spares remain.\n", len(refs))
+			}
+		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Println(out, "Shared-key beta: no independent R2 revocation.")
 	}
@@ -492,11 +507,13 @@ func pairingAddError(out io.Writer, message string) int { terminal.Println(out, 
 func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issuance.Slot, issuer *keyIssuer, env Env, out, errOut io.Writer, opts pairingAddOptions) int {
 	var err error
 	if slot.SlotID != "" {
-		slot.State = issuance.DeliveryIntent
-		if err = issuance.Save(home, *slot); err != nil {
+		intent := *slot
+		intent.State = issuance.DeliveryIntent
+		if err = issuance.Save(home, intent); err != nil {
 			terminal.Println(errOut, "cannot persist dedicated delivery intent")
 			return 1
 		}
+		*slot = intent
 	}
 	ledger.State = pairingDeliveryIntent
 	if err = savePairingLedger(home, *ledger); err != nil {

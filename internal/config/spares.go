@@ -1,6 +1,9 @@
 package config
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // SpareTarget returns the desired unused key count, including legacy defaults.
 func (c Config) SpareTarget() int {
@@ -17,7 +20,7 @@ func (c Config) ValidateSpares() error {
 	}
 	seen := map[string]bool{}
 	for _, ref := range c.SpareCredentialRefs {
-		if ref == "" || !SafeMachineText(ref, 128) || seen[ref] {
+		if !strings.HasPrefix(ref, "issued-") || !ValidMachineID(strings.TrimPrefix(ref, "issued-")) || seen[ref] {
 			return errors.New("invalid spare credential index")
 		}
 		seen[ref] = true

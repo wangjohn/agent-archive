@@ -84,7 +84,7 @@ func (i *keyIssuer) create(origin issuance.Origin) (issuance.Slot, credentials.R
 	}
 	derived := cloudflare.DeriveS3Credentials(token)
 	key := credentials.R2Credentials{AccessKeyID: derived.AccessKeyID, SecretAccessKey: derived.SecretAccessKey}
-	verifier := r2Creator{env: i.env, p: i.p, account: i.account, bucket: cloudflare.BucketSpec{BucketRef: i.bucket}}
+	verifier := r2Creator{keyStorage: &i.cfg.Storage, env: i.env, p: i.p, account: i.account, bucket: cloudflare.BucketSpec{BucketRef: i.bucket}}
 	if err = verifier.checkKey(ctx, key); err != nil {
 		i.cleanup(&s)
 		return s, credentials.R2Credentials{}, errors.New("dedicated key did not pass the storage check; cleanup tracked")
@@ -182,12 +182,16 @@ func reserveSpare(home string, cfg config.Config, pairID, name string, expiry ti
 	if cfg.SpareTarget() == 0 {
 		return issuance.Slot{}, credentials.R2Credentials{}, nil
 	}
+	account, bucket, err := providerDestination(cfg.Storage)
+	if err != nil {
+		return issuance.Slot{}, credentials.R2Credentials{}, err
+	}
 	slots, err := issuance.List(home)
 	if err != nil {
 		return issuance.Slot{}, credentials.R2Credentials{}, err
 	}
 	for _, s := range slots {
-		if s.State != issuance.Spare || s.DestinationID != cfg.DestinationID() || s.IssuerID != cfg.MachineID {
+		if s.State != issuance.Spare || s.DestinationID != cfg.DestinationID() || s.IssuerID != cfg.MachineID || s.AccountID != account || s.Bucket != bucket.Name || s.Jurisdiction != bucket.Jurisdiction {
 			continue
 		}
 		// The reference is read only after durable reservation, never from the config index.
@@ -209,7 +213,7 @@ func reserveSpare(home string, cfg config.Config, pairID, name string, expiry ti
 			_ = issuance.Save(home, s)
 			continue
 		}
-		verifier := r2Creator{env: env, p: newPrompter(nil, io.Discard), account: s.AccountID, bucket: cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: s.Bucket, Jurisdiction: s.Jurisdiction}}}
+		verifier := r2Creator{keyStorage: &cfg.Storage, env: env, p: newPrompter(nil, io.Discard), account: s.AccountID, bucket: cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: s.Bucket, Jurisdiction: s.Jurisdiction}}}
 		if verifier.checkKey(context.Background(), key) != nil {
 			s.State = issuance.CleanupPending
 			s.CleanupReason = "spare-storage-check-failed"
@@ -374,22 +378,27 @@ func choosePairingKey(home string, cfg config.Config, p *prompter, env Env, yes,
 			return selected, nil, errors.New("pairing cancelled")
 		}
 	}
-	token, _, _, err := readManagementToken(context.Background(), p, env, cfg.CloudflareTokenCommand, !yes)
-	if err != nil {
-		return selected, nil, err
-	}
-	api := env.cloudflareAPI(token)
-	issuer, err = newKeyIssuer(home, cfg, env, p, api)
-	if err != nil {
-		api.Discard()
-		return selected, nil, err
-	}
-	if err = issuer.reconcile(); err == nil {
-		selected, key, err = issuer.create(issuance.Fresh)
+	var err error
+	issuer, err = acquirePairingIssuer(home, cfg, p, env, yes)
+	if err == nil {
+		if err = issuer.reconcile(); err == nil {
+			selected, key, err = issuer.create(issuance.Fresh)
+		}
 	}
 	if err != nil {
-		api.Discard()
-		return selected, nil, err
+		if issuer != nil {
+			issuer.api.Discard()
+		}
+		spare, spareKey, spareErr := reserveSpare(home, cfg, payload.PairingID, payload.Name, payload.ExpiresAt, env)
+		if spareErr != nil {
+			return spare, nil, spareErr
+		}
+		if spare.SlotID == "" {
+			return spare, nil, err
+		}
+		setDedicatedPayload(payload, spare, spareKey)
+		terminal.Println(p.out, "Fresh creation unavailable; checked and reserved an eligible spare instead.")
+		return spare, nil, nil
 	}
 	selected.State = issuance.Reserved
 	selected.PairingID = payload.PairingID
@@ -400,11 +409,7 @@ func choosePairingKey(home string, cfg config.Config, p *prompter, env Env, yes,
 		api.Discard()
 		return selected, nil, err
 	}
-	payload.RecipientID = selected.RecipientID
-	payload.SlotID = selected.SlotID
-	payload.Kind = config.MachineAssignmentR2Own
-	payload.AccessKeyID = key.AccessKeyID
-	payload.SecretAccessKey = key.SecretAccessKey
+	setDedicatedPayload(payload, selected, key)
 	return selected, issuer, nil
 }
 
@@ -437,4 +442,26 @@ func recoverUntouchedSpares(home string, cfg config.Config) error {
 		}
 	}
 	return nil
+}
+
+func acquirePairingIssuer(home string, cfg config.Config, p *prompter, env Env, yes bool) (*keyIssuer, error) {
+	token, _, _, err := readManagementToken(context.Background(), p, env, cfg.CloudflareTokenCommand, !yes)
+	if err != nil {
+		return nil, err
+	}
+	api := env.cloudflareAPI(token)
+	issuer, err := newKeyIssuer(home, cfg, env, p, api)
+	if err != nil {
+		api.Discard()
+		return nil, err
+	}
+	return issuer, nil
+}
+
+func setDedicatedPayload(payload *pairing.Payload, slot issuance.Slot, key credentials.R2Credentials) {
+	payload.RecipientID = slot.RecipientID
+	payload.SlotID = slot.SlotID
+	payload.Kind = config.MachineAssignmentR2Own
+	payload.AccessKeyID = key.AccessKeyID
+	payload.SecretAccessKey = key.SecretAccessKey
 }

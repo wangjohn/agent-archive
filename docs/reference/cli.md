@@ -218,16 +218,21 @@ Unreadable records and incomplete listings are reported; those exit with code 1.
 Guide: [Multiple machines](../guides/multiple-machines.md).
 
 ```text
-Usage: agent-archive machines add [--name NAME] [--share-key]
+Usage: agent-archive machines add [--name NAME] [--share-key] [--spares 0..5]
        [--expires 15m] [--print | --file PATH] [--yes]
 
 Create an encrypted pairing bundle after checking the source storage.
-Shared-key R2 beta requires --share-key and cannot revoke one recipient alone.
+Dedicated R2 issuance is an experimental draft, gated by
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1. An available management token creates
+and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
+implicitly. --share-key explicitly selects shared-key beta without independent
+recipient revocation. Live provider acceptance and revocation remain required.
 S3 transfers settings and a profile name. Configure the profile on the receiver.
 Deliver the bundle and six-word code separately. Pairing refuses in any coding
 agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
   --share-key    Explicitly share the active R2 key (beta)
+  --spares N     Save unused R2 key target, 0..5 (default 2); refill with a token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
   --print        Print the encrypted bundle instead of copying it
   --file PATH    Create a private 0600 bundle file; never overwrite a file
@@ -236,7 +241,9 @@ agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
 Interactive delivery needs terminal input and output; codes use a cleared
 alternate screen. Clipboard contents are
 cleared on normal exit only if they still equal the bundle. Interrupted delivery
-remains uncertain in the local ledger; shared credentials remain active.
+remains uncertain in the local ledger; dedicated keys are never recycled after
+attempted exposure. Issuer-local delivered secrets are removed on exit; lineage
+remains. Spare refill failure does not invalidate the delivered pairing.
 ```
 
 | Flag | Takes | Default |
@@ -246,6 +253,7 @@ remains uncertain in the local ledger; shared credentials remain active.
 | `--name` | a value | — |
 | `--print` | no value | — |
 | `--share-key` | no value | — |
+| `--spares` | a value | `-1` |
 | `--yes` | no value | — |
 
 ## agent-archive machines rename

@@ -19,6 +19,7 @@ import (
 // State describes durable intent. Only Spare is eligible for reservation.
 type State string
 
+// Durable slot lifecycle states.
 const (
 	CreationIntent State = "creation-intent"
 	SecretIntent   State = "secret-intent"
@@ -34,6 +35,7 @@ const (
 // Origin retains how the issuer first allocated a slot.
 type Origin string
 
+// Allocation origins remain immutable across delivery.
 const (
 	Fresh      Origin = "fresh"
 	Precreated Origin = "spare"
@@ -87,18 +89,10 @@ func New(issuer, destination, account string, bucket cloudflare.BucketRef, permi
 // Validate refuses incomplete or ambiguous local binding evidence.
 func (s Slot) Validate() error {
 	bad := errors.New("invalid issuance ledger; spares withheld")
-	for _, id := range []string{s.SlotID, s.RecipientID, s.IssuerID, s.AccountID, s.PermissionID} {
-		if !config.ValidMachineID(id) {
-			return bad
-		}
+	if err := s.validateBinding(); err != nil {
+		return err
 	}
-	if s.Version != 1 || len(s.DestinationID) != 64 || strings.Trim(s.DestinationID, "0123456789abcdef") != "" || s.CreatedAt.IsZero() || (s.SecretRef != "issued-"+s.SlotID && !(s.Origin == Guided && strings.HasPrefix(s.SecretRef, "setup-") && config.ValidMachineID(strings.TrimPrefix(s.SecretRef, "setup-")))) || s.ProviderName != ProviderName(s.RecipientID, s.IssuerID, s.SlotID) {
-		return bad
-	}
-	if _, err := cloudflare.BucketResource(s.AccountID, cloudflare.BucketRef{Name: s.Bucket, Jurisdiction: s.Jurisdiction}); err != nil {
-		return bad
-	}
-	if s.ProviderID != "" && !config.ValidMachineID(s.ProviderID) || s.PairingID != "" && !config.ValidMachineID(s.PairingID) || s.Label != "" && !config.ValidMachineName(s.Label) {
+	if s.Origin == Guided && (s.State == Spare || s.State == Reserved || s.State == DeliveryIntent || s.State == Delivered) {
 		return bad
 	}
 	switch s.Origin {
@@ -129,7 +123,18 @@ func Save(home string, s Slot) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	return local.Write(filepath.Join(home, "issued", "slot-"+s.SlotID+".json"), s)
+	path := filepath.Join(home, "issued", "slot-"+s.SlotID+".json")
+	if data, err := os.ReadFile(path); err == nil {
+		var prior Slot
+		if len(data) > 16384 || json.Unmarshal(data, &prior) != nil || prior.Validate() != nil || !immutableMatch(prior, s) || !allowedTransition(prior, s) {
+			return errors.New("issuance binding or lifecycle change refused")
+		}
+	} else if !os.IsNotExist(err) {
+		return errors.New("issuance ledger unreadable")
+	} else if s.State != CreationIntent {
+		return errors.New("issuance record needs durable creation intent")
+	}
+	return local.Write(path, s)
 }
 
 // List returns bounded validated lineage, failing closed on corrupt slot entries.
@@ -165,4 +170,58 @@ func List(home string) ([]Slot, error) {
 		slots = append(slots, s)
 	}
 	return slots, nil
+}
+
+func immutableMatch(a, b Slot) bool {
+	return a.SlotID == b.SlotID && a.RecipientID == b.RecipientID && a.IssuerID == b.IssuerID && a.DestinationID == b.DestinationID && a.AccountID == b.AccountID && a.Bucket == b.Bucket && a.Jurisdiction == b.Jurisdiction && a.PermissionID == b.PermissionID && a.ProviderName == b.ProviderName && a.Origin == b.Origin && a.CreatedAt.Equal(b.CreatedAt) && (a.ProviderID == "" || a.ProviderID == b.ProviderID) && (a.SecretRef == b.SecretRef || (a.Origin == Guided && a.State == SecretIntent && b.State == Own))
+}
+
+func allowedTransition(a, b Slot) bool {
+	if a.State == b.State {
+		return true
+	}
+	switch a.State {
+	case CreationIntent:
+		return b.State == SecretIntent || b.State == CleanupPending || b.State == Deleted
+	case SecretIntent:
+		return b.State == Spare || b.State == Own || b.State == CleanupPending || b.State == Deleted
+	case Spare:
+		return b.State == Reserved || b.State == CleanupPending
+	case Reserved:
+		return b.State == DeliveryIntent || b.State == CleanupPending || (b.State == Spare && a.Origin == Precreated)
+	case DeliveryIntent:
+		return b.State == Delivered || b.State == CleanupPending
+	case Delivered:
+		return b.State == CleanupPending
+	case Own:
+		return b.State == CleanupPending || b.State == Deleted
+	case CleanupPending:
+		return b.State == Deleted
+	case Deleted:
+		return false
+	}
+	return false
+}
+
+func (s Slot) validateBinding() error {
+	bad := errors.New("invalid issuance ledger; spares withheld")
+	for _, id := range []string{s.SlotID, s.RecipientID, s.IssuerID, s.AccountID, s.PermissionID} {
+		if !config.ValidMachineID(id) {
+			return bad
+		}
+	}
+	if s.Version != 1 || len(s.DestinationID) != 64 || strings.Trim(s.DestinationID, "0123456789abcdef") != "" || s.CreatedAt.IsZero() || (s.SecretRef != "issued-"+s.SlotID && !(s.Origin == Guided && strings.HasPrefix(s.SecretRef, "setup-") && config.ValidMachineID(strings.TrimPrefix(s.SecretRef, "setup-")))) || s.ProviderName != ProviderName(s.RecipientID, s.IssuerID, s.SlotID) {
+		return bad
+	}
+	if cloudflare.ValidateBucketName(s.Bucket) != nil || (s.Jurisdiction != "" && !cloudflare.ValidJurisdiction(s.Jurisdiction)) {
+		return bad
+	}
+	if _, err := cloudflare.BucketResource(s.AccountID, cloudflare.BucketRef{Name: s.Bucket, Jurisdiction: s.Jurisdiction}); err != nil {
+		return bad
+	}
+	if s.ProviderID != "" && !config.ValidMachineID(s.ProviderID) || s.PairingID != "" && !config.ValidMachineID(s.PairingID) || s.Label != "" && !config.ValidMachineName(s.Label) {
+		return bad
+	}
+
+	return nil
 }

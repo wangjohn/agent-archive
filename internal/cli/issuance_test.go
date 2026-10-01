@@ -272,3 +272,114 @@ func TestDedicatedVerificationFailureCleansBeforeExposure(t *testing.T) {
 		t.Fatal("failed pre-exposure key left active")
 	}
 }
+
+func TestDedicatedRefillFailureKeepsDeliveredBundleValid(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	original := env.Cloudflare
+	calls := 0
+	env.Cloudflare = func(token string) cloudflare.API {
+		client := original(token)
+		return &trackedInventoryAPI{API: client, InventoryAPI: client.(cloudflare.InventoryAPI), create: func(ctx context.Context, a string, s cloudflare.TokenSpec) (cloudflare.Token, error) {
+			calls++
+			if calls > 1 {
+				return cloudflare.Token{}, &cloudflare.Error{Status: 403}
+			}
+			return client.CreateToken(ctx, a, s)
+		}}
+	}
+	env.LookupEnv = func(key string) (string, bool) {
+		if key == "CLOUDFLARE_API_TOKEN" {
+			return bootstrapCanary, true
+		}
+		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+	}
+	var out, errOut bytes.Buffer
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 || !strings.Contains(errOut.String(), "Pairing remains valid") {
+		t.Fatal("refill invalidated delivered pairing")
+	}
+	bundle, code := pairingPieces(out.String())
+	payload, err := pairing.Open(bundle, code, env.now())
+	must(t, err)
+	if len(cf.Live()) != 1 || payload.AccessKeyID != cf.Live()[0].ID {
+		t.Fatal("delivered key deleted after independent refill failure")
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	delivered := 0
+	for _, s := range slots {
+		if s.State == issuance.Delivered {
+			delivered++
+		}
+	}
+	if delivered != 1 {
+		t.Fatal("missing delivered lineage")
+	}
+}
+
+func pairingPieces(output string) (bundle, code string) {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "aa-pair1:") {
+			bundle = line
+		}
+		if strings.HasPrefix(line, "Pairing code (deliver separately): ") {
+			code = strings.TrimPrefix(line, "Pairing code (deliver separately): ")
+		}
+	}
+	return bundle, code
+}
+
+func TestDedicatedFreshRefusalFallsBackToExistingSpare(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	release, err := local.NamedLock(home, "issued.lock")
+	must(t, err)
+	s, _, err := i.create(issuance.Precreated)
+	must(t, err)
+	release()
+	original := env.Cloudflare
+	env.Cloudflare = func(token string) cloudflare.API {
+		client := original(token)
+		return &trackedInventoryAPI{API: client, InventoryAPI: client.(cloudflare.InventoryAPI), create: func(context.Context, string, cloudflare.TokenSpec) (cloudflare.Token, error) {
+			return cloudflare.Token{}, &cloudflare.Error{Status: 403}
+		}}
+	}
+	env.LookupEnv = func(key string) (string, bool) {
+		if key == "CLOUDFLARE_API_TOKEN" {
+			return bootstrapCanary, true
+		}
+		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+	}
+	var out, errOut bytes.Buffer
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 {
+		t.Fatalf("spare fallback failed: %s", &errOut)
+	}
+	bundle, code := pairingPieces(out.String())
+	payload, err := pairing.Open(bundle, code, env.now())
+	must(t, err)
+	if payload.SlotID != s.SlotID || len(cf.Tokens()) != 1 || !strings.Contains(out.String(), "eligible spare instead") {
+		t.Fatal("fresh refusal lost valid spare")
+	}
+}
+
+func TestDedicatedSparesZeroAndFlagBounds(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	var out bytes.Buffer
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop", "--spares=-1"}, strings.NewReader(""), &out, &out, env) != 2 {
+		t.Fatal("negative spare flag accepted")
+	}
+	env.LookupEnv = func(key string) (string, bool) {
+		if key == "CLOUDFLARE_API_TOKEN" {
+			return bootstrapCanary, true
+		}
+		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+	}
+	out.Reset()
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop", "--spares=0"}, strings.NewReader(""), &out, &out, env) != 0 {
+		t.Fatal("zero spare issuance failed")
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	if cfg.SpareTarget() != 0 || len(cf.Tokens()) != 1 || len(cfg.SpareCredentialRefs) != 0 {
+		t.Fatal("zero policy did not disable refill")
+	}
+}
