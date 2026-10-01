@@ -355,6 +355,7 @@ Enter does, and the heading's verb.
 | `show` (no ID) | archive | the same as `list` (browse) | none |
 | `show --json` (no ID) | archive | return the session; print its JSON (pick one) | `Show ·` |
 | `show "<words>"`, several matches | the matches | show the details (browse) | `"words" matches N ·` |
+| `handoff` before setup | bounded filtered native previews, already checkout scoped; o explicitly loads older | return the opaque selected row to the native caller | `Hand off local ·` |
 | `handoff` (no selector) | local and archive, merged as today | return the session to hand off (pick one) | `Hand off ·` |
 | `handoff "<words>"`, several matches | the matches | the same as `handoff` (pick one) | `Hand off · "words" matches N ·` |
 

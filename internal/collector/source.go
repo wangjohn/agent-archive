@@ -94,9 +94,9 @@ func (r fileReader) Signature(context.Context) (sourceState, error) {
 // once; tests use the count to keep it that way.
 var transcriptFilters atomic.Int64
 
-func (r fileReader) Filter(_ context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
+func (r fileReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
 	transcriptFilters.Add(1)
-	filtered, stat, err := filterTranscript(adapter, r.reg, maxBytes)
+	filtered, stat, err := filterTranscript(ctx, adapter, r.reg, maxBytes)
 	return filtered, sourceState{file: stat}, err
 }
 

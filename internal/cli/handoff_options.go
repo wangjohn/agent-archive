@@ -7,9 +7,24 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
+type handoffConfigState struct {
+	cfg   config.Config
+	found bool
+}
+
+func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error) {
+	if opts.config != nil {
+		return opts.config.cfg, opts.config.found, nil
+	}
+	return config.Load(home)
+}
+
 type handoffOptions struct {
+	config    *handoffConfigState
+	native    bool
 	sessionID string
 	project   string
 	harness   string
@@ -197,4 +212,11 @@ func validateHandoffWindowOptions(opts handoffOptions, interactive bool) string 
 	default:
 		return ""
 	}
+}
+
+func (e Env) loadHandoffConfig(home string) (config.Config, bool, error) {
+	if e.handoffConfigLoad != nil {
+		return e.handoffConfigLoad(home)
+	}
+	return config.Load(home)
 }

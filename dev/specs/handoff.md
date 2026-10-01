@@ -168,7 +168,7 @@ list, or `list` → `handoff ID`.
 
 ### Matching by repository
 
-Package R2 of `dev/proposals/portable-handoff-and-onboarding.md`. The key is
+Package R2 of `dev/proposals/implemented/portable-handoff-and-onboarding.md`. The key is
 `archive.RepoKey` of the `origin` remote (`repo_key` in the registration and
 the metadata sidecar; R1 records it).
 

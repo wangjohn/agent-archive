@@ -14,6 +14,58 @@ There are two ways to do it:
   in words: `agent-archive handoff "flaky retention"`), and press Enter at
   `Continue in:`. The other agent starts in this terminal.
 
+## Before setup: native local sessions
+
+After installing, run `agent-archive handoff` inside a checkout to browse
+existing Claude Code and Codex conversations. No bucket, capture hooks,
+credentials, registrations, or background job are created. Cursor automatic
+discovery is deferred; `--file PATH --harness cursor` remains available.
+
+```sh
+agent-archive handoff
+agent-archive handoff --latest --harness claude --to codex
+agent-archive handoff "OAuth" --harness codex --to claude
+agent-archive handoff NATIVE_ID --harness claude --source local
+```
+
+The scope is this directory and its descendants, using the transcript's
+recorded working directory and canonical paths. `--project DIR` requires an
+existing directory before setup. `--all-projects` explicitly searches other
+projects; an empty checkout or word search never broadens automatically.
+Default app homes and `CLAUDE_CONFIG_DIR` / `CODEX_HOME` overrides are searched.
+These selectable IDs are native local IDs, qualified by harness. Full IDs or
+unique prefixes (at least four characters) work beyond the preview window.
+Conflicting identities require the explicit-file path.
+
+The picker initially inspects filtered labels for the newest 50 candidates.
+Use **o · Load older sessions** to inspect another 50; clear a key-mode `/`
+filter with Esc first. Redrawing, scrolling and filtering inspect no additional
+transcripts. Word queries search only loaded previews and report their bounded
+coverage. A partial label falls back to the first filtered prompt or native ID.
+Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
+preview read budget per invocation. Exhaustion disables older loading.
+
+Local `--latest` uses transcript file modification time. Copying or restoring
+files can change that ordering. It requires complete identity/checkout discovery
+and skips the exactly identified calling session. `--to` without a selector
+uses an exact available native identity, offers the terminal picker when one
+cannot be identified, or requires explicit selection inside an agent; it never
+substitutes latest. Automatic current identity depends on the app exposing a
+matching session variable. Disposable live Claude/Codex checks on both supported
+platforms remain unverified; synthetic home/launcher tests cover the command
+flow. Setup installs agent skills only when explicitly requested later.
+
+Rendering creates no archive. Launch files are private (directory 0700, file
+0600) under `agent-archive-local-handoffs` in the temporary directory and survive
+asynchronous launch. Subsequent local handoffs remove owned directories older
+than seven days, best effort; files can remain until another invocation or OS
+cleanup. Trimmed output has no automatic saved full copy before setup: use
+`--max-bytes 0` or explicit `--output`. `--source archive` requires setup.
+
+Once configured, the existing registration and archive eligibility rules apply;
+this utility does not make other native history eligible. Run `setup` later for
+backup and cross-machine use, with explicit capture and backfill choices.
+
 ## From inside an agent: /handoff
 
 ```text
@@ -85,7 +137,10 @@ one, else the first listed. A number (or an agent's name) starts that agent
 in this terminal, and `handoff` returns when it exits.
 
 The other answers don't start an agent. `p` prints the handoff, through the
-pager when it is longer than the screen. `c` copies it with `pbcopy`. `w`
+pager when it is longer than the screen. `c` copies it with `pbcopy` on macOS,
+`wl-copy` on Wayland, or `xclip`/`xsel` on X11. The copy choice appears only when
+a provider is installed and, on Linux, a display is configured. In a headless
+session, use `w` to write a file instead. `w`
 asks for a file name (default `handoff-<short id>.md` in the directory an
 agent would start in: the current one, or `--project DIR` with `--latest`;
 `~/` is your home directory), writes it with mode 0600,
@@ -142,7 +197,7 @@ on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 
 `--to` starts the installed `claude`, `codex`, or Cursor `agent` (else
 `cursor-agent`) CLI in the current directory (or `--project DIR` with
-`--latest`). Codex gets that directory with `--cd` and Cursor with
+`--latest`, and before setup with any native selection). Codex gets that directory with `--cd` and Cursor with
 `--workspace`. Claude Code runs in it and is given only the handoff's folder
 with `--add-dir`, since it reads outside the project only from an added
 directory. The launched agent does not inherit the calling agent's session

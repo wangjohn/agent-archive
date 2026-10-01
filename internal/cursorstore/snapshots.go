@@ -172,7 +172,7 @@ const cacheDirTagName = "CACHEDIR.TAG"
 
 // errCacheDirNotPrivate means agent-archive's folder in the cache home exists
 // but is not a directory of this user's that nobody else can write to, or the
-// cache home is one every account can write to (without the sticky bit). A
+// cache home grants group or other write access (without the sticky bit). A
 // directory another account can write to could have the directory inside it
 // renamed away and replaced between the checks and the copy.
 var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache directory is not private to this user")
@@ -187,8 +187,8 @@ var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache dire
 // and a failure to write the tag must not stop the read.
 //
 // A cache home that was already there is the user's and is left as it is
-// (its mode is never changed), unless every account can write to it without
-// the sticky bit: anyone could then rename dir away and put their own in its
+// (its mode is never changed), unless group or other accounts can write to it
+// without the sticky bit: they could rename dir away and put their own in its
 // place between the checks and the copy, so it is refused, the way dir is.
 func prepareCacheDir(dir string) error {
 	cache := filepath.Dir(dir)
@@ -197,8 +197,8 @@ func prepareCacheDir(dir string) error {
 	}
 	if info, err := os.Stat(cache); err != nil || !info.IsDir() {
 		return errors.New("inspect the cache directory")
-	} else if info.Mode().Perm()&0o002 != 0 && info.Mode()&fs.ModeSticky == 0 {
-		return fmt.Errorf("%w: every account can write to the cache directory %s; set XDG_CACHE_HOME to a directory of yours, or take that write access away (chmod o-w)", errCacheDirNotPrivate, cache)
+	} else if info.Mode().Perm()&0o022 != 0 && info.Mode()&fs.ModeSticky == 0 {
+		return fmt.Errorf("%w: other accounts can write to the cache directory %s; set XDG_CACHE_HOME to a directory of yours, or take that write access away (chmod go-w)", errCacheDirNotPrivate, cache)
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return errors.New("create agent-archive's folder in the cache directory")

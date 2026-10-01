@@ -74,6 +74,12 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 		laid = filteredFormat(format, shown)
 		footer.WriteString(l.filterFooter(matched, words))
 	}
+	if l.boundedNotice != "" {
+		footer.WriteString(l.boundedNotice + "\n")
+	}
+	if l.older != nil {
+		footer.WriteString("o · " + l.older.Label + " (Esc first while filtering)\n")
+	}
 	// The mark is for the key browser's filter line; a table read by lines
 	// is chosen from by number.
 	laid.Cursor = l.filtering && l.keys != nil

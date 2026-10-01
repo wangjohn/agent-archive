@@ -13,7 +13,7 @@ import (
 )
 
 // Characterization of the macOS scheduler (PR 5a-0 of
-// dev/proposals/platform-abstraction.md): how the CLI reads launchd's answer.
+// dev/proposals/implemented/platform-abstraction.md): how the CLI reads launchd's answer.
 // testdata/scheduler/launchctl-print/ holds launchctl print output in the
 // shapes launchd gives (its README says how they were made); the placeholder
 // @PLIST@ stands for the plist launchd loaded the job from. This file runs

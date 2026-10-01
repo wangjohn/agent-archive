@@ -21,10 +21,10 @@ already be enabled on your Cloudflare account (Cloudflare may ask for a
 payment method; see [current R2
 pricing](https://developers.cloudflare.com/r2/pricing/)).
 
-1. In the [Cloudflare dashboard](https://dash.cloudflare.com), open **Manage
-   account → Account API tokens → Create Token** ([Cloudflare's
-   steps](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/))
-   and create an account token with two permissions on your account:
+1. Open [Account API tokens in the Cloudflare
+   dashboard](https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fapi-tokens), sign
+   in and select your account, then select **Create Token**. Create an account
+   token with two permissions on your account:
    **Workers R2 Storage Write** (creates the bucket) and **Account API Tokens
    Write** (creates the bucket's own key). Account members can grant only
    permissions they hold themselves, so if setup is refused here, ask an

@@ -383,27 +383,28 @@ each check):
   no files, no link and no running timer.
 - The real-manager Go tests (`AGENT_ARCHIVE_REAL_SYSTEMD=1`) as a second lingering
   user, and `cursorstore`'s snapshot tests on a real Linux account.
+- On the container's own disk, `status` reports no network filesystem and
+  `config.json` records no `allow_network_home` opt-in. A real network home
+  remains untested live.
 
 **What it does not cover:** the real Cursor application, `cursor-agent` and the
 Cursor database layout on Linux (the database is hand-made after macOS's and VS
 Code's layout, so a real Cursor's Linux paths and its hook approval are
-unverified); Claude Code itself (the hook payloads are hand-written); any distribution
-other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
-252 and 255 for the adapter's parsing, but only 255 has run live); amd64, unless a run
-below says otherwise; a manager without lingering over a real logout (the
-no-user-bus session is simulated by unsetting the bus variables); real R2 or
+unverified); the real Claude Code and Codex apps (only hand-written Claude Code
+hook payloads are exercised); any distribution other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
+252 and 255 for the adapter's parsing, but only 255 has run live); a manager
+without lingering over a real logout (the no-user-bus session is simulated by unsetting the bus variables); real R2 or
 AWS (MinIO stands in); WSL; Linux running as the machine's only user session
 with a desktop; and anything about upgrades from an earlier release.
 
-**Last run** (record each run that follows a change to what it covers: date,
+**Recorded runs** (record each run that follows a change to what it covers: date,
 commit, systemd, architecture, result):
 
 - 2026-09-30, the tree of the pull request that added the run (on top of 5c's
   enable-link and clone-warning change), Ubuntu 24.04.5 LTS, systemd 255
   (255.4-1ubuntu8.17), linux/arm64 (Docker in a colima VM on an Apple silicon
   Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
-  the product. amd64 has not been run (the script builds for Docker's
-  architecture; on an amd64 host it would run as is).
+  the product. At that point amd64 had not been run.
 - 2026-09-30, the same pull request after review (the Go test binaries must
   report each named test passed, a root-only `cursorstore` test added), same
   machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
@@ -415,6 +416,22 @@ commit, systemd, architecture, result):
   **91 passed, 0 failed**, 103 seconds. A home on a real network filesystem is
   not run live (the container cannot fake an NFS mount's type); the unit
   tests cover it with injected mount tables.
+- 2026-10-01, clean commit `61d068b785a6d554bad8400ae8ab69023e355dad`,
+  Ubuntu 24.04.5 LTS, systemd 255 (255.4-1ubuntu8.17), linux/amd64 (Docker in
+  the x86-64 Colima `levenshtein` VM on macOS): **91 passed, 0 failed**,
+  exit 0, 341 seconds including guest image preparation. This establishes
+  live harness coverage on amd64 as well as arm64. The first attempt stopped
+  before any checks because Quay returned 401 for the default MinIO image;
+  Docker Hub images were also unavailable and official binary downloads
+  returned 410. The successful retry used `MINIO_IMAGE` and `MC_IMAGE` with
+  temporary Alpine 3.24 images built from official source pins:
+  `github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c` and
+  `github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540`, cross-built with
+  Go 1.27.1, `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`. Product code and checks
+  were unchanged; the run's resources and temporary MinIO images were removed.
+  Local evidence (not committed):
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-retry.log` and
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-summary.txt`.
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product

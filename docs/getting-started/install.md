@@ -6,6 +6,10 @@ and arm64).
 
 After installing, continue with [setup](setup.md).
 
+After installing, try `agent-archive handoff` inside a project to continue an
+existing Claude Code or Codex conversation before creating a bucket or running
+setup. [Native local selection, limits and verification](../guides/handoff.md#before-setup-native-local-sessions).
+
 ## Platforms
 
 **macOS** is the platform the project was built on. Releases are signed with
@@ -40,8 +44,8 @@ What was tested on Linux, so you can judge how far to trust it:
 
 - A live acceptance run of the real `setup`, hook, timer-driven collector,
   `status`, `setup --refresh` and `uninstall` on Ubuntu 24.04 with systemd
-  255 on arm64 ([`scripts/acceptance/linux`](../../scripts/acceptance/linux/README.md)),
-  over synthetic sessions and a throwaway S3-compatible bucket (MinIO): 89
+  255 on arm64 and amd64 ([`scripts/acceptance/linux`](../../scripts/acceptance/linux/README.md)),
+  over synthetic sessions and a throwaway S3-compatible bucket (MinIO): 91
   checks, all passed. What it covers and what it does not is in
   [testing](../../dev/contributing/testing.md#the-linux-live-acceptance-run).
 - The systemd adapter against a real user manager in CI on an x86-64 Ubuntu
@@ -63,9 +67,8 @@ What is **not** verified on Linux:
   hand-written Claude Code payloads; both apps use the same hook files, paths
   and transcript formats as on macOS, so they are expected to work, but that
   is an expectation, not a result.
-- **Distributions and systemd versions other than those above**, and an
-  amd64 live run (the acceptance run above was arm64; amd64 is covered by the
-  unit tests and the CI job, not by that run).
+- **Live product runs on distributions other than Ubuntu 24.04 or systemd
+  versions other than 255.** Other versions above have fixture coverage only.
 - **Real R2 and Amazon S3 from Linux.** The live run uploaded to a MinIO
   bucket; the storage code is the same as on macOS.
 - **A real logout with lingering off** (the no-user-bus case is simulated),

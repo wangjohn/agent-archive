@@ -17,7 +17,7 @@ import (
 )
 
 // Guided creation of an Amazon S3 bucket in the person's own AWS account
-// (dev/proposals/portable-handoff-and-onboarding.md, Part 2b).
+// (dev/proposals/implemented/portable-handoff-and-onboarding.md, Part 2b).
 //
 // It uses the AWS profile chosen for storage, at setup time. That profile
 // needs s3:CreateBucket and s3:PutBucketPublicAccessBlock, which the runtime

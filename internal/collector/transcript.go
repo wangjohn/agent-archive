@@ -2,14 +2,14 @@ package collector
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // filterTranscript filters reg's transcript with adapter, falling back to
@@ -25,7 +25,7 @@ var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
 // errRecordTooLarge means one record of the transcript is longer than
 // recordLimit.
-var errRecordTooLarge = errors.New("transcript record exceeds the record size limit")
+var errRecordTooLarge = transcriptio.ErrRecordTooLarge
 
 // checkFilteredSize is errTranscriptTooLarge for filtered records over
 // maxBytes: the size limit applies to what is kept, not to the tool output
@@ -50,37 +50,38 @@ func statTranscript(info os.FileInfo) transcriptFileInfo {
 	return transcriptFileInfo{Size: info.Size(), Mtime: info.ModTime().UnixNano()}
 }
 
-func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	file, err := openRegularFile(reg.TranscriptPath)
+func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
+	snapshot, err := transcriptio.Open(transcriptio.OS{}, reg.TranscriptPath, transcriptio.OpenPolicy{})
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("stat transcript: %w", err)
-	}
-	// Taken before any read, so it describes the bytes this scan is about to
-	// consume. A write that lands afterwards moves the mtime and is therefore
-	// seen as a change by the next pass, which is the conservative direction.
-	stat := statTranscript(info)
-	boundary := info.Size()
+	defer func() { _ = snapshot.Close() }()
+	return filterSnapshot(ctx, snapshot, adapter, reg, maxBytes)
+}
+
+func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
+	stamp := file.Stamp()
+	stat := transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}
+	boundary := stamp.Size
 	if raw := maxRawBytes(maxBytes); boundary > raw {
 		return archive.FilteredTranscript{}, stat, fmt.Errorf("%w of %d bytes before filtering", errTranscriptTooLarge, raw)
 	}
-	if boundary < 0 {
-		return archive.FilteredTranscript{}, stat, errors.New("transcript has invalid size")
+	if err := ctx.Err(); err != nil {
+		return archive.FilteredTranscript{}, stat, err
 	}
-	jsonBoundary, err := completeJSONLBoundary(file, boundary, recordLimit)
+	jsonBoundary, err := completeJSONLBoundary(contextReaderAt{ctx: ctx, reader: file}, boundary, recordLimit)
 	if errors.Is(err, errRecordTooLarge) {
 		return archive.FilteredTranscript{}, stat, err
 	}
 	if err != nil {
 		return archive.FilteredTranscript{}, stat, fmt.Errorf("find complete transcript boundary: %w", err)
 	}
-	limited := &recordLimitReader{r: io.NewSectionReader(file, 0, jsonBoundary), limit: recordLimit}
+	limited := &recordLimitReader{r: io.LimitReader(file.Reader(ctx), jsonBoundary), limit: recordLimit}
 	filtered, err := filterReader(adapter, reg, limited)
 	if err == nil {
+		if change := file.Check(); change != nil {
+			return archive.FilteredTranscript{}, stat, change
+		}
 		return filtered, stat, checkFilteredSize(filtered, maxBytes)
 	}
 	if limited.exceeded || errors.Is(err, archive.ErrRecordTooLarge) {
@@ -95,19 +96,34 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if boundary > recordLimit {
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
-	filtered, err = cursorAdapter.FilterText(io.NewSectionReader(file, 0, boundary), reg.SessionStartedAt)
+	filtered, err = cursorAdapter.FilterText(file.Reader(ctx), reg.SessionStartedAt)
 	if errors.Is(err, archive.ErrRecordTooLarge) {
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
 	if err != nil {
 		return filtered, stat, err
 	}
+	if change := file.Check(); change != nil {
+		return archive.FilteredTranscript{}, stat, change
+	}
 	return filtered, stat, checkFilteredSize(filtered, maxBytes)
+}
+
+type contextReaderAt struct {
+	ctx    context.Context
+	reader io.ReaderAt
+}
+
+func (r contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.ReadAt(p, off)
 }
 
 // errNotRegularFile means a hook-supplied transcript path names something
 // other than a regular file: a FIFO, a device, a socket, or a directory.
-var errNotRegularFile = errors.New("transcript is not a regular file")
+var errNotRegularFile = transcriptio.ErrNotRegularFile
 
 // openRegularFile opens a hook-supplied path for reading only if it is a
 // regular file (following symlinks, as the stat-based change check does).
@@ -116,84 +132,12 @@ var errNotRegularFile = errors.New("transcript is not a regular file")
 // end. It is checked before opening, so nothing else is opened, and the open
 // itself is non-blocking and checked again, so a regular file swapped for a
 // FIFO in between fails instead of blocking.
-func openRegularFile(path string) (*os.File, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w (%s)", errNotRegularFile, info.Mode().Type())
-	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	if info, err = file.Stat(); err != nil || !info.Mode().IsRegular() {
-		_ = file.Close()
-		if err == nil {
-			err = fmt.Errorf("%w (%s)", errNotRegularFile, info.Mode().Type())
-		}
-		return nil, err
-	}
-	return file, nil
-}
+func openRegularFile(path string) (*os.File, error) { return transcriptio.OS{}.OpenRegularFile(path) }
 
-// boundaryChunk is how much of the transcript completeJSONLBoundary reads at a
-// time while it looks backward for the last newline.
 const boundaryChunk = 64 * 1024
 
-// completeJSONLBoundary returns the offset just past the transcript's last
-// complete record, so a final record the harness is still writing is ignored.
-// size was fixed by the caller before this check.
-//
-// A transcript that ends in a newline, the ordinary case, costs a one-byte
-// read. Otherwise it scans backward from the end in boundaryChunk pieces for
-// the last newline, never further back than limit+1 bytes: a trailing record
-// that long cannot be read, and errRecordTooLarge says so. The trailing bytes
-// after that newline are a complete record when they are valid JSON (a final
-// record written without its newline); otherwise they are still being written
-// and the boundary is the newline. A transcript with no newline at all is
-// taken whole, as before.
 func completeJSONLBoundary(file io.ReaderAt, size, limit int64) (int64, error) {
-	if size <= 0 {
-		return 0, nil
-	}
-	var last [1]byte
-	if _, err := file.ReadAt(last[:], size-1); err != nil && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-	if last[0] == '\n' {
-		return size, nil
-	}
-	// The earliest offset a newline may have for the record after it to fit.
-	floor := max(0, size-limit-1)
-	newline := int64(-1)
-	chunk := make([]byte, boundaryChunk)
-	for end := size; end > floor && newline < 0; {
-		start := max(floor, end-boundaryChunk)
-		buf := chunk[:end-start]
-		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
-			return 0, err
-		}
-		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
-			newline = start + int64(i)
-		}
-		end = start
-	}
-	if newline < 0 {
-		if size > limit {
-			return 0, errRecordTooLarge
-		}
-		return size, nil
-	}
-	trailing := make([]byte, size-newline-1)
-	if _, err := file.ReadAt(trailing, newline+1); err != nil && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-	if json.Valid(bytes.TrimSpace(trailing)) {
-		return size, nil
-	}
-	return newline + 1, nil
+	return transcriptio.CompleteJSONLBoundary(file, size, limit)
 }
 
 // recordLimitReader passes a transcript through unchanged while checking that
