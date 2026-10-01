@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Setup can match portable repository keys with `--project-repo`, using bounded header-only history discovery and preserving local exclusions. Printed transfer commands use repository keys when available.
+
 ### Changed
 
 - The handoff picker, `show --json` with no ID, and the pickers for an
