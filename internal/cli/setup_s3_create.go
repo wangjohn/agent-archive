@@ -26,13 +26,8 @@ import (
 // Setup never creates IAM users or keys, and does not set a lifecycle rule
 // (see the note on bucket-permissions.md).
 
-// storageChoiceS3New is the storage menu's key for creating an S3 bucket,
-// and storageLabelS3New its label, which messages that point at the choice
-// quote.
-const (
-	storageChoiceS3New = "s3-new"
-	storageLabelS3New  = "Amazon S3: create a new bucket for me"
-)
+// storageChoiceS3New is the explicit interactive shortcut for S3 creation.
+const storageChoiceS3New = "s3-new"
 
 // createdS3Bucket is a bucket this setup run created, kept in memory for the
 // run so that setup can offer it again instead of creating a second one,
@@ -139,8 +134,14 @@ type newS3Bucket struct {
 func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket newS3Bucket) error {
 	terminal.Println(p.out, "Setup created bucket "+bucket.name+" in "+bucket.region+"; it is empty and will stay in your account if you stop now.")
 	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
-	if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+	choice, err := p.actions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}})
+	if err != nil {
 		return err
+	}
+	if choice == "profile" {
+		if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+			return err
+		}
 	}
 	setArchiveProfile(p, bucket.name, cfg.AWSProfile)
 	return nil
@@ -148,43 +149,164 @@ func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket 
 
 // createS3Bucket creates a bucket with the profile in cfg and returns its
 // name and region; it writes neither to cfg. It returns false, having said
-// why, when setup should ask for an existing bucket instead: the profile
-// cannot create buckets, or the attempt failed with nothing left to clean up.
+// why, only when the user explicitly chooses an existing bucket.
 func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion string, noCredentials bool) (newS3Bucket, bool, error) {
-	profile := cfg.AWSProfile
-	if noCredentials {
-		terminal.Printf(p.out, "Profile %s has no credentials configured, so it can't create a bucket. Pick an existing bucket instead.\n", profile)
-		return newS3Bucket{}, false, nil
-	}
 	if offered, used, err := offerCreatedBucket(p, cfg.AWSProfile); err != nil || used {
 		return offered, used, err
 	}
-	terminal.Printf(p.out, "Setup will create a bucket in the AWS account of profile %s, using that profile now, and turn on Block Public Access for it.\n", profile)
-	terminal.Println(p.out, "That needs permission to create buckets and set Block Public Access, which day-to-day archiving does not.")
-	region, err := promptRegion(p, "Region for the new bucket (for example us-east-1)", firstNonEmpty(cfg.Region, profileRegion))
+	name := newBucketName()
+	region := firstNonEmpty(cfg.Region, profileRegion)
+	explicitRegion := cfg.Region != ""
+	automaticName, regenerated := true, false
+	uncertain := map[string]bool{}
+	for {
+		var creator BucketCreator
+		var err error
+		if noCredentials {
+			terminal.Printf(p.out, "Profile %s has no credentials configured. Choose another profile or use an existing bucket.\n", cfg.AWSProfile)
+		} else {
+			if region == "" {
+				region, err = promptRegion(p, "Region for the new bucket (for example us-east-1)", "")
+				if err != nil {
+					return newS3Bucket{}, false, err
+				}
+				explicitRegion = true
+			}
+			settings := s3CreationSettings{name: name, region: region, explicitRegion: explicitRegion, automaticName: automaticName, noCredentials: noCredentials}
+			proceed, e := settings.confirm(p, cfg, env)
+			name, region, explicitRegion, automaticName, noCredentials = settings.name, settings.region, settings.explicitRegion, settings.automaticName, settings.noCredentials
+			if e != nil || !proceed {
+				return newS3Bucket{}, false, e
+			}
+			if !noCredentials && region == "" {
+				continue
+			}
+			if !noCredentials && region != "" {
+				switch {
+				case !standardAWSRegion(region):
+					terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
+				case uncertain[name]:
+					terminal.Printf(p.out, "The bucket %s may have been created by an earlier request. Check the S3 console; customize the name before trying another creation.\n", name)
+				default:
+					creator, err = env.awsBucketCreator(cfg.AWSProfile, region)
+					if err != nil {
+						terminal.Printf(p.out, "Couldn't open profile %s (%s).\n", cfg.AWSProfile, discoveryReason(err))
+					}
+				}
+			}
+		}
+		if creator != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
+			err = creator.CreateBucket(ctx, name, region)
+			cancel()
+			if err == nil {
+				terminal.Printf(p.out, "Created bucket %s in %s.\n", name, region)
+				p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: cfg.AWSProfile})
+				secured, e := secureNewBucket(p, creator, name, cfg.AWSProfile)
+				if e != nil {
+					return newS3Bucket{}, false, e
+				}
+				if secured {
+					rememberSecuredBucket(p, name)
+					printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
+					return newS3Bucket{name: name, region: region, fresh: true}, true, nil
+				}
+				// secureNewBucket has deleted the empty bucket; recovery is explicit.
+			} else if errors.Is(err, storage.ErrBucketNameTaken) && automaticName && !regenerated {
+				terminal.Printf(p.out, "The name %s is taken; preparing another suggested name.\n", name)
+				name, regenerated = newBucketName(), true
+				continue
+			} else {
+				if errors.Is(err, storage.ErrBucketNameTaken) || errors.Is(err, storage.ErrInvalidBucketName) {
+					terminal.Printf(p.out, "S3 could not use the name %s. Customize the name or use an existing bucket.\n", name)
+				} else {
+					noteCreateFailure(p, cfg.AWSProfile, name, err)
+				}
+				if errors.Is(err, storage.ErrBucketMayExist) {
+					uncertain[name] = true
+				}
+			}
+		}
+		choice, e := p.actions("What next?", "retry", []option{{"retry", "Review settings and retry"}, {"profile", "Choose another creation profile"}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
+		if e != nil {
+			return newS3Bucket{}, false, e
+		}
+		switch choice {
+		case "existing":
+			return newS3Bucket{}, false, nil
+		case "back":
+			return newS3Bucket{}, false, errChooseStorageAgain
+		case "stop":
+			return newS3Bucket{}, false, errors.New("guided bucket creation stopped")
+		case "profile":
+			profileRegion, noCredentials, err = chooseS3Profile(p, cfg, env)
+			if err != nil {
+				return newS3Bucket{}, false, err
+			}
+			if !explicitRegion {
+				region = profileRegion
+			}
+		}
+	}
+}
+
+// s3CreationSettings keeps customization separate from bucket mutations.
+type s3CreationSettings struct {
+	name, region                                 string
+	explicitRegion, automaticName, noCredentials bool
+}
+
+// confirm returns false only for the explicit existing-bucket route.
+func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env Env) (bool, error) {
+	for {
+		if !standardAWSRegion(s.region) {
+			terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
+		}
+		terminal.Printf(p.out, "Profile: %s\nBucket: %s\nRegion: %s\nSetup will enable and check all four Block Public Access settings.\n", cfg.AWSProfile, s.name, s.region)
+		choice, err := p.actions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name, region or profile"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
+		if err != nil {
+			return false, err
+		}
+		switch choice {
+		case "existing":
+			return false, nil
+		case "back":
+			return false, errChooseStorageAgain
+		case "customize":
+			if err := s.customize(p, cfg, env); err != nil {
+				return false, err
+			}
+			if s.noCredentials || s.region == "" {
+				return true, nil
+			}
+		case "create":
+			if standardAWSRegion(s.region) {
+				return true, nil
+			}
+		}
+	}
+}
+
+func (s *s3CreationSettings) customize(p *prompter, cfg *credentials.Config, env Env) error {
+	edit, err := p.actions("Customize storage", "name", []option{{"name", "Bucket name"}, {"region", "Region"}, {"profile", "Creation profile"}}, []actionOption{{"back", "b", "Back to summary"}})
 	if err != nil {
-		return newS3Bucket{}, false, err
+		return err
 	}
-	if !standardAWSRegion(region) {
-		terminal.Printf(p.out, "Setup can only create buckets in the standard AWS regions (such as us-east-1 or eu-west-2), and %s isn't one. Create the bucket yourself (see the bucket guide) and pick it instead.\n", region)
-		return newS3Bucket{}, false, nil
+	switch edit {
+	case "name":
+		s.name, err = promptNewBucketName(p, s.name)
+		s.automaticName = false
+	case "region":
+		s.region, err = promptRegion(p, "Region for the new bucket", s.region)
+		s.explicitRegion = true
+	case "profile":
+		var profileRegion string
+		profileRegion, s.noCredentials, err = chooseS3Profile(p, cfg, env)
+		if !s.explicitRegion {
+			s.region = profileRegion
+		}
 	}
-	creator, err := env.awsBucketCreator(profile, region)
-	if err != nil {
-		terminal.Printf(p.out, "Couldn't open profile %s (%s). Pick an existing bucket instead.\n", profile, discoveryReason(err))
-		return newS3Bucket{}, false, nil
-	}
-	name, created, err := createNamedBucket(p, creator, profile, region)
-	if err != nil || !created {
-		return newS3Bucket{}, false, err
-	}
-	p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: profile})
-	if secured, err := secureNewBucket(p, creator, name, profile); err != nil || !secured {
-		return newS3Bucket{}, false, err
-	}
-	rememberSecuredBucket(p, name)
-	printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
-	return newS3Bucket{name: name, region: region, fresh: true}, true, nil
+	return err
 }
 
 // offerCreatedBucket offers a bucket this run already created and secured
@@ -281,68 +403,6 @@ var standardRegion = regexp.MustCompile(`^(us|eu|ap|sa|ca|me|af|il|mx)-[a-z]+-[0
 // guided creation is only built and worded for the standard one.
 func standardAWSRegion(region string) bool { return standardRegion.MatchString(region) }
 
-// namesTakenBeforeAsking is how many "name in use" answers in a row setup
-// takes before it offers to give up on creating and pick an existing bucket.
-// The first answer for a suggested name is retried on its own, so the offer
-// comes with the second.
-const namesTakenBeforeAsking = 2
-
-// createNamedBucket asks for the bucket's name, defaulting to a random one,
-// and creates it. A suggested name that is in use is replaced once by another
-// random one; any other name in use is asked for again. After two in-use
-// answers in a row every further one offers picking an existing bucket, so
-// the loop always has an exit even when S3's answers make every name look
-// taken. created is false, with the reason said, when setup should ask for an
-// existing bucket instead.
-func createNamedBucket(p *prompter, creator BucketCreator, profile, region string) (name string, created bool, err error) {
-	suggested := newBucketName()
-	if name, err = promptNewBucketName(p, suggested); err != nil {
-		return "", false, err
-	}
-	autoRetried, inUse := false, 0
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
-		err = creator.CreateBucket(ctx, name, region)
-		cancel()
-		switch {
-		case err == nil:
-			terminal.Printf(p.out, "Created bucket %s in %s.\n", name, region)
-			return name, true, nil
-		case errors.Is(err, storage.ErrBucketNameTaken):
-			inUse++
-			terminal.Printf(p.out, "The name %s is already in use, by you or by someone else (bucket names are shared by everyone on AWS).\n", name)
-			if name == suggested && !autoRetried {
-				autoRetried = true
-				name = newBucketName()
-				suggested = name
-				terminal.Printf(p.out, "Trying %s instead.\n", name)
-				continue
-			}
-			if inUse >= namesTakenBeforeAsking {
-				answer, err := p.menu("What now?", "name",
-					option{"name", "Choose another name"},
-					option{"existing", "Pick an existing bucket instead"})
-				if err != nil || answer == "existing" {
-					return "", false, err
-				}
-			}
-			suggested = newBucketName()
-			if name, err = promptNewBucketName(p, suggested); err != nil {
-				return "", false, err
-			}
-		case errors.Is(err, storage.ErrInvalidBucketName):
-			terminal.Printf(p.out, "S3 doesn't accept the name %s. Choose another.\n", name)
-			suggested = newBucketName()
-			if name, err = promptNewBucketName(p, suggested); err != nil {
-				return "", false, err
-			}
-		default:
-			noteCreateFailure(p, profile, name, err)
-			return "", false, nil
-		}
-	}
-}
-
 // promptNewBucketName asks for a bucket name until it is one S3 accepts.
 func promptNewBucketName(p *prompter, def string) (string, error) {
 	for {
@@ -359,11 +419,11 @@ func promptNewBucketName(p *prompter, def string) (string, error) {
 }
 
 // noteCreateFailure says in plain words why the bucket called name could not
-// be created, and that setup goes on to pick an existing one. It never quotes
+// be created, and offers explicit recovery choices. It never quotes
 // S3's error. When the answer was unclear the bucket may exist, so it says
 // where to look and offers nothing that deletes.
 func noteCreateFailure(p *prompter, profile, name string, err error) {
-	const fallback = " For now, pick an existing bucket instead."
+	const fallback = " Review the settings and retry, or choose an existing bucket."
 	d := storage.Diagnose(err)
 	switch {
 	case storage.IsCredentialsCheck(err):

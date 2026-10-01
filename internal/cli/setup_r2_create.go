@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,17 +41,11 @@ import (
 // key as it does for any R2 key.
 //
 // The feature is experimental until every box of "Live acceptance: guided R2
-// creation" in dev/contributing/testing.md is ticked: the menu offers it only
-// when experimentalR2Create says so. Remove that function, and its one use in
-// storageMenuFor, to end the gate.
+// creation" in dev/contributing/testing.md is ticked. Provider introduction
+// and explicit creation shortcuts are gated by experimentalR2Create.
 
-// guidedR2Choice is the storage menu's key for creating an R2 bucket, and
-// storageLabelR2New its label, which messages that point at the choice share
-// with the menu.
-const (
-	guidedR2Choice    = "r2-create"
-	storageLabelR2New = "Cloudflare R2: create a new bucket for me"
-)
+// guidedR2Choice is the explicit interactive shortcut for R2 creation.
+const guidedR2Choice = "r2-create"
 
 // experimentalR2CreateVar is the environment variable that turns the guided
 // R2 option on.
@@ -63,21 +56,6 @@ const experimentalR2CreateVar = "AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE"
 func experimentalR2Create(env Env) bool {
 	value, _ := env.lookupEnv(experimentalR2CreateVar)
 	return value == "1"
-}
-
-func guidedR2Option() option {
-	return option{guidedR2Choice, storageLabelR2New}
-}
-
-// storageMenuFor is the storage menu setup shows: storageMenuOptions, plus
-// the guided R2 option, after the guided S3 one and before the instructions,
-// when it is switched on.
-func storageMenuFor(env Env) []option {
-	options := storageMenuOptions()
-	if !experimentalR2Create(env) {
-		return options
-	}
-	return slices.Insert(options, len(options)-1, guidedR2Option())
 }
 
 // errChooseStorageAgain ends guided creation without a bucket: the person
@@ -184,6 +162,9 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	}
 	key, err := c.createUntilVerified()
 	if err != nil {
+		if errors.Is(err, errUseExistingStorage) && c.bucketCreated {
+			return c.storageConfig(), none, false, err
+		}
 		return credentials.Config{}, none, false, err
 	}
 	// From here to staging, in setup.go, no signal handler is installed: a
@@ -219,11 +200,7 @@ func (c *r2Creator) connect() error {
 		if !errors.Is(err, errChooseStorageAgain) && err != nil && c.account == "" {
 			return err
 		}
-		choice, err := c.p.menu("What next?", "token",
-			option{"token", "Paste a different token"},
-			option{"retry", "Retry after updating permissions"},
-			option{"other", "Back"},
-			option{"stop", "Stop setup"})
+		choice, err := c.p.actions("What next?", "token", []option{{"token", "Paste a different token"}, {"retry", "Retry after updating permissions"}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"other", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if err != nil {
 			return err
 		}
@@ -244,6 +221,8 @@ func (c *r2Creator) connect() error {
 			continue
 		case "other":
 			return errChooseStorageAgain
+		case "existing":
+			return errUseExistingStorage
 		default:
 			return errors.New("guided bucket creation stopped")
 		}
@@ -479,13 +458,8 @@ func parseR2AccountID(input string) (string, error) {
 
 // askBucket asks for the bucket's name and its optional location.
 func (c *r2Creator) askBucket() error {
-	suggested := newBucketName()
-	name, err := c.askBucketName("Bucket name", suggested)
-	if err != nil {
-		return err
-	}
-	c.bucket.Name, c.defaultName = name, name == suggested
-	return c.askLocation()
+	c.bucket.Name, c.defaultName = newBucketName(), true
+	return nil
 }
 
 func (c *r2Creator) askBucketName(label, def string) (string, error) {
@@ -550,6 +524,7 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			return credentials.R2Credentials{}, err
 		}
 		if errors.Is(err, errConfirmR2Creation) {
+			terminal.Println(c.p.out, "Account: "+c.account)
 			terminal.Println(c.p.out, "Bucket: "+c.bucket.Name)
 			location := "automatic"
 			if c.bucket.Jurisdiction != "" {
@@ -560,12 +535,26 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			}
 			terminal.Println(c.p.out, "Location: "+location)
 			terminal.Println(c.p.out, "Setup will leave public access off and create a key for this bucket only.")
-			ok, e := c.p.yesNo("Create the bucket and its key now?", true)
+			choice, e := c.p.actions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name or location"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
 			if e != nil {
 				return credentials.R2Credentials{}, e
 			}
-			if !ok {
+			if choice == "back" {
 				return credentials.R2Credentials{}, errChooseStorageAgain
+			}
+			if choice == "existing" {
+				return credentials.R2Credentials{}, errUseExistingStorage
+			}
+			if choice == "customize" {
+				name, e := c.askBucketName("Bucket name", c.bucket.Name)
+				if e != nil {
+					return credentials.R2Credentials{}, e
+				}
+				c.bucket.Name, c.defaultName = name, false
+				if e := c.askLocation(); e != nil {
+					return credentials.R2Credentials{}, e
+				}
+				continue
 			}
 			c.creationConfirmed = true
 			continue
@@ -581,13 +570,14 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 				return credentials.R2Credentials{}, e
 			}
 			c.bucket.Name, c.defaultName = name, false
+			c.creationConfirmed = false
 			continue
 		}
 		retry := "Try again"
 		if c.bucketCreated {
 			retry = "Try again with the same bucket (" + c.bucket.Name + ")"
 		}
-		choice, e := c.p.menu("What next?", "retry", option{"retry", retry}, option{"other", "Choose another storage option"}, option{"stop", "Stop setup"})
+		choice, e := c.p.actions("What next?", "retry", []option{{"retry", retry}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"other", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if e != nil {
 			return credentials.R2Credentials{}, e
 		}
@@ -597,6 +587,9 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 		c.reportBucketLeftBehind()
 		if choice == "other" {
 			return credentials.R2Credentials{}, errChooseStorageAgain
+		}
+		if choice == "existing" {
+			return credentials.R2Credentials{}, errUseExistingStorage
 		}
 		return credentials.R2Credentials{}, errors.New("guided bucket creation stopped")
 	}

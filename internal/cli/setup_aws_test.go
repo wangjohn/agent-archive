@@ -202,7 +202,7 @@ func TestStorageProviderDefaultFollowsAWSProfiles(t *testing.T) {
 		var out bytes.Buffer
 		// The reader ends after the provider question, so setup stops there.
 		_, _, _, err := promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: tc.existing}, env, "")
-		if err == nil || !strings.Contains(out.String(), fmt.Sprintf("Enter 1-%d ", len(storageMenuOptions()))+tc.want) {
+		if err == nil || !strings.Contains(out.String(), "Choose "+tc.want) {
 			t.Errorf("%s: err=%v output %q, want default %q", tc.name, err, &out, tc.want)
 		}
 	}
@@ -352,7 +352,7 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose \"Amazon S3: create a new bucket for me\" at the storage question.\nBucket name:"},
+			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose Amazon S3 and continue with creation.\nBucket name:"},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},

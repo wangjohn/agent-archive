@@ -553,7 +553,7 @@ and the switch's mentions in the docs and CHANGELOG) once every box is ticked. U
 Cloudflare account (never one with real archives), and the sandbox recipe
 below, so nothing touches your real Mac; create the bootstrap token with
 exactly the two permissions setup prints, then run `agent-archive setup` and
-choose "Cloudflare R2: create a new bucket for me" (with
+choose "Cloudflare R2", then "Continue" (with
 `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
 open-source acceptance record.
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -21,32 +20,23 @@ func storageMenuNumber(t *testing.T, key string) string {
 			return strconv.Itoa(i + 1)
 		}
 	}
-	t.Fatalf("the storage menu has no entry %q", key)
-	return ""
+	return key
 }
 
 // storageMenuPromptS3 is the answer line of the storage menu when Amazon S3
 // is its default entry.
-func storageMenuPromptS3() string {
-	for i, o := range storageMenuOptions() {
-		if o.Key == "s3" {
-			return fmt.Sprintf("Enter 1-%d [%d]: ", len(storageMenuOptions()), i+1)
-		}
-	}
-	return ""
-}
+func storageMenuPromptS3() string { return "Choose [2]: " }
 
 func TestStorageMenuNumbersFollowTheMenu(t *testing.T) {
 	t.Parallel()
-	options := storageMenuOptions()
-	if got := storageMenuNumber(t, "help"); got != strconv.Itoa(len(options)) {
-		t.Fatalf("the instructions are entry %s of %d; they must stay last", got, len(options))
+	if got := storageMenuNumber(t, "r2"); got != "1" {
+		t.Fatal(got)
 	}
-	if got, want := storageMenuNumber(t, "r2"), "1"; got != want {
-		t.Fatalf("r2 is entry %s, want %s", got, want)
+	if got := storageMenuNumber(t, "s3"); got != "2" {
+		t.Fatal(got)
 	}
-	if want := fmt.Sprintf("Enter 1-%d [2]: ", len(options)); storageMenuPromptS3() != want {
-		t.Fatalf("prompt %q, want %q", storageMenuPromptS3(), want)
+	if len(storageMenuOptions()) != 2 {
+		t.Fatal("provider menu must contain two choices")
 	}
 }
 
