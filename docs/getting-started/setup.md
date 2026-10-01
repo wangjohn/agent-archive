@@ -638,3 +638,8 @@ carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
 `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. `--yes` has
 no option for the folder inside the bucket, so when you changed it, setup
 adds a line saying to set it there with `agent-archive setup`.
+
+For another machine, the encrypted shared-key beta can transfer settings through
+`setup --pair` or `setup --pair-file PATH`. Read [Multiple machines](../guides/multiple-machines.md)
+for separate bundle/code delivery, destination consent, scope review, and the
+shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.

@@ -412,3 +412,8 @@ The document has `schema_version: 1` and contains `records` (each with `schema_v
 records and partial listings exit with code 1 while preserving readable records.
 Records are untrusted bucket claims. Heartbeats are at most daily, not current
 activity; credential kinds do not establish provider-verified ownership.
+
+`machines --json` additionally includes optional `pairing_warnings`, an array of
+secret-free local pending, uncertain-delivery or expired pairing descriptions.
+These warnings require no conversation scan or provider-management credential.
+An observed matching bucket claim does not prove machine ownership or revocation.
