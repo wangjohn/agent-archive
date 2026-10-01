@@ -527,7 +527,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 			return 2
 		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
-			defer startTrace("list", stderr, env)()
+			startTrace("list", stderr, env)
+			defer finishTraceNow()
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {
@@ -545,7 +546,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
-	defer startTrace(args[0], stderr, env)()
+	startTrace(args[0], stderr, env)
+	defer finishTraceNow()
 
 	switch args[0] {
 	case "-h", "--help", "help":

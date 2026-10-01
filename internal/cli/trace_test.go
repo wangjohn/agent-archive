@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func TestTraceWritesTheTimingTreeToStderr(t *testing.T) {
 		t.Fatalf("tracing changed stdout:\n%s\nwant:\n%s", out.String(), plain.String())
 	}
 	got := errOut.String()
-	for _, want := range []string{"agent-archive trace", "  list  ", "load config", "open store", "list metadata", "list objects", "read sidecars", "sidecars 1", "from cache"} {
+	for _, want := range []string{"agent-archive trace", "  list  ", "load config", "open store", spinnerSpan, "list metadata", "list objects", "read sidecars", "sidecars 1", "from cache"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("trace lacks %q:\n%s", want, got)
 		}
@@ -139,24 +140,50 @@ func TestTracedCommandsMatchRunsSwitch(t *testing.T) {
 	}
 }
 
-// A handoff that launches an agent in this terminal writes its trace first,
-// once, and the agent does not inherit the switch.
+// The trace is written once, however many times finishTraceNow is called
+// (early by a handoff, then by Run's deferred call), and a launched agent
+// does not inherit the switch.
 // Not parallel: it starts the process-wide recorder.
-func TestTraceFinishesBeforeALaunchedAgent(t *testing.T) {
+func TestTraceFinishesOnce(t *testing.T) {
 	var errOut bytes.Buffer
-	finish := startTrace("handoff", &errOut, withTrace(Env{}, "1"))
+	startTrace("handoff", &errOut, withTrace(Env{}, "1"))
 	finishTraceNow()
 	written := errOut.String()
 	if !strings.Contains(written, "agent-archive trace") {
 		t.Fatalf("finishTraceNow wrote nothing:\n%s", written)
 	}
-	finish()
+	finishTraceNow()
 	if errOut.String() != written {
-		t.Fatalf("the command's own finish wrote the trace again:\n%s", errOut.String())
+		t.Fatalf("a second finishTraceNow wrote the trace again:\n%s", errOut.String())
 	}
 	for _, kv := range childEnv([]string{envTrace + "=1", "HOME=/h"}) {
 		if strings.HasPrefix(kv, envTrace+"=") {
 			t.Fatalf("a launched agent inherits %s", kv)
 		}
+	}
+}
+
+// A handoff continued in this terminal has written its whole trace by the
+// time the agent starts, so the tree times the handoff and appears before
+// the agent takes over the terminal.
+// Not parallel: it starts the process-wide recorder.
+func TestTraceIsWrittenBeforeAHandoffLaunchesHere(t *testing.T) {
+	f := newHandoffFixture(t, false)
+	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+	env := withTrace(f.env, "1")
+	launched, tracedFirst := false, false
+	env.LaunchHandoff = func(_ launchSpec, _ io.Reader, _, stderr io.Writer) error {
+		launched = true
+		if b, ok := stderr.(*bytes.Buffer); ok {
+			tracedFirst = strings.Contains(b.String(), "agent-archive trace")
+		}
+		return nil
+	}
+	_, errOut, code := runPicker(t, env, "", f.id, "--to", "claude")
+	if code != 0 || !launched || !tracedFirst {
+		t.Fatalf("code=%d launched=%v trace written before launch=%v stderr=%s", code, launched, tracedFirst, errOut)
+	}
+	if strings.Count(errOut, "agent-archive trace") != 1 {
+		t.Fatalf("trace written %d times:\n%s", strings.Count(errOut, "agent-archive trace"), errOut)
 	}
 }

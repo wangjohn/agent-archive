@@ -121,22 +121,25 @@ func (s *Span) End() {
 
 // Write renders the recording as an indented tree: each span's start offset
 // from Enable, its duration, and its counts. Sibling spans with the same name
-// are folded into one line with how many there were, their total and their
-// longest duration. A span never ended (a response body nobody closed) is
-// marked unfinished, shown up to now, placed by its start alone, and holds
-// no other span.
+// are folded into one line with how many there were, the time they spanned
+// (the first's start to the last's end, not the sum: siblings often run at
+// once) and the longest. A span never ended (a response body nobody closed)
+// is marked unfinished, shown up to now, placed by its start alone, and
+// holds no other span. The tree is built under the recorder's lock and
+// written after releasing it, so a slow writer never holds up a span still
+// ending.
 func Write(w io.Writer) {
 	rec := active.Load()
 	if rec == nil {
 		return
 	}
 	rec.mu.Lock()
-	defer rec.mu.Unlock()
 	now := time.Now()
 	roots := nest(rec.top, now)
 	var b strings.Builder
-	fmt.Fprintf(&b, "agent-archive trace (start offset, duration):\n")
+	b.WriteString("agent-archive trace (start offset, duration):\n")
 	writeLevel(&b, rec.start, roots, 0, now)
+	rec.mu.Unlock()
 	_, _ = io.WriteString(w, b.String())
 }
 
@@ -231,16 +234,22 @@ func writeLevel(b *strings.Builder, origin time.Time, nodes []*node, depth int, 
 	for _, name := range names {
 		group := groups[name]
 		first := group[0].span
-		var total, longest time.Duration
+		var longest time.Duration
+		var firstStart, lastEnd time.Time
 		counts := map[string]int64{}
 		var order []string
 		var children []*node
 		unfinished := false
 		for _, n := range group {
 			unfinished = unfinished || n.span.end.IsZero()
-			d := endOf(n.span, now).Sub(n.span.start)
-			total += d
-			longest = max(longest, d)
+			end := endOf(n.span, now)
+			longest = max(longest, end.Sub(n.span.start))
+			if firstStart.IsZero() || n.span.start.Before(firstStart) {
+				firstStart = n.span.start
+			}
+			if end.After(lastEnd) {
+				lastEnd = end
+			}
 			for _, key := range n.span.order {
 				if _, seen := counts[key]; !seen {
 					order = append(order, key)
@@ -250,10 +259,10 @@ func writeLevel(b *strings.Builder, origin time.Time, nodes []*node, depth int, 
 			children = append(children, n.children...)
 		}
 		label := name
-		timing := millis(total)
+		timing := millis(longest)
 		if len(group) > 1 {
 			label = fmt.Sprintf("%s ×%d", name, len(group))
-			timing = fmt.Sprintf("%s (longest %s)", millis(total), millis(longest))
+			timing = fmt.Sprintf("%s spanned, longest %s", millis(lastEnd.Sub(firstStart)), millis(longest))
 		}
 		var parts []string
 		for _, key := range order {
@@ -266,9 +275,18 @@ func writeLevel(b *strings.Builder, origin time.Time, nodes []*node, depth int, 
 		if unfinished {
 			detail += "  (unfinished)"
 		}
-		fmt.Fprintf(b, "%9s  %s%s  %s%s\n", "+"+millis(first.start.Sub(origin)), strings.Repeat("  ", depth), label, timing, detail)
+		fmt.Fprintf(b, "%9s  %s%s  %s%s\n", "+"+offset(first.start.Sub(origin)), strings.Repeat("  ", depth), label, timing, detail)
 		writeLevel(b, origin, children, depth+1, now)
 	}
+}
+
+// offset renders a start offset in at most 8 characters, so the column stays
+// aligned: milliseconds under 10 s, then tenths of a second (up to a day).
+func offset(d time.Duration) string {
+	if d < 10*time.Second {
+		return millis(d)
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 func millis(d time.Duration) string {

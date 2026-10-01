@@ -127,8 +127,10 @@ and a pseudo-terminal.
   - spans from different packages nest by time (the innermost span that
     contains them);
   - concurrent work (listing ranges) is attached to its parent explicitly;
-  - same-named siblings fold into one line with a count, the total, and the
-    longest.
+  - same-named siblings fold into one line with a count, the time they
+    spanned (first start to last end, not the sum), and the longest;
+  - a `spinner (until first draw)` span times the loading before a command
+    shows anything, apart from the time a person spends in the picker.
 - **Requests:** a wrapper on the S3 client's HTTP client, always installed
   (a pointer check while tracing is off). Each request's span lasts until
   its body is closed, so a listing page's download counts.

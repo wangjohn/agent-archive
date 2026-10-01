@@ -493,14 +493,19 @@ Run the command with `AGENT_ARCHIVE_TRACE=1` to see where its time goes:
 AGENT_ARCHIVE_TRACE=1 agent-archive handoff
 ```
 
-When the command finishes (after you pick or quit, for an interactive one;
-interrupting with Ctrl-C prints nothing), it prints a timing tree on stderr. Each line gives a step's start (as an
-offset from the command's start), how long it took, and counts such as keys
-listed, sidecars read from the local cache or downloaded, and bytes per
-request. Repeated steps, such as listing ranges or requests, fold into one
-line with how many there were and the longest. The tree holds only step
-names, times and counts, never a session ID, title, key or path, so it is safe
-to paste into an issue.
+When the command finishes, it prints a timing tree on stderr: after you pick
+or quit, for an interactive one, and just before the agent starts when
+`handoff` launches one in this terminal. Interrupting with Ctrl-C prints
+nothing. Each line gives a step's start (as an offset from the command's
+start), how long it took, and counts such as keys listed, sidecars read from
+the local cache or downloaded, and bytes per request. Repeated steps, such
+as listing ranges or requests, fold into one line with how many there were,
+the time they spanned from the first's start to the last's end (they often
+run at once, so this is not their sum), and the longest. The `spinner (until
+first draw)` line is how long the command was loading before it showed
+anything, which for `handoff` is the wait before the picker appears. The
+tree holds only step names, times and counts, never a session ID, title, key
+or path, so it is safe to paste into an issue.
 
 Most of a slow listing is usually `list objects`: listing a bucket costs
 about 0.5–0.9 s per 1,000 objects on R2. A large archive is split into

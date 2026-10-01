@@ -182,6 +182,34 @@ func TestNestPlacement(t *testing.T) {
 	}
 }
 
+// A folded line gives the time its members spanned, first start to last end,
+// not their sum: eight requests of 10 ms run at once spanned about 10 ms.
+func TestFoldedLineShowsSpannedTimeNotTheSum(t *testing.T) {
+	rec := &recorder{}
+	var spans []*Span
+	for range 8 {
+		spans = append(spans, at(rec, "request get", 100, 110, true))
+	}
+	var b strings.Builder
+	writeLevel(&b, time.Unix(0, 0), nest(spans, time.Unix(0, 0).Add(time.Hour)), 0, time.Unix(0, 0).Add(time.Hour))
+	if got := b.String(); !strings.Contains(got, "request get ×8  10ms spanned, longest 10ms") {
+		t.Fatalf("folded line = %q, want the 10 ms they spanned", got)
+	}
+}
+
+// Offsets past 10 s are tenths of a second, so a long command's lines keep
+// the column: the label starts where it does on the first lines.
+func TestLongOffsetsKeepTheColumn(t *testing.T) {
+	rec := &recorder{}
+	spans := []*Span{at(rec, "early", 0, 5, false), at(rec, "late", 1_200_000, 1_200_005, false)}
+	var b strings.Builder
+	writeLevel(&b, time.Unix(0, 0), nest(spans, time.Unix(0, 0).Add(time.Hour)), 0, time.Unix(0, 0).Add(time.Hour))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if len(lines) != 2 || strings.Index(lines[0], "early") != strings.Index(lines[1], "late") || !strings.Contains(lines[1], "+1200.0s") {
+		t.Fatalf("misaligned:\n%s", b.String())
+	}
+}
+
 func TestEndTwiceKeepsTheFirstEnd(t *testing.T) {
 	disable := Enable()
 	defer disable()
