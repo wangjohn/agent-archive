@@ -41,9 +41,10 @@ const (
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
 	// Filter 13 keeps the name a session was given (Claude Code's
-	// custom-title and pr-link records, Cursor's chat name). See
-	// dev/specs/privacy-filter.md.
-	FilterVersion = "13"
+	// custom-title and pr-link records, Cursor's chat name). Filter 14 keeps
+	// the description the parent gave a Claude Code subagent's task, read
+	// from the sibling .meta.json. See dev/specs/privacy-filter.md.
+	FilterVersion = "14"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

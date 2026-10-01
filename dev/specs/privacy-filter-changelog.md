@@ -5,6 +5,64 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 14
+
+Adapter version 0.14.0 goes with it. Parser 0.18.0 is the first to read what
+is newly kept: it derives a subagent's `name` from it. What is newly kept is
+one string, the description the parent session gave a Claude Code subagent's
+task, and nothing else that was dropped.
+
+- **Claude Code's subagent description.** A subagent's transcript,
+  `subagents/agent-<id>.jsonl`, has a sibling `agent-<id>.meta.json` whose
+  `description` is the name the parent gave the task ("Find the retention
+  tests"). The description is not in the transcript, so the collector reads
+  that file when it filters the transcript of a subagent (a registration
+  with a parent session, whose transcript is named `agent-<id>.jsonl`) and
+  `ClaudeAdapter.FilterSubagentJSONL` writes one synthetic record at the front
+  of the filtered records:
+
+  ```json
+  {"type":"subagent-meta","description":"…"}
+  ```
+
+  - The description passes the same value rules as a prompt (injected
+    instruction stripping, credential redaction), applied to the whole text
+    first, and is then cut to 512 bytes on a character boundary (a
+    `content_truncated` gap records the cut) and checked again, so a secret
+    is never cut in half and left behind. It is kept when it is a string with
+    something in it.
+  - Nothing else of the file is kept, and none of it is reported: the file
+    is not part of the transcript. `worktreePath` (a path on this Mac) and
+    `agentType` (local-only state) are never read.
+  - The file is optional. One that is missing, unreadable, not a regular file,
+    larger than 16 KB, not a JSON object, or without a description that is a
+    non-blank string changes nothing and records no gap.
+  - The record is written only when the transcript has records of its own, so
+    it never makes an empty or unrecognized transcript look captured, and
+    never changes the transcript's timestamps or identities. There is at most
+    one: a `subagent-meta` record in the transcript itself (a retained
+    snapshot filtered again carries the one written earlier) is rebuilt from
+    its description alone, and a second one, or one beside the file's, is
+    dropped with an `unsupported_value_omitted` gap.
+  - A transcript that is not a Claude Code subagent's never reads a
+    `.meta.json`.
+
+The collector does not count a changed description as the transcript being
+rewritten: a subagent captured before its `.meta.json` existed, or whose
+description changed, still extends its earlier snapshot (the leading
+`subagent-meta` record is left out of that comparison). A later scan
+republishes the new description only when the transcript has changed: a
+`.meta.json` that appears or changes beside a transcript that does not
+change is not noticed until the transcript changes or the next filter
+or parser version re-reads it. The collector registers a subagent when its
+`SubagentStop` hook fires, or when backfill finds it, so the file is normally
+beside the transcript the first time it is read.
+
+A filter bump makes the collector read and republish every session whose
+transcript still exists, which is how a description reaches subagents
+archived before this version. A subagent whose transcript is gone keeps what
+it had.
+
 ## Source filter version 13
 
 Adapter version 0.13.0 goes with it. Parser 0.17.0 is the first to read what
