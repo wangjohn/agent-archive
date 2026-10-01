@@ -54,15 +54,9 @@ func snapshotCacheDir() string {
 }
 
 // currentSnapshotLocations are the locations of the running system for this
-// process's environment and account. Only Linux places the root by the
-// account's home, so only Linux reads the user database for it: macOS's root
-// is what it always was, and so is what finding it does.
+// process's environment and account.
 func currentSnapshotLocations() platform.Locations {
-	system, home := platform.Current(), ""
-	if system == platform.Linux {
-		home = accountHome()
-	}
-	return snapshotLocations(system, os.Getenv, home)
+	return snapshotLocations(platform.Current(), os.Getenv, accountHome)
 }
 
 // accountHome is the account's home directory from the user database (not
@@ -76,10 +70,16 @@ func accountHome() string {
 }
 
 // snapshotLocations are the locations of system, reading the environment
-// through getenv, the account's home directory as given, and the system's
-// per-user temporary directory as this package finds it. There is no $HOME:
-// nothing about the snapshot root depends on it.
-func snapshotLocations(system platform.OS, getenv func(string) string, home string) platform.Locations {
+// through getenv, the account's home directory as accountHome finds it, and
+// the system's per-user temporary directory as this package finds it. There
+// is no $HOME: nothing about the snapshot root depends on it. Only Linux
+// places the root by the account's home, so only Linux calls accountHome (a
+// user database read): on macOS finding the root does what it always did.
+func snapshotLocations(system platform.OS, getenv func(string) string, accountHome func() string) platform.Locations {
+	home := ""
+	if system == platform.Linux && accountHome != nil {
+		home = accountHome()
+	}
 	return platform.NewLocations(system, "", getenv, platform.LocationDeps{
 		DarwinUserTempDir: darwinUserTempDir,
 		ProcessTempDir:    os.TempDir,
