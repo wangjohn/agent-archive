@@ -39,6 +39,8 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Guided bucket creation waits for Cloudflare between checks; a
 		// test does not.
 		Pause: func(time.Duration) {},
+		// Tests never change the real process environment.
+		UnsetEnv: func(string) error { return nil },
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
 		OS: platform.Darwin,

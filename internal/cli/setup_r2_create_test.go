@@ -355,6 +355,65 @@ func TestGuidedR2TokenAndAccountFromTheEnvironment(t *testing.T) {
 	}
 }
 
+// The token read from CLOUDFLARE_API_TOKEN is removed from setup's own
+// environment (not CLOUDFLARE_ACCOUNT_ID, which is no secret), so what the
+// message says is true.
+func TestGuidedR2RemovesTheTokenVariableFromSetupsEnvironment(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary, "CLOUDFLARE_ACCOUNT_ID": cloudflaretest.AccountID})
+	var unset []string
+	g.env.UnsetEnv = func(key string) error { unset = append(unset, key); return nil }
+	out := g.run(t, guidedAnswers(acceptedRest...), 0)
+	if !slices.Equal(unset, []string{"CLOUDFLARE_API_TOKEN"}) || !strings.Contains(out, "it also removed the variable from setup's own environment") {
+		t.Fatalf("unset %v\n%s", unset, out)
+	}
+	// A token typed in is not in the environment, so nothing is removed.
+	typed := newGuidedR2Fixture(t)
+	typed.env.UnsetEnv = func(key string) error { t.Errorf("removed %s", key); return nil }
+	if out := typed.run(t, typed.happy(), 0); strings.Contains(out, "removed the variable") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+func TestGuidedR2SaysSoWhenTheTokenVariableCannotBeRemoved(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary})
+	g.env.UnsetEnv = func(string) error { return errors.New("denied") }
+	out := g.run(t, guidedAnswers(acceptedRest...), 0)
+	for _, want := range []string{"Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment", "has dropped it.\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "removed the variable") {
+		t.Fatalf("claims a removal that failed:\n%s", out)
+	}
+}
+
+// By default the variable really leaves the process environment, and with it
+// the environment a program setup starts would inherit. This test changes the
+// real environment, so it does not run in parallel.
+func TestGuidedR2TokenVariableLeavesTheProcessEnvironment(t *testing.T) {
+	t.Setenv("CLOUDFLARE_API_TOKEN", bootstrapCanary)
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	token, fromEnv, removed, err := askBootstrapToken(p, Env{})
+	if err != nil || token != bootstrapCanary || !fromEnv || !removed {
+		t.Fatalf("token %q fromEnv %v removed %v err %v", token, fromEnv, removed, err)
+	}
+	if _, set := os.LookupEnv("CLOUDFLARE_API_TOKEN"); set {
+		t.Fatal("the variable is still set")
+	}
+	// What a program started now inherits is os.Environ.
+	for _, kv := range os.Environ() {
+		if strings.Contains(kv, bootstrapCanary) || strings.HasPrefix(kv, "CLOUDFLARE_API_TOKEN=") {
+			t.Fatalf("a child would inherit %q", kv)
+		}
+	}
+}
+
 func TestGuidedR2IgnoresAMalformedAccountIDInTheEnvironment(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)

@@ -114,6 +114,9 @@ type r2Creator struct {
 	// tokenFromEnv is whether the bootstrap token came from
 	// CLOUDFLARE_API_TOKEN rather than the prompt.
 	tokenFromEnv bool
+	// tokenRemovedFromEnv is whether setup then removed the variable from its
+	// own environment, so programs it starts do not inherit the token.
+	tokenRemovedFromEnv bool
 	// defaultName is whether the bucket name is the generated one, which
 	// may be replaced by a new one if it collides.
 	defaultName   bool
@@ -154,11 +157,11 @@ type r2Created struct {
 func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
 	var none credentials.R2Credentials
 	printR2BootstrapInstructions(p)
-	token, fromEnv, err := askBootstrapToken(p, env)
+	token, fromEnv, removed, err := askBootstrapToken(p, env)
 	if err != nil {
 		return credentials.Config{}, none, false, err
 	}
-	c := &r2Creator{p: p, env: env, api: env.cloudflareAPI(token), tokenFromEnv: fromEnv, maybeCreated: map[string]bool{}}
+	c := &r2Creator{p: p, env: env, api: env.cloudflareAPI(token), tokenFromEnv: fromEnv, tokenRemovedFromEnv: removed, maybeCreated: map[string]bool{}}
 	kept := false
 	defer func() {
 		if !kept {
@@ -195,6 +198,10 @@ func (p *prompter) finishGuidedCreation() {
 	h.c.api.Discard()
 	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName})
 	if h.c.tokenFromEnv {
+		if h.c.tokenRemovedFromEnv {
+			terminal.Println(p.out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN, and has dropped it; it also removed the variable from setup's own environment. Your shell still has it.")
+			return
+		}
 		terminal.Println(p.out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN, and has dropped it.")
 		return
 	}
@@ -289,20 +296,27 @@ func printR2BootstrapInstructions(p *prompter) {
 
 // askBootstrapToken reads the bootstrap token from CLOUDFLARE_API_TOKEN, as
 // Cloudflare's own tools do, or asks for it without echoing it, and says
-// which. An empty answer goes back to the storage menu.
-func askBootstrapToken(p *prompter, env Env) (token string, fromEnv bool, err error) {
+// which. A token from the environment is then removed from setup's own
+// environment (removed says so), so a program setup starts, such as launchctl
+// or a profile's credential_process, does not inherit it. An empty answer goes
+// back to the storage menu.
+func askBootstrapToken(p *prompter, env Env) (token string, fromEnv, removed bool, err error) {
 	if value, ok := env.lookupEnv("CLOUDFLARE_API_TOKEN"); ok && strings.TrimSpace(value) != "" {
 		terminal.Println(p.out, "Using the API token in CLOUDFLARE_API_TOKEN.")
-		return strings.TrimSpace(value), true, nil
+		if e := env.unsetEnv("CLOUDFLARE_API_TOKEN"); e != nil {
+			p.warn("Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment, so programs setup starts can still see it: " + e.Error() + ".")
+			return strings.TrimSpace(value), true, false, nil
+		}
+		return strings.TrimSpace(value), true, true, nil
 	}
 	token, err = p.secret("Cloudflare API token (hidden; Enter to choose another option): ")
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if token == "" {
-		return "", false, errChooseStorageAgain
+		return "", false, false, errChooseStorageAgain
 	}
-	return token, false, nil
+	return token, false, false, nil
 }
 
 // chooseAccount settles which Cloudflare account owns the bucket: the one

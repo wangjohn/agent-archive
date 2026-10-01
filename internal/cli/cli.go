@@ -198,6 +198,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// UnsetEnv removes a variable from the process environment, so programs
+	// setup starts later do not inherit it. Guided R2 creation uses it for
+	// CLOUDFLARE_API_TOKEN once it has read it. Defaults to os.Unsetenv.
+	UnsetEnv func(string) error
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
@@ -311,6 +315,13 @@ func (e Env) fileOwner(path string) (uid int, ok bool) {
 		return e.FileOwner(path)
 	}
 	return fileOwner(path)
+}
+
+func (e Env) unsetEnv(key string) error {
+	if e.UnsetEnv != nil {
+		return e.UnsetEnv(key)
+	}
+	return os.Unsetenv(key)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {

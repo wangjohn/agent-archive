@@ -554,8 +554,9 @@ uses. Setup treats it accordingly:
   the bucket. Setup drops it as soon as the key is stored, or when the flow
   fails or stops before that. (Go cannot guarantee that no copy lingers in
   process memory until the process exits.)
-  A `CLOUDFLARE_API_TOKEN` you set yourself stays in your shell's environment,
-  as you set it.
+  A `CLOUDFLARE_API_TOKEN` you set yourself is read once and then removed from
+  setup's own environment, so a program setup starts does not inherit it (if
+  that fails, setup says so). It stays in your shell, as you set it.
 - The key it stores is a separate token that can read, write, and list objects
   in the one new bucket. The two are never used for each other's endpoint: the
   archive's key never goes to the management API.
