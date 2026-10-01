@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -139,5 +140,33 @@ func TestMigrationCannotOverwriteConcurrentEmptyStateCompletion(t *testing.T) {
 	ready, err := s.identityReady()
 	if err != nil || !ready {
 		t.Fatal("completion not durable", err)
+	}
+}
+
+func TestIdentityWriteFencesExistingNumericProtectedConfig(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	// A previously guarded config had a numeric version and a skill marker
+	// unknown to the published v0.1.1 reader. Keep its consent disabled.
+	raw := []byte(`{"schema_version":2,"skill_evidence":"body+discovery-v2","discovery":{"enabled":false,"codex_homes":[],"authorizations":[]}}`)
+	if err := os.WriteFile(filepath.Join(s.home, "config.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.EnsureAgentSessionID("codex", "new-native"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(s.home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &published); err == nil {
+		t.Fatal("namespaced identity was written without fencing the published old reader")
+	}
+	cfg, found, err := config.Load(s.home)
+	if err != nil || !found || cfg.Discovery == nil || cfg.Discovery.Enabled || cfg.EffectiveSkillEvidence() != config.SkillEvidenceBody {
+		t.Fatal("fence migration changed existing consent or skill policy", err)
 	}
 }

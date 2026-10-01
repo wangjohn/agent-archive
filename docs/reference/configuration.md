@@ -92,12 +92,19 @@ Pause closes an interval, resume opens another, and reconfiguration starts a
 new generation when scope changes. Starts in excluded/disabled/pause periods
 remain ineligible after re-enable. Unknown or expired start evidence fails closed.
 
-A deliberate writer compatibility encoding preserves the effective skill
-policy: `skill_evidence` is `none+discovery-v2`, `metadata+discovery-v2`, or
-`body+discovery-v2`. New writers normalize it before applying the skill policy;
-earlier binaries' enum validation refuses it before rewriting unknown
-permission history. A schema number alone cannot protect those older writers.
-The marker survives disablement and journal recovery. Do not edit it away:
+A deliberate writer compatibility encoding changes the known version field:
+`schema_version` is `{"version":2,"writer":"discovery-v2"}` for protected
+configuration. Published v0.1.0/v0.1.1 expect an integer there, so their JSON
+decoder rejects this configuration before a write can discard unknown fields.
+A numeric schema version alone does not make those releases refuse a rewrite.
+Current readers keep version 2 internally and also preserve the effective skill
+policy with `none+discovery-v2`, `metadata+discovery-v2`, or `body+discovery-v2`.
+That suffix additionally blocks later intermediate writers with skill enum
+validation, but the suffix alone does not block the published releases.
+Previously written numeric version-2 configurations remain readable and are
+atomically rewritten with the object fence before a namespaced identity write.
+Already fenced configurations need no extra rewrite. Both guards survive
+disablement and journal recovery. Do not edit them away:
 rollback needs an explicit safe downgrade that disables discovery and resets
 future-only authorization. No downgrade command is supplied in this release.
 

@@ -193,13 +193,15 @@ func sameDiscoveryProjectScope(root string, previous, next Config) bool {
 // namespaced state. Callers hold hooks.lock after checking setup's journal.
 // Disablement is explicit: this never grants discovery consent or intervals.
 func ProtectIdentityWriter(home string) error {
-	c, found, err := Load(home)
+	c, found, fenced, err := loadConfig(home)
 	if err != nil || !found {
 		return err
 	}
-	if c.Discovery != nil {
+	if c.Discovery != nil && fenced {
 		return nil
 	}
-	c.Discovery = &DiscoveryConfig{}
+	if c.Discovery == nil {
+		c.Discovery = &DiscoveryConfig{}
+	}
 	return Save(home, c)
 }

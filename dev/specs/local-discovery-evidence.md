@@ -92,11 +92,19 @@ it before admitting its confirmed batch. Removed identities retain tombstone
 semantics. The journal and migration state are authoritative local state;
 corruption requires repair instead of allocating replacement identities.
 
-Before any namespace or journal write on configured machines, the durable
-writer marker protects the whole new-state contract, including legacy configs
+Before any namespace or journal write on configured machines, a durable
+writer fence protects the whole new-state contract, including legacy configs
 without discovery consent. It preserves effective skill policy and grants no
-discovery intervals. Older supported-enum writers refuse the marked config.
-Disablement preserves the marker; hand editing it is not safe downgrade.
+discovery intervals. Protected configuration encodes schema_version as a
+version/writer object; published v0.1.0/v0.1.1 integer decoders reject that known
+field type before any write. Their source ignores the skill marker, so an
+enum-only regression cannot establish refusal by these actual published
+releases. The retained skill marker also rejects later intermediate
+enum-validating writers. Existing numeric version-2 configs migrate to the
+durable object before identity writing; already fenced configs do not rewrite.
+Disablement preserves both guards; hand editing them is not safe downgrade.
+Released Darwin binary execution remains an outstanding acceptance check;
+source/decoder regressions do not replace it.
 
 ## Integrated source and scheduling behavior
 

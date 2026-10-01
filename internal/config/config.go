@@ -206,29 +206,37 @@ func path(home string) string { return filepath.Join(home, "config.json") }
 // longer decodes, the way out: every command needs it, so nothing else can
 // say which file stopped it.
 func Load(home string) (cfg Config, found bool, err error) {
+	cfg, found, _, err = loadConfig(home)
+	return cfg, found, err
+}
+
+func loadConfig(home string) (cfg Config, found, fenced bool, err error) {
 	defer trace.Start("load config").End()
-	err = local.Read(path(home), &cfg)
+	data, err := os.ReadFile(path(home))
+	if err == nil {
+		fenced, err = decodeConfig(data, &cfg)
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, false, nil
+		return Config{}, false, false, nil
 	}
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
+		return Config{}, false, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
 	if err := validateDiscoveryConfig(cfg); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
-		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
+		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
 	if err := cfg.Handoff.validate(); err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
-	return cfg, true, nil
+	return cfg, true, fenced, nil
 }
 
 // ErrUnreadable is a configuration file that exists but does not decode.

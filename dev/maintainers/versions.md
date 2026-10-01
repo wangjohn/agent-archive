@@ -48,8 +48,10 @@ is re-uploaded unless it changed.
 - Update the version line in this file.
 
 Configuration upgraded for namespaced identity or discovery writing is schema
-2. Untouched legacy configuration remains schema 1. The validated `skill_evidence` compatibility
-marker blocks earlier writers that ignored schema numbers (see
+2, encoded as `schema_version: {"version":2,"writer":"discovery-v2"}`.
+Untouched legacy configuration remains numeric schema 1. The known-field type
+fence blocks published older integer decoders; a `skill_evidence` suffix also
+blocks later intermediate enum-validating writers (see
 [configuration rollback](../../docs/reference/configuration.md#discovery-authorization-and-rollback)).
 Status JSON is version 4; source/metadata provenance fields are optional
 extensions and retain source schema 2 and metadata schema 1. The transcript
