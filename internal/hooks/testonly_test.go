@@ -1,5 +1,28 @@
 package hooks
 
+import (
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+var testPorts = builtin.NewBuiltins()
+
+const prototypeOwner = "Recording private skill-run evidence"
+
+var errInvalidConfiguration = hookconfig.ErrInvalidConfiguration
+
+func (h Hook) sameInstallation(home string) bool {
+	if home == "" {
+		home = h.DefaultDataHome
+	}
+	target := h.DataHome
+	if target == "" {
+		target = h.DefaultDataHome
+	}
+	return local.SameLocation(home, target)
+}
+
 // Helpers only tests use, kept out of the production files so deadcode
 // (golang.org/x/tools/cmd/deadcode) reports only code that is really dead.
 

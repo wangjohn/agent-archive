@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
@@ -139,7 +140,7 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 			fix += " To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
 		}
 		return fix
-	})
+	}, env.installation(home, userHome).hook("").Ports)
 
 	in := env.installation(home, userHome)
 	ref, words := in.ref(), in.sched().Words()
@@ -172,19 +173,23 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 // each of apps, as all names it, is one setup can install into. A failed
 // check names the file, and the line when the problem is at one, and fix
 // says how to fix it.
-func hookFileChecks(apps []string, all hooks.Files, userHome string, fix func(app string) string) preflightChecks {
+func hookFileChecks(apps []string, all hooks.Files, userHome string, fix func(app string) string, lookups ...agentapi.HooksLookup) preflightChecks {
+	ports := agentapi.HooksLookup(productionAgents)
+	if len(lookups) > 0 && lookups[0] != nil {
+		ports = lookups[0]
+	}
 	files := hooks.Files{}
-	for _, app := range allHarnesses {
+	for _, app := range apps {
 		if containsString(apps, app) {
 			files[app] = all[app]
 		}
 	}
 	problems := map[string]hooks.Problem{}
-	for _, problem := range hooks.Validate(files) {
+	for _, problem := range hooks.Validate(files, ports) {
 		problems[problem.Harness] = problem
 	}
 	var checks preflightChecks
-	for _, app := range allHarnesses {
+	for _, app := range apps {
 		path, ok := files[app]
 		if !ok {
 			continue
@@ -239,7 +244,7 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 // app the saved configuration or the unfinished setup includes.
 func preflightApps(detected, saved, declined, draft []string) []string {
 	var apps []string
-	for _, app := range allHarnesses {
+	for _, app := range apps {
 		switch {
 		case containsString(saved, app), containsString(draft, app):
 		case containsString(detected, app) && !containsString(declined, app):

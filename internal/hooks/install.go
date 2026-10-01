@@ -3,6 +3,9 @@ package hooks
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
+	"github.com/wangjohn/agent-archive/internal/filechange"
 	"maps"
 	"os"
 	"path/filepath"
@@ -10,23 +13,12 @@ import (
 	"strings"
 )
 
-// Change is prepared before any mutation so callers can show a concrete plan.
-type Change struct {
-	Path    string
-	Before  []byte
-	After   []byte
-	Existed bool
-	Mode    os.FileMode
-	// Delete is a removal that leaves the file with nothing in it (see
-	// Empty): Apply deletes it instead of writing After, so a file setup
-	// created goes away again. Only a regular file is deleted, never a link
-	// a dotfile manager keeps.
-	Delete bool `json:",omitempty"`
-}
+// Change is the shared value-only file plan.
+type Change = filechange.Change
 
 // Applied reports whether the file at c.Path is as c leaves it: deleted, or
 // holding After.
-func (c Change) Applied() bool {
+func Applied(c Change) bool {
 	current, err := os.ReadFile(c.Path)
 	if c.Delete {
 		return os.IsNotExist(err)
@@ -36,7 +28,7 @@ func (c Change) Applied() bool {
 
 // Unapplied reports whether the file at c.Path is as c found it: holding
 // Before, or absent when it did not exist.
-func (c Change) Unapplied() bool {
+func Unapplied(c Change) bool {
 	current, err := os.ReadFile(c.Path)
 	if !c.Existed {
 		return os.IsNotExist(err)
@@ -55,26 +47,32 @@ type Files map[string]string
 // reads the environment setup runs in, which is the one the user starts the
 // applications from; a relative directory is taken relative to the current
 // directory, as the application would.
-func ResolveFiles(userHome string, lookupEnv func(string) (string, bool)) Files {
-	dir := func(variable, fallback string) string {
-		if value, ok := lookupEnv(variable); ok && value != "" {
-			if abs, err := filepath.Abs(value); err == nil {
-				return abs
+func ResolveFiles(userHome string, lookupEnv func(string) (string, bool), ports agentapi.HooksLookup) Files {
+	cwd, _ := os.Getwd()
+	env := map[string]string{}
+	for _, name := range ports.HookAgents() {
+		p, ok := ports.LookupHooks(name)
+		if !ok {
+			continue
+		}
+		for _, key := range p.EnvironmentKeys() {
+			if v, found := lookupEnv(key); found {
+				env[key] = v
 			}
 		}
-		return filepath.Join(userHome, fallback)
 	}
-	return Files{
-		string(harnessClaude): filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
-		string(harnessCodex):  filepath.Join(dir("CODEX_HOME", ".codex"), "hooks.json"),
-		string(harnessCursor): filepath.Join(userHome, ".cursor", "hooks.json"),
+	files := Files{}
+	for _, name := range ports.HookAgents() {
+		p, ok := ports.LookupHooks(name)
+		if ok {
+			files[name] = p.Location(agentapi.HookLocations{UserHome: userHome, WorkingDirectory: cwd, Environment: env})
+		}
 	}
+	return files
 }
 
 func (f Files) path(harness string) (string, error) {
-	if _, err := events(harness); err != nil {
-		return "", err
-	}
+
 	path := f[harness]
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("no hook configuration file for %s", harness)
@@ -110,28 +108,18 @@ func (e *readError) Unwrap() error { return e.cause }
 // is the one place Plan and Validate check a file, so the two cannot
 // disagree about which files setup can install into.
 func planFile(files Files, harness string, hook Hook) (Change, error) {
-	path, err := files.path(harness)
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
 		return Change{}, err
 	}
-	before, err := os.ReadFile(path)
-	exists := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return Change{}, &readError{path: path, cause: err}
-	}
-	after, err := Merge(before, harness, hook)
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: file, Owner: owner})
 	if err != nil {
-		return Change{}, fmt.Errorf("%s: %w", path, err)
+		return Change{}, fmt.Errorf("%s: %w", file.Path, err)
 	}
-	mode := os.FileMode(0600)
-	if exists {
-		info, e := os.Stat(path)
-		if e != nil {
-			return Change{}, e
-		}
-		mode = info.Mode().Perm()
+	if len(changes) != 1 {
+		return Change{}, errors.New("hook install must plan one file")
 	}
-	return Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode}, nil
+	return changes[0], nil
 }
 
 // Problem is why setup cannot install into one hook file, as Validate finds
@@ -159,7 +147,6 @@ type Problem struct {
 // validationHook stands in for the Hook setup installs when Validate runs
 // Merge: a file Merge refuses is refused for what it holds, never for the
 // command installed into it, so any valid Hook refuses the same files.
-var validationHook = Hook{Executable: string(filepath.Separator)}
 
 // Validate checks every hook file in files the way Plan does before it
 // installs into one, and returns a Problem for each file Plan would refuse:
@@ -168,7 +155,8 @@ var validationHook = Hook{Executable: string(filepath.Separator)}
 // hooks of a shape setup cannot edit. It reads the files, through any
 // symbolic links, and changes nothing. A missing file is no problem: setup
 // creates it. Problems come in harness order.
-func Validate(files Files) []Problem {
+func Validate(files Files, ports agentapi.HooksLookup) []Problem {
+	validationHook := Hook{Executable: string(filepath.Separator), Ports: ports}
 	var problems []Problem
 	for _, harness := range slices.Sorted(maps.Keys(files)) {
 		_, err := planFile(files, harness, validationHook)
@@ -177,19 +165,9 @@ func Validate(files Files) []Problem {
 		}
 		path := files[harness]
 		p := Problem{Harness: harness, Path: path, Err: err}
-		var unread *readError
-		var located *configError
-		switch {
-		case errors.As(err, &unread):
-			p.Reason = "the file cannot be read"
-			if cause := errors.Unwrap(unread.cause); cause != nil {
-				p.Reason += ": " + cause.Error()
-			}
-		case errors.As(err, &located):
-			p.Line, p.Column, p.Reason = located.line, located.column, located.reason
-		default:
+		p.Line, p.Column, p.Reason = hookconfig.Problem(err)
+		if p.Reason == "" {
 			p.Reason = strings.TrimPrefix(err.Error(), path+": ")
-			p.Reason = strings.TrimPrefix(p.Reason, errInvalidConfiguration.Error()+": ")
 		}
 		problems = append(problems, p)
 	}
@@ -261,36 +239,21 @@ func apply(changes []Change, writeTarget func(path string) (string, error)) erro
 // Apply the result with Apply, which keeps its refuse-on-concurrent-edit and
 // rollback behavior.
 func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
-	path, err := files.path(harness)
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
 		return Change{}, false, err
 	}
-	before, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: file, Owner: owner})
+	if err != nil {
+		return Change{}, false, fmt.Errorf("%s: %w", file.Path, err)
+	}
+	if len(changes) == 0 {
 		return Change{}, false, nil
 	}
-	if err != nil {
-		return Change{}, false, fmt.Errorf("cannot read %s", path)
+	if len(changes) != 1 {
+		return Change{}, false, errors.New("hook remove must plan one file")
 	}
-	after, removed, err := Remove(before, harness, hook)
-	if err != nil {
-		return Change{}, false, fmt.Errorf("%s: %w", path, err)
-	}
-	if !removed {
-		return Change{}, false, nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return Change{}, false, err
-	}
-	link, err := os.Lstat(path)
-	if err != nil {
-		return Change{}, false, err
-	}
-	// A file left with nothing in it means what no file means, and is what
-	// setup leaves of one it created, so it is deleted.
-	remove := Empty(after) && link.Mode().IsRegular()
-	return Change{Path: path, Before: before, After: after, Existed: true, Mode: info.Mode().Perm(), Delete: remove}, true, nil
+	return changes[0], true, nil
 }
 
 // Rollback undoes applied changes in reverse order: each file is restored to
@@ -304,7 +267,7 @@ func rollback(changes []Change) error {
 	var failures []error
 	for i := len(changes) - 1; i >= 0; i-- {
 		c := changes[i]
-		if !c.Applied() {
+		if !Applied(c) {
 			failures = append(failures, fmt.Errorf("%s changed; manual recovery required", c.Path))
 			continue
 		}
@@ -464,137 +427,24 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 // else. Formatting, key order, the user's own handlers, and another
 // installation's do not affect the result (see OtherInstallations).
 func Installed(files Files, hook Hook, harness string) (bool, error) {
-	path, err := files.path(harness)
-	if err != nil {
-		return false, err
-	}
-	command, err := hook.Command(harness)
-	if err != nil {
-		return false, err
-	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	doc, err := parseDocument(data)
-	if err != nil {
-		return false, err
-	}
-	app := harnessName(harness)
-	if app == harnessCursor {
-		if v, _ := doc.root.get("version"); !isOne(v) {
-			return false, nil
-		}
-	}
-	hs, err := hooksObject(doc.root)
-	if err != nil || hs == nil {
-		return false, err
-	}
-	names, _ := events(harness)
-	for _, event := range names {
-		if _, ok := hs.get(event); !ok {
-			return false, nil
-		}
-	}
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
-		if !ok {
-			return false, fmt.Errorf("invalid hook list for %s", m.key)
-		}
-		handlers, err := handlerList(groups, app)
-		if err != nil {
-			return false, err
-		}
-		ours := 0
-		for _, handler := range handlers {
-			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
-				continue
-			}
-			got, _ := handler.get("command")
-			kind, _ := handler.get("type")
-			if got != command || (app != harnessCursor && kind != "command") {
-				return false, nil
-			}
-			ours++
-		}
-		want := 0
-		if slices.Contains(names, m.key) {
-			want = 1
-		}
-		if ours != want {
-			return false, nil
-		}
-	}
-	return true, nil
+	result, err := Inspect(files, hook, harness)
+	return result.Installed, err
 }
 
-// OtherInstallation is a hook handler another installation of agent-archive
-// (another data directory) installed in a file this one uses.
-type OtherInstallation struct {
-	// DataHome is the data directory the handler runs with: its
-	// AGENT_ARCHIVE_HOME, or the default installation's directory (""
-	// when that is not known).
-	DataHome string
-	// Default is whether it is the account's default installation, whose
-	// handlers set no AGENT_ARCHIVE_HOME.
-	Default bool
-	// Command is the handler's command when no data directory could be read
-	// from it (it was edited by hand); DataHome is then "".
-	Command string
-}
+// OtherInstallation is local information about another managed owner.
+type OtherInstallation = agentapi.HookOtherOwner
 
-// OtherInstallations lists, once each, the other installations whose
-// handlers are in harness's hook file: handlers that carry agent-archive's
-// marker but run with another data directory than hook's. Setup, uninstall,
-// and Installed leave them alone; setup refuses to install beside them, since
-// every session would then be captured twice. A missing file has none.
+// OtherInstallations reports foreign handlers without changing settings.
 func OtherInstallations(files Files, hook Hook, harness string) ([]OtherInstallation, error) {
-	path, err := files.path(harness)
+	result, err := Inspect(files, hook, harness)
+	return result.Others, err
+}
+
+// Inspect supplies bounded host observations to the integration's pure inspector.
+func Inspect(files Files, hook Hook, harness string) (agentapi.HookInspection, error) {
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
-		return nil, err
+		return agentapi.HookInspection{State: agentapi.HookUnreadable, Reason: "settings_unreadable"}, err
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	doc, err := parseDocument(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	hs, err := hooksObject(doc.root)
-	if err != nil || hs == nil {
-		return nil, err
-	}
-	app := harnessName(harness)
-	var others []OtherInstallation
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
-		if !ok {
-			return nil, fmt.Errorf("%s: invalid hook list for %s", path, m.key)
-		}
-		handlers, err := handlerList(groups, app)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		for _, handler := range handlers {
-			kind, dataHome, unreadable := classify(handler, app, hook)
-			if kind != kindOther {
-				continue
-			}
-			other := OtherInstallation{DataHome: dataHome, Command: unreadable}
-			if other.Command == "" && other.DataHome == "" {
-				other.DataHome, other.Default = hook.DefaultDataHome, true
-			}
-			if !slices.Contains(others, other) {
-				others = append(others, other)
-			}
-		}
-	}
-	return others, nil
+	return port.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
 }

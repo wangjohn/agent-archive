@@ -153,10 +153,10 @@ func Restore(home string, journal Journal, backends Backends) error {
 	// touched: a recovery that stops halfway would leave less to go on.
 	var changed []hooks.Change
 	for _, c := range journal.Changes {
-		if c.Unapplied() {
+		if hooks.Unapplied(c) {
 			continue
 		}
-		if !c.Applied() {
+		if !hooks.Applied(c) {
 			return &RecoveryBlockedError{home: home, cause: c.Path + " changed outside setup, and recovery never overwrites your edits"}
 		}
 		changed = append(changed, c)
