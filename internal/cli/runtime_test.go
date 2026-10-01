@@ -22,8 +22,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
-const syntheticRuntimeKey = "SYNTHETIC_RUNNING"
-const syntheticCleanupKey = "SYNTHETIC_PARENT"
+const (
+	syntheticRuntimeKey = "SYNTHETIC_RUNNING"
+	syntheticCleanupKey = "SYNTHETIC_PARENT"
+)
 
 type syntheticDetector struct{ presence bool }
 
@@ -165,12 +167,12 @@ func TestPreparedTerminalStripsRuntimeAndTracePreservesConfiguration(t *testing.
 		t.Fatalf("foreground %+v %v", spec, err)
 	}
 	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
-		return termlaunch.Open(context.Background(), spec, termlaunch.Environment{OS: platform.Linux, LookupEnv: agentEnv(map[string]string{"TMUX": "fake"}), Run: func(_ context.Context, name string, args ...string) error {
+		return termlaunch.Open(t.Context(), spec, termlaunch.Environment{OS: platform.Linux, LookupEnv: agentEnv(map[string]string{"TMUX": "fake"}), Run: func(ctx context.Context, name string, args ...string) error {
 			if name != "tmux" {
 				t.Fatalf("unexpected terminal %s", name)
 			}
 			script := strings.Trim(args[len(args)-1], "'")
-			cmd := exec.CommandContext(t.Context(), "/bin/sh", script)
+			cmd := exec.CommandContext(ctx, "/bin/sh", script)
 			cmd.Env = inherited
 			raw, err := cmd.CombinedOutput()
 			if err != nil {
