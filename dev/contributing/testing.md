@@ -374,6 +374,11 @@ commit, systemd, architecture, result):
   Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
   the product. amd64 has not been run (the script builds for Docker's
   architecture; on an amd64 host it would run as is).
+- 2026-09-30, the same pull request after review (the Go test binaries must
+  report each named test passed, a root-only `cursorstore` test added), same
+  machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
+  (the enable link left out of uninstall's paths, and the clone warning turned
+  off) failed 8 checks, in sections 6, 9, 11 and 12.
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product
