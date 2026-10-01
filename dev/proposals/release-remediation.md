@@ -8,7 +8,7 @@ that every failure remains on the refreshed baseline.
 
 ## Refreshed execution record
 
-- A: resumable cleanup is implemented in a separate change under review. The
+- A: resumable cleanup is implemented in [PR #261](https://github.com/wangjohn/agent-archive/pull/261) and remains under independent review. The
   manifest remains immutable; recovery builds a new reviewable plan from
   original surviving keys. Integration and live disposable-provider acceptance
   are pending.
@@ -17,12 +17,12 @@ that every failure remains on the refreshed baseline.
   shell exits 126/127 ([PR #259](https://github.com/wangjohn/agent-archive/pull/259)).
   Ordinary pager exit, signals, and Ctrl-C must preserve
   current behavior without replaying the listing.
-- C/D: this documentation change makes the README reach app-specific verified
+- C/D: [PR #264](https://github.com/wangjohn/agent-archive/pull/264) makes the README reach app-specific verified
   capture and uses `list --all-projects --json --limit 0` for sizing. Live
   per-app onboarding acceptance remains pending.
 - E: the baseline already uses a bounded durable admission-intent queue and
   moves staging disk synchronization outside its short queue lock. The
-  remaining implementation addresses a pause/resume generation race so delayed
+  remaining implementation in [PR #262](https://github.com/wangjohn/agent-archive/pull/262) addresses a pause/resume generation race so delayed
   intents cannot cross that boundary. Review, integration, final contention
   results, and latency evidence remain pending.
 

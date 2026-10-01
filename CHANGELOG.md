@@ -22,6 +22,7 @@ Planned for v0.2.0. This release has not been tagged or published.
 ### Changed
 
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
+- Prevent contended hooks and staged admission retries from registering sessions across a pause/resume boundary.
 - The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
 
 - Listings default to the current project when available and return at most 50
