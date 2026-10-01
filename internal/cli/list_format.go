@@ -24,7 +24,7 @@ type listRow struct {
 	ShortID    string
 	HarnessKey string // raw harness name for show / locateMetadataKey
 	ProjectID  string // raw identity; display names can collide
-	Title      string // display title (metadata title, else short ID)
+	Title      string // display title (archive.DisplayTitle, else short ID)
 	When       string
 	CapturedAt string
 	Harness    string
