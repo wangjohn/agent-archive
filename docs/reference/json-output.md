@@ -33,6 +33,16 @@ explicitly.
   true: the indexed read stopped once it found one more match than the limit.
   When true, `total_matched` is the exact match count and `truncated` is
   present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Run inside a project, `list` and `list --json` return that repository's
+  sessions, and the document gains an optional `scope` object:
+  `{"label": "agent-archive", "all_projects": false, "fell_back": false,
+  "outside_matches": 3}`. `label` names the scope; `all_projects` is true when
+  it was not applied (`--all-projects`, or the scope held nothing);
+  `fell_back` is true when it held nothing and all projects are listed;
+  `outside_matches` is how many more sessions the same filters match outside
+  it. Outside any project there is no `scope` and every session is listed.
+  Scripts that want every session pass `--all-projects`. The field is
+  additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on
   stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
   current parsers cannot prove non-use. Schema version `3` removed the
@@ -139,6 +149,29 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
+From parser `0.17.0` a sidecar may also carry three optional fields that
+say what to call the session:
+
+- `name`: the title the agent gave the session, collapsed to one line and cut
+  to 72 characters like `title`. For Claude Code it is the session name in
+  its sidebar (set from your prompt, or by `/rename`; the last one wins), and
+  for Cursor the chat's name. `title` keeps its meaning, a preview of the
+  first prompt. Absent when the session has no name, including one whose
+  transcript is gone and so could not be re-read after the privacy filter
+  began keeping names (filter 13).
+- `branch`: the last git branch the transcript recorded. Absent when none was
+  recorded, or it is `HEAD` (a detached checkout).
+- `pull_requests`: up to 20 pull requests the session was linked to (Claude
+  Code's `pr-link` records), in the order first linked and each once, as
+  `{"repository", "number", "url"}`. `repository` is `owner/repo`; `url` is
+  the GitHub address, present only when it is exactly
+  `https://github.com/<owner>/<repo>/pull/<number>`. Unlike `git_activity`,
+  which records the pull requests the session's own commands created or
+  merged, these are the ones the agent linked.
+
+`list` and `show` show `name` where they showed `title` (and `title` when
+there is no `name`).
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
@@ -240,11 +273,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). Every project is in `groups.rows` with `--by project`, which
-  is never cut; the terminal's "all in --json --by project" points at it.
-  The JSON has no more than five skills or MCP servers (the terminal's detail
-  screen lists up to 40). `models` lists every model family (the terminal's
-  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  (see below). `--all` (only with `--json`) lifts the cut: `projects`,
+  `skills`, `display_skills` and `mcp.servers` then list every row, in the
+  same order (the top five are its first five), and the `total_*` fields say
+  the same as before; the document is otherwise the same, so it is additive
+  and `schema_version` stays 1. The terminal's "all in --json --all" points
+  at it, under the projects screen and under the skills and MCP servers of
+  the overview and detail screens. Every project is also in `groups.rows`
+  with `--by project`, which is never cut, with `--all` or without it.
+  `models` lists every model family (the terminal's "all in --json"), with
+  or without `--all`. `display_skills` is `skills` for showing to a person: a
   plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
   only the first `:` counts) and skills that then share a name are one row,
   counted in the sessions that used any of them (a session that used both
@@ -287,7 +325,7 @@ at the top level. Read the rules below before using a number:
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
-  `projects` keeps only the top few of `total_projects`.
+  `projects` keeps only the top few of `total_projects`, unless `--all`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server
@@ -330,7 +368,7 @@ Treat an absent field and `null` the same way.
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this Mac only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |
-| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, and another installation's hooks in this one's hook files. |
+| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, another installation's hooks in this one's hook files, and on Linux a data directory set up on a different machine (see [`host_id`](configuration.md)). |
 
 Before setup, `state` says setup is needed, `background` is `missing`, and
 `authentication` is `not_configured`. When a command has held the collector

@@ -75,7 +75,7 @@ func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
 // before it exits, with the shell's status for the signal.
 func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
 	t.Parallel()
-	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129, syscall.SIGQUIT: 131} {
 		var steps []string
 		exitAfterSignal(sig, func() { steps = append(steps, "remove") }, func(code int) { steps = append(steps, fmt.Sprintf("exit %d", code)) })
 		if got := strings.Join(steps, ", "); got != fmt.Sprintf("remove, exit %d", want) {
@@ -87,7 +87,7 @@ func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
 // B-24: SIGTERM or SIGHUP (a closing terminal, a process manager) quits at
 // once, even as the first signal, through exitOnSignal.
 func TestTerminateSignalsExitAtOnce(t *testing.T) {
-	for _, sig := range []os.Signal{syscall.SIGTERM, syscall.SIGHUP} {
+	for _, sig := range []os.Signal{syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT} {
 		exit, exits := stubExit()
 		signals := make(chan os.Signal, 1)
 		env := Env{exitOnSignal: exit, Interrupts: func() (<-chan os.Signal, func()) { return signals, func() {} }}
