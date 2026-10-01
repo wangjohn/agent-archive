@@ -382,6 +382,40 @@ func TestKeyFilterTakesLettersThatActOutsideIt(t *testing.T) {
 	}
 }
 
+// The heading names Esc, not a, as soon as the filter line is open, before
+// a word is typed: a is typed text there. Closing the line brings a back.
+func TestKeyFilterHeadingNamesEscBeforeAWordIsTyped(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	scope := sessionScope{Label: "app", ProjectIDs: []string{"id-app"}, Dir: "/w/app"}
+	format := listFormatOptions{Now: pickerNow, Numbered: true}
+	choices := newScopeChoices(scope, format, false, func(sessionScope) scopeView {
+		return scopeView{rows: formatSessionRows(sessions, format), total: len(sessions)}
+	})
+	fake := newFakeKeys("/", "\x1b", "q")
+	picker := &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
+	defer picker.keys.close()
+	var out bytes.Buffer
+	picker.clear = func() { out.WriteString(screenBreak) }
+	if _, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show"); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	screens := strings.Split(out.String(), screenBreak)
+	if len(screens) != 3 {
+		t.Fatalf("want 3 screens (list, filter line, list), got %d:\n%s", len(screens), out.String())
+	}
+	heading := func(screen string) string {
+		first, _, _ := strings.Cut(screen, "\n")
+		return first
+	}
+	if h := heading(screens[1]); !strings.HasSuffix(h, " · Esc clear") || strings.Contains(h, "a all projects") {
+		t.Errorf("heading with the filter line open and empty = %q, want it to end in Esc clear", h)
+	}
+	if h := heading(screens[2]); !strings.HasSuffix(h, " · a all projects") {
+		t.Errorf("heading after Esc = %q, want it to end in a all projects", h)
+	}
+}
+
 // In browse mode Enter shows the details of the highlighted row and the list
 // comes back with the filter still on it; in pick mode Enter hands off the
 // highlighted row.

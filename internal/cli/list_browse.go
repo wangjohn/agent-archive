@@ -468,7 +468,7 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		c := choices.shown()
 		l.heading, l.toggles, l.toggled = c.heading, choices.canToggle(), false
 		l.headingFor = func(words string, matches int) string {
-			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Keys: l.keys != nil})
+			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
 		}
 		l.search, l.searched, l.searchRead = c.search, nil, false
 		l.noteText, l.noteWords = c.searchNote, c.searchWords

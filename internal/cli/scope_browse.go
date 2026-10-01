@@ -156,9 +156,9 @@ type headingOptions struct {
 	// many sessions match them.
 	Words   string
 	Matches int
-	// Keys is set for a browser reading keys, which names Esc while it
-	// filters, and where `a` is typed text, not the other scope.
-	Keys bool
+	// Filtering is set while the key browser's filter line is open, where
+	// `a` is typed text, not the other scope: the heading names Esc instead.
+	Filtering bool
 }
 
 // heading is the line above the table, naming what is shown and the other
@@ -208,7 +208,7 @@ func (c *scopeChoices) headingWith(i int, view scopeView, constants []string, o 
 		}
 	}
 	switch {
-	case o.Words != "" && o.Keys:
+	case o.Filtering:
 		parts = append(parts, "Esc clear")
 	case !c.canToggle():
 	case c.plain && i == viewScope:
