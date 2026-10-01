@@ -10,7 +10,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - **Linux is supported for persistent capture** (x86-64 and arm64), on a
   machine with systemd 240 or newer and a user manager (RHEL 8 and its
-  rebuilds from 8.3). macOS behaviour, its plist, Keychain items and
+  rebuilds from 8.3). macOS behavior, its plist, Keychain items and
   `config.json` are unchanged. What you can see on Linux:
   - **Install.** Releases after v0.1.1 carry unsigned static
     `agent-archive-linux-amd64` and `-arm64` binaries, in `SHA256SUMS` and
@@ -50,9 +50,11 @@ follow [Semantic Versioning](https://semver.org/).
     (a Cursor forum report says they may fail silently, so Cursor capture is
     best effort and its version is not detected), the real Claude Code and
     Codex apps, distributions and systemd versions other than Ubuntu 24.04
-    with systemd 255 (exercised live on arm64), an amd64 live run, WSL, and
-    handoff opening a new window outside tmux (it prints the command). See
-    [platforms](docs/getting-started/install.md#platforms).
+    with systemd 255 (exercised live on arm64), an amd64 live run, real R2
+    and S3 from Linux (the live run used MinIO), a real logout with lingering
+    off, and WSL. See [platforms](docs/getting-started/install.md#platforms).
+  - **Handoff** opens the new agent in a tmux window on Linux; outside tmux
+    it prints the command to run instead.
 - The multiple-Macs guide is now [multiple machines](docs/guides/multiple-machines.md)
   (`docs/guides/multiple-macs.md` is gone; update any link to it), with a
   section on cloning Linux machines next to the Migration Assistant and Time

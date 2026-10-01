@@ -317,10 +317,11 @@ The collector writes `collector.log` and `collector-error.log` in the data
 directory, not to the journal.
 
 - **"The systemd user manager cannot be reached (this session has no user
-  bus)."** Setup and `status` say this over SSH without `pam_systemd`, in a
+  bus)."** Setup and `uninstall` say this over SSH without `pam_systemd`, in a
   container, after `su`, and wherever nothing runs a user manager. `status`
-  shows the collector as *state unknown* (`--json`: background `unknown`) and
-  "systemctl couldn't say". Run the command from a login session that has
+  does not give the reason: it says "The background collector couldn't be
+  checked" and shows the collector as *state unknown*, "systemctl couldn't
+  say" (`--json`: background `unknown`). Run the command from a login session that has
   the bus, or run `loginctl enable-linger` once (as yourself, or with `sudo
   loginctl enable-linger "$USER"` where your system asks for it) so the user
   manager runs without a login; a shell that was already open may also need
@@ -356,11 +357,13 @@ directory, not to the journal.
   nothing about a difference. If a Cursor database is not found by the collector while it is by
   a backfill from your shell, export the same values in the shell as the
   manager has and run setup again.
-- **systemd older than 240.** Setup refuses (`status` says "this is systemd
-  237, older than 240"): the collector's logs need `StandardOutput=append:`.
+- **systemd older than 240.** Setup refuses, saying "this is systemd 237,
+  older than 240, which the collector's logs need" (they use
+  `StandardOutput=append:`); `status` shows the collector as *state unknown*.
   Upgrade systemd; on RHEL 8 or a rebuild of it, update to 8.3 or later.
-- **A masked unit or a drop-in.** A masked timer or service is reported with
-  the command that unmasks it (`systemctl --user unmask ...`). A drop-in that
+- **A masked unit or a drop-in.** Setup and `uninstall` report a masked timer
+  or service with the command that unmasks it (`systemctl --user unmask
+  ...`); `status` shows the collector as *state unknown*. A drop-in that
   overrides the unit is a note under Notes: its settings differ from the unit
   file's, which is what setup and `setup --refresh` read.
 - **"This data directory was set up on a different machine."** `status` and

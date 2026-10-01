@@ -75,8 +75,10 @@ enable-linger`; there is no cron fallback. An R2 key is kept in a private file
 unsigned (the installer checks them against `SHA256SUMS`, and `gh attestation
 verify` confirms where they came from). What is **not** verified on Linux:
 the real Cursor app and `cursor-agent` hooks (a Cursor forum report says
-they may fail silently there, so Cursor capture is best effort),
-distributions other than Ubuntu 24.04 live, an amd64 live run, and WSL. A
+they may fail silently there, so Cursor capture is best effort), the real
+Claude Code and Codex apps, distributions and systemd versions other than
+Ubuntu 24.04 with systemd 255 (run live on arm64), an amd64 live run, a real
+logout with lingering off, and WSL. A
 home directory shared by several Linux machines (NFS, say) is not supported.
 See [platforms](../getting-started/install.md#platforms), [setup on
 Linux](../getting-started/setup.md#setup-on-linux) and [troubleshooting](troubleshooting.md#linux-and-systemd).
