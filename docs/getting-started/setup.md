@@ -101,6 +101,10 @@ already have a profile with credentials, and R2 otherwise.
   Ctrl-C while it creates and checks the key stops it and revokes that key's
   token; a Ctrl-C after the key exists, while setup stores it, leaves that
   key's token in your account (its name was printed when it was created).
+  However else setup ends without using the new bucket and key (you cancel
+  the review, an error, an interrupted storage check), it says they exist and
+  how to remove them, or that your saved setup draft uses them; it says
+  nothing when they are in use.
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -1041,7 +1042,9 @@ func TestGuidedR2NetworkFailuresAreNotBlamedOnTheToken(t *testing.T) {
 // networkDownAPI fails the calls it is given an error for.
 type networkDownAPI struct {
 	cloudflare.API
-	accounts, groups, domains error
+	accounts error
+	groups   error
+	domains  error
 }
 
 func (a *networkDownAPI) Accounts(ctx context.Context) ([]cloudflare.Account, error) {
@@ -1105,7 +1108,7 @@ func r2MenuNumber(t *testing.T, key string) string {
 	t.Helper()
 	for i, o := range storageMenuFor(withR2CreateSwitch("1", true)) {
 		if o.Key == key {
-			return fmt.Sprint(i + 1)
+			return strconv.Itoa(i + 1)
 		}
 	}
 	t.Fatalf("the storage menu has no entry %q", key)
@@ -1387,7 +1390,7 @@ func TestGuidedR2SitsBeforeTheInstructions(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
 	n, help := r2MenuNumber(t, guidedR2Choice), r2MenuNumber(t, "help")
-	if !strings.Contains(out, "  "+n+") "+storageLabelR2New+"\n  "+help+") Show setup instructions\n") || help != fmt.Sprint(len(storageMenuFor(withR2CreateSwitch("1", true)))) {
+	if !strings.Contains(out, "  "+n+") "+storageLabelR2New+"\n  "+help+") Show setup instructions\n") || help != strconv.Itoa(len(storageMenuFor(withR2CreateSwitch("1", true)))) {
 		t.Fatalf("menu:\n%s", out)
 	}
 }

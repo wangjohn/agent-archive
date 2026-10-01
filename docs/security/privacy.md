@@ -566,6 +566,10 @@ uses. Setup treats it accordingly:
   that key's token in your account, and its name was printed when it was
   created, so you can revoke it in the dashboard. The bootstrap token stays in
   memory until the key is stored.
+- Once the key is stored, the bootstrap token is gone, so setup can no longer
+  revoke the key's token. If setup then ends without using the bucket (a
+  failed storage check, a cancelled review, an error), it prints the bucket's
+  name and the token's name, once, and how to remove them in the dashboard.
 
 **What "checked at setup" means.** With the bootstrap token, setup reads two
 things about the new bucket once: whether its public `r2.dev` URL is on, and

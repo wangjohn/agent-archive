@@ -420,7 +420,11 @@ open-source acceptance record.
       `GET .../domains/custom` work with only Workers R2 Storage Write
       (else setup says "couldn't check"; adjust its wording if a Read
       permission is needed), and that `result.enabled` and
-      `result.domains[]` are the fields read. Turn r2.dev on for a scratch
+      `result.domains[]` are the fields read, and that a bucket with no
+      custom domains answers with an empty `domains` list and not without
+      the field (setup treats a missing `enabled` or `domains`, like any
+      success without a result, as unreadable, never as "off" or "none").
+      Turn r2.dev on for a scratch
       bucket and confirm the loud warning.
 - [ ] **Token expiry.** A token created without `expires_on` has no expiry in
       the dashboard.
