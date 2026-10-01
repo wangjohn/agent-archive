@@ -521,13 +521,15 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		draft.Config.Storage = cfg
 		if p.guided != nil && p.guided.c.slot != nil {
 			s := p.guided.c.slot
-			s.State = issuance.Own
-			s.SecretRef = cfg.R2CredentialRef
-			if e = issuance.Save(p.guided.c.home, *s); e != nil {
+			staged := *s
+			staged.State = issuance.OwnIntent
+			staged.SecretRef = cfg.R2CredentialRef
+			if e = issuance.Save(p.guided.c.home, staged); e != nil {
 				draft.Step = 1
 				_ = save()
 				return false, p.rollbackGuidedCreation(e)
 			}
+			*s = staged
 		}
 		if p.guided != nil && p.guided.c.privacy.CheckedAt != nil {
 			report := p.guided.c.privacy
@@ -741,6 +743,9 @@ type setupFinish struct {
 // removes the saved draft, drops diagnostics of excluded projects, offers to
 // import the chosen projects' past sessions, and says what to do next.
 func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time, finish setupFinish) error {
+	if err := reconcileCommittedGuidedSlot(home); err != nil {
+		terminal.Println(errOut, "Guided key ledger commit pending; configuration is saved.")
+	}
 	if err := recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
 		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
 	}

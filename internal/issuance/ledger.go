@@ -175,7 +175,7 @@ func List(home string) ([]Slot, error) {
 }
 
 func immutableMatch(a, b Slot) bool {
-	return a.SlotID == b.SlotID && a.RecipientID == b.RecipientID && a.IssuerID == b.IssuerID && a.DestinationID == b.DestinationID && a.AccountID == b.AccountID && a.Bucket == b.Bucket && a.Jurisdiction == b.Jurisdiction && a.PermissionID == b.PermissionID && a.ProviderName == b.ProviderName && a.Origin == b.Origin && a.CreatedAt.Equal(b.CreatedAt) && (a.ProviderID == "" || a.ProviderID == b.ProviderID) && (a.SecretRef == b.SecretRef || (a.Origin == Guided && a.State == SecretIntent && b.State == Own))
+	return a.SlotID == b.SlotID && a.RecipientID == b.RecipientID && a.IssuerID == b.IssuerID && a.DestinationID == b.DestinationID && a.AccountID == b.AccountID && a.Bucket == b.Bucket && a.Jurisdiction == b.Jurisdiction && a.PermissionID == b.PermissionID && a.ProviderName == b.ProviderName && a.Origin == b.Origin && a.CreatedAt.Equal(b.CreatedAt) && (a.ProviderID == "" || a.ProviderID == b.ProviderID) && (a.SecretRef == b.SecretRef || (a.Origin == Guided && a.State == SecretIntent && b.State == OwnIntent))
 }
 
 func allowedTransition(a, b Slot) bool {

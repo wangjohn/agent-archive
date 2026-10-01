@@ -27,6 +27,9 @@ import (
 )
 
 func discardDraft(home string, draft setupDraft, active config.Config, env Env) error {
+	if err := abandonGuidedStage(home, draft, active); err != nil {
+		return err
+	}
 	refs := append([]string{}, draft.StagedRefs...)
 	if draft.CredentialRef != "" && !containsString(refs, draft.CredentialRef) {
 		refs = append(refs, draft.CredentialRef)

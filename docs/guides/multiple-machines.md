@@ -351,7 +351,9 @@ valid even when refill or an advisory config index update fails.
 The private `issued/slot-<slot-id>.json` ledger owns eligibility. Its durable records
 precede creation, credential staging, reservation, and bundle exposure. Interrupted
 creation is reconciled using the exact immutable provider name and exact bucket policy;
-lost one-time token values cannot be recovered. Uncertain cleanup stays pending and
+lost one-time token values cannot be recovered. Guided retries require confirmed cleanup
+of the previous slot. A guided setup key stays staged until configuration commits;
+discarding its draft retains provider cleanup lineage. Uncertain cleanup stays pending and
 requires explicit management access. Never edit the ledger or reuse config spare
 references as proof of eligibility. Corrupt records withhold spare use.
 

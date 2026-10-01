@@ -195,6 +195,12 @@ func (i *keyIssuer) reconcile() error {
 		if s.DestinationID != i.cfg.DestinationID() || s.IssuerID != i.cfg.MachineID {
 			continue
 		}
+		if s.Origin == issuance.Guided && s.State == issuance.OwnIntent && committedGuidedSlot(i.cfg, s) {
+			s.State = issuance.Own
+			if err := issuance.Save(i.home, s); err != nil {
+				return err
+			}
+		}
 		if s.State == issuance.CreationIntent || s.State == issuance.SecretIntent || s.State == issuance.CleanupPending || (s.State == issuance.Reserved && s.Origin != issuance.Precreated) {
 			if i.cfg.Storage.R2CredentialRef == s.SecretRef || (i.cfg.MachineAssignment != nil && i.cfg.MachineAssignment.AccessKeyID == s.ProviderID) {
 				continue
@@ -491,4 +497,66 @@ func setDedicatedPayload(payload *pairing.Payload, slot issuance.Slot, key crede
 	payload.Kind = config.MachineAssignmentR2Own
 	payload.AccessKeyID = key.AccessKeyID
 	payload.SecretAccessKey = key.SecretAccessKey
+}
+
+// reconcileCommittedGuidedSlot promotes only the exact locally committed binding.
+// A crash between config commit and this advisory update is safe to retry.
+func reconcileCommittedGuidedSlot(home string) error {
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	cfg, found, err := config.Load(home)
+	if err != nil || !found {
+		return err
+	}
+	slots, err := issuance.List(home)
+	if err != nil {
+		return err
+	}
+	for _, slot := range slots {
+		if slot.Origin == issuance.Guided && slot.State == issuance.OwnIntent && committedGuidedSlot(cfg, slot) {
+			slot.State = issuance.Own
+			if err = issuance.Save(home, slot); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func committedGuidedSlot(cfg config.Config, slot issuance.Slot) bool {
+	a := cfg.MachineAssignment
+	return a != nil && a.Kind == config.MachineAssignmentR2Own && cfg.MachineID == slot.IssuerID && cfg.DestinationID() == slot.DestinationID && cfg.Storage.R2CredentialRef == slot.SecretRef && a.SlotID == slot.SlotID && a.AccessKeyID == slot.ProviderID && a.RecipientID == slot.RecipientID && a.IssuerID == slot.IssuerID && a.DestinationID == slot.DestinationID
+}
+
+// abandonGuidedStage retains provider cleanup ownership after explicit discard.
+func abandonGuidedStage(home string, draft setupDraft, active config.Config) error {
+	if draft.GuidedSlotID == "" {
+		return nil
+	}
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	slots, err := issuance.List(home)
+	if err != nil {
+		return err
+	}
+	for _, slot := range slots {
+		if slot.SlotID != draft.GuidedSlotID || slot.Origin != issuance.Guided || slot.State != issuance.OwnIntent || committedGuidedSlot(active, slot) {
+			continue
+		}
+		if slot.SecretRef != draft.CredentialRef && !containsString(draft.StagedRefs, slot.SecretRef) {
+			return errors.New("guided draft credential does not match its slot")
+		}
+		slot.State = issuance.CleanupPending
+		slot.CleanupReason = "guided-draft-discarded"
+		if err = issuance.Save(home, slot); err != nil {
+			return err
+		}
+	}
+	return nil
 }

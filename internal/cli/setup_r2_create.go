@@ -112,15 +112,16 @@ const (
 
 // r2Creator is one run of guided creation.
 type r2Creator struct {
-	keyStorage *credentials.Config
-	slot       *issuance.Slot
-	home       string
-	issuerID   string
-	p          *prompter
-	env        Env
-	api        cloudflare.API
-	account    string
-	bucket     cloudflare.BucketSpec
+	releaseIssued func()
+	keyStorage    *credentials.Config
+	slot          *issuance.Slot
+	home          string
+	issuerID      string
+	p             *prompter
+	env           Env
+	api           cloudflare.API
+	account       string
+	bucket        cloudflare.BucketSpec
 	// tokenFromEnv is whether the bootstrap token came from
 	// CLOUDFLARE_API_TOKEN rather than the prompt.
 	tokenFromEnv bool
@@ -179,6 +180,7 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	kept := false
 	defer func() {
 		if !kept {
+			c.releaseIssuance()
 			c.api.Discard()
 		}
 	}()
@@ -271,6 +273,14 @@ func (c *r2Creator) connect() error {
 	}
 }
 
+// releaseIssuance ends the guided creation/staging critical section.
+func (c *r2Creator) releaseIssuance() {
+	if c.releaseIssued != nil {
+		c.releaseIssued()
+		c.releaseIssued = nil
+	}
+}
+
 // finishGuidedCreation ends guided creation once setup has staged the key:
 // it discards the bootstrap client, and says so.
 func (p *prompter) finishGuidedCreation(draft *setupDraft, save func() error) {
@@ -280,8 +290,7 @@ func (p *prompter) finishGuidedCreation(draft *setupDraft, save func() error) {
 	}
 	if h.c.slot != nil {
 		issuer := keyIssuer{home: h.c.home, cfg: draft.Config, env: h.c.env, p: p, api: h.c.api, group: h.c.groupID, account: h.c.account, bucket: h.c.bucket.BucketRef}
-		release, err := local.NamedLock(h.c.home, "issued.lock")
-		if err == nil {
+		if h.c.releaseIssued != nil {
 			if e := issuer.refill(); e != nil {
 				terminal.Println(p.out, "Setup key remains valid; spare refill failed or is pending.")
 			}
@@ -289,7 +298,6 @@ func (p *prompter) finishGuidedCreation(draft *setupDraft, save func() error) {
 			if e == nil {
 				draft.Config.SpareCredentialRefs = refs
 			}
-			release()
 			if e = save(); e != nil {
 				terminal.Println(p.out, "Spare index draft update pending; ledger remains authoritative.")
 			}
@@ -297,6 +305,7 @@ func (p *prompter) finishGuidedCreation(draft *setupDraft, save func() error) {
 			terminal.Println(p.out, "Spare refill deferred: issuance operation is running.")
 		}
 	}
+	h.c.releaseIssuance()
 	p.guided = nil
 	h.c.api.Discard()
 	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName, storage: h.c.storageConfig(), privacy: h.c.privacy})
@@ -352,6 +361,7 @@ func (p *prompter) rollbackGuidedCreation(err error) error {
 	terminal.Println(p.out, "Setup couldn't store the new key, so it is revoking the key's token.")
 	h.c.revoke(context.Background(), h.c.token, h.c.tokenName)
 	h.c.reportBucketLeftBehind()
+	h.c.releaseIssuance()
 	h.c.api.Discard()
 	return err
 }
@@ -679,7 +689,26 @@ func (c *r2Creator) attempt() (credentials.R2Credentials, error) {
 	return key, err
 }
 
-func (c *r2Creator) attemptWith(ctx context.Context) (credentials.R2Credentials, error) {
+func (c *r2Creator) attemptWith(ctx context.Context) (key credentials.R2Credentials, err error) {
+	defer func() {
+		if err != nil {
+			c.releaseIssuance()
+		}
+	}()
+	if c.slot != nil && c.slot.State != issuance.Deleted {
+		release, e := local.NamedLock(c.home, "issued.lock")
+		if e != nil {
+			return key, e
+		}
+		c.releaseIssued = release
+		cfg := config.Config{MachineID: c.slot.IssuerID, Storage: c.storageConfig()}
+		issuer := keyIssuer{home: c.home, cfg: cfg, env: c.env, p: c.p, api: c.api, account: c.account, bucket: c.bucket.BucketRef}
+		issuer.cleanup(c.slot)
+		c.releaseIssuance()
+		if c.slot.State != issuance.Deleted {
+			return key, errors.New("prior key creation remains unresolved; cleanup must be confirmed before retrying")
+		}
+	}
 	if c.groupID == "" {
 		terminal.Println(c.p.out, "Checking archive-key permissions with Cloudflare...")
 		id, err := c.lookUpPermissionGroup(ctx)
@@ -804,6 +833,11 @@ const tokenWriteHint = "The token needs the " + cloudflare.PermissionTokensWrite
 // what to do.
 func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name string, key credentials.R2Credentials, err error) {
 	p := c.p
+	defer func() {
+		if err != nil {
+			c.releaseIssuance()
+		}
+	}()
 	// The default bucket name's random part tells this Mac's tokens apart.
 	home, e := c.env.readHome()
 	if e != nil {
@@ -835,7 +869,7 @@ func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name s
 	if e != nil {
 		return token, name, key, e
 	}
-	defer release()
+	c.releaseIssued = release
 	if e = issuance.Save(home, slot); e != nil {
 		return token, name, key, e
 	}
