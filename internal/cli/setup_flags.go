@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -27,21 +28,29 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	provider             string
-	bucket               string
-	r2Account            string
-	r2KeyID              string
-	awsProfile           string
-	region               string
-	apps                 string
-	projects             []string
-	yes                  bool
-	verbose              bool
-	skillEvidence        string
-	noSkills             bool
-	skills               bool
-	allowNetworkHome     bool
-	storageFlagsSupplied bool
+	prefix                 string
+	prefixSupplied         bool
+	retentionDays          int
+	retentionSupplied      bool
+	requireSkillUse        bool
+	noRequireSkillUse      bool
+	requireSkillSupplied   bool
+	noRequireSkillSupplied bool
+	provider               string
+	bucket                 string
+	r2Account              string
+	r2KeyID                string
+	awsProfile             string
+	region                 string
+	apps                   string
+	projects               []string
+	yes                    bool
+	verbose                bool
+	skillEvidence          string
+	noSkills               bool
+	skills                 bool
+	allowNetworkHome       bool
+	storageFlagsSupplied   bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -102,6 +111,10 @@ func (l *projectList) Set(value string) error {
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
 	var projects projectList
+	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
+	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
+	fs.BoolVar(&opts.requireSkillUse, "require-skill-use", false, "capture only sessions that use skills")
+	fs.BoolVar(&opts.noRequireSkillUse, "no-require-skill-use", false, "capture sessions with or without skills")
 	fs.StringVar(&opts.provider, "provider", "", "storage provider: r2 or s3")
 	fs.StringVar(&opts.bucket, "bucket", "", "bucket name")
 	fs.StringVar(&opts.r2Account, "r2-account", "", "R2 account ID, or the bucket URL")
@@ -123,6 +136,14 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "prefix":
+			opts.prefixSupplied = true
+		case "retention-days":
+			opts.retentionSupplied = true
+		case "require-skill-use":
+			opts.requireSkillSupplied = true
+		case "no-require-skill-use":
+			opts.noRequireSkillSupplied = true
 		case "provider", "bucket", "r2-account", "r2-access-key-id", "aws-profile", "region":
 			opts.storageFlagsSupplied = true
 		}
@@ -132,7 +153,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -285,6 +306,26 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if opts.retentionSupplied {
+		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
+			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
+		}
+		cfg.RetentionDays = opts.retentionDays
+	}
+	if opts.prefixSupplied {
+		if strings.TrimSpace(opts.prefix) == "" {
+			return cfg, credentials.R2Credentials{}, errors.New("--prefix must name a folder inside the bucket")
+		}
+		if _, err := storage.Prefix(opts.prefix, "test"); err != nil {
+			return cfg, credentials.R2Credentials{}, fmt.Errorf("--prefix: %w", err)
+		}
+	}
+	if opts.requireSkillSupplied {
+		cfg.RequireSkillUse = opts.requireSkillUse
+	}
+	if opts.noRequireSkillSupplied {
+		cfg.RequireSkillUse = !opts.noRequireSkillUse
+	}
 	if cfg.SkillEvidence == "" && cfg.SchemaVersion == 0 {
 		cfg.SkillEvidence = config.SkillEvidenceMetadata
 	}
@@ -476,6 +517,9 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) []error 
 func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (credentials.R2Credentials, []error) {
 	var secret credentials.R2Credentials
 	if !opts.storageFlagsSupplied {
+		if opts.prefixSupplied {
+			cfg.Storage.Prefix = opts.prefix
+		}
 		if cfg.Storage.Provider == "" {
 			return secret, []error{errors.New("storage is not set up yet; pass --provider r2 or --provider s3 and the bucket's details")}
 		}
@@ -487,6 +531,9 @@ func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (cred
 		next.Prefix = previous.Prefix
 	}
 	next.Prefix = firstNonEmpty(next.Prefix, defaultPrefix)
+	if opts.prefixSupplied {
+		next.Prefix = opts.prefix
+	}
 	var problems []error
 	checkBucket := true
 	//lint:ignore LV1001 --provider is raw user input; anything else is refused below

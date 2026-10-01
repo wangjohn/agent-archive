@@ -70,6 +70,10 @@ the release behavior.
 
 #### Changed
 
+- Scripted setup accepts `--prefix`, `--retention-days`, and explicit skill-use
+  capture choices. The command printed for another machine now carries these
+  settings, skill evidence, and the agent skill installation policy.
+
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a
   terminal, so their list is gone once you choose, as `list`'s is.

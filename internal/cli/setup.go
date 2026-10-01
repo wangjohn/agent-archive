@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -117,6 +118,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
 		}
 		return runSetupRefresh(stdout, stderr, env, opts.verbose)
+	}
+	if opts.requireSkillSupplied && opts.noRequireSkillSupplied {
+		return fs.usageError("--require-skill-use and --no-require-skill-use contradict each other; give one")
 	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
@@ -996,15 +1000,11 @@ func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
 		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
 	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome)))
-	// setup --yes has no flag for the folder inside the bucket: it stores in
-	// the default one, which would split the archive from this machine's.
-	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
-		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
-	}
 }
 
 // anotherMachineCommand is the setup --yes command that sets up another machine
-// like this one: the same storage, apps and projects. Projects in the home
+// like this one: the same storage, capture rules, skills, apps and projects.
+// Projects in the home
 // folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
 func anotherMachineCommand(cfg config.Config, userHome string) string {
@@ -1020,6 +1020,19 @@ func anotherMachineCommand(cfg config.Config, userHome string) string {
 	if len(cfg.Harnesses) > 0 {
 		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
 	}
+	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix), "--retention-days", strconv.Itoa(cmp.Or(cfg.RetentionDays, defaultRetentionDays)))
+	if cfg.RequireSkillUse {
+		args = append(args, "--require-skill-use")
+	} else {
+		args = append(args, "--no-require-skill-use")
+	}
+	args = append(args, "--skill-evidence", string(cfg.EffectiveSkillEvidence()))
+	if cfg.NoSkills {
+		args = append(args, "--no-skills")
+	} else {
+		args = append(args, "--skills")
+	}
+
 	for _, project := range cfg.Archive.Projects {
 		if !project.Included {
 			continue

@@ -456,3 +456,69 @@ func TestSetupYesVerboseStorageFailure(t *testing.T) {
 		t.Fatalf("no details line:\n%s", output)
 	}
 }
+
+func TestSetupYesCarriesCaptureSettingsAndPreservesOmittedValues(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project, "--prefix", "team/archive/", "--retention-days", "30", "--require-skill-use", "--skill-evidence", "none", "--no-skills")
+	before, _, err := config.Load(home)
+	must(t, err)
+	if before.Storage.Prefix != "team/archive/" || before.RetentionDays != 30 || !before.RequireSkillUse || !before.NoSkills || before.SkillEvidence != config.SkillEvidenceNone {
+		t.Fatalf("config: %+v", before)
+	}
+	setupYes(t, env, "", 0, "--yes")
+	kept, _, err := config.Load(home)
+	must(t, err)
+	if kept.Storage != before.Storage || kept.RetentionDays != 30 || !kept.RequireSkillUse || !kept.NoSkills || kept.MachineID != before.MachineID {
+		t.Fatalf("omitted settings changed: %+v", kept)
+	}
+	setupYes(t, env, "", 0, "--yes", "--prefix", "other/", "--retention-days", "36500", "--no-require-skill-use", "--skills")
+	after, _, err := config.Load(home)
+	must(t, err)
+	if after.Storage.Bucket != "b" || after.Storage.AWSProfile != "p" || after.Storage.Prefix != "other/" || after.RetentionDays != 36500 || after.RequireSkillUse || after.NoSkills {
+		t.Fatalf("changed config: %+v", after)
+	}
+}
+
+func TestSetupYesRejectsInvalidCaptureSettingsBeforeSystemChecks(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args []string
+		want string
+		code int
+	}{
+		{[]string{"--retention-days", "0"}, "--retention-days must be", 1},
+		{[]string{"--retention-days", "-1"}, "--retention-days must be", 1},
+		{[]string{"--retention-days", "36501"}, "--retention-days must be", 1},
+		{[]string{"--prefix", "../escape"}, "--prefix:", 1},
+		{[]string{"--prefix", "/absolute"}, "--prefix:", 1},
+		{[]string{"--prefix", ""}, "--prefix must name", 1},
+		{[]string{"--require-skill-use", "--no-require-skill-use"}, "contradict each other", 2},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			env := testEnv(t, home, time.Now())
+			env.Executable = func() (string, error) { return "/opt/bin/agent-archive", nil }
+			output := setupYes(t, env, "", tc.code, append([]string{"--yes"}, tc.args...)...)
+			if !strings.Contains(output, tc.want) {
+				t.Fatalf("output: %s", output)
+			}
+			if _, found, _ := config.Load(home); found {
+				t.Fatal("invalid flag installed configuration")
+			}
+		})
+	}
+}
+
+func TestSetupCaptureAnswerFlagsNeedYesEvenWithExplicitZeroValues(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"--prefix", ""}, {"--retention-days", "0"}, {"--require-skill-use=false"}, {"--no-require-skill-use=false"}} {
+		env := testEnv(t, t.TempDir(), time.Now())
+		out := setupYes(t, env, "", 2, args...)
+		if !strings.Contains(out, "answers given as flags need --yes") {
+			t.Fatalf("%v: %s", args, out)
+		}
+	}
+}
