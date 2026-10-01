@@ -70,6 +70,13 @@ func (m *fakeUserManager) units(ref string) (timer, service string) {
 	return filepath.Join(dir, ref+".timer"), filepath.Join(dir, ref+".service")
 }
 
+// enableLink is the link enabling job ref makes: the timer in
+// timers.target.wants, pointing at the timer's file.
+func (m *fakeUserManager) enableLink(ref string) string {
+	timer, _ := m.units(ref)
+	return filepath.Join(filepath.Dir(timer), "timers.target.wants", ref+".timer")
+}
+
 // put sets the state of the job called ref.
 func (m *fakeUserManager) put(ref string, state scheduler.JobState) {
 	m.mu.Lock()
@@ -161,15 +168,26 @@ func (m *fakeUserManager) run(ctx context.Context, name string, args ...string) 
 				return []byte("Failed to enable unit: Unit file " + args[3] + " does not exist.\n"), errors.New("exit status 1")
 			}
 		}
+		// Enabling links the timer into timers.target.wants, as systemd does,
+		// before it starts it: a start that fails leaves the link.
+		link := m.enableLink(ref)
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(timer, link); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
 		if m.failLoad != "" {
 			return []byte(m.failLoad), errors.New("exit status 1")
 		}
 		m.put(ref, scheduler.Loaded)
 		return nil, nil
 	case len(args) == 4 && args[0] == "--user" && args[1] == "disable" && args[2] == "--now":
+		ref := strings.TrimSuffix(args[3], ".timer")
 		m.mu.Lock()
-		delete(m.state, strings.TrimSuffix(args[3], ".timer"))
+		delete(m.state, ref)
 		m.mu.Unlock()
+		_ = os.Remove(m.enableLink(ref))
 		return nil, nil
 	case len(args) == 3 && args[0] == "--user" && (args[1] == "stop" || args[1] == "reset-failed"):
 		return nil, nil

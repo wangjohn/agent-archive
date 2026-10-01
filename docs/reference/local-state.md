@@ -9,8 +9,7 @@ Files are private to your account and written atomically (temporary file,
 fsync, rename, directory fsync).
 
 On macOS, R2 credentials are not here: they are in the Keychain under the
-service `agent-archive`. In a build for another platform (Linux), which has
-no Keychain, they are in `credentials/<reference>.json` in this directory,
+service `agent-archive`. On Linux, which has no Keychain, they are in `credentials/<reference>.json` in this directory,
 each file mode 0600 in a folder mode 0700 that agent-archive refuses to read
 if it is open to other users (see
 [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
@@ -23,8 +22,12 @@ S3 credentials stay in your AWS profile.
   index, subagent candidates, removal records, refresh-skips, and
   `status.json`. Its `Store` holds the rules for each file and the
   per-session locks (`request-locks/`) that keep a hook and the collector
-  from interleaving; `state.OwnedEntries()` lists every top-level entry it can
-  create. It never reads transcripts or talks to storage.
+  from interleaving. A hook waits only a second for one, so writers sync to
+  disk outside it: a writer syncs its temporary file first and holds the lock
+  only to check and rename. A hook that another writer overtook meanwhile
+  holds it for its next attempt; any other writer retries later instead.
+  Subagent candidates are written the same way under their own locks. `state.OwnedEntries()` lists every
+  top-level entry it can create. It never reads transcripts or talks to storage.
 - **`internal/config`** owns `config.json`; **`internal/cli`** owns setup's
   files, logs, diagnostics, the collector-lock record, and `handoffs/`;
   **`internal/backfill`** owns `imports/`; **`internal/reader`** owns
@@ -34,7 +37,7 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `config.json` | The configuration: storage, projects, apps, retention, pause. See [configuration](configuration.md). |
+| `config.json` | The configuration: storage, projects, apps, retention, pause, and on Linux a digest of the machine ID setup first ran on (`host_id`, never uploaded), which lets `status` and `setup` notice a copied data directory. See [configuration](configuration.md). |
 | `setup-draft.json` | Setup's saved progress, so an interrupted setup can continue. Holds no secrets. |
 | `setup-transaction.json` | Present only while setup is changing files, or after it was interrupted; see [troubleshooting](../guides/troubleshooting.md#an-interrupted-setup). |
 | `application-versions.json` | Installed app versions setup found. |
@@ -97,7 +100,7 @@ and left in place.
 | `admission-intents/`, `admission-intents.lock` | cli | Private, bounded retry records for proven first starts and Cursor response/stop transcript paths. The collector revalidates and replays them. They include a native session ID, destination ID, and transcript path, but no conversation text or raw hook payload. A Cursor follow-up alone cannot admit a session. |
 | `collector.log`, `collector-error.log` | cli | The background collector's output. The error log is trimmed in place to its most recent part once it grows past a limit. |
 | `collector-lock.json` | cli | Which command holds `collector.lock`, its process ID, and since when; `status` uses it to report stuck collection. |
-| `cache/` | reader | A disposable cache of metadata sidecars for `list`. Safe to delete. |
+| `cache/` | reader | A disposable cache of metadata sidecars for `list`, `show`, `stats`, and `handoff`, which also sets how a large listing is split into parallel ranges. Safe to delete. |
 | `handoffs/` | cli | Untrimmed handoffs, and untrimmed `show --transcript` output (`*.transcript.txt`, `*.transcript.json`), saved when output was trimmed, and the copies `handoff --to` launches agents with (one `launch-*/` folder each); removed after 7 days. |
 | `collector.lock`, `hooks.lock`, `setup.lock` | local | File locks coordinating processes. |
 
@@ -113,12 +116,22 @@ list in step with `state.OwnedEntries()`.
 
 ## Outside the data directory
 
-- `~/Library/LaunchAgents/com.agent-archive.collector.plist` (or
+- On macOS, `~/Library/LaunchAgents/com.agent-archive.collector.plist` (or
   `com.agent-archive.collector.<hash>.plist` for a non-default data
   directory).
+- On Linux, `~/.config/systemd/user/agent-archive-collector.service` and
+  `agent-archive-collector.timer` (or `agent-archive-collector-<hash>.*` for
+  a non-default data directory), each mode 0600, and the link that enables
+  the timer, `~/.config/systemd/user/timers.target.wants/agent-archive-collector.timer`.
+  The collector's logs stay in the data directory (`collector.log` and
+  `collector-error.log`).
 - The hook entries in each app's hook file, recorded in `hook_files` in
   `config.json`.
 - A Cursor database copy, only while a read of it is in progress with Cursor
-  running: `agent-archive-cursor-<uid>/cursor-snapshot-*` in your per-user
-  temporary folder (`getconf DARWIN_USER_TEMP_DIR`), removed when the read
-  ends. An abandoned copy is swept by the next read.
+  running. On macOS: `agent-archive-cursor-<uid>/cursor-snapshot-*` in your
+  per-user temporary folder (`getconf DARWIN_USER_TEMP_DIR`). On Linux:
+  `cursor-snapshots/` (mode 0700) in `agent-archive/` under `$XDG_CACHE_HOME`
+  (else `~/.cache`, the account's home), beside a `CACHEDIR.TAG` that tells
+  backup tools to skip it; never `/tmp` and never the data directory, which
+  may be backed up or synced. The copy is removed when the read ends, and an
+  abandoned one is swept by the next read.

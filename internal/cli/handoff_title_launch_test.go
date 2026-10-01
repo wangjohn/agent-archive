@@ -33,7 +33,7 @@ func launchRecorder(t *testing.T, f *pickerFixture) *launchSpec {
 }
 
 // A title with --to is one step: the match is launched, with the document of
-// the matched session, whether the match is on this Mac or only archived.
+// the matched session, whether the match is on this machine or only archived.
 func TestHandoffTitleWithToLaunchesTheMatchedSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)

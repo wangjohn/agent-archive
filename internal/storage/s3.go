@@ -307,6 +307,62 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 	return page, nil
 }
 
+// ListRange lists the objects under relativePrefix in the key range (after,
+// through] (see RangeLister). The provider starts at after through
+// ListObjectsV2's StartAfter, sent on the first request only (later pages
+// carry just the continuation token, since not every S3-compatible provider
+// is known to accept both), and paging stops at the first page that passes
+// through. The range is also enforced here, key by key, so a provider that
+// ignored StartAfter (or a start key it could not be given) would cost extra
+// pages but never return a key twice across ranges.
+func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through string) ([]Object, error) {
+	prefix, err := s.keyForList(relativePrefix)
+	if err != nil {
+		return nil, err
+	}
+	// A start key the prefix rules refuse (a boundary a newer release would
+	// no longer write, say) only costs the provider's head start: the range
+	// is still enforced below, key by key.
+	var start *string
+	if key, err := s.key(after); after != "" && err == nil {
+		start = aws.String(key)
+	}
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start}
+	var objects []Object
+	for {
+		page, pageErr := s.client.ListObjectsV2(ctx, input)
+		if pageErr != nil {
+			return nil, pageErr
+		}
+		for _, item := range page.Contents {
+			if item.Key == nil {
+				continue
+			}
+			key := trimStorePrefix(*item.Key, s.prefix)
+			if key <= after {
+				continue
+			}
+			if through != "" && key > through {
+				return objects, nil
+			}
+			objects = append(objects, Object{
+				Key:          key,
+				Size:         aws.ToInt64(item.Size),
+				ETag:         strings.Trim(aws.ToString(item.ETag), "\""),
+				LastModified: aws.ToTime(item.LastModified),
+			})
+		}
+		if !aws.ToBool(page.IsTruncated) {
+			return objects, nil
+		}
+		token := aws.ToString(page.NextContinuationToken)
+		if token == "" {
+			return nil, errors.New("list page is truncated without continuation token")
+		}
+		input = &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), ContinuationToken: aws.String(token)}
+	}
+}
+
 func (s *S3Store) keyForList(relativePrefix string) (string, error) {
 	if strings.TrimSpace(relativePrefix) == "" {
 		if s.prefix == "" {

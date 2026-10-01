@@ -18,11 +18,10 @@ import (
 // by the next collector pass, even one with no Cursor database chat to
 // read: before, the collector swept only when it read Cursor itself, so on
 // a Mac with none registered the copy of every chat stayed in the temporary
-// folder until the next backfill.
+// folder until the next backfill. Not parallel: it checks what a sweep of
+// the snapshot folder did.
 func TestEveryPassSweepsStaleCursorSnapshots(t *testing.T) {
-	previous := cursorstore.SnapshotTempDirForTesting
-	cursorstore.SnapshotTempDirForTesting = t.TempDir()
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
+	ownSnapshotFolder(t)
 	root := filepath.Join(cursorstore.SnapshotTempDirForTesting, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
 	stale := filepath.Join(root, "cursor-snapshot-left-by-a-killed-backfill")
 	if err := os.MkdirAll(stale, 0o700); err != nil {

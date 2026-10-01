@@ -330,7 +330,7 @@ func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, ins
 	}
 }
 
-// privacyDocURL is the page on what leaves the Mac and what filtering
+// privacyDocURL is the page on what leaves the machine and what filtering
 // removes.
 const privacyDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md"
 
@@ -342,7 +342,7 @@ func printReviewNotes(p *prompter) {
 		terminal.Println(p.out, p.style.dim(p.style.hang("  ", p.reviewHint)))
 	}
 	terminal.Println(p.out, p.style.dim(p.style.hang("  ", "Filtering is best effort; sensitive text may remain in archived sessions.")))
-	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your Mac:")+" "+p.style.cmd(privacyDocURL)))
+	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your machine:")+" "+p.style.cmd(privacyDocURL)))
 }
 
 // printReviewPrivacy reports the saved bucket privacy evidence as of the

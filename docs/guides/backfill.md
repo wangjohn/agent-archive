@@ -1,7 +1,7 @@
 # Import existing sessions (backfill)
 
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
-already on this Mac. Run it after [setup](../getting-started/setup.md), which
+already on this machine. Run it after [setup](../getting-started/setup.md), which
 itself offers to import the past sessions of the projects you chose (an
 import like `backfill --project DIR`, listed in `backfill history` and undone
 with `backfill undo`); run `backfill` for anything else. With
@@ -23,7 +23,7 @@ Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
 background collector upload what is registered. Each says at once that it is
-stopping. A second Ctrl-C, or closing the terminal (SIGHUP) or SIGTERM,
+stopping. A second Ctrl-C, or closing the terminal (SIGHUP), SIGTERM or SIGQUIT,
 quits at once, after removing the private copy of Cursor's database backfill
 may have made; a copy a killed backfill leaves is removed by the next
 `backfill` command of any kind.
@@ -40,8 +40,9 @@ may have made; a copy a killed backfill leaves is removed by the next
 - Cursor chats that exist only in Cursor's own database (older chats, and
   those without a transcript file) are imported too. Backfill reads the
   database without changing it; while Cursor is running it reads a private
-  copy in your per-user temporary folder and deletes the copy when it is
-  done. The collector keeps capturing such a chat from the database
+  copy (macOS: in your per-user temporary folder; Linux: under
+  `~/.cache/agent-archive`, or `$XDG_CACHE_HOME`) and deletes the copy when
+  it is done. The collector keeps capturing such a chat from the database
   afterwards. Their subagent chats are not imported yet; the plan says how
   many there are.
 - Sessions run from your home directory or a temporary directory are skipped
@@ -52,15 +53,16 @@ may have made; a copy a killed backfill leaves is removed by the next
   and app folders inside it are added to setup as excluded projects, so they
   stay out of capture as before, and the plan lists them. Include one in
   setup to capture it; undoing the import removes them again. Backfill does
-  not look inside folders macOS asks about before an app reads them
-  (Desktop, Documents, Downloads, Library, iCloud Drive, other volumes)
+  not look, on macOS, inside folders it asks about before an app reads them
+  (Desktop, Documents, Downloads, Library, iCloud Drive, other volumes;
+  Linux has no such prompts, so nothing is kept out there)
   unless the plain folder is itself inside one; such a folder is kept out
   whole. When not every folder inside could be checked (it stops after
   5,000), the plan says so: a repository it did not find is captured too.
   To stop that, exclude the folder in setup, or import only the projects
   you want with `--project`.
-- Chats Codex desktop started in its own workspaces (`~/Documents/Codex`)
-  are one project. Recognizing them doesn't look inside Documents, so a
+- On macOS, chats Codex desktop started in its own workspaces
+  (`~/Documents/Codex`) are one project. Recognizing them doesn't look inside Documents, so a
   terminal without access to Documents is not asked for it unless a session
   you import actually ran there.
 - `--since` and `--until` take a date (`2026-09-01`), an RFC 3339 time, or an
@@ -85,7 +87,7 @@ is in the [backfill design](../../dev/specs/backfill.md).
 ## Undo
 
 `backfill undo [ID]` deletes an import's sessions from the bucket, forgets
-them on this Mac, and keeps later backfills from importing them again unless
+them on this machine, and keeps later backfills from importing them again unless
 you pass `--include-removed`. With `--project DIR` it undoes only that
 project's sessions. The plan shows exactly what will be deleted, including
 sessions resumed since the import, before it asks.

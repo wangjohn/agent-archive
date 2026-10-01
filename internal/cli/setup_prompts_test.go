@@ -106,6 +106,7 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 }
 
 func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
 	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
@@ -121,6 +122,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 }
 
 func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"
@@ -486,7 +488,7 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 func TestStorageHelpStaysOnTheMenu(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n3\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
 	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Show setup instructions") != 3 {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}

@@ -186,10 +186,10 @@ func TestProtectedFolders(t *testing.T) {
 	}
 }
 
-// The snapshot root: macOS uses the per-user temporary directory the system
+// The macOS snapshot root is the per-user temporary directory the system
 // reports, whatever $TMPDIR says, so a collector started by launchd without
 // TMPDIR, a hook run with it, and a shell with a custom one share one root;
-// $TMPDIR only when the system can't say, and on Linux from the start.
+// $TMPDIR only when the system can't say.
 func TestSnapshotRoot(t *testing.T) {
 	t.Parallel()
 	const uid = 501
@@ -213,18 +213,13 @@ func TestSnapshotRoot(t *testing.T) {
 		{"macOS relative getconf answer is ignored", Darwin, "/private/tmp/mine", func() string { return "relative" }, process, "/private/tmp/mine"},
 		{"macOS relative TMPDIR, getconf failed", Darwin, "tmp", none, process, "/process/tmp"},
 		{"macOS relative TMPDIR, getconf answers", Darwin, "tmp", perUser, process, "/var/folders/xy/abc/T"},
-		{"Linux, TMPDIR", Linux, "/tmp/linux", perUser, process, "/tmp/linux"},
-		{"Linux ignores the macOS temporary directory", Linux, "", perUser, process, "/process/tmp"},
-		{"Linux without TMPDIR", Linux, "", perUser, process, "/process/tmp"},
 		// A relative $TMPDIR is ignored as if unset: the snapshot root, a copy
 		// of every chat, must not depend on the working directory.
-		{"Linux relative TMPDIR", Linux, "tmp", perUser, process, "/process/tmp"},
-		{"Linux dot-relative TMPDIR", Linux, "./tmp", perUser, process, "/process/tmp"},
-		{"Linux tilde TMPDIR", Linux, "~/tmp", perUser, process, "/process/tmp"},
-		{"Linux relative process temp dir falls back to /tmp", Linux, "tmp", perUser, func() string { return "relative/tmp" }, "/tmp"},
+		{"macOS dot-relative TMPDIR", Darwin, "./tmp", none, process, "/process/tmp"},
+		{"macOS tilde TMPDIR", Darwin, "~/tmp", none, process, "/process/tmp"},
 		{"macOS relative process temp dir falls back to /tmp", Darwin, "tmp", none, func() string { return "relative/tmp" }, "/tmp"},
-		{"Linux with no process temp dir", Linux, "", perUser, nil, "/tmp"},
-		{"Linux absolute TMPDIR", Linux, "/var/tmp/mine", perUser, process, "/var/tmp/mine"},
+		{"macOS with no process temp dir", Darwin, "", none, nil, "/tmp"},
+		{"macOS absolute TMPDIR, getconf failed", Darwin, "/var/tmp/mine", none, process, "/var/tmp/mine"},
 		// An unknown system has no snapshot root, whatever it is given.
 		{"unknown system", Unknown, "/tmp/mine", perUser, process, ""},
 	} {
@@ -237,6 +232,68 @@ func TestSnapshotRoot(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: %q, want %q", tc.name, got, want)
 		}
+	}
+}
+
+// The Linux snapshot root is under the XDG cache home, never a temporary
+// directory: $XDG_CACHE_HOME when absolute, else ~/.cache of the account's
+// home from the user database (not the $HOME the shell says), and none when
+// neither is known.
+func TestLinuxSnapshotRootIsUnderTheCacheHome(t *testing.T) {
+	t.Parallel()
+	deps := LocationDeps{
+		DarwinUserTempDir: func() string { return "/var/folders/xy/abc/T" },
+		ProcessTempDir:    func() string { return "/process/tmp" },
+		UID:               1000,
+		AccountHome:       "/home/ada",
+	}
+	const defaultRoot, defaultDir = "/home/ada/.cache/agent-archive/cursor-snapshots", "/home/ada/.cache/agent-archive"
+	const srvRoot, srvDir = "/srv/cache/agent-archive/cursor-snapshots", "/srv/cache/agent-archive"
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		deps LocationDeps
+		home string
+		root string
+		dir  string
+	}{
+		{"default", nil, deps, "/home/ada", defaultRoot, defaultDir},
+		{"absolute XDG_CACHE_HOME", map[string]string{"XDG_CACHE_HOME": "/srv/cache"}, deps, "/home/ada", srvRoot, srvDir},
+		{"XDG_CACHE_HOME is cleaned", map[string]string{"XDG_CACHE_HOME": "/srv/cache/"}, deps, "/home/ada", srvRoot, srvDir},
+		{"empty XDG_CACHE_HOME is unset", map[string]string{"XDG_CACHE_HOME": ""}, deps, "/home/ada", defaultRoot, defaultDir},
+		{"relative XDG_CACHE_HOME is ignored", map[string]string{"XDG_CACHE_HOME": "cache"}, deps, "/home/ada", defaultRoot, defaultDir},
+		{"tilde XDG_CACHE_HOME is ignored", map[string]string{"XDG_CACHE_HOME": "~/cache"}, deps, "/home/ada", defaultRoot, defaultDir},
+		// TMPDIR and the temporary directories play no part.
+		{"TMPDIR is ignored", map[string]string{"TMPDIR": "/tmp/mine"}, deps, "/home/ada", defaultRoot, defaultDir},
+		// The home NewLocations is given ($HOME) is not the account's home.
+		{"the account's home, not $HOME", nil, deps, "/sandbox/home", defaultRoot, defaultDir},
+		{"no account home uses the absolute cache home", map[string]string{"XDG_CACHE_HOME": "/srv/cache"}, LocationDeps{}, "/home/ada", srvRoot, srvDir},
+		{"no account home and no cache home", nil, LocationDeps{}, "/home/ada", "", ""},
+		{"relative account home", nil, LocationDeps{AccountHome: "home/ada"}, "/home/ada", "", ""},
+	} {
+		loc := NewLocations(Linux, tc.home, envOf(tc.env), tc.deps)
+		if got := loc.SnapshotRoot(); got != tc.root {
+			t.Errorf("%s: root %q, want %q", tc.name, got, tc.root)
+		}
+		if got := loc.SnapshotCacheDir(); got != tc.dir {
+			t.Errorf("%s: cache dir %q, want %q", tc.name, got, tc.dir)
+		}
+	}
+}
+
+// Only Linux has an agent-archive cache folder; the macOS root stays in the
+// per-user temporary directory whatever XDG_CACHE_HOME says.
+func TestOnlyLinuxHasACacheDirForSnapshots(t *testing.T) {
+	t.Parallel()
+	deps := LocationDeps{DarwinUserTempDir: func() string { return "/var/folders/xy/abc/T" }, UID: 501, AccountHome: "/Users/ada"}
+	env := envOf(map[string]string{"XDG_CACHE_HOME": "/srv/cache"})
+	for _, system := range []OS{Darwin, Unknown} {
+		if got := NewLocations(system, "/Users/ada", env, deps).SnapshotCacheDir(); got != "" {
+			t.Errorf("%s: cache dir %q, want none", system, got)
+		}
+	}
+	if got, want := NewLocations(Darwin, "/Users/ada", env, deps).SnapshotRoot(), "/var/folders/xy/abc/T/agent-archive-cursor-501"; got != want {
+		t.Errorf("macOS root %q, want %q", got, want)
 	}
 }
 

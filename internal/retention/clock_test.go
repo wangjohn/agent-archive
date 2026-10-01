@@ -62,6 +62,7 @@ func objectCount(t *testing.T, store storage.ObjectStore) int {
 // own clock now has to agree first, so nothing is deleted, remotely or
 // locally, and the sweep says why.
 func TestClockAheadOfStorageDeletesNothing(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	dir := t.TempDir()
@@ -102,6 +103,7 @@ func TestClockAheadOfStorageDeletesNothing(t *testing.T) {
 // The same sweep, once the storage service agrees, expires everything: the
 // check holds deletion only while the clocks disagree.
 func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Now().UTC().Add(-100 * 24 * time.Hour)
@@ -124,6 +126,7 @@ func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 // A clock behind the storage service's only delays deletion, the safe
 // direction, so it is let through.
 func TestClockBehindStorageStillDeletes(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -139,6 +142,7 @@ func TestClockBehindStorageStillDeletes(t *testing.T) {
 // When the storage service's clock cannot be read, nothing is deleted on
 // account of age: the check fails closed.
 func TestUnreadableStorageClockHoldsDeletion(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -155,6 +159,7 @@ func TestUnreadableStorageClockHoldsDeletion(t *testing.T) {
 // anything, whatever the storage service says; with a recent previous pass
 // the same sweep proceeds.
 func TestClockFarPastThePreviousPassWaitsOnePass(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -174,6 +179,7 @@ func TestClockFarPastThePreviousPassWaitsOnePass(t *testing.T) {
 
 // Superseded snapshots are deleted by age too, so the same check guards them.
 func TestClockAheadKeepsSupersededSnapshots(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	now := time.Now().UTC()
@@ -196,6 +202,7 @@ func TestClockAheadKeepsSupersededSnapshots(t *testing.T) {
 // session then expires a window after the clamp, not a window after a date
 // that has not happened.
 func TestCaptureStampedByAClockAheadIsClampedOnceTheClockIsRight(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	right := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -224,6 +231,7 @@ func TestCaptureStampedByAClockAheadIsClampedOnceTheClockIsRight(t *testing.T) {
 // like the future, clamp it to that past date, and expire it all once the
 // clock was corrected.
 func TestFutureCaptureIsNotClampedByAClockBehindStorage(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	captured := time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC)
@@ -241,6 +249,7 @@ func TestFutureCaptureIsNotClampedByAClockBehindStorage(t *testing.T) {
 
 // The ledger's supersession times get the same clamp.
 func TestSupersessionStampedByAClockAheadIsClamped(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	right := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -271,6 +280,7 @@ func TestSupersessionStampedByAClockAheadIsClamped(t *testing.T) {
 
 // The probe leaves nothing in the bucket and reads the service's time.
 func TestProbeServerClockLeavesNothingBehind(t *testing.T) {
+	t.Parallel()
 	store := storagetest.NewMemoryStore()
 	before := time.Now().Add(-time.Second)
 	at, err := ProbeServerClock(context.Background(), store)
@@ -285,8 +295,12 @@ func TestProbeServerClockLeavesNothingBehind(t *testing.T) {
 // A sweep past its deadline stops cleanly, as a collector pass does: the
 // sessions it did not reach are left for the next sweep, not reported as
 // failing (which made sync exit 1 and status say "Needs attention" whenever
-// a large import expired at once).
+// a large import expired at once). It runs in parallel: the deadline is the
+// test's own and is meant to pass, and the checks hold wherever a busy run
+// is when it does (slowStore makes every call take 10ms, so twelve sessions
+// never fit in 100ms).
 func TestSweepPastItsDeadlineLeavesTheRestForTheNextSweep(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	mem := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -350,6 +364,7 @@ func (s slowStore) List(ctx context.Context, p string) ([]storage.Object, error)
 // A sweep with nothing due never touches the storage clock: the probe is a
 // write, a listing, and a delete, and sweeps run after every pass.
 func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := time.Now().UTC()
@@ -370,6 +385,7 @@ func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
 // deletion stands for an hour. Setting the clock back reads it again at once,
 // and the deletions it held go ahead.
 func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	wallNow := time.Now().UTC()
@@ -401,6 +417,7 @@ func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
 // A failed probe holds deletion for the next passes too, without probing
 // again on each.
 func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore(), failPut: true}
 	wallNow := time.Now().UTC()
@@ -421,6 +438,7 @@ func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
 // since jumped ahead delete: past agreeingReadingReuse the clock is read
 // again, and a jump inside that window is too small to matter.
 func TestAgreeingReadingDoesNotCoverALaterJump(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	dir := t.TempDir()
@@ -439,6 +457,7 @@ func TestAgreeingReadingDoesNotCoverALaterJump(t *testing.T) {
 }
 
 func TestReuseReading(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	agreeing := state.StorageClockReading{CheckedAt: at, ServerAt: at.Add(time.Second)}
 	ahead := state.StorageClockReading{CheckedAt: at, ServerAt: at.Add(-2 * MaxClockSkew)}

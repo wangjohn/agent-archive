@@ -83,18 +83,61 @@ A bucket that uses customer-managed KMS keys also needs `kms:Encrypt`,
 `kms:Decrypt`, and `kms:GenerateDataKey` on that key. The actual error is
 reported rather than asking for broad permissions up front.
 
+### Creating a bucket (setup time only)
+
+The policy above is what runs day to day, and it deliberately cannot create
+buckets or change Block Public Access. If you let `agent-archive setup`
+[create the bucket](../getting-started/bucket.md#let-setup-create-it), setup
+uses the profile you chose, once, with these extra permissions:
+
+| Permission | Used for |
+| --- | --- |
+| `s3:CreateBucket` | Creating the bucket. |
+| `s3:PutBucketPublicAccessBlock` | Turning on all four Block Public Access settings. |
+| `s3:DeleteBucket` | Deleting the still-empty bucket only if you ask to after Block Public Access could not be turned on, and confirm by typing its name. |
+| `s3:GetBucketPublicAccessBlock` | Reading the settings back (also in the runtime policy). |
+
+Setup also asks STS who the profile is (`sts:GetCallerIdentity`, which needs
+no permission) when S3 answers a check that a bucket name is free with
+"forbidden", so that a refused key is reported as one and not as a taken
+name. An organization policy (a service control policy or a permissions
+boundary) can deny the actions above even to a profile whose own policy
+allows them; setup's message says so when creation is refused.
+
+Guided creation works in the standard AWS partition only; for a region in
+China, GovCloud or an isolated partition, create the bucket yourself and pick
+it. Two runs that choose the same name at the same moment can both be told the
+name is free; the second is then refused, or, in us-east-1, shares the
+bucket. That is why setup never deletes a bucket on one keypress: you type
+its name first, and S3 refuses to delete a bucket that holds objects.
+
+Setup does not set a bucket policy, ACLs, a lifecycle rule, or default
+encryption (S3 already encrypts new buckets with SSE-S3), and it never
+creates IAM users or access keys. It does not keep a separate credential for
+creation: it asks which profile archiving should use, defaulting to the one
+that created the bucket, so attach the policy above to a separate identity
+and choose that profile when you can.
+
+Setup sets no lifecycle rule on purpose. A rule expires objects one by one
+by their own age, while agent-archive's retention deletes a whole session
+together and never a source snapshot a live metadata file still points to,
+and a rule set to today's retention would go on deleting after you raise it
+in setup. If you want one as a backstop, see [a lifecycle rule as a
+backstop](../getting-started/uninstall.md#a-lifecycle-rule-as-a-backstop).
+
 ## Cloudflare R2
 
 Create an R2 API token with **Object Read & Write** permission, scoped to the
 one bucket, and give setup its access key ID and secret access key (stored in
-the macOS Keychain under the service `agent-archive`, never in files; on a build
-without a Keychain, in a private credentials file in the data directory). R2's
+the macOS Keychain under the service `agent-archive`, never in files; on Linux,
+which has no Keychain, in a private credentials file in the data directory that
+is not encrypted, so prefer an S3 profile there). R2's
 S3-compatible credentials can't read the bucket's public-access settings, so
 R2 privacy is always `not_verified`: check in the Cloudflare dashboard that
 the bucket has no public `r2.dev` URL or custom domain.
 
-## One key per Mac
+## One key per machine
 
-Use separate credentials on each Mac where you can, so revoking one Mac
-doesn't affect the others. Macs can share a prefix; see
-[multiple Macs](../guides/multiple-macs.md).
+Use separate credentials on each machine where you can, so revoking one machine
+doesn't affect the others. Machines can share a prefix; see
+[multiple machines](../guides/multiple-machines.md).

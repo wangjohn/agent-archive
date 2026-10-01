@@ -64,6 +64,12 @@ func Diagnose(err error) Diagnosis {
 	if err == nil {
 		return Diagnosis{}
 	}
+	// A credentials check made before a bucket call (BucketAdmin) names the
+	// credentials whatever the error inside it is.
+	var check *credentialsCheckError
+	if errors.As(err, &check) {
+		return diagnoseCredentialsCheck(check)
+	}
 	// Credentials come first: fetching them can itself fail with an API
 	// error (an STS or SSO refusal) or a network error (an unreachable EC2
 	// metadata service), and that is still a credential problem, not a
@@ -130,6 +136,33 @@ var (
 
 // diagnoseCredentials recognizes a failure to find or use credentials.
 func diagnoseCredentials(err error) (Diagnosis, bool) {
+	if d, ok := diagnoseNoCredentials(err); ok {
+		return d, true
+	}
+	if service := credentialService(err); service != "" {
+		// STS, SSO or a container credentials endpoint answered, or
+		// couldn't be reached. Unreachable is the network's fault, and a
+		// cancelled call nobody's; any answer refuses the profile's
+		// credentials.
+		if isNetworkError(err) || errors.Is(err, context.Canceled) {
+			return Diagnosis{}, false
+		}
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The storage profile's credentials couldn't be obtained from its sign-in or role service.",
+			Fix:         "Check the profile's role and account settings, and for an SSO profile sign in again with `aws sso login --profile <profile>`, then try again.",
+		}, true
+	}
+	return Diagnosis{}, false
+}
+
+// diagnoseNoCredentials recognizes the failures that name credentials that
+// are missing or unusable by their own type: no profile, an expired SSO
+// sign-in, a failed credential_process, an R2 key not in the Keychain, empty
+// static credentials, no credentials for the EC2 metadata service. It leaves
+// out diagnoseCredentials's last resort, any other answer from a credentials
+// service.
+func diagnoseNoCredentials(err error) (Diagnosis, bool) {
 	var profileMissing awsconfig.SharedConfigProfileNotExistError
 	if errors.As(err, &profileMissing) {
 		return Diagnosis{
@@ -198,23 +231,8 @@ func diagnoseCredentials(err error) (Diagnosis, bool) {
 		}, true
 	}
 	var emptyStatic *awscredentials.StaticCredentialsEmptyError
-	service := credentialService(err)
-	if errors.As(err, &emptyStatic) || service == metadataServiceID {
+	if errors.As(err, &emptyStatic) || credentialService(err) == metadataServiceID {
 		return noCredentialsFound, true
-	}
-	if service != "" {
-		// STS, SSO or a container credentials endpoint answered, or
-		// couldn't be reached. Unreachable is the network's fault, and a
-		// cancelled call nobody's; any answer refuses the profile's
-		// credentials.
-		if isNetworkError(err) || errors.Is(err, context.Canceled) {
-			return Diagnosis{}, false
-		}
-		return Diagnosis{
-			Cause:       CauseNoCredentials,
-			Explanation: "The storage profile's credentials couldn't be obtained from its sign-in or role service.",
-			Fix:         "Check the profile's role and account settings, and for an SSO profile sign in again with `aws sso login --profile <profile>`, then try again.",
-		}, true
 	}
 	return Diagnosis{}, false
 }

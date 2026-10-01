@@ -107,7 +107,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
-	refresh := fs.Bool("refresh", false, "bring hooks, the collector's plist, and skills up to date, and nothing else")
+	refresh := fs.Bool("refresh", false, "bring hooks, the background job's definition, and skills up to date, and nothing else")
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
@@ -276,7 +276,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
-	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	err = runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	// However setup ended, a bucket it created and did not keep is not left
+	// without a word.
+	noteUnusedCreatedBuckets(p, home)
+	return err
 }
 
 func runSetupDraft(p *prompter, draft setupDraft, home, userHome, exe string, env Env, existing config.Config, installed bool, reviewed, discoveries map[string]applicationDiscovery, discoveredAt time.Time, errOut io.Writer, known func(config.Config) []backfill.KnownProject, verbose bool) error {
@@ -630,7 +634,7 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 }
 
 // setupFinish is what finishSetup needs beyond the committed
-// configuration: the Mac it runs on, and whether it may ask to import past
+// configuration: the machine it runs on, and whether it may ask to import past
 // sessions (interactive setup) or only point at backfill (setup --yes).
 type setupFinish struct {
 	env         Env
@@ -664,11 +668,11 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
 	// working, so it is a choice about history and not a step of setup. A
-	// paused Mac imports nothing (backfill refuses too); resume says so.
+	// paused machine imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printAnotherMac(p, cfg, finish.userHome)
+	printAnotherMachine(p, cfg, finish.userHome)
 	return nil
 }
 
@@ -940,27 +944,27 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	}
 }
 
-// printAnotherMac ends a committed setup with the command that sets up
-// another Mac with the same storage.
-func printAnotherMac(p *prompter, cfg config.Config, userHome string) {
+// printAnotherMachine ends a committed setup with the command that sets up
+// another machine with the same storage.
+func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
-		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
+		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
-		terminal.Println(p.out, "\nTo set up another Mac with this storage, run there:")
+		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
-	terminal.Println(p.out, "  "+p.style.cmd(anotherMacCommand(cfg, userHome)))
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome)))
 	// setup --yes has no flag for the folder inside the bucket: it stores in
-	// the default one, which would split the archive from this Mac's.
+	// the default one, which would split the archive from this machine's.
 	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
 		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
 	}
 }
 
-// anotherMacCommand is the setup --yes command that sets up another Mac
+// anotherMachineCommand is the setup --yes command that sets up another machine
 // like this one: the same storage, apps and projects. Projects in the home
-// folder are written from ~, which setup resolves on that Mac. An R2 key is
+// folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
-func anotherMacCommand(cfg config.Config, userHome string) string {
+func anotherMachineCommand(cfg config.Config, userHome string) string {
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1069,7 +1073,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 }
 
 // offerFirstCapture is the first setup's one question for what to capture,
-// when it can guess both halves: the apps found on this Mac, and the Git
+// when it can guess both halves: the apps found on this machine, and the Git
 // repository setup was run from. Yes takes both; the review step's "Edit a
 // setting" changes apps, projects, and retention (which stays at its
 // default), and on no chooseCapture asks for each in turn. It reports
@@ -1235,9 +1239,10 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
-// Part 2). Until then the menu offers only existing buckets.
-func guidedStorageOptions() []option { return nil }
+// (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
+func guidedStorageOptions() []option {
+	return []option{{storageChoiceS3New, storageLabelS3New}}
+}
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
@@ -1252,10 +1257,15 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
 		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
+		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create an Amazon S3 bucket for you.")
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	createS3 := choice == storageChoiceS3New
+	if createS3 {
+		choice = credentials.ProviderS3
 	}
 	if cfg.Provider != choice {
 		cfg = credentials.Config{Provider: choice}
@@ -1298,7 +1308,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 				}
 			}
 		}
-	} else if err = promptS3Location(p, &cfg, env, failedRegion); err != nil {
+	} else if err = promptS3Bucket(p, &cfg, env, failedRegion, createS3); err != nil {
 		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)

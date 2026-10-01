@@ -92,7 +92,7 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 type Env struct {
 	// sweepClock, set only by tests, adjusts the retention sweep's clock
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
-	// moves Now months ahead moves only this Mac's clock; the sweep rightly
+	// moves Now months ahead moves only this machine's clock; the sweep rightly
 	// refuses to delete by it unless the storage clock moves too.
 	sweepClock func(*retention.Options)
 	// observeFlags, set only by tests, sees every command flag set as it is
@@ -130,9 +130,12 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
-	WorkingDir func() (string, error)
-	Home       func() (string, error)
-	Now        func() time.Time
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
+	WorkingDir       func() (string, error)
+	Home             func() (string, error)
+	Now              func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -154,6 +157,12 @@ type Env struct {
 	// it is the default installation, with the default launchd label.
 	// Defaults to os/user.Current's HomeDir.
 	AccountHome func() (string, error)
+	// HostFingerprint identifies the machine the command runs on, as
+	// local.HostFingerprint does (Linux only; "": cannot say). Setup records
+	// it beside the machine ID and status compares it, to notice a data
+	// directory copied from another machine. Defaults to
+	// local.HostFingerprint; it is read only on Linux.
+	HostFingerprint func() string
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -234,9 +243,11 @@ type Env struct {
 	OpenTerminal func(termlaunch.Spec) (string, error)
 	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
 	Clipboard func([]byte) error
-	// Interrupts delivers the signals that stop backfill while it plans,
-	// registers, and uploads, and stop ends the delivery. Defaults to
-	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
+	// Interrupts delivers the signals that stop a command while it runs
+	// (backfill while it plans, registers, and uploads, the full-screen
+	// views until they restore the terminal, setup's storage check), and
+	// stop ends the delivery. Defaults to os/signal for os.Interrupt,
+	// SIGTERM, SIGHUP, and SIGQUIT.
 	Interrupts func() (signals <-chan os.Signal, stop func())
 	// RefreshCollectorWait is how long setup --refresh waits for a running
 	// collector pass to finish before it refuses. Defaults to
@@ -258,12 +269,19 @@ func (e Env) isTerminal(stream any) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
+// interrupts is the signal set of the commands a person runs. SIGQUIT is in
+// it so that a kill -QUIT from outside (Ctrl-\ is turned off while a screen
+// reads keys) is answered like the others: the terminal is restored and the
+// process exits with the shell's status for it, 131. Go's default for SIGQUIT
+// is a goroutine dump, which would leave the terminal raw on the alternate
+// screen. The collector and the hooks never register these, so their SIGQUIT
+// keeps the default.
 func (e Env) interrupts() (<-chan os.Signal, func()) {
 	if e.Interrupts != nil {
 		return e.Interrupts()
 	}
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	return signals, func() { signal.Stop(signals) }
 }
 
@@ -443,7 +461,7 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this Mac is not archiving: it has no saved
+// notSetUp reports whether this machine is not archiving: it has no saved
 // configuration, or uninstall left one with archiving disabled. It reads
 // only, and says nothing when the data directory cannot be read.
 func notSetUp(env Env) bool {
@@ -473,7 +491,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent

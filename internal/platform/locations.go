@@ -14,15 +14,20 @@ type LocationDeps struct {
 	// called only for Darwin and only by SnapshotRoot.
 	DarwinUserTempDir func() string
 	// ProcessTempDir is the process's own idea of the temporary directory
-	// (os.TempDir), the last resort before /tmp. Nil skips it.
+	// (os.TempDir), the last resort before /tmp on macOS. Nil skips it.
 	ProcessTempDir func() string
 	// ResolveSymlinks returns path with its symbolic links resolved (and
 	// cleaned), as far as they can be. Nil leaves a path as given, cleaned.
 	// It is called only by ProtectedFolders.
 	ResolveSymlinks func(path string) string
-	// UID is the user's ID. The snapshot folder's name carries it, which
-	// keeps users apart where the temporary directory is shared.
+	// UID is the user's ID. The macOS snapshot folder's name carries it,
+	// which keeps users apart where the temporary directory is shared.
 	UID int
+	// AccountHome is the account's home directory from the user database,
+	// not $HOME (which a shell or a sandbox may set to anything). The Linux
+	// snapshot root defaults to a folder under it. "" when the system cannot
+	// say; a relative path counts as that.
+	AccountHome string
 }
 
 // Locations are where an operating system keeps what agent-archive looks
@@ -156,25 +161,72 @@ func (l Locations) ProtectedFolders() []string {
 const fallbackTempDir = "/tmp"
 
 // SnapshotDirName is the name of the per-user directory Cursor database
-// copies go in, under a temporary directory.
+// copies go in, under macOS's temporary directory.
 func SnapshotDirName(uid int) string { return "agent-archive-cursor-" + strconv.Itoa(uid) }
 
-// SnapshotRoot is where copies of Cursor's database are made: a directory of
-// this user's own (SnapshotDirName) in the per-user temporary directory. A
-// copy holds every Cursor chat, including those of projects that are not
-// archived, so it stays out of the archive home, which may be backed up or
-// synced.
+// The Linux snapshot root is <cache>/agent-archive/cursor-snapshots, where
+// <cache> is the XDG cache home.
+const (
+	// CacheDirName is agent-archive's folder in the cache home. It holds the
+	// CACHEDIR.TAG that tells backup tools to skip it.
+	CacheDirName = "agent-archive"
+	// linuxSnapshotDirName is the folder of database copies in CacheDirName.
+	linuxSnapshotDirName = "cursor-snapshots"
+)
+
+// cacheHome is the XDG cache home on Linux: $XDG_CACHE_HOME when it is an
+// absolute path (the XDG Base Directory specification says a relative one is
+// invalid and must be ignored, as is an empty one), else ~/.cache under the
+// account's home. It is "" when neither is known, and on any other system.
+func (l Locations) cacheHome() string {
+	if l.OS != Linux {
+		return ""
+	}
+	if dir := l.getenv("XDG_CACHE_HOME"); dir != "" && filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	if filepath.IsAbs(l.deps.AccountHome) {
+		return filepath.Join(filepath.Clean(l.deps.AccountHome), ".cache")
+	}
+	return ""
+}
+
+// SnapshotCacheDir is agent-archive's folder in the XDG cache home on Linux
+// (<cache>/agent-archive), the parent of SnapshotRoot and the place for a
+// CACHEDIR.TAG. It is "" on any other system, and on Linux when the cache
+// home is not known.
+func (l Locations) SnapshotCacheDir() string {
+	if cache := l.cacheHome(); cache != "" {
+		return filepath.Join(cache, CacheDirName)
+	}
+	return ""
+}
+
+// SnapshotRoot is where copies of Cursor's database are made. A copy holds
+// every Cursor chat, including those of projects that are not archived, so it
+// stays out of the archive home, which may be backed up or synced.
 //
-// The temporary directory is, on macOS, the one the system reports
-// (deps.DarwinUserTempDir), whatever $TMPDIR says: it is under /var/folders,
-// which Time Machine excludes, and every process of the user's agrees on it,
-// whereas the LaunchAgent that runs the collector sets only
-// AGENT_ARCHIVE_HOME (so launchd may leave TMPDIR unset) and a custom TMPDIR
-// in a shell would put a copy of every chat elsewhere and split the sweep's
-// root. Only if the system cannot say, and on Linux from the start, it is an
-// absolute $TMPDIR, then deps.ProcessTempDir, then /tmp. A relative $TMPDIR
-// would put the copy of every chat relative to the working directory,
-// wherever that is, so it is ignored, as if unset.
+// On macOS it is a directory of this user's own (SnapshotDirName) in the
+// per-user temporary directory the system reports (deps.DarwinUserTempDir),
+// whatever $TMPDIR says: it is under /var/folders, which Time Machine
+// excludes, and every process of the user's agrees on it, whereas the
+// LaunchAgent that runs the collector sets only AGENT_ARCHIVE_HOME (so
+// launchd may leave TMPDIR unset) and a custom TMPDIR in a shell would put a
+// copy of every chat elsewhere and split the sweep's root. Only if the system
+// cannot say, it is an absolute $TMPDIR, then deps.ProcessTempDir, then /tmp.
+// A relative $TMPDIR would put the copy of every chat relative to the working
+// directory, wherever that is, so it is ignored, as if unset.
+//
+// On Linux it is <cache>/agent-archive/cursor-snapshots (SnapshotCacheDir),
+// where <cache> is $XDG_CACHE_HOME or ~/.cache (~ is the account's home from
+// the user database, not $HOME). It is not under /tmp: that is shared, so
+// another local user can make a predictable name there first and keep a copy
+// from ever being made; it is often a tmpfs, which would put a copy as large
+// as Cursor's database in memory; and a job started by systemd has its own
+// idea of $TMPDIR. $XDG_CACHE_HOME is one of the variables setup records in
+// the collector's unit, so a shell and the collector agree on the root and the
+// sweep of stale copies sees one directory. With no cache home and no account
+// home there is no root ("").
 //
 // An Unknown system has no snapshot root: it is "", because Cursor's
 // database is not looked for there (CursorStateDB is ""), so no copy is ever
@@ -182,11 +234,24 @@ func SnapshotDirName(uid int) string { return "agent-archive-cursor-" + strconv.
 // privacy decision made without knowing the system. A caller must treat ""
 // as "take no snapshot".
 func (l Locations) SnapshotRoot() string {
-	if l.OS != Darwin && l.OS != Linux {
+	switch l.OS {
+	case Linux:
+		if dir := l.SnapshotCacheDir(); dir != "" {
+			return filepath.Join(dir, linuxSnapshotDirName)
+		}
+		return ""
+	case Darwin:
+		return l.darwinSnapshotRoot()
+	case Unknown:
 		return ""
 	}
+	return ""
+}
+
+// darwinSnapshotRoot is SnapshotRoot on macOS.
+func (l Locations) darwinSnapshotRoot() string {
 	name := SnapshotDirName(l.deps.UID)
-	if l.OS == Darwin && l.deps.DarwinUserTempDir != nil {
+	if l.deps.DarwinUserTempDir != nil {
 		if dir := l.deps.DarwinUserTempDir(); filepath.IsAbs(dir) {
 			return filepath.Join(dir, name)
 		}

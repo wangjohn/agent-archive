@@ -16,6 +16,7 @@ const moreTranscript = `
 // lookup fails (git briefly unavailable, the checkout moved), and a lookup
 // that succeeds with another answer (the remote really changed) replaces it.
 func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	path := writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript)
 	reg := registration(t, path)
@@ -57,6 +58,7 @@ func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
 }
 
 func TestDerivedRepoKeyIsStickyAcrossAParserRefresh(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
@@ -96,6 +98,7 @@ func TestDerivedRepoKeyIsStickyAcrossAParserRefresh(t *testing.T) {
 // A key on the registration is what the hook saw at the start of the session:
 // it is used as recorded, not re-derived, whatever git says later.
 func TestRegisteredRepoKeyIsNotReDerived(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = widgetKey

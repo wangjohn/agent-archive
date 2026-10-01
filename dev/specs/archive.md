@@ -19,7 +19,7 @@ Real-world observations suggest patterns. They do not establish that the skill, 
 
 ### CLI and distribution contract
 
-Build a downloadable CLI named `agent-archive`. The initial release supports macOS Apple Silicon and Intel with self-contained executables. Users must not need to install Python, Node, rclone, or a separate database. Publish versioned release artifacts with checksums and macOS signing/notarization. An existing AWS SSO workflow may use the user's AWS CLI, but it is not a dependency for R2 or every authentication mode.
+Build a downloadable CLI named `agent-archive`. The initial release supports macOS (Apple Silicon and Intel) with self-contained executables; Linux (x86-64 and arm64) followed it, as unsigned static executables whose trust rests on the mandatory checksum and the release attestation. Users must not need to install Python, Node, rclone, or a separate database. Publish versioned release artifacts with checksums, macOS signing/notarization, and a build provenance attestation. An existing AWS SSO workflow may use the user's AWS CLI, but it is not a dependency for R2 or every authentication mode.
 
 No Agent Archive account or hosted service is required. The user supplies an existing private Cloudflare R2 or Amazon S3 bucket. Both providers are first-class targets of the same S3-compatible storage interface; provider differences remain inside storage configuration and authentication.
 
@@ -33,7 +33,7 @@ No Agent Archive account or hosted service is required. The user supplies an exi
 
 Support `--help` and `--version`. Keep background-worker and hook entry points internal; normal users should not need to invoke them or edit hook JSON. Return a nonzero exit code for a failed explicit sync or incomplete setup, with a concise explanation. Errors must not print secrets or transcript contents.
 
-### Setup on each Mac
+### Setup on each machine
 
 The onboarding sequence is download → select applications/projects → connect storage → review and enable → verify real capture.
 
@@ -48,17 +48,17 @@ The following requirements describe each part of setup and subsequent verificati
 
 **1. Connect an existing bucket.** Do not create infrastructure or require account-administration permissions in the initial release. Offer provider documentation if the user has not created a bucket yet.
 
-For R2, collect bucket name, the S3 endpoint supplied by Cloudflare, optional prefix (default `agent-archive/`), access key ID, and a hidden secret access key. Use region `auto`. Store credentials in macOS Keychain; configuration contains only their reference. Never accept secrets through command-line arguments, print them, or write them to shell history or project files.
+For R2, collect bucket name, the S3 endpoint supplied by Cloudflare, optional prefix (default `agent-archive/`), access key ID, and a hidden secret access key. Use region `auto`. Store credentials in the macOS Keychain, or on Linux, which has none, in a private file (mode 0600 in a mode 0700 folder under the data directory); configuration contains only their reference. Never accept secrets through command-line arguments, print them, or write them to shell history or project files.
 
 For S3, collect bucket name and an existing AWS profile. Offer locally configured profiles and infer the selected profile's region; ask for a region only when missing. Keep the optional prefix and region override in the final review's Edit menu. Use the selected SDK's supported AWS credential providers, including IAM Identity Center where available. Store the profile reference rather than copying credentials. Honor an explicitly selected profile deterministically; do not silently use an unrelated environment credential. Explain how to configure an AWS profile if none exists.
 
-Use separate credentials per Mac scoped to the intended bucket/prefix where supported. Existing credentials must cover upload, read, listing, and deletion for retention cleanup. An AWS bucket using additional controls such as customer-managed encryption may need extra permissions; surface the actual failure rather than requiring broad permissions by default.
+Use separate credentials per machine scoped to the intended bucket/prefix where supported. Existing credentials must cover upload, read, listing, and deletion for retention cleanup. An AWS bucket using additional controls such as customer-managed encryption may need extra permissions; surface the actual failure rather than requiring broad permissions by default.
 
 **2. Verify access with synthetic content.** Under a unique setup-test key inside the chosen prefix, write a small object, read it back, verify its bytes, list it, and delete it. Never test against an existing user object. This step sends no transcript data. If cleanup fails, show the exact test-object key and the missing capability.
 
 Successful object access does not establish bucket privacy. Check public-access configuration when authorized, otherwise report `privacy not verified` and link to provider instructions. Do not request administrative access solely to perform that check or present a successful upload test as proof of privacy.
 
-Validate that the background execution environment can resolve the chosen credentials, not just the interactive shell. If Keychain access is unavailable or an AWS login expires and cannot refresh, retain pending uploads and explain the recovery action in `status`. Never launch interactive authentication from the scheduled worker.
+Validate that the background execution environment can resolve the chosen credentials, not just the interactive shell. If the credential store (Keychain access, or the Linux credentials file) is unavailable or an AWS login expires and cannot refresh, retain pending uploads and explain the recovery action in `status`. Never launch interactive authentication from the scheduled worker.
 
 **3. Select applications and projects.** Detect installed Codex, Claude Code, and Cursor versions. Let the user choose integrations and explicitly include project roots. Do not automatically include every repository. Record unsupported versions and missing transcript support as unverified capabilities.
 
@@ -90,7 +90,7 @@ Start archiving?
 Enter 1-3 [1]:
 ```
 
-Merge only owned lifecycle hooks, preserve unrelated handlers, and guide the user through each application's required trust flow. Install a macOS LaunchAgent that starts at login and schedules the collector. Store runtime files outside project repositories. Do not mark hooks as trusted automatically.
+Merge only owned lifecycle hooks, preserve unrelated handlers, and guide the user through each application's required trust flow. Install a background job that schedules the collector: a macOS LaunchAgent that starts at login, or on Linux a systemd user timer and service (systemd 240 or newer; a headless machine needs lingering enabled). Setup refuses, changing nothing, when the system has no scheduler it can use. Store runtime files outside project repositories. Do not mark hooks as trusted automatically.
 
 Setup is repeatable: no duplicate hooks, collector jobs, or machine identities. On cancellation or failure, retain a working previous configuration and report any incomplete setup. Changing the destination does not silently copy old archives or redirect already queued records; require an explicit disposition for pending work. Reducing retention must show its deletion effect before activation.
 
@@ -105,9 +105,9 @@ Claude Code capture      Waiting for first session
 
 Configuration may finish while application verification is pending, but `status` must show that distinction. Never label every integration verified based only on a successful bucket connection.
 
-### Second Mac and routine controls
+### Second machine and routine controls
 
-Run `agent-archive setup` again on the second Mac with the same bucket and prefix, separate credentials, and independently selected project paths. Generate a new machine identity. Do not copy local ownership records or runtime state. Each Mac publishes only its own archived sessions; readers may inspect both.
+Run `agent-archive setup` again on the second machine with the same bucket and prefix, separate credentials, and independently selected project paths. Generate a new machine identity. Do not copy local ownership records or runtime state. Each machine publishes only its own archived sessions; readers may inspect both. Machines may be any mix of macOS and Linux. A data directory copied to another machine, or shared by several, breaks ownership: setup must be run again on a copy, and a home directory shared across machines is not supported.
 
 `pause` persists across restarts. Hooks perform no new registrations while paused; a running collector finishes or safely stops its current operation and starts no further work. The command reports when paused state is reached. Native application logs remain untouched. On resume, registered eligible sessions can catch up, including activity written to their native transcripts during the pause; this behavior must be stated in command help. Pause is not a privacy exclusion or an instruction to erase evidence. New sessions that began while paused are not discovered retroactively.
 
@@ -129,7 +129,7 @@ The archive supplies evidence for Evaluate Skill. Building that evaluation skill
 
 ```mermaid
 flowchart TD
-    A[Install on each Mac] --> B[Choose included projects and configure private R2 or S3]
+    A[Install on each machine] --> B[Choose included projects and configure private R2 or S3]
     B --> C[Install and trust hooks; start background collector]
     C --> D[User works in Codex, Claude Code, or Cursor]
     D --> E[Application writes native transcript]
@@ -148,7 +148,7 @@ flowchart TD
     O -- No --> P[Keep pending files and retry later]
     P --> H
     O -- Yes --> Q[Publish metadata pointing to uploaded source]
-    Q --> R[Evaluator reads metadata across both Macs]
+    Q --> R[Evaluator reads metadata across both machines]
     R --> S[Select source bundles and parse them on demand]
     S --> T[Compare outcomes and report evidence gaps]
     T --> U[Human reviews proposed skill changes]
@@ -158,7 +158,7 @@ The durable application transcript and local pending files let collection resume
 
 ## Scope and non-goals
 
-Initial scope is local macOS sessions in the three applications. Remote and cloud-hosted sessions require a collector in their execution environment and are not automatically covered by a Mac installation. Each supported application version needs a capture test.
+Scope is local sessions in the three applications on macOS and Linux, with a background scheduler (launchd or a systemd user manager). Linux is supported for persistent capture, with Cursor there best effort: the real Cursor application and `cursor-agent` hooks have not been verified on Linux. Remote and cloud-hosted sessions require a collector in their execution environment and are not automatically covered by an installation on a workstation. Each supported application version needs a capture test. Windows, other schedulers (cron, a hook-triggered fallback), WSL without systemd, and a home directory shared across machines are not supported.
 
 The first version does not provide a web dashboard, distributed event stream, server-side search database, automatic skill edits, exact execution replay, or storage of every streaming token. It does not archive untouched native logs by default.
 
@@ -379,7 +379,7 @@ Never label a task successful merely because a turn ended. Feedback, corrections
 - Filter before writing upload-ready files. Retain visible conversation and useful tool evidence; exclude hidden reasoning, credentials, and raw system/developer instructions by default.
 - Redaction is best effort. Set explicit content-size limits and report omissions. Images, binary outputs, and external artifacts are omitted initially with references and gaps where appropriate.
 - Keep runtime state and credentials outside all Git checkouts. Public repository content consists only of code, schemas, tests, and documentation.
-- Keep the bucket private, with separate credentials per Mac. Do not infer append-only permissions from content-addressed filenames.
+- Keep the bucket private, with separate credentials per machine. Do not infer append-only permissions from content-addressed filenames.
 - Keep the current source snapshot and its predecessor. Delete older unreferenced snapshots after a proposed 24-hour grace period. Readers that encounter a deleted older snapshot should refresh metadata and retry.
 - Propose 90 days of whole-session retention, configurable before activation. Delete metadata and all associated source snapshots together. Do not apply a source-only age rule that can leave a live pointer dangling.
 - Excluding a project stops future capture; deleting already archived data is a separate explicit operation.
@@ -424,17 +424,17 @@ Retain enough provenance to link every finding to its source session and turn. L
 
 1. **Capability proof:** one synthetic session per installed application, with known messages, a tool call, a skill invocation, a no-skill turn, and a model change where supported. Document what each adapter can actually observe.
 2. **Local vertical slice:** implement one adapter through filtered source capture, derived metadata, and on-demand normalized views. Test filtering, IDs, deterministic snapshots, and recovery. Keep the existing recorder clearly separate until migration.
-3. **CLI onboarding and storage round trips:** build the five-command interface and guided setup described above, produce both macOS executable builds, and test against private R2 and AWS S3; validate source-first publication, integrity, retries, readable metadata, and cleanup using synthetic content.
+3. **CLI onboarding and storage round trips:** build the five-command interface and guided setup described above, produce the macOS (and later Linux) executable builds, and test against private R2 and AWS S3; validate source-first publication, integrity, retries, readable metadata, and cleanup using synthetic content.
 4. **Remaining adapters:** reuse the same collector and schema; add only application-specific extraction and hook configuration.
-5. **Two-Mac trial:** confirm independent ownership, combined metadata browsing, offline recovery, and no cross-machine overwrites.
+5. **Two-machine trial:** confirm independent ownership, combined metadata browsing, offline recovery, and no cross-machine overwrites.
 6. **Evaluate Skill integration:** add evidence selection and human-reviewed recommendations as separate work.
 
 Acceptance criteria:
 
-- A fresh Mac can configure either provider through `agent-archive setup` without installing an application runtime or manually editing hook files.
-- Both macOS architectures and both storage providers pass synthetic upload/read/list/delete tests and application capture checks.
+- A fresh machine can configure either provider through `agent-archive setup` without installing an application runtime or manually editing hook files.
+- Both macOS architectures and both storage providers pass synthetic upload/read/list/delete tests and application capture checks. Both Linux architectures are built and checked in CI, and Linux was exercised live on one system (Ubuntu 24.04, systemd 255, arm64); the others are unverified.
 - Setup reruns preserve unrelated hooks, identities, existing project activation times, and working configuration. No conversation uploads occur before explicit enablement.
-- Credentials stay in Keychain or the selected AWS provider; background authentication failures leave data queued and produce actionable status.
+- Credentials stay in the Keychain (macOS), the private credentials file (Linux), or the selected AWS provider; background authentication failures leave data queued and produce actionable status.
 - Older resumed sessions are excluded by default; no-skill sessions started after activation remain eligible.
 - Pause persists across login, prevents new scheduled collection/uploads/cleanup, and is respected by manual sync.
 

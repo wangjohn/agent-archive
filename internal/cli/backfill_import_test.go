@@ -776,6 +776,8 @@ func TestUninstallDeleteLocalDataRemovesImports(t *testing.T) {
 // are the check; the hook's total time also counts its own disk writes,
 // which a loaded machine can stretch past a second without any wait.
 func TestBackfillHookDuringRegistration(t *testing.T) {
+	// Not parallel: the hook must get hooks.lock within its one-second wait, and
+	// a busy parallel run can stretch registration's hold past that.
 	home, project := t.TempDir(), t.TempDir()
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, activated)

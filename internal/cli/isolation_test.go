@@ -87,7 +87,7 @@ func isolateProcessForTesting() func() {
 	// Nor does a test see the agent it may be run from: an agent's variables
 	// switch off every prompt. Tests that mean an agent inject them through
 	// Env.LookupEnv, and the suite is also run with them set to prove it.
-	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", envNonInteractive}, agentShellEnv()...) {
+	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", envNonInteractive}, agentShellEnv()...) {
 		must(os.Unsetenv(name))
 	}
 	newScheduler = func(backend string) (scheduler.Scheduler, error) {
@@ -107,6 +107,9 @@ func isolateProcessForTesting() func() {
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
+	openAWSBucketCreator = func(string, string) (BucketCreator, error) {
+		return nil, errors.New("no AWS in this test: set Env.AWSBucketCreator")
+	}
 	detectLessVersion = func(string) (int, bool) {
 		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
 	}
@@ -115,9 +118,10 @@ func isolateProcessForTesting() func() {
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that
-// reaches this Mac itself stops the test, and the process's own home is a
+// reaches this machine itself stops the test, and the process's own home is a
 // temporary one.
 func TestIsolationFailsClosed(t *testing.T) {
+	t.Parallel()
 	panics := func(name string, f func()) {
 		t.Helper()
 		defer func() {
@@ -169,6 +173,9 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if _, err := (Env{}).awsBuckets("default", "us-east-1"); err == nil {
 		t.Error("Env{}.awsBuckets reached AWS instead of failing")
 	}
+	if _, err := (Env{}).awsBucketCreator("default", "us-east-1"); err == nil {
+		t.Error("Env{}.awsBucketCreator reached AWS instead of failing")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +188,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 			t.Errorf("%s=%s leaks into the tests", name, value)
 		}
 	}
-	// testEnv's side-effecting fields fail rather than reach the Mac.
+	// testEnv's side-effecting fields fail rather than reach the machine.
 	env := testEnv(t, t.TempDir(), time.Now())
 	if _, err := env.credentialStore(); err == nil {
 		t.Error("testEnv's credential store must fail unless a test sets one")

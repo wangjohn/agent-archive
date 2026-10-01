@@ -40,8 +40,10 @@ const (
 	// starts a section, hides the rest of the transcript, or un-hides a
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
-	// See dev/specs/privacy-filter.md.
-	FilterVersion = "12"
+	// Filter 13 keeps the name a session was given (Claude Code's
+	// custom-title and pr-link records, Cursor's chat name). See
+	// dev/specs/privacy-filter.md.
+	FilterVersion = "13"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -636,6 +638,16 @@ type Metadata struct {
 	// Title is a one-line, truncated preview of the first human prompt after
 	// filtering. Omitted when no prompt text was available.
 	Title string `json:"title,omitempty"`
+	// Name is the title the harness gave the session (Claude Code's custom
+	// title, the last one if it was renamed; a Cursor chat's name), collapsed
+	// to one line like Title. Omitted when there is none.
+	Name string `json:"name,omitempty"`
+	// Branch is the last git branch the transcript recorded. Omitted when
+	// none was recorded or it is HEAD.
+	Branch string `json:"branch,omitempty"`
+	// PullRequests are the pull requests the session was linked to, in the
+	// order first linked, at most MaxPullRequests. Omitted when none.
+	PullRequests []PullRequestLink `json:"pull_requests,omitempty"`
 	// ProjectName is the basename of the session's project root at publish
 	// time, so list can label the project without local config. Omitted when
 	// unknown.

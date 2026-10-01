@@ -8,6 +8,79 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Linux is supported for persistent capture** (x86-64 and arm64), on a
+  machine with systemd 240 or newer and a user manager (RHEL 8 and its
+  rebuilds from 8.3). macOS behavior, its plist, Keychain items and
+  `config.json` are unchanged. What you can see on Linux:
+  - **Install.** Releases after v0.1.1 carry unsigned static
+    `agent-archive-linux-amd64` and `-arm64` binaries, in `SHA256SUMS` and
+    attested; `install.sh` installs them, requires the checksum to match, and
+    prints the `gh attestation verify` command. v0.1.1 has no Linux binary.
+  - **Background collector.** `setup` installs a systemd user timer and
+    service (`agent-archive-collector`, every 60 seconds, logs in the data
+    directory) in `~/.config/systemd/user`, and records `"background_backend":
+    "systemd"` in `config.json`. With no user bus (SSH without
+    `pam_systemd`, a container) setup stops before changing anything and says
+    to log in properly or run `loginctl enable-linger`; there is no cron
+    fallback. `status` and `status --json` (`background_warnings`) note when
+    lingering is off or a drop-in overrides the unit; systemd older than 240
+    is refused. `setup --refresh` and `uninstall` handle the units and the
+    link that enables the timer.
+  - **`uninstall --skip-scheduler`** goes on when the scheduler cannot say
+    whether the job is loaded: it removes the definition, hooks and skills,
+    prints the command that stops the job by hand, and says the collector
+    was not verified stopped. Without it, uninstall refuses in that case on
+    either system.
+  - **Credentials.** There is no Keychain: an R2 key is kept in a 0600 file
+    in a 0700 folder of the data directory (not encrypted; an S3 profile is
+    recommended on Linux), with the `AGENT_ARCHIVE_R2_*` variables as a
+    read-only fallback for containers.
+  - **Environment.** `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are recorded in
+    the job when set to an absolute path, `status` warns when your shell's
+    differ, and Cursor database copies live under
+    `~/.cache/agent-archive/cursor-snapshots` (or `$XDG_CACHE_HOME`), never
+    `/tmp`. A user manager can have its own values from outside your shell,
+    which `status` cannot see (see [setup on Linux](docs/getting-started/setup.md#setup-on-linux)).
+  - **Cloned machines.** `config.json` records `host_id`, a digest of the
+    machine ID, on Linux; `status` and `setup` warn when the data directory
+    was set up on a different machine (a cloned VM or image). It is best
+    effort; see [multiple machines](docs/guides/multiple-machines.md#cloned-machines-on-linux).
+    A home directory shared by several machines is not supported.
+  - **Not verified on Linux:** the real Cursor app and `cursor-agent` hooks
+    (a Cursor forum report says they may fail silently, so Cursor capture is
+    best effort and its version is not detected), the real Claude Code and
+    Codex apps, distributions and systemd versions other than Ubuntu 24.04
+    with systemd 255 (exercised live on arm64), an amd64 live run, real R2
+    and S3 from Linux (the live run used MinIO), a real logout with lingering
+    off, a desktop login, and WSL. See [platforms](docs/getting-started/install.md#platforms).
+  - **Handoff** opens the new agent in a tmux window on Linux; outside tmux
+    it prints the command to run instead.
+- The multiple-Macs guide is now [multiple machines](docs/guides/multiple-machines.md)
+  (`docs/guides/multiple-macs.md` is gone; update any link to it), with a
+  section on cloning Linux machines next to the Migration Assistant and Time
+  Machine guidance.
+- `agent-archive stats --json --all` lists every project, skill and MCP
+  server instead of the top five of each (`--all` is an error without
+  `--json`: the web page keeps its top lists). The document is otherwise the
+  same, in the same order, and `schema_version` stays 1. The hints under the
+  skills and MCP servers now say `+ N more (all in --json --all)`, and the
+  one under the projects screen `--json --all` too. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -55,13 +128,13 @@ follow [Semantic Versioning](https://semver.org/).
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
 - `agent-archive setup --refresh` brings the app hooks, the background
-  collector's plist, and the skill files up to date for the saved settings and
+  job's definition, and the skill files up to date for the saved settings and
   the binary you run it from, and changes nothing else. It asks nothing and
   needs no terminal, prints `nothing to refresh` or what it refreshed, and
   refuses (exit 1) before setup has finished, while a setup needs recovery,
   after uninstall, or when another installation's hooks are in the way. It
   also repairs hooks left pointing at a binary that moved. `install.sh` runs it
-  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  when it finds a set-up machine, so upgrading the binary upgrades the hooks and
   skills; if it fails, or the installer runs as root (which would leave
   root-owned files in your home directory), the install still succeeds and
   says how to run it. It waits up to ten seconds for a running collection
@@ -80,7 +153,7 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/agent-archive/SKILL.md`), so you can ask an agent to
   "pull in the auth session from Codex". The agent runs
   `agent-archive handoff "auth" --harness codex` (a bounded, filtered handoff
-  prompt, found by title on this Mac first, then in the archive), asks you
+  prompt, found by title on this machine first, then in the archive), asks you
   which when several sessions match, and can browse with `list`, `show`,
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
@@ -266,8 +339,7 @@ follow [Semantic Versioning](https://semver.org/).
   stages the new binary with `mktemp` and removes it on failure; it prints
   `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
   reports a missing `curl` ("curl is required") and a failed temporary
-  file or directory creation with their own messages. Linux is not yet a
-  supported platform.
+  file or directory creation with their own messages.
 
 - `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
   terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
@@ -276,6 +348,65 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **"Mac" became "machine" wherever the text is not about macOS**, now that
+  Linux is supported: in `agent-archive help` and the [CLI
+  reference](docs/reference/cli.md) ("sessions already on this machine"), in
+  `setup`'s review ("What leaves your machine:") and its next-steps line
+  ("To set up another machine with this storage"), in `backfill`, `purge`,
+  `uninstall`, `status` and `handoff` messages and in retention's clock
+  messages. What is specific to macOS (the Keychain, Time Machine, Migration
+  Assistant, macOS's privacy prompts, launchd) keeps its wording, and scripts
+  that match these messages should match the new words.
+- **Privacy filter 13: a session's name and linked pull request are now
+  archived.** Claude Code's session name (the one in its sidebar, set from
+  your prompt or by `/rename`) and the pull request a session linked (its
+  `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
+  only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
+  that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
+  `last-prompt` records are still dropped. The next sync re-reads and
+  republishes each session whose transcript is still on the Mac, so it can
+  carry them; `list`, `show`, and the handoff picker show them as described
+  below. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list`, `show`, and `handoff` start from the repository you are in.**
+  Run inside a project, `agent-archive list` and `list --json` now return
+  that repository's sessions (every checkout and worktree of it, and its
+  sessions from other Macs) where they returned all of them. Scripts that
+  read every session pass `--all-projects`. The text listing and the
+  handoff picker carry a heading that names what is shown, and on a terminal
+  `a`, typed alone, switches between the repository and all projects. When
+  the repository has no sessions they open on all projects and say so.
+  `--project DIR|NAME` (new for `list`, and now for every `handoff`
+  selection, not only `--latest`) picks another project by directory or by
+  name. `handoff "<title>"` looks in the repository first and says how many
+  more match in other projects. Outside any project nothing changes.
+  `list --json` gains an optional `scope` object
+  (`{"label", "all_projects", "fell_back", "outside_matches"}`) and keeps
+  `schema_version` 4.
+- The session table and the handoff picker leave out a HARNESS or PROJECT
+  column every row shares and name the value in the heading, add a PR column
+  (the last pull request the session linked or created) when a row has one, dim the ID
+  in the picker, and mark a session active in the last 2 minutes with a dot.
+- **Rows and `show` now show the name you gave the session in your agent, its
+  branch, and its linked pull requests.** A row in `list`, the handoff picker,
+  and the browser shows the session's name (the one in Claude Code's sidebar,
+  set from your prompt or by `/rename`, or a Cursor chat's name) where it
+  showed a preview of your first prompt, and still shows the preview for a
+  session with no name. `show`'s summary uses the name as its heading, with
+  the first prompt as a `Prompt` row, and gains `Branch` and `PRs` rows (the
+  last git branch the session recorded, and the pull requests it was linked
+  to). Metadata from parser `0.17.0` carries them as the optional `name`,
+  `branch`, and `pull_requests` fields (see
+  [JSON output](docs/reference/json-output.md#show)), so the collector
+  refreshes every published session's metadata once, from what is already
+  archived; a session gets its name only if it was published by filter 13, which
+  the next sync does for sessions whose transcript is still on the Mac. The
+  handoff picker's rows for sessions not yet uploaded are cut to 72
+  characters like published ones, not by display width.
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
@@ -286,9 +417,10 @@ follow [Semantic Versioning](https://semver.org/).
   pipes are plain; bars have no shaded track). The rest moved behind
   `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
   the tool error rate, the token breakdown, the agents table and the notes on
-  what the numbers rest on. `--view projects`, `models` and `agents` list every
-  project, model family and agent. `--by project` is now `--view projects`, and
-  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  what the numbers rest on. `--view projects`, `models` and `agents` list the
+  projects and model families (up to 500 each, then `+ N more`) and every
+  agent. `--by project` is now `--view projects`, and `--by day`, `week` and
+  `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
 - **`stats --json` and `--html` rank projects by spend, not tokens.** The
@@ -336,7 +468,6 @@ follow [Semantic Versioning](https://semver.org/).
   `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
   backfill inputs (Claude and Codex desktop app folders, the privacy-protected
   folders, the `/Applications` probes) are skipped. On macOS nothing changes.
-  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or
@@ -385,6 +516,16 @@ follow [Semantic Versioning](https://semver.org/).
   (a closed pseudo-terminal, for example). It now ends as every other prompt
   does at the end of input, with "no more input", and so does Ctrl-D on an
   empty answer, which the prompt used to ignore.
+- On a busy Mac, setup no longer warns "Could not prune capture diagnostics
+  for excluded projects", leaving a project it had just excluded named in the
+  local diagnostics file, when a hook recorded a diagnostic at the same time.
+  Hooks that fire together are also far less likely to drop each other's
+  diagnostics.
+  Each writer held the diagnostics lock through its write's disk syncs, which
+  could outlast setup's two-second wait for that lock and a hook's 50 ms one.
+  Writers now sync before taking the lock and hold it only to reread, check
+  and rename the file, and setup waits up to ten seconds for it, since a
+  rename alone can stall for over a second while other programs sync.
 - The `handoff` picker no longer offers archived subagent sessions. They
   filled the first screen under their orchestrator (one had 45 of them) and
   were counted in "Showing 50 of 659", though only top-level sessions can be
@@ -399,15 +540,38 @@ follow [Semantic Versioning](https://semver.org/).
 - **`agent-archive stats` no longer says `--json` has every row of a list it
   cut.** Under a cut list the screens said `(--json has them all)`, but plain
   `--json` keeps only the top five projects. The projects screen now says `+ N
-  more (all in --json --by project)` (the by-project rows are never cut),
-  the models screen `(all in --json)` (`models` is never cut), and the
-  detail screen's day, week and month tables `N earlier rows not shown (all in
-  --json --by day)`; the interactive screen, which takes no command, says to
-  quit first and names the window on show (`+ N more (quit, then run
-  agent-archive stats --days 90 --json --by project)`). The skills and MCP
-  servers were never claimed to be in `--json`, which keeps only the top five
-  of each; `stats --help` and the guide now say the detail screen lists up to
-  40 of them.
+  more (all in --json --all)` (plain `--json` keeps the top five; `--all`
+  lists every project), the models screen `(all in --json)` (`models` is never
+  cut), and the detail screen's day, week and month tables `N earlier rows not
+  shown (all in --json --by day)`; the interactive screen, which takes no
+  command, says to quit first and names the window on show (`+ N more (quit,
+  then run agent-archive stats --days 90 --json --all)`). The skills and MCP
+  servers say `+ N more (all in --json --all)` too; `stats --help` and the
+  guide say the detail screen lists up to 40 of them and the projects and
+  models screens up to 500 rows, not "every one".
+- **A `kill -QUIT` no longer leaves the terminal raw.** The interactive
+  screens (`list`, `show` and `stats`) turn Ctrl-\ off while they read keys,
+  but a SIGQUIT sent from outside dumped goroutines and left the terminal on
+  the alternate screen without echo. SIGQUIT is now handled like SIGTERM and
+  SIGHUP by every command that stops on a signal (those screens, the pager,
+  `backfill`, the storage check in `setup`, `stats` while it reads, and
+  `setup --refresh`, which absorbs it while it changes files): the terminal is
+  restored and the exit status is 131. The collector and the hooks are
+  unchanged.
+- **`stats` keeps a command and a name with its count together.** A hint such
+  as `(all in --json --by project)` was broken after `--by` on a 40-column
+  terminal, and a skill or MCP server could be separated from its count; each
+  now stays on one line whenever it fits. And the path of a page saved with
+  `h` is printed after a signal ends the interactive screen too, as it is
+  after a quit.
+- A hook no longer fails with "another collector or setup is running", and
+  loses that turn's evidence, when the collector, an import, or
+  `agent-archive feedback` writes to the same session at the same moment on a
+  busy Mac. Those writers held the session's lock, which a hook waits only a
+  second for, through the write's disk syncs, which can take longer; they now
+  sync first and hold the lock only to check and rename the file. Subagent
+  records are written the same way. Forgetting a session also no longer
+  waits, under that lock, for a subagent record another process is writing.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

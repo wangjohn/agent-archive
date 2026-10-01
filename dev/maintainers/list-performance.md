@@ -14,6 +14,15 @@ available with `--limit 0`, and an older archive without an index uses that
 scan until `list --rebuild-index` completes. The index is a hint: every
 displayed session must pass a live sidecar read and validation.
 
+The target covers a listing of every project: `list` outside any project,
+and `list --all-projects` piped or with `--json`. Inside a project, `list`
+applies the repository's scope before `--limit` (see
+[session finding](../specs/session-finding.md#deviations)), so it reads the
+whole listing, through the local metadata cache, as the handoff picker and
+bare `show` do; so does `list --all-projects` on a terminal, whose `a` key
+can switch to the scope. The index's repository-scoped window is to bring
+those back under the target.
+
 The benchmark in `internal/reader/list_index_bench_test.go` reports elapsed
 time and allocations for the cold full-scan baseline, indexed cold listing,
 and indexed warm listing. Memory-store listing is an in-process stand-in for
@@ -26,3 +35,17 @@ These are local measurements, not a network latency guarantee. The indexed
 test asserts one listing page and 51 live sidecar reads
 for 300 sessions; the same early-stop rule applies to the 10,000-session
 benchmark fixture.
+
+## Full scans
+
+Every command that needs the whole archive runs the full scan: `list --limit 0`,
+`stats`, bare `show`, the handoff picker, `handoff "<query>"`, and `list` on an
+archive whose index isn't ready. On R2 a listing page of 1,000 keys takes
+0.5–0.9 s, and one listing's pages are strictly sequential. So since the
+[listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
+split into contiguous key ranges listed concurrently: at most 16 in flight,
+each about 200 of the sidecars the metadata cache knows (one page). The
+ranges cover every key whatever the boundaries, so the cache only decides
+how evenly the work is spread. With under 400 cached sidecars under the
+listed prefix (a `--harness` listing counts only that harness's), or with
+`--no-cache`, the scan is the single sequential listing.

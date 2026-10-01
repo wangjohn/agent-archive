@@ -33,7 +33,7 @@ changes app settings.
 ## Goals
 
 1. `agent-archive backfill` with no arguments imports every session on this
-   Mac. It says so plainly, and first shows each project with its session
+   machine. It says so plainly, and first shows each project with its session
    count per app. Nothing is written until the person confirms.
 2. Imported sessions go through the same filter, bundle, metadata, retention,
    `list`, `show`, and `handoff` code as hook-captured ones.
@@ -47,11 +47,11 @@ changes app settings.
    evidence the import lacks.
 
 **Non-goals:**
-- Re-importing sessions this Mac already registered (see
+- Re-importing sessions this machine already registered (see
   [Re-admission](#re-admission)).
 - Deduplicating content that Claude Code copies into forked sessions.
 - Linking Codex sub-threads to their parents.
-- Importing from other Macs, from backups, or from store paths other than
+- Importing from other machines, from backups, or from store paths other than
   the defaults and those `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and setup's
   recorded hook files name (see [Discovery](#discovery)).
 - Installing hooks or changing app settings.
@@ -83,8 +83,8 @@ app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
 Ctrl-C during registration exits `1`, because the import is incomplete until a
 rerun; Ctrl-C during upload exits `0`, because the collector finishes it. The
 first Ctrl-C, in planning, registration, or upload, prints that it is
-stopping. A second Ctrl-C, or SIGTERM or SIGHUP at any point, exits at once
-with the shell's status for the signal (130, 143, 129), after
+stopping. A second Ctrl-C, or SIGTERM, SIGHUP or SIGQUIT at any point, exits at once
+with the shell's status for the signal (130, 143, 129, 131), after
 `cursorstore.RemoveOwnSnapshots` removes the database copies this process's
 Readers hold (the one-step backup can't be interrupted, and those Readers
 are never closed).
@@ -101,10 +101,10 @@ Counts are illustrative.
 
 ```
 $ agent-archive backfill
-Looking for Claude Code, Codex, and Cursor sessions on this Mac… 35 found.
+Looking for Claude Code, Codex, and Cursor sessions on this machine… 35 found.
 Checking storage… ready.
 
-Backfill imports every session found on this Mac into
+Backfill imports every session found on this machine into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
 PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
@@ -138,7 +138,7 @@ Import 29 sessions from 6 projects? [y/N/edit]
 ```
 
 - **Scope sentence.** It names the bucket and says "every session found on
-  this Mac". When filters are set, it says "sessions matching" and lists
+  this machine". When filters are set, it says "sessions matching" and lists
   them instead.
 - **Answers.** The default is No. `edit` asks for a longer retention
   period, which applies to the whole archive, then shows the plan again. It
@@ -946,7 +946,9 @@ snapshot is published as a replacement, and the chat carries one
 `cursor_chat_rewritten` capture gap (collector evidence, provenance
 `collector:cursor-rewrite`, no content) whose detail counts the rewrites and
 whose observation time is the last one's, so a chat Cursor rewrites often
-(late token counts are routine) does not grow a gap per rewrite.
+(late token counts are routine) does not grow a gap per rewrite. A change to
+the chat's name alone, which filter 13 keeps on the chat's first record, is
+not a rewrite: the chat is republished with its new name and no gap.
 
 **Everywhere else a transcript file was assumed.** The collector reads each
 registration through a small `sourceReader` interface (`Signature`,

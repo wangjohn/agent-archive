@@ -72,7 +72,7 @@ func TestSetupOffersImportAfterNextSteps(t *testing.T) {
 	saved := strings.Index(out, "Configuration saved.")
 	steps := strings.Index(out, "Check progress with agent-archive status.")
 	offer := strings.Index(out, "Import the 2 past sessions from these projects?")
-	another := strings.Index(out, "To set up another Mac with this storage")
+	another := strings.Index(out, "To set up another machine with this storage")
 	if saved < 0 || steps < saved || offer < steps || another < offer {
 		t.Fatalf("order saved=%d steps=%d offer=%d another=%d:\n%s", saved, steps, offer, another, out)
 	}
@@ -88,7 +88,7 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", "3", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, "help"), "2", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}
@@ -103,15 +103,15 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	}
 }
 
-// With no guided creation yet, the menu is the two providers and the
-// instructions, in that order.
-func TestStorageMenuOptionsWithoutGuidedCreation(t *testing.T) {
+// The menu is the two providers, the guided choices, then the instructions,
+// in that order.
+func TestStorageMenuOptionsOrder(t *testing.T) {
 	t.Parallel()
 	var keys []string
 	for _, o := range storageMenuOptions() {
 		keys = append(keys, o.Key)
 	}
-	if strings.Join(keys, ",") != "r2,s3,help" {
+	if strings.Join(keys, ",") != "r2,s3,s3-new,help" {
 		t.Fatalf("menu = %v", keys)
 	}
 }

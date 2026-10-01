@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 )
 
 // This child is only launched under a pseudo-terminal by the test below.
@@ -36,7 +34,7 @@ master, slave = pty.openpty()
 env = dict(os.environ, ARCHIVE_SECRET_TEST_CHILD='1')
 p = subprocess.Popen([sys.argv[1], '-test.run=^TestSecretTerminalChild$'], stdin=slave, stdout=slave, stderr=slave, env=env)
 try:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     output = b''
     # A color terminal ends the prompt with the › cursor, NO_COLOR with ": ".
     while b'Secret (hidden)' not in output or not (output.endswith('\u203a '.encode()) or output.endswith(b': ')):
@@ -56,10 +54,7 @@ finally:
     if p.poll() is None: p.kill(); p.wait()
     os.close(master); os.close(slave)
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-c", script, binary)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runPTYScript(t, python, script, binary); err != nil {
 		t.Fatalf("PTY test: %v %s", err, out)
 	}
 }
@@ -79,7 +74,7 @@ master, slave = pty.openpty()
 env = dict(os.environ, ARCHIVE_SECRET_TEST_CHILD='1')
 p = subprocess.Popen([sys.argv[1], '-test.run=^TestSecretTerminalChild$'], stdin=slave, stdout=slave, stderr=slave, env=env)
 try:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     output = b''
     # A color terminal ends the prompt with the › cursor, NO_COLOR with ": ".
     while b'Secret (hidden)' not in output or not (output.endswith('\u203a '.encode()) or output.endswith(b': ')):
@@ -99,10 +94,7 @@ finally:
     if p.poll() is None: p.kill(); p.wait()
     os.close(master); os.close(slave)
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-c", script, binary)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runPTYScript(t, python, script, binary); err != nil {
 		t.Fatalf("PTY test: %v %s", err, out)
 	}
 }

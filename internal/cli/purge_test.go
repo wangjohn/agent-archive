@@ -19,6 +19,7 @@ import (
 )
 
 func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, t.TempDir(), time.Now())
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)

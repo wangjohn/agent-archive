@@ -14,7 +14,7 @@ import (
 // collectorLockRecordName is the file in the data directory that says who
 // holds collector.lock and since when. flock itself records neither, so
 // without it status could only guess from the age of the last scan, which
-// cannot tell a pass that started a moment ago (after the Mac woke, say)
+// cannot tell a pass that started a moment ago (after the machine woke, say)
 // from one that has hung.
 const collectorLockRecordName = "collector-lock.json"
 

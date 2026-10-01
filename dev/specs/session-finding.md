@@ -1,8 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PR 1 in review. Where this plan and the code differ once packages merge, the
-code is the reference and differences go under Deviations.
+PRs 1, 2 and 4 merged, PR 3 (parser 0.17.0) in review, the rest not started. Where this
+plan and the code differ once packages merge, the code is the reference and
+differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -230,7 +231,7 @@ directory:
 
 1. The repository key of the directory (`gitremote.Resolver.Key`, the same
    hash hooks record). A session is in scope when its `RepoKey` equals it.
-   This spans checkouts, worktrees, and Macs.
+   This spans checkouts, worktrees, and machines.
 2. With no key on either side (no origin remote, or an older session), a
    local session is in scope when `sameProject(reg.ProjectRoot, dir)`, and an
    archived one when its `ProjectID` is in `projectIDs(dir)`, as `--latest`
@@ -261,7 +262,7 @@ all projects, and the heading says `Nothing in agent-archive ·
 showing all projects`.
 
 Title search, in `handoff "<words>"` and `list "<words>"`, looks in scope
-first, then everywhere, as `handoff` already looks on this Mac before the
+first, then everywhere, as `handoff` already looks on this machine before the
 archive. The tiers, each tried only when the one before has no match:
 
 1. an exact session ID (unchanged)
@@ -371,7 +372,7 @@ Everything else is the same code for every caller:
 - paging, scrolling, and fitting to the window (#149)
 
 Rows keep their own sources: `list` and `show` read the archive, and
-`handoff` also offers this Mac's sessions that are not uploaded yet. Making
+`handoff` also offers this machine's sessions that are not uploaded yet. Making
 `list` and `show` offer local sessions is out of scope. `list`'s ID column
 is a column rule (§7), not a browser difference.
 
@@ -653,3 +654,113 @@ guide. Live check on the owner's Mac:
   need admitting, or the parser would need to keep the last human prompt.
 - A configured default scope (always all projects), if `a` and
   `--all-projects` prove not enough.
+
+## Deviations
+
+- PR 2: `custom-title` and `pr-link` are rebuilt from typed values
+  (`internal/archive/filter_session_labels.go`, as `compact_boundary` is) and
+  their keys are admitted for those two records only, instead of adding
+  `customTitle`, `prNumber`, `prRepository`, and `prUrl` to `allowedKeys`.
+  `allowedKeys` applies to every record, so adding the keys there would have
+  kept an unvalidated `prUrl` on a `user` record, and could not check the URL
+  against the repository and number.
+- PR 2: `prNumber` is written as a JSON integer whether Claude Code wrote a
+  string (`"213"`, what real data holds) or a number, so PR 3 reads one
+  shape: an integer in `prNumber`, not a string.
+- PR 2: a dropped `pr-link` (or a `custom-title` with no usable text) is
+  recorded as `unsupported_value_omitted` with the detail `record omitted`,
+  not `unknown_record_type`, which stays the code for record types the
+  filter does not know. A `prUrl` dropped for not matching is named in the
+  `unknown_field_omitted` gap, like any other dropped key.
+- PR 2: Cursor's `name` is written as `name` on the `session` record, the
+  first record of the chat. That record is part of what a later snapshot must
+  extend, and Cursor names a chat after its first messages, so the collector's
+  prefix check (`nativeEvidenceExtends`) compares a Cursor session record
+  without its name (`archive.SameNativeRecord`). Otherwise nearly every
+  Cursor chat would get a `cursor_chat_rewritten` gap ("Cursor changed
+  messages") for being named. A chat named or renamed later is republished
+  with its new name and no gap.
+- PR 2: `splitRepository` and `parsePRNumber` in `git_activity.go` are the
+  filter's reading of a repository (`repoPartPattern`, as `git_activity`
+  requires) and a number (digits only, 1 to `maxPRNumber`, as a pull
+  request URL has it). `pullRequestEvent` keeps its own number check, which
+  also takes a leading `+` from an MCP call's argument, so `git_activity`'s
+  output is unchanged.
+- PR 4: bare `show` (its browser and `show --json`'s picker) also starts in
+  the working directory's scope, with `a`, because it shares the browser and
+  `findBrowseSessions`; it has no `--all-projects` or `--project` flag yet.
+  `show "<words>"` is unchanged (PR 5 replaces its matcher).
+- PR 4: title search keeps today's matcher (`matchSessionsByQuery`) and only
+  gains the scope-first order: this machine's in-scope sessions, then the
+  archive's in-scope, then everywhere (this machine's, then the archive's). The
+  subagent tier is PR 5's. The "N more in other projects" count covers what
+  was searched: a title answered on this machine does not read the archive, which
+  needs the network, so its other matches are not counted.
+- PR 4: a scope is applied before `--limit`, so a `list` that can narrow (a
+  scope, or a terminal that can switch to one) reads the whole archive
+  listing instead of the index's newest page. `list --all-projects` piped, or
+  with `--json`, keeps the index fast path. The index spec's scoped window
+  will replace this.
+- PR 4: a scope exists only inside a project: a directory with a repository
+  key, or inside a configured project root. Elsewhere the working directory
+  has no scope (every session). A directory named with `--project` is always
+  the scope, so one in no project holds nothing and falls back with the
+  heading saying so. A scope made from a directory in a git checkout is named after the
+  repository's main checkout (`repositoryName`: a worktree's `.git` file
+  points into it, and a subdirectory walks up to it), not after the directory
+  or the sessions a command happened to read, so every view, heading, title
+  note, and `--json` document names it alike, with or without the archive.
+- PR 4: `listScope.label` is the scope's name even when it is turned off
+  (`all_projects` says so); `outside_matches` counts the sessions outside the
+  scope that match the same filters. The object is omitted outside a project.
+- PR 4: the PR column first read the last `pr_created` event of
+  `git_activity` (`createdPRLabel`); PR 3 replaced that with `LatestPR`
+  (the last linked pull request, else the last created). `listRow.Live` (owned by
+  PR 6 in the shared-names table) is added here for the dot; local rows only
+  (the archive says nothing about what is running here).
+- PR 4: HARNESS and PROJECT are left out only for two or more rows (one row
+  shares its value with nothing), and the verbose table keeps every column.
+  With one project the table is not grouped, so a repository's checkouts are
+  one list.
+- PR 4: `handoff --project NAME` with `--latest` still reads its value as a
+  directory (a project that no longer exists on disk is still searched by
+  its ID). `--project` and `--all-projects` are usage errors with `--file`,
+  and `--all-projects` with `--latest`; `--project` sets where a launched agent
+  starts only with `--latest`, as before.
+- PR 4: the picker's line-mode `a` takes precedence over a short ID prefix
+  typed as `a`, as `n` and `p` do. In the key browser `a` pressed first
+  switches the scope, so a short ID that starts with `a` (IDs are hex) is
+  picked by its row number there; `n`, `p`, and `q` never met this, as they
+  are not hex digits.
+- PR 3: `SessionLabels` is the one place the four labels are derived, but
+  `BuildMetadata` reaches it through `deriveLabels(bundle, view)`, which takes
+  the normalized view it has already parsed, so a transcript is not parsed
+  twice. `SessionLabels(bundle)` parses and calls the same `deriveLabels`; the
+  picker's `localMetadata` calls it. Its `ok` is what `firstPrompt`'s was:
+  whether the transcript holds a prompt (a Cursor text transcript counts).
+- PR 3: `firstPrompt` is gone rather than kept: with the title coming from
+  `SessionLabels`, `hasPrompt` is all that was left of it, so it reads the
+  prompt test directly. The picker's local titles are now derived as
+  published ones are (runes, and a Cursor text transcript now has a title
+  where the local row had none).
+- PR 3: `show`'s summary heading is `DisplayTitle`. Rather than a `Name` row
+  that would repeat the heading, a session with a name gets a `Prompt` row
+  holding its first prompt (which was the heading before), so `show` loses
+  nothing; `Branch` and `PRs` rows are added, `PRs` being the linked pull
+  requests as `owner/repo#n`, beside the existing `Git` row of the ones its
+  commands opened or merged.
+- PR 3: `PullRequestLink.URL` is `omitempty` (a `pr-link` may carry no
+  `prUrl`), and the parser keeps a URL only when it is exactly the GitHub
+  address rebuilt from the repository and number, as the filter does; it does
+  not rebuild one the record lacked, since a GitHub Enterprise link is dropped
+  by the filter and the host is not known. A `pr-link` whose repository or
+  number is out of shape is skipped.
+- PR 3: `branch` reads the last record's `gitBranch` through the same helper
+  handoff uses (`recordedBranch`), then applies `validBranch`; a last value
+  that is malformed or `HEAD` gives no branch, rather than falling back to an
+  earlier record's.
+- PR 3: `TestFilterV13NewRecordsDoNotChangeDerivedMetadata` (PR 2) asserted
+  that the parser ignored the new records; it is now
+  `TestFilterV13NewRecordsChangeOnlyNameAndPullRequests`, asserting that they
+  change `name` and `pull_requests` and nothing else. The non-interactive
+  ambiguous-`show` list also prints `DisplayTitle`.

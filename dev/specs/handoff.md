@@ -9,7 +9,7 @@ Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
 ## Problem
 
 A person switching coding agents mid-task (Codex → Claude Code, Claude Code
-→ Cursor, or the same agent on another Mac) has no way to carry the
+→ Cursor, or the same agent on another machine) has no way to carry the
 conversation over. Each app resumes only its own sessions, from its own
 local files. Today the closest path is `agent-archive show ID --normalized`,
 which prints ~350 KB of JSON for a medium Claude session, omits every tool
@@ -66,7 +66,8 @@ agent-archive handoff [SESSION_ID | --latest] [flags]
 |---|---|---|
 | `SESSION_ID` | — | Archive session ID from `list`. Mutually exclusive with `--latest` and `--file`. |
 | `--latest` | off | Most recent session for the project (see [Selection](#selection)). |
-| `--project DIR` | current directory | Project used by `--latest`. |
+| `--project DIR\|NAME` | current directory | The project the picker and a title look at first (a directory's repository, or a project name), and the directory `--latest` searches. See [session finding](session-finding.md#3-scope-this-repository-first). |
+| `--all-projects` | off | The picker and a title look at every project, not only the working directory's repository. Not with `--project`, `--latest`, or `--file`. |
 | `--harness NAME` | any | Restrict `--latest`, or disambiguate an ID, to `claude`, `codex`, or `cursor`. |
 | `--file PATH --harness NAME` | — | Render a native transcript file directly. Same machine only; still filtered. |
 | `--source auto\|local\|archive` | `auto` | Where the session content comes from (see [Content source](#content-source)). |
@@ -148,7 +149,7 @@ pick is visible:
    no project column in v1: a name taken from local config would be blank
    on the other machine, which is where it would be needed.
 
-Known limit: `ProjectID` hashes the absolute path, so on a second Mac the
+Known limit: `ProjectID` hashes the absolute path, so on a second machine the
 same repository only matches when it is checked out at the same path.
 Phase 2 adds a portable repository key (see [Later](#later-phase-2)). Until
 then, the cross-machine flow is step 3's fallback list, or `list` →
