@@ -17,8 +17,9 @@ import (
 func TestSetupRollbackCannotRestoreNumericProtectedWriter(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name             string
-		refresh, enabled bool
+		name    string
+		refresh bool
+		enabled bool
 	}{{"setup-disabled", false, false}, {"refresh-disabled", true, false}, {"setup-enabled", false, true}, {"refresh-enabled", true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
