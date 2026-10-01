@@ -626,6 +626,13 @@ follow [Semantic Versioning](https://semver.org/).
   prototype's upload job, or a collector under an earlier label) whose label
   another installation now runs: recovery used to stop there, leaving the
   jobs after it stopped, and now puts its plist back and finishes.
+- A Cursor read no longer fails now and then with "lock a Cursor database
+  snapshot directory" when a sweep of leftover snapshots (at the start of
+  every collector pass and every backfill command) runs at the moment the
+  read starts. The sweep checks whether each snapshot is in use by taking
+  its lock for an instant; it could take a new snapshot's lock just before
+  the read did. A read's lock file now appears already locked, so the
+  sweep sees it in use and leaves it alone.
 
 ### Changed
 
