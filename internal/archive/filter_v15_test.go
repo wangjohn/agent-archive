@@ -8,7 +8,10 @@ import (
 
 func TestPairingBundleRedactionBoundaries(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ in, want string }{
+	for _, tc := range []struct {
+		in   string
+		want string
+	}{
 		{"Paste aa-pair1:synthetic_ABC-123 now.", "Paste [REDACTED] now."},
 		{"aa-pair1:a", "[REDACTED]"},
 		{"AA-PAIR1:abc+/==", "[REDACTED]"},
@@ -24,6 +27,7 @@ func TestPairingBundleRedactionBoundaries(t *testing.T) {
 		{"acorn cable lemon orbit river violet", "acorn cable lemon orbit river violet"},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
 			got, hit := redactSensitive(tc.in)
 			if got != tc.want || hit != (tc.in != tc.want) {
 				t.Fatalf("got %q (%v), want %q", got, hit, tc.want)
@@ -40,6 +44,7 @@ func TestFilterRedactsPairingBundlesAtEveryRetainedDepth(t *testing.T) {
 	t.Parallel()
 	for _, harness := range []string{"claude", "codex", "cursor"} {
 		t.Run(harness, func(t *testing.T) {
+			t.Parallel()
 			adapter := adapterForFixture(t, harness+"-pairing-bundles.jsonl")
 			filtered, err := adapter.FilterJSONL(bytes.NewReader(fixture(t, harness+"-pairing-bundles.jsonl")))
 			if err != nil {
