@@ -3,15 +3,17 @@ package backfill
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
 
 // transcript is one native transcript file found on disk, before resolution.
@@ -137,23 +139,22 @@ func discoverClaude(env Environment, u *unreadable) []*transcript {
 	return found
 }
 
+type nativeDirectories struct{ env Environment }
+
+func (n nativeDirectories) ReadDir(path string) ([]fs.DirEntry, error) { return n.env.readDir(path) }
+
 func discoverClaudeIn(env Environment, root string, u *unreadable) []*transcript {
 	var found []*transcript
-	for _, slug := range listStore(env, root, "claude", u) {
-		if !slug.dir {
-			continue
+	coverage, _ := nativesessions.Walk(context.Background(), nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root}, 0, func(ref nativesessions.Ref) (bool, error) {
+		size, ok := fileSize(env, ref.Path)
+		if ok {
+			found = append(found, &transcript{harness: harnessClaude, path: ref.Path, size: size, nativeID: strings.TrimSuffix(filepath.Base(ref.Path), ".jsonl")})
 		}
-		for _, f := range listDir(env, filepath.Join(root, slug.name), u) {
-			if !f.regular || !strings.HasSuffix(f.name, ".jsonl") {
-				continue
-			}
-			path := filepath.Join(root, slug.name, f.name)
-			size, ok := fileSize(env, path)
-			if !ok {
-				continue
-			}
-			found = append(found, &transcript{harness: harnessClaude, path: path, size: size, nativeID: strings.TrimSuffix(f.name, ".jsonl")})
-		}
+		return true, nil
+	})
+	u.folders += coverage.UnreadableFolders
+	if coverage.RootUnreadable {
+		u.stores["claude"] = true
 	}
 	return found
 }
@@ -182,48 +183,28 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 
 func discoverCodexIn(env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
 	var found []*transcript
-	var walk func(dir string, entries []dirEntry)
-	walk = func(dir string, entries []dirEntry) {
-		for _, e := range entries {
-			path := filepath.Join(dir, e.name)
-			if e.dir {
-				walk(path, listDir(env, path, u))
-				continue
+	for index, store := range []string{"sessions", "archived_sessions"} {
+		coverage, _ := nativesessions.Walk(context.Background(), nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0}, 0, func(ref nativesessions.Ref) (bool, error) {
+			name := filepath.Base(ref.Path)
+			if seen[name] {
+				return true, nil
 			}
-			if !e.regular || !isRolloutName(e.name) || seen[e.name] {
-				continue
+			size, ok := fileSize(env, ref.Path)
+			if ok {
+				seen[name] = true
+				found = append(found, &transcript{harness: harnessCodex, path: ref.Path, size: size})
 			}
-			size, ok := fileSize(env, path)
-			if !ok {
-				continue
+			return true, nil
+		})
+		u.folders += coverage.UnreadableFolders
+		if coverage.RootUnreadable {
+			if index == 1 {
+				u.codexArchivedOnly = !u.stores["codex"]
 			}
-			seen[e.name] = true
-			found = append(found, &transcript{harness: harnessCodex, path: path, size: size})
+			u.stores["codex"] = true
 		}
-	}
-	sessions := filepath.Join(codexDir, "sessions")
-	walk(sessions, listStore(env, sessions, "codex", u))
-	sessionsRead := !u.stores["codex"]
-	archived := filepath.Join(codexDir, "archived_sessions")
-	archivedEntries := listStore(env, archived, "codex", u)
-	u.codexArchivedOnly = sessionsRead && u.stores["codex"]
-	for _, e := range archivedEntries {
-		if !e.regular || !isRolloutName(e.name) || seen[e.name] {
-			continue
-		}
-		path := filepath.Join(archived, e.name)
-		size, ok := fileSize(env, path)
-		if !ok {
-			continue
-		}
-		seen[e.name] = true
-		found = append(found, &transcript{harness: harnessCodex, path: path, size: size})
 	}
 	return found
-}
-
-func isRolloutName(name string) bool {
-	return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
 }
 
 // discoverCursor finds ~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl,
@@ -277,81 +258,17 @@ func discoverCursor(env Environment, u *unreadable) []*transcript {
 	return found
 }
 
-// readHead reads the leading records a transcript's identity and working
-// directory come from. Claude Code: the cwd of the first record that has one.
-// Codex: session_meta, whose payload.id is the native ID and must equal
-// payload.session_id when present and the UUID in the file name.
+// readHead preserves import's 8 MiB scan and 16-record Codex rule.
 func readHead(env Environment, t *transcript) error {
-	switch t.harness {
-	case harnessClaude:
-		return scanRecords(env, t.path, func(line []byte) bool {
-			var r struct {
-				Cwd string `json:"cwd"`
-			}
-			if json.Unmarshal(line, &r) == nil && r.Cwd != "" {
-				t.cwd = r.Cwd
-				return false
-			}
-			return true
-		})
-	case harnessCodex:
-		seen := 0
-		metaFound := false
-		err := scanRecords(env, t.path, func(line []byte) bool {
-			seen++
-			var r struct {
-				Type      string `json:"type"`
-				Timestamp string `json:"timestamp"`
-				Payload   struct {
-					ID        string `json:"id"`
-					SessionID string `json:"session_id"`
-					Timestamp string `json:"timestamp"`
-					Cwd       string `json:"cwd"`
-				} `json:"payload"`
-			}
-			if json.Unmarshal(line, &r) != nil || r.Type != "session_meta" {
-				return seen < codexMetaScanLimit
-			}
-			metaFound = true
-			t.nativeID = r.Payload.ID
-			t.cwd = r.Payload.Cwd
-			fileID := rolloutFileID(filepath.Base(t.path))
-			if r.Payload.ID == "" || (r.Payload.SessionID != "" && r.Payload.SessionID != r.Payload.ID) || fileID == "" || !strings.EqualFold(fileID, r.Payload.ID) {
-				t.identityMismatch = true
-			}
-			for _, ts := range []string{r.Payload.Timestamp, r.Timestamp} {
-				if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-					t.metaStart = parsed.UTC()
-					break
-				}
-			}
-			return false
-		})
-		if !metaFound {
-			// Without session_meta there is no ID to register the session
-			// under, so it cannot be matched with a hook registration.
-			t.identityMismatch = true
-		}
-		return err
-	case harnessCursor:
-		// Cursor's ID and project come from its folders, not its records.
+	if t.harness == harnessCursor {
+		return nil
 	}
-	return nil
-}
-
-// codexMetaScanLimit bounds how far into a Codex rollout session_meta is
-// looked for. Codex writes it first.
-const codexMetaScanLimit = 16
-
-// rolloutUUID is the session UUID at the end of a Codex rollout file name.
-var rolloutUUID = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$`)
-
-// rolloutFileID returns the UUID a rollout file is named with, or "".
-func rolloutFileID(name string) string {
-	if m := rolloutUUID.FindStringSubmatch(name); m != nil {
-		return m[1]
-	}
-	return ""
+	h, err := nativesessions.Inspect(string(t.harness), t.path, func(visit func([]byte) bool) error { return scanRecords(env, t.path, visit) })
+	t.cwd = h.Directory
+	t.nativeID = h.NativeID
+	t.metaStart = h.StartedAt
+	t.identityMismatch = h.IdentityMismatch
+	return err
 }
 
 // headLineLimit is the longest line the header scan decodes; a longer one is
