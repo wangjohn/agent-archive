@@ -47,12 +47,33 @@ func newKeyIssuer(home string, cfg config.Config, env Env, p *prompter, api clou
 }
 
 func (i *keyIssuer) create(origin issuance.Origin) (issuance.Slot, credentials.R2Credentials, error) {
+	return i.createWithIntent(origin, "", nil)
+}
+
+// createWithIntent binds a chosen recipient before the immutable provider name
+// is journaled, and lets an owning transaction persist that exact slot before API.
+func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string, beforeProvider func(issuance.Slot) error) (issuance.Slot, credentials.R2Credentials, error) {
 	s, err := issuance.New(i.cfg.MachineID, i.cfg.DestinationID(), i.account, i.bucket, i.group, origin, i.env.now())
 	if err != nil {
 		return s, credentials.R2Credentials{}, err
 	}
+	if recipientID != "" {
+		if !config.ValidMachineID(recipientID) {
+			return s, credentials.R2Credentials{}, errors.New("invalid recipient identity")
+		}
+		s.RecipientID = recipientID
+		s.ProviderName = issuance.ProviderName(recipientID, s.IssuerID, s.SlotID)
+	}
 	if err = issuance.Save(i.home, s); err != nil {
 		return s, credentials.R2Credentials{}, err
+	}
+	if beforeProvider != nil {
+		if err = beforeProvider(s); err != nil {
+			s.State = issuance.Deleted
+			s.CleanupReason = "transaction-refused-before-provider"
+			_ = issuance.Save(i.home, s)
+			return s, credentials.R2Credentials{}, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -406,7 +427,7 @@ func choosePairingKey(home string, cfg config.Config, p *prompter, env Env, yes,
 	selected.ExpiresAt = payload.ExpiresAt
 	if err = issuance.Save(home, selected); err != nil {
 		issuer.cleanup(&selected)
-		api.Discard()
+		issuer.api.Discard()
 		return selected, nil, err
 	}
 	setDedicatedPayload(payload, selected, key)

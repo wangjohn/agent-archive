@@ -86,6 +86,19 @@ func TestLedgerImmutableIdentityAndStateValidation(t *testing.T) {
 	if err = Save(home, slot); err != nil {
 		t.Fatal(err)
 	}
+	recycled := slot
+	recycled.State = Spare
+	recycled.PairingID = ""
+	recycled.Label = ""
+	recycled.ExpiresAt = time.Time{}
+	if Save(home, recycled) == nil {
+		t.Fatal("exposed slot recycled")
+	}
+	changed := slot
+	changed.ProviderID = strings.Repeat("f", 32)
+	if Save(home, changed) == nil {
+		t.Fatal("immutable provider binding replaced")
+	}
 	slot.ProviderName = "agent-archive bogus"
 	if slot.Validate() == nil {
 		t.Fatal("changed name accepted")

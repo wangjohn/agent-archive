@@ -253,7 +253,7 @@ remains. Spare refill failure does not invalidate the delivered pairing.
 | `--name` | a value | — |
 | `--print` | no value | — |
 | `--share-key` | no value | — |
-| `--spares` | a value | `-1` |
+| `--spares` | a value | `2` |
 | `--yes` | no value | — |
 
 ## agent-archive machines rename

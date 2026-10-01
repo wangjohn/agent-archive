@@ -383,3 +383,106 @@ func TestDedicatedSparesZeroAndFlagBounds(t *testing.T) {
 		t.Fatal("zero policy did not disable refill")
 	}
 }
+
+func TestDedicatedPropagationRetriesBeforeExposure(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	original := env.OpenStore
+	calls, pauses := 0, 0
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		calls++
+		if calls <= 2 {
+			return &guidedStore{fail: invalidKey}, nil
+		}
+		return original(cfg)
+	}
+	env.Pause = func(time.Duration) { pauses++ }
+	i := fixtureIssuer(t, env, home)
+	s, _, err := i.create(issuance.Precreated)
+	must(t, err)
+	if calls != 3 || pauses != 2 || s.State != issuance.Spare || len(cf.Live()) != 1 {
+		t.Fatal("key exposed before propagation checks completed")
+	}
+}
+
+func TestDedicatedLostResponseAmbiguousNameNeverDeletes(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	client := i.api
+	i.api = &trackedInventoryAPI{API: client, InventoryAPI: client.(cloudflare.InventoryAPI), create: func(ctx context.Context, a string, s cloudflare.TokenSpec) (cloudflare.Token, error) {
+		_, err := client.CreateToken(ctx, a, s)
+		must(t, err)
+		cf.MetadataTokens = append(cf.MetadataTokens, map[string]any{"id": strings.Repeat("f", 32), "name": s.Name, "status": "active"})
+		return cloudflare.Token{}, errors.New("lost")
+	}}
+	s, _, err := i.create(issuance.Fresh)
+	if err == nil || s.State != issuance.CleanupPending || len(cf.Live()) != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+		t.Fatal("ambiguous provider name authorized cleanup")
+	}
+}
+
+func TestDedicatedReservedCrashReleaseRequiresNoExposure(t *testing.T) {
+	env, home, _, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	s, _, err := i.create(issuance.Precreated)
+	must(t, err)
+	first, _, err := reserveSpare(home, i.cfg, strings.Repeat("b", 32), "laptop", env.now().Add(time.Hour), env)
+	must(t, err)
+	must(t, recoverUntouchedSpares(home, i.cfg))
+	next, _, err := reserveSpare(home, i.cfg, strings.Repeat("c", 32), "desktop", env.now().Add(time.Hour), env)
+	must(t, err)
+	if first.SlotID != s.SlotID || next.SlotID != s.SlotID {
+		t.Fatal("untouched reservation was lost")
+	}
+	next.State = issuance.DeliveryIntent
+	must(t, issuance.Save(home, next))
+	must(t, recoverUntouchedSpares(home, i.cfg))
+	final, _, err := reserveSpare(home, i.cfg, strings.Repeat("d", 32), "tablet", env.now().Add(time.Hour), env)
+	must(t, err)
+	if final.SlotID != "" {
+		t.Fatal("uncertain delivery recycled")
+	}
+}
+
+func TestDedicatedCreateWithIntentBindsRecipientBeforeProvider(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	recipient := strings.Repeat("b", 32)
+	called := false
+	s, _, err := i.createWithIntent(issuance.Fresh, recipient, func(slot issuance.Slot) error {
+		called = true
+		slots, err := issuance.List(home)
+		must(t, err)
+		if len(slots) != 1 || slots[0].SlotID != slot.SlotID || slot.RecipientID != recipient || cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
+			t.Fatal("provider preceded transaction intent")
+		}
+		return nil
+	})
+	must(t, err)
+	id, ok := cloudflare.ParseProviderName(cf.Tokens()[0].Name)
+	if !called || !ok || id.RecipientID != recipient || s.RecipientID != recipient {
+		t.Fatal("chosen recipient identity changed")
+	}
+}
+
+func TestDedicatedCreateWithIntentCallbackFailureAndInvalidRecipient(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	s, _, err := i.createWithIntent(issuance.Fresh, strings.Repeat("b", 32), func(issuance.Slot) error { return errors.New("transaction journal failed") })
+	if err == nil || s.State != issuance.Deleted || cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
+		t.Fatal("callback failure caused API effect")
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	if len(slots) != 1 || slots[0].CleanupReason != "transaction-refused-before-provider" {
+		t.Fatal("callback failure lost durable intent")
+	}
+	_, _, err = i.createWithIntent(issuance.Fresh, "../invalid", func(issuance.Slot) error { t.Fatal("invalid recipient reached transaction"); return nil })
+	if err == nil || cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
+		t.Fatal("invalid recipient reached provider")
+	}
+	slots, err = issuance.List(home)
+	must(t, err)
+	if len(slots) != 1 {
+		t.Fatal("invalid recipient persisted")
+	}
+}

@@ -198,11 +198,11 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 		terminal.Println(errOut, "cannot persist pairing preparation")
 		return 1
 	}
-	if result := deliverPairingBundle(home, bundle, &ledger, &slot, issuer, env, out, errOut, opts); result != 0 {
-		return result
-	}
 	if !opts.yes && !opts.printBundle && opts.file == "" {
 		defer env.clearPairClipboard(bundle)
+	}
+	if result := deliverPairingBundle(home, bundle, &ledger, &slot, issuer, env, out, errOut, opts); result != 0 {
+		return result
 	}
 	return finishPairingDelivery(p, code, ledger, home, opts.yes, out, errOut, env, &slot, issuer)
 }

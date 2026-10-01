@@ -154,7 +154,8 @@ func List(home string) ([]Slot, error) {
 		if !strings.HasPrefix(e.Name(), "slot-") {
 			continue
 		}
-		if !e.Type().IsRegular() {
+		info, infoErr := e.Info()
+		if infoErr != nil || !e.Type().IsRegular() || info.Mode().Perm() != 0600 {
 			return nil, errors.New("invalid issuance ledger entry")
 		}
 		f, err := os.Open(filepath.Join(home, "issued", e.Name()))
