@@ -24,9 +24,10 @@ CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
 line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
-runs the Linux scheduler against a real systemd user manager on Ubuntu (see
-[below](#never-test-against-your-real-machine)); it is its own check, not a
-required one. `go test ./...` also checks the docs:
+runs the Linux scheduler against a real systemd user manager on Ubuntu 24.04
+(see [below](#never-test-against-your-real-machine)); it is meant to be a
+required check, and its name must stay `real-systemd`, because branch
+protection matches it by name. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -165,12 +166,16 @@ In Go tests, everything goes through injection:
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that
   already has such units. CI runs them in the `real-systemd` job on
-  `ubuntu-latest` (a virtual machine with systemd: it enables lingering for the
-  runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  `ubuntu-24.04` (a virtual machine with systemd 255: it enables lingering for
+  the runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
   waits up to two and a half minutes for the timer's first run). That job is
-  its own check and is not among the branch's required ones, so a change to the
-  runner image does not stop unrelated pull requests; a failure in it is a real
-  finding about the adapter. To run it yourself, never on your own machine or
+  intended to be a required check, so it is pinned to the image it was
+  validated on rather than `ubuntu-latest`, whose move to a new image would
+  change the systemd version and defaults under a required check. Bump the pin
+  deliberately, re-validating on the new image with
+  `scripts/acceptance/linux` first. The job's name must stay `real-systemd`,
+  because branch protection matches the required check by name. A failure in it
+  is a real finding about the adapter. To run it yourself, never on your own machine or
   login, use a disposable Linux container with systemd as PID 1 (Docker on
   macOS runs it in a Linux VM) and a non-root user (or run
   `scripts/acceptance/linux/host.sh`, which does all of this and more; see
