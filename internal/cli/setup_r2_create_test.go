@@ -212,6 +212,9 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
+	if !strings.Contains(out, "Using Cloudflare account: Test account ("+cloudflaretest.AccountID+")") {
+		t.Fatalf("account was not selected automatically:\n%s", out)
+	}
 	want := []string{
 		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RoutePermissionGroups),
 		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
@@ -220,6 +223,12 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 		t.Fatalf("calls %v, want %v", got, want)
 	}
 	cfg := g.savedConfig(t)
+	if cfg.BucketPrivacy == nil || cfg.BucketPrivacy.State != "verified_private" || cfg.BucketPrivacy.Reason != "r2_public_domains_disabled" ||
+		!slices.Equal(cfg.BucketPrivacy.Checks, []string{"r2_dev_domain", "custom_domains"}) ||
+		cfg.BucketPrivacy.ConfigurationID != privacyConfigurationID(cfg) || cfg.BucketPrivacy.CheckedAt == nil ||
+		!strings.Contains(out, "✓ Bucket is private") || !strings.Contains(out, "r2.dev off; no enabled custom domains (checked at setup)") {
+		t.Fatalf("guided privacy evidence %+v; output:\n%s", cfg.BucketPrivacy, out)
+	}
 	if cfg.Storage.Provider != credentials.ProviderR2 || !defaultBucketName.MatchString(cfg.Storage.Bucket) ||
 		cfg.Storage.R2AccountID != cloudflaretest.AccountID || cfg.Storage.R2Endpoint != "https://"+cloudflaretest.AccountID+".r2.cloudflarestorage.com" {
 		t.Fatalf("storage %+v", cfg.Storage)
@@ -252,29 +261,31 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 			t.Fatal("the bootstrap token was not discarded")
 		}
 	}
-	for _, want := range []string{"Created bucket " + cfg.Storage.Bucket, "r2.dev public access: off (checked at setup).", "Custom domains: none (checked at setup).", "not saved anywhere", "Connected to your storage."} {
+	for _, want := range []string{"Created bucket " + cfg.Storage.Bucket, "r2.dev public access: off (checked at setup).", "Custom domains: none enabled (checked at setup).", "not saved anywhere", "Connected to your storage."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "is private") || strings.Contains(out, "Bucket is private") {
-		t.Fatalf("claims more than was checked:\n%s", out)
-	}
 }
 
 // The instructions come before anything is asked, name the permissions, and
-// link Cloudflare's page for the token rather than a guessed dashboard link.
+// link directly to Cloudflare's account API tokens page.
 func TestGuidedR2ExplainsTheTokenBeforeAskingForIt(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
+	if !strings.Contains(out, "Setup needs a Cloudflare API token to create the bucket and key, and won't save it.") || strings.Contains(out, "This is experimental") {
+		t.Fatalf("token introduction is not concise:\n%s", out)
+	}
+	link := strings.Index(out, "Get your token: "+cloudflare.TokenDashboardURL)
+	create := strings.Index(out, "Sign in, select your account, choose Create Token, and give it these permissions:")
 	intro := strings.Index(out, "Workers R2 Storage Write")
 	ask := strings.Index(out, "Cloudflare API token (hidden")
-	if intro < 0 || ask < intro || !strings.Contains(out, "Account API Tokens Write") || !strings.Contains(out, cloudflare.TokenDocsURL) {
+	if link < 0 || create < link || intro < create || ask < intro || !strings.Contains(out, "Account API Tokens Write") {
 		t.Fatalf("instructions:\n%s", out)
 	}
-	if strings.Contains(out, "dash.cloudflare.com") {
-		t.Fatalf("a dashboard link was guessed:\n%s", out)
+	if strings.Contains(out[:ask], "Manage account > Account API tokens") || strings.Contains(out[:ask], "Cloudflare's steps:") {
+		t.Fatalf("instructions show another route to the token page:\n%s", out)
 	}
 }
 
@@ -629,6 +640,9 @@ func TestGuidedR2ContinuesAnywayWhenToldTo(t *testing.T) {
 	if len(g.cf.Live()) != 1 || g.savedConfig(t).Storage.Bucket == "" {
 		t.Fatalf("live %d\n%s", len(g.cf.Live()), out)
 	}
+	if report := g.savedConfig(t).BucketPrivacy; report == nil || report.State != "public_or_risky" || report.Reason != "r2_public_access_enabled" || !strings.Contains(out, "! Bucket is public") {
+		t.Fatalf("public privacy evidence %+v; output:\n%s", report, out)
+	}
 }
 
 // Enter at that menu, or choosing another storage option, revokes the key's
@@ -712,7 +726,9 @@ func TestGuidedR2CheckAgainSeesTheDashboardChange(t *testing.T) {
 	if g.cf.Calls(cloudflaretest.RouteManagedDomain) != 2 || g.cf.Calls(cloudflaretest.RouteCustomDomains) != 2 {
 		t.Fatalf("reads: managed %d, custom %d", g.cf.Calls(cloudflaretest.RouteManagedDomain), g.cf.Calls(cloudflaretest.RouteCustomDomains))
 	}
-	g.savedConfig(t)
+	if report := g.savedConfig(t).BucketPrivacy; report == nil || report.State != "verified_private" || report.Reason != "r2_public_domains_disabled" || !strings.Contains(text, "✓ Bucket is private") {
+		t.Fatalf("rechecked privacy evidence %+v; output:\n%s", report, text)
+	}
 }
 
 // A read that failed does not hide the other's positive: the stop still
@@ -754,7 +770,9 @@ func TestGuidedR2PublicAccessReadsRefused(t *testing.T) {
 	if strings.Contains(out, "(checked at setup)") {
 		t.Fatalf("claims a check that did not happen:\n%s", out)
 	}
-	g.savedConfig(t)
+	if report := g.savedConfig(t).BucketPrivacy; report == nil || report.State != "not_verified" || report.Reason != "r2_public_access_not_fully_checked" || !strings.Contains(out, "Bucket privacy unknown") {
+		t.Fatalf("unreadable privacy evidence %+v; output:\n%s", report, out)
+	}
 }
 
 // The failure menu after each step that can fail: what to fix, the bucket kept
@@ -1153,6 +1171,14 @@ func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
 		g.notSaved(t)
+		draft, found, problem, err := readDraft(g.home)
+		if err != nil || !found || problem != "" || draft.Config.BucketPrivacy == nil || draft.Config.BucketPrivacy.Reason != "r2_public_domains_disabled" {
+			t.Fatalf("saved guided privacy: found %v, problem %q, report %+v, err %v", found, problem, draft.Config.BucketPrivacy, err)
+		}
+		resumed := g.run(t, "continue\n\n", 0)
+		if report := g.savedConfig(t).BucketPrivacy; report == nil || report.State != "verified_private" || !strings.Contains(resumed, "✓ Bucket is private") {
+			t.Fatalf("guided privacy after resume %+v; output:\n%s", report, resumed)
+		}
 	})
 	t.Run("committed", func(t *testing.T) {
 		t.Parallel()
@@ -1337,9 +1363,6 @@ func TestGuidedR2SaysTheTokenIsDroppedOnlyAfterStaging(t *testing.T) {
 	connected := strings.Index(out, "Connected to your storage.")
 	if minted < 0 || dropped < minted || connected < dropped {
 		t.Fatalf("order: key %d, dropped %d, connected %d\n%s", minted, dropped, connected, out)
-	}
-	if !strings.Contains(out, "This is experimental") {
-		t.Fatalf("no experimental notice:\n%s", out)
 	}
 	flow := out[strings.Index(out, "Setup can create"):strings.Index(out, "Checking your storage connection")]
 	if strings.Contains(flow, "private") {

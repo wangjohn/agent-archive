@@ -186,9 +186,9 @@ temporary synthetic object (`.setup-test/<random>.json`), reads it back, and
 deletes it. That proves the credentials work; it does not prove the bucket is private. Setup then
 inspects the bucket's public-access settings read-only (S3 only; see
 [privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
-read those settings, so for R2 the review reminds you to check that public
-access is disabled in the Cloudflare dashboard. A bucket setup created
-reports what its Cloudflare token could read at that moment, while you set up.
+read those settings. For an existing R2 bucket, the review reminds you to
+check public access in the Cloudflare dashboard. For a bucket setup just
+created, it shows what the temporary Cloudflare token checked at setup.
 
 Never pass secrets as command arguments; secret input fails rather than
 falling back to visible keystrokes.
@@ -237,11 +237,12 @@ any row is ✗, setup does not offer to start: fix what it names, then choose
 
 - **Storage connected**: the storage check wrote, read, listed and deleted a
   test file.
-- **Bucket is private**: the bucket blocks all public access. A public
-  bucket is marked ✗ with a link on fixing it; a bucket whose settings could
-  not be read is marked !. R2 keys cannot read public-access settings, so
-  for R2 the review reminds you to check public access in the Cloudflare
-  dashboard.
+- **Bucket is private**: for S3, all bucket-level Block Public Access settings
+  were observed on. For a newly created R2 bucket, `r2.dev` was off and no
+  custom domains were enabled when setup checked. An existing R2 bucket, or
+  one whose settings could not be read, is marked !. A public bucket is marked
+  ✗ unless you chose **Continue anyway** during guided R2 creation; that
+  choice remains visible as a warning in the review.
 - **Hook files are valid**: setup can edit each app's hook file.
 - **Codex needs one step**: Codex asks you to approve new hooks. After
   setup, run `/hooks` in Codex and approve them.

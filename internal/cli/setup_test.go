@@ -251,13 +251,14 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	old, _, _ := config.Load(home)
 	old.Paused = true
+	old.PauseGeneration = "persisted-pause-window"
 	if err := config.Save(home, old); err != nil {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
-	if !next.Paused || next.MachineID != old.MachineID || !next.Archive.Projects[0].ActivatedAt.Equal(old.Archive.Projects[0].ActivatedAt) {
+	if !next.Paused || next.PauseGeneration != old.PauseGeneration || next.MachineID != old.MachineID || !next.Archive.Projects[0].ActivatedAt.Equal(old.Archive.Projects[0].ActivatedAt) {
 		t.Fatal("reconfigure reset stable state")
 	}
 	b, _ := os.ReadFile(filepath.Join(userHome, ".claude", "settings.json"))

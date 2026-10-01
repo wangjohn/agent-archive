@@ -75,6 +75,10 @@ type Config struct {
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
 	Paused bool `json:"paused"`
+	// PauseGeneration changes with each pause/resume transition. Deferred
+	// hook admissions must belong to the same uninterrupted capture window.
+	// Empty is the legacy window, valid until the first transition.
+	PauseGeneration string `json:"pause_generation,omitempty"`
 	// Harnesses lists which applications setup installed hooks for
 	// (values match archive.Harness.Name: "codex", "claude", "cursor").
 	Harnesses []string `json:"harnesses,omitempty"`
@@ -238,8 +242,9 @@ func Save(home string, cfg Config) error {
 	return local.Write(path(home), cfg)
 }
 
-// SetPaused updates only the Paused flag, preserving the rest of an existing
-// configuration. It fails if setup has not run yet: pausing before there is
+// SetPaused updates the Paused flag and rotates PauseGeneration at a state
+// transition, preserving the rest of an existing configuration. It fails if
+// setup has not run yet: pausing before there is
 // anything to pause is not a meaningful state.
 func SetPaused(home string, paused bool) (Config, error) {
 	cfg, found, err := Load(home)
@@ -248,6 +253,12 @@ func SetPaused(home string, paused bool) (Config, error) {
 	}
 	if !found {
 		return Config{}, errors.New("not set up yet; run `agent-archive setup` first")
+	}
+	if cfg.Paused != paused {
+		cfg.PauseGeneration, err = local.ID()
+		if err != nil {
+			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
+		}
 	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {
