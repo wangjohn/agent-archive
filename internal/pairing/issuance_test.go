@@ -25,7 +25,10 @@ func TestDedicatedPayloadStrictJSONProvenance(t *testing.T) {
 	if err = p.validateProvenance(); err != nil {
 		t.Fatal(err)
 	}
-	for _, replace := range []struct{ before, after string }{
+	for _, replace := range []struct {
+		before string
+		after  string
+	}{
 		{`"kind":`, `"Kind":`},
 		{`"slot_id":`, `"Slot_ID":`},
 		{`"kind":"r2_own"`, `"kind":null`},
