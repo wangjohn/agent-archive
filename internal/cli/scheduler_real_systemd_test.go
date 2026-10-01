@@ -22,7 +22,7 @@ import (
 // realSystemdEnv runs the tests below against the real systemd user manager of
 // the user running them, which they change (a unit of the collector's names in
 // the user's unit directory): only on a disposable machine. The CI job for them
-// is real-systemd in .github/workflows/test.yml; internal/scheduler/systemd has
+// is real-systemd in .github/workflows/extended.yml; internal/scheduler/systemd has
 // the conformance run over the same manager.
 const realSystemdEnv = "AGENT_ARCHIVE_REAL_SYSTEMD"
 
