@@ -290,7 +290,8 @@ prompt), its branch, its project name, or its app), or start its session ID
 the session linked or created, never the start of an ID. Words may match
 different fields, so a topic, a PR number, a branch, or a project name all work.
 A session ID, full or the short one a table shows, names that session, even when
-another title mentions it. Inside a repository, its top-level sessions are
+another title mentions it, and even when it has no prompt, which words never
+offer. Inside a repository, its top-level sessions are
 searched first, then every project's, and subagent sessions only when no other
 session matches; a note on stderr says how many more match in other projects.
 `--harness` and `--source` narrow the search. When the command runs inside a
@@ -332,7 +333,9 @@ With no session selector, `handoff` opens a numbered session picker when
 stdin and stdout are terminals. It lists this machine's sessions, including ones
 marked `not yet uploaded`, together with archived ones, most recently active
 first; a session that is both appears once. Subagent sessions and sessions
-with no prompt yet are left out, and `--harness` narrows the list. When the
+with no prompt yet, on this machine or in the archive, are left out (one
+uploaded before its first prompt is listed once its transcript here has one),
+and `--harness` narrows the list. When the
 archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing. Quit with `q` without producing a
 handoff. In a script or pipeline, pass a session ID or words, `--latest`, or
