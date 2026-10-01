@@ -1,7 +1,8 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 5 and 7 merged, PR 6 (one browser) in review, PR 8 not started.
+PRs 1 to 7 merged, PR 8 (docs and live check) open until the owner's
+[live check](#live-check-pr-8).
 Where this plan and the code differ once packages merge, the code is the
 reference and differences go under Deviations.
 
@@ -628,7 +629,8 @@ the filter, which emits one `subagent-meta` record. Backfill's
 ### PR 8 — docs and live check
 
 Update the handoff guide, `list` in the CLI reference, and the agent-skills
-guide. Live check on the owner's Mac:
+guide. Live check on the owner's Mac (the steps are under
+[Live check (PR 8)](#live-check-pr-8)):
 
 - bare `show`, `list`, and `handoff` from inside agent-archive open the same
   browser on this repository with native names
@@ -641,6 +643,262 @@ guide. Live check on the owner's Mac:
   resolves without asking
 - a Claude Code CLI session (not the desktop app) is checked for whether it
   writes `custom-title` without `/rename`, and the guide says what was seen
+
+## Live check (PR 8)
+
+For the owner, on the Mac that holds the real archive. Automated tests use
+fakes and never touch a real Mac, so this is the one place the whole feature
+meets real sessions and a real terminal. It takes about 30 minutes. Tick each
+box when what you see matches the line that starts `Expect`. A step that does not
+match is a finding: write down the command, what you saw, and the screen
+width, and file it before merging PR 8.
+
+### Before you start
+
+- [ ] **Build and install `main`** (PRs 1 to 7 merged), then refresh setup, which
+  brings the hooks, skills, and background job up to date for the new binary.
+  `--replace-current` puts it where `agent-archive` already is on `PATH`, so
+  the hooks and skills keep pointing at a real path:
+
+  ```sh
+  cd ~/path/to/agent-archive          # your checkout of this repository
+  git checkout main && git pull
+  ./scripts/install-from-source.sh --replace-current
+  agent-archive --version             # dev-<commit>, the commit you just pulled
+  agent-archive setup --refresh
+  ```
+
+  Expect: `setup --refresh` prints a one-line result (or `nothing to refresh`),
+  and `status --verbose` lists the skill files without a warning that they came
+  from an earlier release. A source build is signed ad hoc on macOS, so the
+  first command that reads the archive may ask again for Keychain access to the
+  R2 key; allow it.
+- [ ] **Let the collector re-read old sessions.** Filter 13 and 14 changed what
+  is archived (names, PR links, subagent descriptions), and only a re-read
+  recovers them for sessions already uploaded.
+
+  ```sh
+  agent-archive sync
+  agent-archive status
+  ```
+
+  Expect: `sync` finishes without an error and `status` reports `Ready`. A
+  session whose transcript is gone from this Mac keeps its old first-prompt
+  title, which is fine. If native names are missing everywhere below, run
+  `agent-archive sync` again and wait a minute before concluding anything.
+- [ ] **Work in a real terminal** (iTerm2 or Terminal, 100 columns or more) and
+  start from inside this repository: `cd ~/path/to/agent-archive`. Every step
+  below starts there unless it says otherwise.
+
+### 1. One browser, on this repository
+
+- [ ] **Bare `show`, `list`, and `handoff` open the same browser.** Run each in
+  turn, look, and press `q` (`handoff` quits without handing anything off):
+
+  ```sh
+  agent-archive show
+  agent-archive list
+  agent-archive handoff
+  ```
+
+  Expect, in all three:
+  - a full-screen list that replaces the screen and is gone when you quit;
+  - a heading that names this repository and the other choice, for example
+    `agent-archive · 42 sessions · claude · a all projects` (`handoff` starts it
+    with `Hand off ·`);
+  - **native names** in the TITLE column, such as `Fix flaky retention
+    hook-request test`, and not the long first prompts of an orchestrator ("You
+    are the REVIEWER AND FIXER for…"), at least for the sessions Claude Code
+    named;
+  - no subagent rows. A parent that has some says so on its row (`· 45
+    subagents`);
+  - a PR column (`#213`) when any row has one, and no HARNESS or PROJECT
+    columns when every row shares them (the heading says `claude` instead);
+  - the same keys: a number and Enter, `/` to filter, `a`, `q`.
+
+  Also expect, in `handoff` only: a `●` before a session you used in the last 2
+  minutes (open one in another terminal to see it), and `· not yet uploaded` on a
+  session the archive does not have yet.
+
+### 2. An ambiguous query opens that browser
+
+- [ ] **`show "flaky"`:**
+
+  ```sh
+  agent-archive show "flaky"
+  ```
+
+  Expect: the same browser, heading `"flaky" matches 3 · claude · Esc clear`
+  (the count is however many sessions match; the heading names no repository
+  and offers no `a`, because the matches are already chosen), `/flaky` on the
+  bottom line, and `▸` on the first match. Press Enter to see its summary, `b`
+  to return, Esc to clear the words and list the matches, then `q`.
+- [ ] **`handoff "flaky"`:**
+
+  ```sh
+  agent-archive handoff "flaky"
+  ```
+
+  Expect: the same screen with the heading `Hand off · "flaky" matches 3 ·
+  claude · Esc clear`. Press `q` to leave without handing anything off.
+- [ ] **Without a terminal it prints candidates and a `Next:` line.**
+
+  ```sh
+  AGENT_ARCHIVE_NONINTERACTIVE=1 agent-archive handoff "flaky"; echo "exit $?"
+  ```
+
+  Expect: exit `1` and, on stderr, a table of the matching sessions
+  (short ID, agent, age, PR, title) followed by `Next: agent-archive handoff
+  <ID> --harness claude` and `(or: agent-archive list "flaky" --json)`.
+
+### 3. Scope: `a` and `--project`
+
+- [ ] **`a` toggles the scope.** In `agent-archive list`, press `a`.
+
+  Expect: the heading becomes `All projects · N sessions · a agent-archive`, with
+  more sessions than before and a PROJECT column. Press `a` again to return.
+  The same key does the same in `show` and `handoff`.
+- [ ] **`--project` names another project.**
+
+  ```sh
+  agent-archive list --project personal_website
+  agent-archive list --all-projects
+  agent-archive list --project personal_website --all-projects; echo "exit $?"
+  ```
+
+  Expect: the first lists `personal_website`'s sessions under a heading that
+  names it (and says `Nothing in personal_website · showing all projects` if the
+  archive holds none, which is a finding if you know it does). The second starts on
+  all projects. The third prints a usage error and exits `2`.
+
+### 4. `/linux` finds the Linux session
+
+- [ ] **In each browser, filter for it.** Run `agent-archive show`, press `/`, and
+  type `linux`. Repeat in `agent-archive list` and `agent-archive handoff`.
+
+  Expect: in each, the session named like `Implement Linux support for
+  agent-archive` (PR `#212`) is listed and marked `▸`. Press Esc to clear. Press
+  `q` to leave (in `handoff`, do not press Enter on it, unless you want to
+  start a handoff).
+- [ ] **The same words from the command line:**
+
+  ```sh
+  agent-archive list linux --no-pager | cat
+  agent-archive list linux --json | jq '.sessions[].session_id, .scope'
+  ```
+
+  Expect: a table with the Linux session, a footer with how many more match
+  elsewhere if any, and in the JSON the same session and a `scope` object
+  (`"label": "agent-archive"`).
+
+### 5. `/208` finds the reviewer under its parent
+
+- [ ] **In the handoff picker, type `/208`.**
+
+  ```sh
+  agent-archive handoff
+  ```
+
+  Expect: the parent (`Implement Linux support for agent-archive`, `#212`) and,
+  indented under it, `↳ Review and fix PR #208 (5b-1b)`, with `▸` on the
+  reviewer. The parent is shown although `208` is not in its name. ↑ moves the
+  mark to the parent. Esc, then `q`.
+
+  If the subagent shows no description, its `.meta.json` was not there when the
+  collector read it (filter 14 reads it beside the transcript): run `agent-archive
+  sync` once more, and note whether the transcript still exists on this Mac.
+
+### 6. From Claude Code, the words resolve without asking
+
+- [ ] **Say it in Claude Code, started in this repository:**
+
+  ```text
+  hand off my flaky retention test session to Codex
+  ```
+
+  Expect: Claude Code may ask permission the first time it uses the
+  `agent-archive` skill and its commands (that is the permission prompt, not
+  a question about which session); it runs `agent-archive handoff "<words>"` or
+  `agent-archive list "<words>" --json` with words like `flaky retention`, and
+  names the one session it found (`Fix flaky retention hook-request test`, PR
+  `#213`) **without asking which one you mean**.
+
+  The skill never adds `--to` (that belongs to `/handoff`), so the agent
+  will not start Codex itself: it pulls the session in as context, or tells you
+  the command to run (`agent-archive handoff <ID> --to codex`). That is not a
+  failure. Asking "which of these?" over several candidates when "flaky
+  retention" matches exactly one is. Check what the words match:
+
+  ```sh
+  agent-archive list "flaky retention" --json | jq '.sessions | length'
+  ```
+
+  Expect: `1`.
+
+### 7. Does the Claude Code CLI name a session without `/rename`?
+
+The names were seen in the desktop app's sessions; this checks the CLI, and
+the answer goes into the guide.
+
+- [ ] **Run a throwaway CLI session and look for `custom-title`.** In a scratch
+  directory, not a project you archive:
+
+  ```sh
+  mkdir -p /tmp/name-check && cd /tmp/name-check
+  claude                      # type one short prompt, wait for the reply, then /exit
+  f=$(ls -t ~/.claude/projects/*name-check*/*.jsonl | head -1)   # or $CLAUDE_CONFIG_DIR/projects
+  grep -c '"type":"custom-title"' "$f"
+  grep '"type":"custom-title"' "$f" | tail -1
+  ```
+
+  Expect: either a count of `0` (the CLI wrote no name), or a count above `0` and
+  a last line holding `"customTitle":"…"`. Do not `/rename` in this session.
+  Then resume it, send three or four more prompts, exit, and run the two `grep`
+  commands again, since a name may arrive only after several turns.
+- [ ] **Record what you saw in the guide.** In
+  `docs/guides/list-and-show.md`, find the comment `OWNER, live check` under the
+  paragraph about names, replace the sentence above it with what you saw
+  (for example: "The Claude Code CLI wrote a `custom-title` after the second
+  prompt, with no `/rename`" or "The CLI wrote none until `/rename`, so its
+  sessions are listed by their first prompt"), and delete the comment.
+
+### 8. What only a real terminal can show
+
+- [ ] **Keys typed right after a pick are not lost.** Archived sessions take a
+  moment to read after you pick them, which is the window to type into.
+
+  ```sh
+  agent-archive handoff
+  ```
+
+  Press `/`, type a word that matches an older session, move the mark with
+  ↓ and ↑, and press Enter on it. As soon as you press Enter, without waiting
+  for anything to appear, type `q` and Enter.
+
+  Expect: the picker closes, `Continue in:` and its choices appear, and the
+  question is answered at once by the `q` you typed before it appeared, so
+  `handoff` exits without waiting for you. Lost input looks like the question
+  staying up, waiting at `Enter 1-2, p, c, w, or q`, for an answer you have
+  already typed. Repeat once with nothing typed ahead to check that the question
+  and its default (`[1]`) still show and work (answer `q`).
+- [ ] **The terminal is restored after `q`, Esc, and Ctrl-C.** For each, run the
+  line, do what the second column says, and check the third:
+
+  | Run | Do | Expect |
+  | --- | --- | --- |
+  | `b=$(stty -g); agent-archive list; [ "$(stty -g)" = "$b" ] && echo restored` | press `q` | `restored`; the screen before the command is back, scrollback intact |
+  | the same | press Ctrl-C | `restored`, the shell prompt returns at once |
+  | the same | press `/`, type `x`, press Esc, then `q` | Esc clears the filter and does not quit (the list is still there), then `q` quits and `restored` shows |
+
+  Also check after each: your typing echoes, the arrow keys recall history,
+  Ctrl-C at the prompt works, and the cursor is visible. Do the same with
+  `agent-archive handoff` (pick nothing: `q`, then Ctrl-C).
+
+### When you are done
+
+- [ ] Every box above is ticked, or each miss is filed. The `OWNER` placeholder
+  in `docs/guides/list-and-show.md` is replaced. Change the Status line at the top of
+  this plan to "PRs 1 to 8 merged and live-checked", then merge PR 8.
 
 ## Later
 
@@ -1003,3 +1261,12 @@ guide. Live check on the owner's Mac:
   go to the front of the answers. Closing the key terminal then does not flush
   the input still waiting (it is read by the prompts as lines). Only a pick
   hands back; quitting still flushes, as before.
+- PR 8: `list`'s help says `--json` lists every session "without WORDS"
+  (with words it lists the tier that answers, as the table does) and that
+  `--all-projects` is not for use with `--project`; no other help text changed.
+- PR 8: the live check's Esc item is "Esc, then `q`": in the session browser
+  and in `stats`, Esc clears a filter or typed text and never quits (so a split
+  arrow key cannot close the screen), so the restore check presses Esc mid-use
+  and quits with `q`. The "hand off ... to Codex" item expects the session to
+  be found without a which-one question, not for Codex to start: the
+  `agent-archive` skill never adds `--to`, which belongs to `/handoff`.
