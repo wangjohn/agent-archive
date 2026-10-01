@@ -63,8 +63,8 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		terminal.Println(errOut, err.Error())
 		return 1
 	}
-	if !*yes && !env.interactive(stdin) {
-		terminal.Println(errOut, "machines add needs a terminal, or deliberate --yes scripted delivery")
+	if !*yes && (!env.interactive(stdin) || !env.interactive(out)) {
+		terminal.Println(errOut, "machines add needs terminal input and output, or deliberate --yes scripted delivery")
 		return 1
 	}
 	p := newPrompter(stdin, out)
@@ -242,6 +242,9 @@ func writePairingFile(path, bundle string) error {
 }
 
 func showPairingCode(p *prompter, code string, env Env) error {
+	if !env.interactive(p.out) {
+		return errors.New("pairing code display needs terminal output")
+	}
 	// Use checked writes for secret-bearing output. Always restore the screen.
 	if _, err := io.WriteString(p.out, "\x1b[?1049h\x1b[2J\x1b[H"); err != nil {
 		return err

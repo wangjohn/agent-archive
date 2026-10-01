@@ -98,6 +98,8 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
+	"pairing_receive.go":  {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
 	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
 	"setup.go":            {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
@@ -116,6 +118,8 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
+	"pairing_receive.go": {"io.ReadAll": 1}, // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
+	"pairing_ledger.go":  {"io.ReadAll": 1}, // bounded local ledger files, never input
 	// The prompter's own line reader: every prompt (see promptSites); and
 	// handoff's one buffer for its answers (typedInput), read only by the
 	// picker (and the ambiguous-title chooser) and the "Continue in:" prompt,

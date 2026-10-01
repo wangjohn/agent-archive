@@ -69,16 +69,12 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err := pairingAgentRefusal(env); err != nil {
 		return err
 	}
-	p := newPrompter(stdin, out)
-	p.now = env.now
-	bundle, err := readPairingBundle(p, opts, stdin)
+	p, bundle, closeInput, err := pairingReceiverInput(opts, stdin, out, env)
 	if err != nil {
 		return err
 	}
-	if _, err = pairing.Inspect(bundle); err != nil {
-		return err
-	}
-	code, err := readPairingCode(opts, p, stdin, env)
+	defer closeInput()
+	code, err := readPairingCode(opts, p, env)
 	if err != nil {
 		return err
 	}
@@ -170,7 +166,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	return nil
 }
 
-func readPairingCode(opts setupOptions, p *prompter, stdin io.Reader, env Env) (string, error) {
+func readPairingCode(opts setupOptions, p *prompter, env Env) (string, error) {
 	var err error
 	var code string
 	if opts.yes {
@@ -186,15 +182,10 @@ func readPairingCode(opts setupOptions, p *prompter, stdin io.Reader, env Env) (
 	} else {
 		if env.PairingCode != nil {
 			code, err = env.PairingCode()
-		} else if env.interactive(stdin) {
+		} else if env.interactive(p.source) {
 			code, err = p.secret("Pairing code (hidden): ")
 		} else {
-			tty, e := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-			if e != nil {
-				return "", fmt.Errorf("pairing code needs a terminal, or --yes with AGENT_ARCHIVE_PAIRING_CODE")
-			}
-			defer func() { _ = tty.Close() }()
-			code, err = newPrompter(tty, tty).secret("Pairing code (hidden): ")
+			return "", fmt.Errorf("pairing code needs a terminal, or --yes with AGENT_ARCHIVE_PAIRING_CODE")
 		}
 		if err != nil {
 			return "", fmt.Errorf("pairing code could not be read")
@@ -373,4 +364,48 @@ func stagePairingCredential(home string, cfg config.Config, payload pairing.Payl
 	}
 	payload.SecretAccessKey = ""
 	return cfg, nil
+}
+
+func (e Env) openPairingTerminal() (io.ReadWriteCloser, error) {
+	if e.PairingTerminal != nil {
+		return e.PairingTerminal()
+	}
+	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
+}
+
+func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env Env) (*prompter, string, func(), error) {
+	noClose := func() {}
+	if mode, err := env.nonInteractive(); err != nil {
+		return nil, "", noClose, err
+	} else if mode.on && !opts.yes {
+		return nil, "", noClose, fmt.Errorf("pairing prompts are off; use --yes with --pair-file and AGENT_ARCHIVE_PAIRING_CODE")
+	}
+	if !opts.yes && opts.pairFile == "" && !env.interactive(stdin) {
+		return nil, "", noClose, fmt.Errorf("pasting a pairing bundle needs a terminal; use --pair-file for redirected input")
+	}
+	p := newPrompter(stdin, out)
+	p.now = env.now
+	bundle, err := readPairingBundle(p, opts, stdin)
+	if err != nil {
+		return nil, "", noClose, err
+	}
+	if _, err = pairing.Inspect(bundle); err != nil {
+		return nil, "", noClose, err
+	}
+	// Bundle stdin is consumed separately; all subsequent private input and
+	// destination consent must use the same interactive terminal.
+	if !opts.yes && !env.interactive(stdin) {
+		tty, e := env.openPairingTerminal()
+		if e != nil {
+			return nil, "", noClose, fmt.Errorf("pairing review needs a terminal, or deliberate --yes")
+		}
+		noClose = func() { _ = tty.Close() }
+		if !env.interactive(tty) {
+			noClose()
+			return nil, "", noClose, fmt.Errorf("pairing review needs an interactive terminal")
+		}
+		p = newPrompter(tty, tty)
+		p.now = env.now
+	}
+	return p, bundle, noClose, nil
 }

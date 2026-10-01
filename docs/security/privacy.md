@@ -901,3 +901,27 @@ stderr; child environments exclude token, secret, object and pairing credential
 variables. Ordinary machine listing and collection never acquire a management
 token. Provider inventory can be restricted to creator-owned keys, so missing
 metadata never proves that access was removed.
+## Encrypted shared-key pairing beta
+
+A pairing bundle carries the destination, app/capture and retention settings,
+repository hashes and portable scope paths, handoff arguments, and, for R2, the
+explicitly shared object credential. S3 carries only its local profile name and
+settings. Argon2id and XChaCha20-Poly1305 protect the bundle with a generated
+six-word code; deliver the two pieces separately. Interactive source delivery
+requires terminal input and output so a redirected file cannot retain the code.
+Alternate-screen clearing cannot protect against recording or screen sharing.
+
+The receiver keeps the decrypted payload in memory and stages R2 secrets only
+in the credential store. Neither side writes the code or bundle to config,
+drafts, journals, registration state or the secret-free `issued/` ledger. Only
+an explicitly requested source `--file` saves an encrypted bundle; delete it
+when no longer needed. Clipboard cleanup checks for the exact bundle before
+clearing; clipboard history can retain it. The ledger retains delivery intent,
+expiry, credential references and informational claim observations, and is
+removed by `uninstall --delete-local-data`.
+
+Pairing refuses inside coding agents. Pasted bundles are redacted before upload,
+but ordinary-word codes cannot be reliably recognized. If either piece may
+have been seen, create new pairing pieces; if both may have been seen, replace
+the shared R2 credential on every machine using it. Expiry and local cancellation
+do not revoke bucket access. This beta has no independent per-machine revocation.

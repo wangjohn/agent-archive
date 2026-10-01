@@ -202,7 +202,12 @@ func TestAuthenticatedPayloadLimitsUnknownFieldsAndHeaderConsistency(t *testing.
 	}
 	unknown := append([]byte(`{"unknown_setting":true,`), data[1:]...)
 	duplicate := append([]byte(`{"version":1,`), data[1:]...)
-	for _, plain := range [][]byte{bytes.Repeat([]byte("x"), MaxPayload+1), unknown, duplicate, mismatch} {
+	for _, plain := range [][]byte{bytes.Repeat([]byte("x"), MaxPayload+1), unknown, duplicate, mismatch,
+		bytes.Replace(data, []byte(`"require_skill_use":false,`), nil, 1),
+		bytes.Replace(data, []byte(`"require_skill_use":false`), []byte(`"require_skill_use":null`), 1),
+		bytes.Replace(data, []byte(`"require_skill_use":false`), []byte(`"require_skill_use":true,"Require_Skill_Use":false`), 1),
+		bytes.Replace(data, []byte(`"prefix":"archive/"`), []byte(`"Prefix":"archive/"`), 1),
+	} {
 		var zipped bytes.Buffer
 		z := gzip.NewWriter(&zipped)
 		if _, err = z.Write(plain); err != nil {
@@ -219,4 +224,19 @@ func TestAuthenticatedPayloadLimitsUnknownFieldsAndHeaderConsistency(t *testing.
 			t.Fatal("accepted authenticated invalid payload")
 		}
 	}
+}
+
+func FuzzPayloadJSON(f *testing.F) {
+	data, err := json.Marshal(testPayload())
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(data)
+	f.Add([]byte(`{"require_skill_use":true,"Require_Skill_Use":false}`))
+	f.Add([]byte(`{"inclusions":null}`))
+	f.Fuzz(func(t *testing.T, plain []byte) {
+		if len(plain) <= MaxPayload {
+			_ = payloadJSON(plain)
+		}
+	})
 }
