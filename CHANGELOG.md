@@ -201,9 +201,8 @@ follow [Semantic Versioning](https://semver.org/).
   [privacy page](docs/security/privacy.md) explains what a hash of a known
   address does and does not hide. Parser version is now `0.16.0`, so existing
   sessions gain the field on the next metadata refresh, on the Mac that
-  captured them and only while the repository is still there. Nothing uses it
-  yet: a later release matches `handoff` to a session by repository rather
-  than checkout path.
+  captured them and only while the repository is still there. `handoff
+  --latest` uses it (see Changed).
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -472,6 +471,26 @@ follow [Semantic Versioning](https://semver.org/).
   matches that session itself (as `--latest` skips it).
   `handoff` no longer rejects an argument that is not shaped like a session
   ID up front; one that matches nothing says so and points to `list`.
+- `handoff --latest` now finds sessions from your other computers even when
+  the repository is at a different path. A session matches the current
+  directory by path or by repository (the `origin` remote, so SSH and HTTPS
+  clones agree), from a subdirectory of the repository too; a directory
+  without an `origin` matches by path only, as before, and a fork's `origin`
+  is the fork's. A session that ran at the same path always comes first. A
+  repository chooses its own `origin`, so when `--latest` can only find a
+  session by repository it says so before downloading any of it (machine, project,
+  start time, first prompt) and, on a terminal, asks before going on (default
+  no); where nothing can be asked (a pipe, or inside a coding agent) it
+  refuses, printing only the machine and start time and the `handoff
+  SESSION_ID` command for you to run (`agent-archive list` when the ID is not
+  a normal one). That refusal slows a steered agent; it does not stop one
+  that runs the command. Path matches, explicit session IDs, and the picker
+  behave as before. `--to` launches an archived session from another
+  computer the same way, and the handoff tells the agent the session was on
+  another branch or in another directory when it was. When nothing matches,
+  the message says what was tried and how to make a match possible. See the
+  [handoff guide](docs/guides/handoff.md#finding-a-session-by-repository) and
+  the [threat model](docs/security/privacy.md#threat-model).
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
