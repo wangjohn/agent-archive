@@ -19,6 +19,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  # Cancel stale checks for one PR, while every main push and daily audit keeps
+  # its own group. Include the workflow name so Test cannot cancel this run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   verify:
     runs-on: ubuntu-24.04

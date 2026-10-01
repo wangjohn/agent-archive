@@ -22,7 +22,7 @@ import (
 // against the real systemd user manager of the user running them. They change
 // that manager (units of the collector's own names, in the user's unit
 // directory), so they run only where that is harmless: the CI job for it
-// (.github/workflows/test.yml, real-systemd) on a disposable virtual machine,
+// (.github/workflows/extended.yml, real-systemd) on a disposable virtual machine,
 // or a disposable container with systemd as PID 1 (dev/contributing/testing.md).
 const realEnv = "AGENT_ARCHIVE_REAL_SYSTEMD"
 
