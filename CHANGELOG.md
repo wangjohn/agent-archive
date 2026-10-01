@@ -511,6 +511,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `setup`'s hidden prompt for a secret access key no longer spins at full
+  CPU forever on macOS when its terminal goes away without a hangup signal
+  (a closed pseudo-terminal, for example). It now ends as every other prompt
+  does at the end of input, with "no more input", and so does Ctrl-D on an
+  empty answer, which the prompt used to ignore.
 - On a busy Mac, setup no longer warns "Could not prune capture diagnostics
   for excluded projects", leaving a project it had just excluded named in the
   local diagnostics file, when a hook recorded a diagnostic at the same time.
