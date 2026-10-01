@@ -99,8 +99,8 @@ type r2Creator struct {
 	// tokenRemovedFromEnv is whether setup then removed the variable from its
 	// own environment, so programs it starts do not inherit the token.
 	tokenRemovedFromEnv bool
-	// defaultName is whether the bucket name is the generated one, which
-	// may be replaced by a new one if it collides.
+	// defaultName allows one replacement of the initially generated name
+	// if it collides; replacements still require confirmation.
 	defaultName       bool
 	bucketCreated     bool
 	creationConfirmed bool
@@ -480,8 +480,12 @@ func (c *r2Creator) askBucketName(label, def string) (string, error) {
 func (c *r2Creator) askLocation() error {
 	p := c.p
 	change, err := p.yesNo("Customize storage location? Leave this off for automatic placement.", false)
-	if err != nil || !change {
+	if err != nil {
 		return err
+	}
+	if !change {
+		c.bucket.Jurisdiction, c.bucket.LocationHint = "", ""
+		return nil
 	}
 	for {
 		answer, e := p.withDefault("Jurisdiction ("+strings.Join(cloudflare.Jurisdictions, ", ")+"; Enter for none)", "")
@@ -699,37 +703,34 @@ func answerLost(err error) bool {
 // made that bucket.
 func (c *r2Creator) createBucket(ctx context.Context) error {
 	p := c.p
-	replaced := false
-	for {
-		err := c.api.CreateBucket(ctx, c.account, c.bucket)
-		if err == nil {
-			c.bucketCreated = true
-			terminal.Println(p.out, p.style.okMark()+" Created bucket "+c.bucket.Name+".")
-			return nil
-		}
-		var apiErr *cloudflare.Error
-		if !errors.As(err, &apiErr) || !apiErr.AlreadyExists() {
-			terminal.Println(p.out, p.style.failMark()+" Couldn't create the bucket. "+explainCloudflare(err, "The token needs the "+cloudflare.PermissionR2Write+" permission to create buckets; add it to the token in the dashboard. If R2 isn't enabled on the account yet, enable it in the dashboard first (Cloudflare may ask for a payment method)."))
-			if answerLost(err) {
-				c.maybeCreated[c.bucket.Name] = true
-				terminal.Println(p.out, "Cloudflare may have made the bucket "+c.bucket.Name+" before the answer was lost.")
-			}
-			return err
-		}
-		switch {
-		case c.maybeCreated[c.bucket.Name]:
-			terminal.Printf(p.out, "A bucket named %s may have been created by the earlier request, which got no answer. Setup can't tell it from a bucket that was already yours, so it won't use it: delete it in the dashboard if it is empty and new, or choose another name.\n", c.bucket.Name)
-		case c.defaultName && !replaced:
-			replaced = true
-			name := newBucketName()
-			terminal.Printf(p.out, "The name %s is taken; trying %s.\n", c.bucket.Name, name)
-			c.bucket.Name = name
-			continue
-		default:
-			terminal.Printf(p.out, "The name %s is taken in your Cloudflare account.\n", c.bucket.Name)
-		}
-		return errNeedAnotherName
+	err := c.api.CreateBucket(ctx, c.account, c.bucket)
+	if err == nil {
+		c.bucketCreated = true
+		terminal.Println(p.out, p.style.okMark()+" Created bucket "+c.bucket.Name+".")
+		return nil
 	}
+	var apiErr *cloudflare.Error
+	if !errors.As(err, &apiErr) || !apiErr.AlreadyExists() {
+		terminal.Println(p.out, p.style.failMark()+" Couldn't create the bucket. "+explainCloudflare(err, "The token needs the "+cloudflare.PermissionR2Write+" permission to create buckets; add it to the token in the dashboard. If R2 isn't enabled on the account yet, enable it in the dashboard first (Cloudflare may ask for a payment method)."))
+		if answerLost(err) {
+			c.maybeCreated[c.bucket.Name] = true
+			terminal.Println(p.out, "Cloudflare may have made the bucket "+c.bucket.Name+" before the answer was lost.")
+		}
+		return err
+	}
+	switch {
+	case c.maybeCreated[c.bucket.Name]:
+		terminal.Printf(p.out, "A bucket named %s may have been created by the earlier request, which got no answer. Setup can't tell it from a bucket that was already yours, so it won't use it: delete it in the dashboard if it is empty and new, or choose another name.\n", c.bucket.Name)
+	case c.defaultName:
+		name := newBucketName()
+		terminal.Printf(p.out, "The name %s is taken; preparing %s.\n", c.bucket.Name, name)
+		c.bucket.Name = name
+		c.defaultName, c.creationConfirmed = false, false
+		return errConfirmR2Creation
+	default:
+		terminal.Printf(p.out, "The name %s is taken in your Cloudflare account.\n", c.bucket.Name)
+	}
+	return errNeedAnotherName
 }
 
 // lookUpPermissionGroup finds the ID of the bucket-item-write group. It is

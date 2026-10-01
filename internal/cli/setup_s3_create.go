@@ -216,7 +216,8 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 					printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
 					return newS3Bucket{name: name, region: region, fresh: true}, true, nil
 				}
-				// secureNewBucket has deleted the empty bucket; recovery is explicit.
+				// The delete action explicitly chose existing storage.
+				return newS3Bucket{}, false, nil
 			} else if errors.Is(err, storage.ErrBucketNameTaken) && automaticName && !regenerated {
 				terminal.Printf(p.out, "The name %s is taken; preparing another suggested name.\n", name)
 				name, regenerated = newBucketName(), true
@@ -232,7 +233,12 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 				}
 			}
 		}
-		choice, e := p.actions("What next?", "retry", []option{{"retry", "Review settings and retry"}, {"profile", "Choose another creation profile"}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
+		def := "retry"
+		options := []option{{"retry", "Review settings and retry"}, {"profile", "Choose another creation profile"}}
+		if noCredentials {
+			def, options = "profile", options[1:]
+		}
+		choice, e := p.actions("What next?", def, options, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if e != nil {
 			return newS3Bucket{}, false, e
 		}

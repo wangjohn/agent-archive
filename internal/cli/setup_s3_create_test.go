@@ -329,7 +329,7 @@ func TestCreateS3BucketBlockPublicAccessFailureNeverContinues(t *testing.T) {
 		wantCfg   string
 	}{
 		{"stop", "stop\n", "bucket agent-archive-1 was created but Block Public Access is not on", "create agent-archive-1 us-east-1,block agent-archive-1", ""},
-		{"delete then an existing bucket", "delete\nagent-archive-1\nexisting\n1\n", "", "create agent-archive-1 us-east-1,block agent-archive-1,delete agent-archive-1", "existing"},
+		{"delete then an existing bucket", "delete\nagent-archive-1\n1\n", "", "create agent-archive-1 us-east-1,block agent-archive-1,delete agent-archive-1", "existing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sequentialNames(t)
@@ -381,7 +381,7 @@ func TestCreateS3BucketDeleteFailureNamesTheCommand(t *testing.T) {
 	creator := &fakeCreator{block: []error{errCreateDenied}, deleted: errCreateDenied}
 	finder := fakeBuckets{names: []string{"existing"}, regions: map[string]string{"existing": "us-east-1"}}
 	var cfg credentials.Config
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\nexisting\n1\n")
+	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
 	if err != nil || cfg.Bucket != "existing" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -697,7 +697,7 @@ func TestCreateS3BucketDeletesOnlyTheNameItCreatedAndOnlyWhenTyped(t *testing.T)
 	// The default agent-archive-1 is taken, agent-archive-2 is created; Block
 	// Public Access is refused. Deleting first names the wrong bucket, so
 	// nothing is deleted and the menu returns; then the right one is typed.
-	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\n\ndelete\nagent-archive-1\ndelete\nagent-archive-2\nexisting\n1\n")
+	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\n\ndelete\nagent-archive-1\ndelete\nagent-archive-2\n1\n")
 	if err != nil || cfg.Bucket != "existing" {
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
@@ -902,7 +902,7 @@ func TestDeletedBucketIsNoLongerRemembered(t *testing.T) {
 	creator := &fakeCreator{block: []error{errCreateDenied}}
 	finder := fakeBuckets{names: []string{"existing"}, regions: map[string]string{"existing": "us-east-1"}}
 	var out bytes.Buffer
-	p := newPrompter(strings.NewReader("\n\ndelete\nagent-archive-1\nexisting\n1\n"), &out)
+	p := newPrompter(strings.NewReader("\n\ndelete\nagent-archive-1\n1\n"), &out)
 	var cfg credentials.Config
 	if err := promptS3Bucket(p, &cfg, createEnv("us-east-1", creator, finder, nil), "", true); err != nil {
 		t.Fatalf("err=%v\n%s", err, &out)

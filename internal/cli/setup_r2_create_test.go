@@ -561,8 +561,8 @@ func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 1})
-	out := g.run(t, g.happy(), 0)
-	if !strings.Contains(out, "is taken; trying") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
+	out := g.run(t, g.happy()+"\n", 0)
+	if !strings.Contains(out, "is taken; preparing") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)
 	}
 	var names []string
@@ -575,7 +575,7 @@ func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 			names = append(names, body.Name)
 		}
 	}
-	if names[0] == names[1] || !defaultBucketName.MatchString(names[1]) || g.savedConfig(t).Storage.Bucket != names[1] {
+	if names[0] == names[1] || !defaultBucketName.MatchString(names[1]) || g.savedConfig(t).Storage.Bucket != names[1] || strings.Count(out, "Your archive storage") != 2 || !strings.Contains(out, "Bucket: "+names[1]) {
 		t.Fatalf("names %v", names)
 	}
 }
@@ -1589,7 +1589,7 @@ func TestGuidedR2LostBucketAnswerIsNotSilentlyReplaced(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out, "is taken; trying") {
+			if strings.Contains(out, "is taken; preparing") {
 				t.Errorf("replaced the name quietly:\n%s", out)
 			}
 			if got := g.savedConfig(t).Storage.Bucket; got != "second-name" || len(g.cf.Buckets) != 2 {

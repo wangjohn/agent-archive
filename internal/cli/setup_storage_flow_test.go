@@ -207,3 +207,65 @@ func TestS3ExistingFallbackPromptsForMalformedChangedProfileRegion(t *testing.T)
 		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
 	}
 }
+
+func TestGuidedR2RegeneratedNameRequiresAnotherConfirmation(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 1})
+	var out bytes.Buffer
+	_, _, _, err := createR2Bucket(newPrompter(strings.NewReader(bootstrapCanary+"\n\n"), &out), g.env)
+	if err == nil || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 || strings.Count(out.String(), "Your archive storage") != 2 {
+		t.Fatalf("err=%v requests=%v\n%s", err, routes(g.cf.Requests()), &out)
+	}
+}
+
+func TestGuidedR2GeneratesOnlyOneReplacementName(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 2})
+	var out bytes.Buffer
+	_, _, _, err := createR2Bucket(newPrompter(strings.NewReader(bootstrapCanary+"\n\n\n"), &out), g.env)
+	if err == nil || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 || strings.Count(out.String(), "is taken; preparing") != 1 || !strings.Contains(out.String(), "Another bucket name") {
+		t.Fatalf("err=%v requests=%v\n%s", err, routes(g.cf.Requests()), &out)
+	}
+}
+
+func TestGuidedR2AutomaticPlacementClearsPreviousCustomization(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	input := guidedAnswers(append(append([]string{}, askToken...), "customize", "my-archive", "y", "eu", "weur", "customize", "my-archive", "n", "", "")...)
+	out := g.run(t, input, 0)
+	for _, request := range g.cf.Requests() {
+		if request.Route == cloudflaretest.RouteCreateBucket && (request.Jurisdiction != "" || strings.Contains(request.Body, "locationHint")) {
+			t.Fatalf("creation retained location: %+v\n%s", request, out)
+		}
+	}
+	if cfg := g.savedConfig(t); cfg.Storage.R2AccountID != cloudflaretest.AccountID || strings.Contains(cfg.Storage.R2Endpoint, ".eu.") || !strings.Contains(out, "Location: automatic") {
+		t.Fatalf("saved custom endpoint: %+v\n%s", cfg.Storage, out)
+	}
+}
+
+func TestCreateS3DeletionGoesDirectlyToExistingBucketSelection(t *testing.T) {
+	sequentialNames(t)
+	creator := &fakeCreator{block: []error{errCreateDenied}}
+	finder := fakeBuckets{names: []string{"saved"}, regions: map[string]string{"saved": "us-east-1"}}
+	var cfg credentials.Config
+	out, err := runCreate(t, createEnv("us-east-1", creator, finder, nil), &cfg, "\n\ndelete\nagent-archive-1\n1\n")
+	if err != nil || cfg.Bucket != "saved" || strings.Join(creator.calls, ",") != "create agent-archive-1 us-east-1,block agent-archive-1,delete agent-archive-1" || strings.Contains(out, "Review settings and retry") {
+		t.Fatalf("cfg=%+v err=%v calls=%v\n%s", cfg, err, creator.calls, out)
+	}
+}
+
+func TestCreateS3MissingCredentialsDefaultsToChoosingAProfile(t *testing.T) {
+	sequentialNames(t)
+	creator := &fakeCreator{}
+	env := createEnv("us-east-1", creator, fakeBuckets{}, nil)
+	env.AWSProfiles = func() ([]AWSProfile, error) {
+		return []AWSProfile{{Name: "bare", NoCredentials: true}, {Name: "ready", Region: "us-west-2"}}, nil
+	}
+	var cfg credentials.Config
+	out, err := runCreate(t, env, &cfg, "bare\n\nready\ne\nsaved\n")
+	if err != nil || cfg.AWSProfile != "ready" || cfg.Region != "us-west-2" || len(creator.calls) != 0 || strings.Contains(out, "Review settings and retry") || strings.Count(out, "Profile bare has no credentials") != 1 {
+		t.Fatalf("cfg=%+v err=%v calls=%v\n%s", cfg, err, creator.calls, out)
+	}
+}
