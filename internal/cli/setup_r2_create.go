@@ -245,6 +245,9 @@ func (c *r2Creator) connect() error {
 			if token == "" {
 				return errChooseStorageAgain
 			}
+			if err := validateManagementToken(token); err != nil {
+				return err
+			}
 			c.api.Discard()
 			c.api = c.env.cloudflareAPI(token)
 			c.account, c.groupID = "", ""

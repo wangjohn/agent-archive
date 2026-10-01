@@ -158,7 +158,7 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 	groups, groupErr := api.PermissionGroups(ctx, account, cloudflare.PermissionBucketItemWrite)
 	permissionID := ""
 	if groupErr == nil {
-		permissionID, groupErr = cloudflare.SelectPermissionGroup(groups, cloudflare.PermissionBucketItemWrite)
+		permissionID, groupErr = verificationPermissionGroup(groups)
 	}
 	if groupErr != nil {
 		report.Partial = true
@@ -210,6 +210,25 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 		report.Diagnostic = "provider_budget_exhausted"
 	}
 	return report
+}
+
+// verificationPermissionGroup reads identity, not the caller's right to mint it.
+// Conflicting or malformed identifiers cannot establish exact policy evidence.
+func verificationPermissionGroup(groups []cloudflare.PermissionGroup) (string, error) {
+	id := ""
+	for _, group := range groups {
+		if group.Name != cloudflare.PermissionBucketItemWrite {
+			continue
+		}
+		if !config.ValidMachineID(group.ID) || id != "" && id != group.ID {
+			return "", errors.New("permission group identity is invalid or ambiguous")
+		}
+		id = group.ID
+	}
+	if id == "" {
+		return "", errors.New("permission group identity is unavailable")
+	}
+	return id, nil
 }
 
 func newProviderVerification(now time.Time, paginationComplete bool) providerVerification {
