@@ -20,7 +20,7 @@ func TestSnapshotFixedBoundaryAndChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if err := os.WriteFile(path, []byte("first\nsecond\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +32,7 @@ func TestSnapshotFixedBoundaryAndChanges(t *testing.T) {
 		t.Fatal("changed file accepted")
 	}
 }
+
 func TestSnapshotRejectsDiscoveredSymlinksAndEscapes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -47,16 +48,17 @@ func TestSnapshotRejectsDiscoveredSymlinksAndEscapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if s, err := Open(OS{}, link, OpenPolicy{RejectSymlinks: true, Root: root}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatal("discovered symlink accepted")
 	}
 	if s, err := Open(OS{}, outside, OpenPolicy{Root: root}); err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatal("store escape accepted")
 	}
 }
+
 func TestStampDistinguishesReplacementWithSameSizeAndTime(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "file")
@@ -67,7 +69,7 @@ func TestStampDistinguishesReplacementWithSameSizeAndTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer func() { _ = first.Close() }()
 	stamp := first.Stamp()
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -82,7 +84,7 @@ func TestStampDistinguishesReplacementWithSameSizeAndTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
+	defer func() { _ = second.Close() }()
 	if stamp.SameFile(second.Stamp()) {
 		t.Fatal("replacement has same identity")
 	}
@@ -109,6 +111,7 @@ type trackedFile struct {
 }
 
 func (f trackedFile) Close() error { *f.closed = true; return f.File.Close() }
+
 func TestSnapshotClosesFileReplacedBetweenVerificationAndOpen(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -118,7 +121,7 @@ func TestSnapshotClosesFileReplacedBetweenVerificationAndOpen(t *testing.T) {
 	}
 	closed := false
 	opener := swappingOpener{closed: &closed, swap: func() {
-		if err := os.Remove(path); err != nil {
+		if err := os.Rename(path, filepath.Join(root, "displaced")); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
@@ -129,6 +132,30 @@ func TestSnapshotClosesFileReplacedBetweenVerificationAndOpen(t *testing.T) {
 	if s != nil {
 		_ = s.Close()
 		t.Fatal("replaced file accepted")
+	}
+	if !errors.Is(err, ErrChanged) || !closed {
+		t.Fatalf("race error=%v closed=%v", err, closed)
+	}
+}
+
+// An in-place rewrite can retain file identity while changing verified bytes.
+func TestSnapshotClosesFileRewrittenBetweenVerificationAndOpen(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, "file")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	opener := swappingOpener{closed: &closed, swap: func() {
+		if err := os.WriteFile(path, []byte("{\"changed\":true}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	s, err := Open(opener, path, OpenPolicy{RejectSymlinks: true, Root: root})
+	if s != nil {
+		_ = s.Close()
+		t.Fatal("rewritten file accepted")
 	}
 	if !errors.Is(err, ErrChanged) || !closed {
 		t.Fatalf("race error=%v closed=%v", err, closed)

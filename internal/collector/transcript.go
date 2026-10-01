@@ -50,13 +50,13 @@ func statTranscript(info os.FileInfo) transcriptFileInfo {
 	return transcriptFileInfo{Size: info.Size(), Mtime: info.ModTime().UnixNano()}
 }
 
-func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
+func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
 	snapshot, err := transcriptio.Open(transcriptio.OS{}, reg.TranscriptPath, transcriptio.OpenPolicy{})
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
 	defer func() { _ = snapshot.Close() }()
-	return filterSnapshot(context.Background(), snapshot, adapter, reg, maxBytes)
+	return filterSnapshot(ctx, snapshot, adapter, reg, maxBytes)
 }
 
 func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {

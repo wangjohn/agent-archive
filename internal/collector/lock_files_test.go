@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -54,7 +55,7 @@ func TestRejectedCandidatesLeaveNoLockFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if outcome := materializeSubagentCandidates(local, Options{}, start); len(outcome.rejected) != 3 || len(outcome.errors) != 2 {
+	if outcome := materializeSubagentCandidates(context.Background(), local, Options{}, start); len(outcome.rejected) != 3 || len(outcome.errors) != 2 {
 		t.Fatalf("outcome = %+v, want three rejections, the two with a mismatched transcript reported as failures", outcome)
 	}
 	// Only the registered parent's request lock remains: it now has a

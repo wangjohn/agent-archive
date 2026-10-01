@@ -9,9 +9,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // ErrNotRegularFile rejects sources that could block or read without end.
@@ -63,7 +64,7 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 	if err == nil && !after.Mode().IsRegular() {
 		err = ErrNotRegularFile
 	}
-	if err == nil && !os.SameFile(before, after) {
+	if err == nil && !unchanged(before, after) {
 		err = ErrChanged
 	}
 	if err != nil {
@@ -71,6 +72,11 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// unchanged compares identity and observable metadata across verification.
+func unchanged(before, after fs.FileInfo) bool {
+	return os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 // Stamp retains real file identity privately, alongside ordering facts.
@@ -121,8 +127,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			if err != nil {
 				return nil, err
 			}
-			rel, err := filepath.Rel(root, canonical)
-			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			if !local.PathWithin(canonical, root) {
 				return nil, fmt.Errorf("transcript is outside its store")
 			}
 		}
@@ -131,7 +136,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			return nil, err
 		}
 		opened, err := f.Stat()
-		if err == nil && (!opened.Mode().IsRegular() || !os.SameFile(info, opened)) {
+		if err == nil && (!opened.Mode().IsRegular() || !unchanged(info, opened)) {
 			err = ErrChanged
 		}
 		if err != nil {

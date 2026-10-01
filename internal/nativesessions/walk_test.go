@@ -7,12 +7,14 @@ import (
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
 type disk struct{}
 
 func (disk) ReadDir(path string) ([]os.DirEntry, error) { return os.ReadDir(path) }
+
 func TestWalkStopsAtFileCapAndCancellation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -40,7 +42,7 @@ func TestWalkStopsAtFileCapAndCancellation(t *testing.T) {
 
 func BenchmarkWalk(b *testing.B) {
 	for _, count := range []int{100, 1000, 10000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			root := b.TempDir()
 			dir := filepath.Join(root, "project")
 			if err := os.Mkdir(dir, 0700); err != nil {

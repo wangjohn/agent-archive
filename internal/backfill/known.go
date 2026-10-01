@@ -27,7 +27,10 @@ type KnownProject struct {
 // as are the home directory, temporary folders, folders that no longer
 // exist, and sessions whose project cannot be told.
 func KnownProjects(ctx context.Context, env Environment, cfg config.Config) ([]KnownProject, error) {
-	found, _ := discover(env)
+	found, _, err := discover(ctx, env)
+	if err != nil {
+		return nil, err
+	}
 	var items []*work
 	for _, t := range found {
 		if t.harness != harnessCursor {

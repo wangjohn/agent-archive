@@ -17,17 +17,24 @@ type DirectoryReader interface {
 
 // StoreRoot names a Claude projects store or Codex sessions/archived store.
 type StoreRoot struct {
-	Harness, Path string
-	Recursive     bool
+	Harness   string
+	Path      string
+	Recursive bool
 }
 
 // Ref is a process-local native transcript reference.
-type Ref struct{ Harness, Path, Store string }
+type Ref struct {
+	Harness string
+	Path    string
+	Store   string
+}
 
 // WalkCoverage distinguishes failed enumeration from an empty store.
 type WalkCoverage struct {
-	Enumerated, UnreadableFolders int
-	RootUnreadable, Complete      bool
+	Enumerated        int
+	UnreadableFolders int
+	RootUnreadable    bool
+	Complete          bool
 }
 
 // Walk enumerates known layouts, bounded before callbacks and traversal continue.

@@ -55,12 +55,18 @@ type unreadable struct {
 // only lists directories; nothing is opened here. A folder that cannot be
 // listed is passed over and recorded in u, so one bad folder never stops the
 // plan, and its path is never shown.
-func discover(env Environment) (found []*transcript, u unreadable) {
+func discover(ctx context.Context, env Environment) (found []*transcript, u unreadable, err error) {
 	u.stores = map[string]bool{}
-	found = append(found, discoverClaude(env, &u)...)
-	found = append(found, discoverCodex(env, &u)...)
+	found = append(found, discoverClaude(ctx, env, &u)...)
+	if err := ctx.Err(); err != nil {
+		return found, u, err
+	}
+	found = append(found, discoverCodex(ctx, env, &u)...)
+	if err := ctx.Err(); err != nil {
+		return found, u, err
+	}
 	found = append(found, discoverCursor(env, &u)...)
-	return found, u
+	return found, u, ctx.Err()
 }
 
 // listDir lists a folder inside an app's store. A missing folder, or a path
@@ -131,10 +137,10 @@ func fileSize(env Environment, path string) (int64, bool) {
 // discoverClaude finds <dir>/projects/*/*.jsonl in each of Claude Code's
 // folders (~/.claude, and $CLAUDE_CONFIG_DIR). The file stem is the native
 // session ID; a session found in two folders is a duplicate_session.
-func discoverClaude(env Environment, u *unreadable) []*transcript {
+func discoverClaude(ctx context.Context, env Environment, u *unreadable) []*transcript {
 	var found []*transcript
 	for _, dir := range env.claudeDirs() {
-		found = append(found, discoverClaudeIn(env, filepath.Join(dir, "projects"), u)...)
+		found = append(found, discoverClaudeIn(ctx, env, filepath.Join(dir, "projects"), u)...)
 	}
 	return found
 }
@@ -143,9 +149,9 @@ type nativeDirectories struct{ env Environment }
 
 func (n nativeDirectories) ReadDir(path string) ([]fs.DirEntry, error) { return n.env.readDir(path) }
 
-func discoverClaudeIn(env Environment, root string, u *unreadable) []*transcript {
+func discoverClaudeIn(ctx context.Context, env Environment, root string, u *unreadable) []*transcript {
 	var found []*transcript
-	coverage, _ := nativesessions.Walk(context.Background(), nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root}, 0, func(ref nativesessions.Ref) (bool, error) {
+	coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root}, 0, func(ref nativesessions.Ref) (bool, error) {
 		size, ok := fileSize(env, ref.Path)
 		if ok {
 			found = append(found, &transcript{harness: harnessClaude, path: ref.Path, size: size, nativeID: strings.TrimSuffix(filepath.Base(ref.Path), ".jsonl")})
@@ -162,7 +168,7 @@ func discoverClaudeIn(env Environment, root string, u *unreadable) []*transcript
 // discoverCodex finds <dir>/sessions/**/rollout-*.jsonl and
 // <dir>/archived_sessions/rollout-*.jsonl in each of Codex's folders
 // (~/.codex, and $CODEX_HOME). A file in both is taken from sessions/.
-func discoverCodex(env Environment, u *unreadable) []*transcript {
+func discoverCodex(ctx context.Context, env Environment, u *unreadable) []*transcript {
 	var found []*transcript
 	seen := map[string]bool{}
 	// Each folder is judged on its own; the plan then says whether any
@@ -170,7 +176,7 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 	storeUnread, sessionsUnread := false, false
 	for _, dir := range env.codexDirs() {
 		u.stores["codex"], u.codexArchivedOnly = false, false
-		found = append(found, discoverCodexIn(env, dir, seen, u)...)
+		found = append(found, discoverCodexIn(ctx, env, dir, seen, u)...)
 		if u.stores["codex"] {
 			storeUnread = true
 			sessionsUnread = sessionsUnread || !u.codexArchivedOnly
@@ -181,10 +187,10 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 	return found
 }
 
-func discoverCodexIn(env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
+func discoverCodexIn(ctx context.Context, env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
 	var found []*transcript
 	for index, store := range []string{"sessions", "archived_sessions"} {
-		coverage, _ := nativesessions.Walk(context.Background(), nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0}, 0, func(ref nativesessions.Ref) (bool, error) {
+		coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0}, 0, func(ref nativesessions.Ref) (bool, error) {
 			name := filepath.Base(ref.Path)
 			if seen[name] {
 				return true, nil

@@ -11,20 +11,30 @@ import (
 
 // Header holds native identity and cwd facts, without import policy.
 type Header struct {
-	NativeID, Directory string
-	StartedAt           time.Time
-	IdentityMismatch    bool
+	NativeID         string
+	Directory        string
+	StartedAt        time.Time
+	IdentityMismatch bool
 }
+
+type harnessName string
+
+const (
+	harnessClaude harnessName = "claude"
+	harnessCodex  harnessName = "codex"
+	harnessCursor harnessName = "cursor"
+)
 
 // Inspect applies native header rules to a caller-owned bounded record scan.
 func Inspect(harness, path string, scan func(func([]byte) bool) error) (Header, error) {
-	var t Header
-	if harness == "claude" {
-		t.NativeID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	var nativeID string
+	if harnessName(harness) == harnessClaude {
+		nativeID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	}
+	t := Header{NativeID: nativeID}
 	var err error
-	switch harness {
-	case "claude":
+	switch harnessName(harness) {
+	case harnessClaude:
 		err = scan(func(line []byte) bool {
 			var r struct {
 				Cwd string `json:"cwd"`
@@ -35,7 +45,7 @@ func Inspect(harness, path string, scan func(func([]byte) bool) error) (Header, 
 			}
 			return true
 		})
-	case "codex":
+	case harnessCodex:
 		seen := 0
 		metaFound := false
 		err = scan(func(line []byte) bool {
@@ -74,7 +84,7 @@ func Inspect(harness, path string, scan func(func([]byte) bool) error) (Header, 
 			t.IdentityMismatch = true
 		}
 
-	case "cursor":
+	case harnessCursor:
 		// Cursor's ID and project come from its folders, not its records.
 	}
 	return t, err
