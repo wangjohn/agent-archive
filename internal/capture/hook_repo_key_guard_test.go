@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"testing"
 	"time"
 
@@ -115,7 +116,7 @@ func TestHookStillAsksWhenTheIndexHasAnEntryButNoRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.EnsureArchiveSessionID("native-1"); err != nil {
+	if _, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	l := newKeyLookup()

@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"path/filepath"
 	"slices"
@@ -775,7 +776,7 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 		// deferForWork is off: undo removes the session whatever a hook
 		// queued for it meanwhile. ForgetSession also drops the parent's
 		// subagent candidates that were never registered.
-		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, false, &state.RemovalRecord{
+		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, false, &state.RemovalRecord{
 			Harness: app, Reason: state.RemovalReasonUndo, At: now,
 		}); err != nil {
 			result.Failed[reg.ArchiveSessionID] = fmt.Errorf("forget locally: %w", err)

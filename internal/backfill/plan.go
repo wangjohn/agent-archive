@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -316,12 +317,17 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 // classifyPlanWork asks the archive about native IDs, then reads full
 // transcripts only where the decision requires their contents or start time.
 func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, filters Filters, items []*work, projectFilter []string, since, until time.Time, workers int) error {
-	sessions := map[string][]*work{}
+	sessions := map[agentmeta.SessionKey][]*work{}
 	for _, w := range items {
 		if w.vanished {
 			continue
 		}
 		if strings.TrimSpace(w.c.NativeSessionID) != "" {
+			key, keyErr := agentmeta.NewSessionKey(string(w.t.harness), w.c.NativeSessionID)
+			if keyErr != nil {
+				w.unsafe = true
+				continue
+			}
 			reason, err := state.Classify(string(w.t.harness), w.c.NativeSessionID)
 			if err != nil {
 				return fmt.Errorf("check the archive: %w", err)
@@ -330,7 +336,6 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 				reason = ""
 			}
 			w.state = reason
-			key := string(w.t.harness) + "\x00" + w.c.NativeSessionID
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)

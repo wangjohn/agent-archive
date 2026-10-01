@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,7 +180,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, native := range []string{"taken", "taken-future"} {
-		if _, err := store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
+		if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native}, func(id string) archive.SessionRegistration {
 			return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: native, ProjectID: "p", ProjectRoot: project, Harness: archive.Harness{Name: "claude"}, SessionStartedAt: admitted}
 		}); err != nil {
 			t.Fatal(err)
@@ -200,7 +201,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 	if len(result.Sessions) != 1 || result.Gone != 1 || result.AlreadyArchived != 2 || result.NotAdmitted != 1 || result.StartInFuture != 1 {
 		t.Fatalf("%+v", result)
 	}
-	if _, found, _ := store.ArchiveSessionID("future"); found {
+	if _, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "future"}); found {
 		t.Fatal("a session starting after its admission was given an archive ID")
 	}
 	reg, _, _ := store.LoadRegistration(result.Sessions[0])
@@ -219,8 +220,8 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent.Subagents = []Subagent{{Path: subPath, AgentID: "s1"}, {Path: subPath, AgentID: "s2"}}
-	parentID, _, _ := store.EnsureArchiveSessionID("parent")
-	childID, _, _ := store.EnsureArchiveSessionID("parent:subagent:s1")
+	parentID, _, _ := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "parent"})
+	childID, _, _ := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "parent:subagent:s1"})
 	if err := store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: childID, NativeSessionID: "parent:subagent:s1", ParentArchiveSessionID: parentID, ParentNativeSessionID: "parent",
 		ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "claude"},

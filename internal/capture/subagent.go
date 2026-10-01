@@ -2,7 +2,8 @@ package capture
 
 import (
 	"fmt"
-	"strings"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -11,7 +12,7 @@ import (
 )
 
 func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNativeID string, payload map[string]any, now time.Time) error {
-	parentID, found, err := store.ArchiveSessionID(parentNativeID)
+	parentID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: parentNativeID})
 	if err != nil {
 		return fmt.Errorf("look up parent archive session ID: %w", err)
 	}
@@ -31,7 +32,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", "SubagentStop omitted agent_id", now)
 	}
 	childNativeID := parent.NativeSessionID + ":subagent:" + agentID
-	childID, _, err := store.EnsureArchiveSessionID(childNativeID)
+	childID, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(parent.Harness.Name)), NativeID: childNativeID})
 	if err != nil {
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}
@@ -43,7 +44,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 	if existing, childFound, err := store.LoadRegistration(childID); err != nil {
 		return err
 	} else if childFound {
-		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || !strings.EqualFold(existing.Harness.Name, parent.Harness.Name) || existing.SubagentID != agentID {
+		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(parent.Harness.Name) || existing.SubagentID != agentID {
 			return nil
 		}
 		if _, _, published, err := store.LoadLastPublished(childID); err != nil {

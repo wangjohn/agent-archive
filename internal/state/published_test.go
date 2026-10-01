@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func TestForgetSessionRefusesWhileItsCandidateIsUnreadable(t *testing.T) {
 	if err := os.Chmod(store.subagentCandidatePath("session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err == nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err == nil {
 		t.Fatal("forgot a session whose candidate could not be read")
 	}
 	if _, found, err := store.LoadRegistration("session-1"); err != nil || !found {
