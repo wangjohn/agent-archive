@@ -4,7 +4,7 @@ What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
 ```sh
-go test -race ./...
+go test -race -timeout 20m ./...                         # internal/cli alone takes 4.5 to 7 minutes in CI
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only

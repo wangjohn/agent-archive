@@ -13,6 +13,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
+    # The job takes 7 to 11 minutes. A hung step is stopped here, not after
+    # GitHub's default of six hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,7 +31,9 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
-      - run: go test -race ./...
+      # internal/cli takes 275 to 427 seconds under the race detector on these
+      # runners, too close to go test's default of 10 minutes a package.
+      - run: go test -race -timeout 20m ./...
       # The run above uses the race detector, under which the wall-clock
       # assertions of the performance tests are skipped (the detector slows
       # filtering by an order of magnitude). This plain run makes them count,
@@ -52,6 +57,7 @@ jobs:
     # legs and the lint job already vet darwin with cgo natively, which no
     # Linux runner can do (cgo needs Apple's SDK).
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,6 +103,8 @@ jobs:
     # (dev/contributing/testing.md). The failure message quotes the input;
     # reproduce it locally and keep it as a seed.
     runs-on: ubuntu-latest
+    # At 30 seconds a target, the targets take about 12 minutes in all.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -191,6 +199,7 @@ jobs:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
     # linted too.
     runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
