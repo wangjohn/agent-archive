@@ -6,7 +6,7 @@ Three changes that back the product's main claim, "switch computers and coding a
 
 1. **Repo-based handoff matching**: `handoff --latest` finds the right session on another machine without requiring the same checkout path.
 2. **Lower-friction setup**: reach a first working handoff without creating a bucket, and make bucket creation guided when the user wants sync.
-3. **Linux support**: full persistent capture, not only the ephemeral cloud mode in [cloud-capture.md](cloud-capture.md).
+3. **Linux support**: full persistent capture, not only the ephemeral cloud mode in [cloud-capture.md](../cloud-capture.md).
 
 They are independent except for a few shared seams, called out under [Sequencing](#sequencing).
 
@@ -123,7 +123,7 @@ Limit: refresh can only add `repo_key` on the machine that owns the registration
 
 ### Scope
 
-Storage stays S3 and R2 only. A local-only mode (setup with no bucket) and a folder backend (iCloud, Dropbox, NAS) were considered and are **not planned**: local-only adds little beyond what `handoff` already does on one machine, and cloud capture ([cloud-capture.md](cloud-capture.md)) matters more. So this part is about removing the dashboard work from setup for both providers, and trimming setup's remaining steps.
+Storage stays S3 and R2 only. A local-only mode (setup with no bucket) and a folder backend (iCloud, Dropbox, NAS) were considered and are **not planned**: local-only adds little beyond what `handoff` already does on one machine, and cloud capture ([cloud-capture.md](../cloud-capture.md)) matters more. So this part is about removing the dashboard work from setup for both providers, and trimming setup's remaining steps.
 
 ### Problem
 
@@ -181,7 +181,7 @@ Uses the AWS SDK v2 already linked in the binary and the profile picker that exi
 1. After the profile is chosen, if no suitable bucket exists, offer "Create a new private bucket" with a default name `agent-archive-<random suffix>` (S3 names are global, so collisions are likely without a suffix).
 2. `CreateBucket` (with `LocationConstraint` outside `us-east-1`), then `PutPublicAccessBlock` with all four flags true, then optionally `PutBucketEncryption`. If `PutPublicAccessBlock` fails after the bucket was created, do not proceed to uploads: report the bucket and offer to retry or delete it (the bucket is empty).
 3. Run the existing `InspectPrivacy` (`cli/privacy.go`, `storage/privacy.go`) so the result screen can show a verified "Block Public Access is on" row. This is stronger than R2's setup-time check.
-4. **Permissions.** The published least-privilege runtime policy deliberately lacks `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock`. So this needs a profile with those actions, used at setup time only. Setup then prints the runtime policy from [bucket permissions](../../docs/security/bucket-permissions.md) for the user to attach to a runtime identity; it does **not** create IAM users or keys. If the chosen profile is itself the runtime profile and cannot create buckets, say so and fall back to the existing "pick an existing bucket" flow.
+4. **Permissions.** The published least-privilege runtime policy deliberately lacks `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock`. So this needs a profile with those actions, used at setup time only. Setup then prints the runtime policy from [bucket permissions](../../../docs/security/bucket-permissions.md) for the user to attach to a runtime identity; it does **not** create IAM users or keys. If the chosen profile is itself the runtime profile and cannot create buckets, say so and fall back to the existing "pick an existing bucket" flow.
 5. Retention (dropped, like the R2 lifecycle rule in 2a step 7: it contradicts the backstop docs): optionally set an S3 lifecycle expiration rule via `PutBucketLifecycleConfiguration` with the same caveat as R2 (only on the bucket setup just created; it replaces existing rules).
 
 This differs from R2 in one important way: S3 setup does not mint a new scoped credential. It reuses the user's profile. That is simpler and safer to build, but the user's profile is usually broader than least privilege; document a recommendation to use a separate runtime profile.
@@ -194,7 +194,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 - Move the "import past sessions" offer (`offerSetupImport`) after the first successful capture check, not straight after commit.
 - Replace the manual `help` text in `promptStorage` (`setup.go:975-983`) with the creation menu, and keep `docs/getting-started/bucket.md` as the manual path.
 - Validate a pasted R2 key pair immediately with a cheap `ListObjectsV2` (max 1) before the full round trip, so a wrong account ID or key fails in seconds with the existing diagnosis (`storage/diagnose.go`).
-- Fix the cloud-mode overlap early: cloud mode ([cloud-capture.md](cloud-capture.md)) configures storage by environment variables and never runs `setup`. Guided creation produces exactly the values that mode needs (bucket, endpoint, key pair). After creation, print the `AGENT_ARCHIVE_*` variables for a cloud environment, next to the existing "set up another Mac" command (`printNextSteps`, `setup.go:783-839`), and offer to make a **separate** bucket-scoped token for cloud use rather than reuse the workstation's key (a cloud VM's environment variables are readable by anyone with access to the environment, per the cloud proposal). The R2 flow can mint that second token with the same bootstrap token in one extra call.
+- Fix the cloud-mode overlap early: cloud mode ([cloud-capture.md](../cloud-capture.md)) configures storage by environment variables and never runs `setup`. Guided creation produces exactly the values that mode needs (bucket, endpoint, key pair). After creation, print the `AGENT_ARCHIVE_*` variables for a cloud environment, next to the existing "set up another Mac" command (`printNextSteps`, `setup.go:783-839`), and offer to make a **separate** bucket-scoped token for cloud use rather than reuse the workstation's key (a cloud VM's environment variables are readable by anyone with access to the environment, per the cloud proposal). The R2 flow can mint that second token with the same bootstrap token in one extra call.
 
 **Status (package S1, implemented):**
 
@@ -202,7 +202,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 - The past-sessions offer now follows the next steps ("Check progress with `agent-archive status`"), not the "Configuration saved." line. It stays skippable, and `setup --yes` is unchanged. It is not tied to a first successful capture check: at that moment no session has been captured yet, so nothing there could be checked.
 - The manual storage help is two lines pointing at `docs/getting-started/bucket.md`; `guidedStorageOptions` (`setup.go`) is the slot where "Create a new bucket for me" goes (S2, S3).
 - `storage.Probe` (one `ListObjectsV2` with max keys 1 under the `.setup-test/` folder, no writes) runs before `VerifyAccess` in `verifyStorage`, so it covers R2 keys, S3 profiles, and `setup --yes` alike. It runs at the storage check, straight after the key is entered, not inside the key prompt: the pasted secret is staged in the credential store first and the store reads it from there.
-- **Not done: the `AGENT_ARCHIVE_*` printout.** Cloud mode is not implemented (`AGENT_ARCHIVE_CLOUD` appears nowhere in `internal/`), so printing those variables would describe a feature that does not exist. TODO when cloud mode ships: in `printAnotherMachine` (`setup.go`), print the variables named in [cloud-capture.md](cloud-capture.md) "Cloud mode configuration" for the configured provider, bucket, prefix, endpoint, and region, with `<access key id>` and `<secret access key>` placeholders (never the values), and one line saying that a cloud environment's variables are readable by anyone with access to it, so it needs a separate bucket-scoped key.
+- **Not done: the `AGENT_ARCHIVE_*` printout.** Cloud mode is not implemented (`AGENT_ARCHIVE_CLOUD` appears nowhere in `internal/`), so printing those variables would describe a feature that does not exist. TODO when cloud mode ships: in `printAnotherMachine` (`setup.go`), print the variables named in [cloud-capture.md](../cloud-capture.md) "Cloud mode configuration" for the configured provider, bucket, prefix, endpoint, and region, with `<access key id>` and `<secret access key>` placeholders (never the values), and one line saying that a cloud environment's variables are readable by anyone with access to it, so it needs a separate bucket-scoped key.
 
 ### Interaction with `--yes`
 
@@ -245,7 +245,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 
 ### Scope
 
-Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.
+Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](../cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.
 
 ### What already works
 
@@ -317,7 +317,7 @@ The capture core is portable: hooks, collector, adapters, storage, the S3 client
 
 ## Sequencing
 
-Value order for the launch story: **Part 1**, then **Part 2** (guided creation), then **Part 3**, with the cloud-capture work ([cloud-capture.md](cloud-capture.md)) able to start after Linux PRs 1-2.
+Value order for the launch story: **Part 1**, then **Part 2** (guided creation), then **Part 3**, with the cloud-capture work ([cloud-capture.md](../cloud-capture.md)) able to start after Linux PRs 1-2.
 
 Dependencies and shared seams:
 

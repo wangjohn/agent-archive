@@ -1,6 +1,6 @@
 # Git activity in session metadata: plan
 
-> **Implemented** in parser 0.15.0 (`internal/archive/git_activity.go`). This is the design record; the [metadata schema](../../schemas/metadata.schema.json) and [JSON output](../../docs/reference/json-output.md#show) are the contract. Where the implementation settled a detail differently, it is noted under [Implementation notes](#implementation-notes). Prepared 2026-09-30 from a read of `main` at commit 7dfc1bb.
+> **Implemented** in parser 0.15.0 (`internal/archive/git_activity.go`). This is the design record; the [metadata schema](../../../schemas/metadata.schema.json) and [JSON output](../../../docs/reference/json-output.md#show) are the contract. Where the implementation settled a detail differently, it is noted under [Implementation notes](#implementation-notes). Prepared 2026-09-30 from a read of `main` at commit 7dfc1bb.
 
 ## Purpose
 

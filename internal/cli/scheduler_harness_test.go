@@ -17,7 +17,7 @@ import (
 )
 
 // The harness of the macOS scheduler characterization (PR 5a-0 of
-// dev/proposals/platform-abstraction.md; the tests are the other
+// dev/proposals/implemented/platform-abstraction.md; the tests are the other
 // scheduler_*_test.go files). Later PRs move the launchctl calls behind a
 // scheduler port and the launchd history into its adapter; the tests must
 // pass through that without their assertions changing. So the tests observe

@@ -433,7 +433,7 @@ The biggest improvement to the experience. No dependency on new Cloudflare behav
 
 ### Phase 3: live acceptance of guided R2 creation (gate)
 
-Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](portable-handoff-and-onboarding.md#outcome-as-built).
+Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](implemented/portable-handoff-and-onboarding.md#outcome-as-built).
 
 ### Phase 4: per-machine keys and revocation
 

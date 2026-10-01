@@ -23,7 +23,7 @@ import (
 // Guided R2 creation: setup makes the bucket and a key that reaches only that
 // bucket, from one Cloudflare API token the person pastes. The design, and
 // what it leaves unconfirmed, is Part 2a of
-// dev/proposals/portable-handoff-and-onboarding.md.
+// dev/proposals/implemented/portable-handoff-and-onboarding.md.
 //
 // The pasted "bootstrap" token is the only value here that can do more than
 // read and write one bucket. It exists only in local variables of
