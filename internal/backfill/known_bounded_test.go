@@ -53,3 +53,16 @@ func TestBoundedProjectsCancellationDuringEnumerationKeepsPartialResults(t *test
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestBoundedProjectsDoNotSearchBodiesAndReportUnreadableHeaders(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	root := tr.repo("home/repo")
+	data, _ := json.Marshal(map[string]string{"cwd": root})
+	tr.write(filepath.Join("home", claudeFile("body", "1")), "{}\n"+string(data)+"\n")
+	tr.write(filepath.Join("home", claudeFile("bad", "2")), "invalid\n"+string(data)+"\n")
+	got := KnownProjectsBounded(context.Background(), tr.env(), config.Config{}, 128)
+	if len(got.Projects) != 0 || got.Unreadable != 1 || !got.Incomplete() {
+		t.Fatalf("got %+v", got)
+	}
+}
