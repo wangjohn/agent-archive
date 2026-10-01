@@ -25,6 +25,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   statistics with estimated costs.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
+- Informational `machines` records, bounded listing and local rename. Setup
+  publishes after commit; the collector independently retries registration and
+  refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Changed
 
