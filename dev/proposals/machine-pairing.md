@@ -27,7 +27,7 @@ No Cloudflare API token with account-wide permissions is ever stored.
 - [Phases and pull requests](#phases-and-pull-requests)
 - [Testing](#testing)
 - [Documentation](#documentation)
-- [Open questions and things to verify](#open-questions-and-things-to-verify)
+- [Things to verify](#things-to-verify)
 - [Alternatives considered](#alternatives-considered)
 - [Review changes](#review-changes)
 
@@ -60,6 +60,10 @@ Copying the data directory is not an option: it carries `machine_id`, and two ma
 | D10 | Cryptography | **Decided:** Argon2id to derive the key from the code, XChaCha20-Poly1305 to encrypt, both from `golang.org/x/crypto`. The Go team maintains it, as it does the `x/sys`, `x/term` and `x/text` modules already in `go.mod`. A trial build on 4de2d07 measured the cost: the stripped binary grows by about 52 KB (26.88 MB to 26.93 MB, 0.2%); `go.mod` gains one line and `go.sum` two; and no other module is compiled in, since x/crypto's dependencies are modules the project already uses. The ChaCha20-Poly1305 code is already in the binary, because the standard library carries its own copy for TLS; Argon2id and BLAKE2b are the only new code. The standard library's PBKDF2 was rejected: with no memory cost, GPUs guess it hundreds of times faster, which the 62-bit code cannot afford ([D3](#decisions)). |
 | D11 | Coding agents | `machines add` and `setup --pair` refuse to run when a coding agent's variable is set (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_AGENT`), whatever `--yes` or `AGENT_ARCHIVE_NONINTERACTIVE` say. Run in an agent, `machines add` would put the bundle and the code into a transcript that is archived and sent to the model's provider. And `setup --pair --yes` is a one-line way for a prompt-injected agent to send all future sessions to someone else's bucket. |
 | D12 | Where the bundle and code are shown | The bundle goes to the clipboard when one is available (and is printed with `--print`). The code is shown on the alternate screen and cleared when the person presses Enter, so the two are never together in scrollback, a terminal's saved session, or a screen share. |
+| D13 | S3 bundles | Encrypted and unlocked by a code, like R2 bundles. They hold no secret, but they hold the bucket name and project repository hashes. One flow is also easier to explain and test than two, and the code costs a few seconds. |
+| D14 | Spare keys | Two by default: enough for a laptop and a desktop added later, without many dormant keys to track. `--spares N` (0 to 5) changes it. |
+| D15 | `last_seen` | Each machine's collector refreshes its own record at most once a day. That is one small PUT per machine per day, and it shows a machine as alive even when it captures nothing for days. Reading each machine's newest session would write nothing, but it needs a listing pass and says nothing about a quiet machine. |
+| D16 | Pairing a machine that is already set up | A reconfiguration, as rerunning `setup` is today: the machine keeps its `machine_id`, the review screen shows each change from the current settings, and a change of destination needs an explicit yes. |
 
 ## User experience
 
@@ -376,7 +380,7 @@ S3 users already have the best credential story: a named profile, usually AWS SS
 
 - `setup --pair` checks that the profile exists on the new machine. If it does not, it prints `aws configure sso --profile <name>` (or `aws configure --profile <name>`) and stops before saving. Run `setup --pair` again after signing in; the same bundle works until it expires.
 - The machine list records `credential.kind: aws_profile`. `machines revoke` writes the revocation record and says that access is controlled in AWS IAM, so there is no key for agent-archive to delete.
-- S3 bundles are encrypted and use a code like R2 ones. They hold no secret, but they hold the bucket name and project repository hashes, and one flow is easier to explain than two. See [Open questions](#open-questions-and-things-to-verify).
+- S3 bundles are encrypted and use a code like R2 ones. They hold no secret, but they hold the bucket name and project repository hashes, and one flow is easier to explain than two ([D13](#decisions)).
 
 ## Security analysis
 
@@ -429,7 +433,7 @@ The biggest improvement to the experience. No dependency on new Cloudflare behav
 
 ### Phase 3: live acceptance of guided R2 creation (gate)
 
-Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#open-questions-and-things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](portable-handoff-and-onboarding.md#outcome-as-built).
+Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` against a real Cloudflare account, plus the new items under [things to verify](#things-to-verify). Nothing in Phase 4 ships before this passes. This is the open item already recorded in [the portable handoff plan](portable-handoff-and-onboarding.md#outcome-as-built).
 
 ### Phase 4: per-machine keys and revocation
 
@@ -473,14 +477,7 @@ Run every box of "Live acceptance: guided R2 creation" in `dev/contributing/test
 - `README.md` quickstart line about a second machine.
 - `CHANGELOG.md` per phase.
 
-## Open questions and things to verify
-
-**Design questions**
-
-1. **S3 bundles without a code.** S3 bundles hold no secret. Skipping the code for S3 would make S3 pairing one paste, at the cost of the bucket name and repository hashes travelling in the clear and two flows to explain. This plan keeps one flow.
-2. **Default spare count.** Two is enough for a laptop and a desktop added later. More means more dormant keys to track.
-3. **`last_seen` from the record or from sessions.** A daily PUT is cheap and works for machines that capture nothing for days. Reading the newest session per `machine_id` writes nothing but needs a listing pass.
-4. **Pairing a machine that is already set up.** Treat it as a reconfiguration (keep `machine_id`, show changes on the review screen), or refuse and point at `setup`. This plan proposes reconfiguration, matching what `setup` does today.
+## Things to verify
 
 **To verify against Cloudflare (Phase 3)**
 
