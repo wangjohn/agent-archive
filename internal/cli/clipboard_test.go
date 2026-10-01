@@ -16,11 +16,13 @@ import (
 func TestClipboardSelectsAProviderForTheConnectedDesktop(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, wayland, display string
-		system                 platform.OS
-		installed              []string
-		want                   string
-		args                   []string
+		name      string
+		wayland   string
+		display   string
+		system    platform.OS
+		installed []string
+		want      string
+		args      []string
 	}{
 		{name: "macOS", system: platform.Darwin, installed: []string{"pbcopy", "wl-copy"}, want: "pbcopy"},
 		{name: "Wayland preferred", system: platform.Linux, wayland: "wayland-0", display: ":0", installed: []string{"wl-copy", "xclip"}, want: "wl-copy", args: []string{"--type", "text/plain;charset=utf-8"}},
