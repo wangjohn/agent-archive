@@ -134,6 +134,39 @@ func (s *subagentMetaSlot) filter(raw map[string]any, lineNo int, addGap func(st
 	return filterSubagentMeta(raw, lineNo, addGap, omit)
 }
 
+// subagentLead is the subagent-meta record FilterSubagentJSONL hands the
+// filter, filtered, with the gaps filtering it reported. Both are held until
+// the transcript is read: they are written only when it has records of its
+// own, so a description never leaves a gap behind in a transcript it is not
+// written to.
+type subagentLead struct {
+	record []byte
+	gaps   []CaptureGap
+}
+
+// lead is filter for the lead record, its gaps held in the result.
+func (s *subagentMetaSlot) lead(raw map[string]any, omit func(string)) (subagentLead, error) {
+	var out subagentLead
+	hold := func(code string, _ int, detail string) {
+		out.gaps = append(out.gaps, CaptureGap{Code: code, Detail: detail})
+	}
+	record, err := s.filter(raw, 0, hold, omit)
+	out.record = record
+	return out, err
+}
+
+// writeTo reports the lead's gaps through addGap and puts its record first,
+// when the transcript has records of its own; otherwise it writes nothing.
+func (l subagentLead) writeTo(t *FilteredTranscript, addGap func(string, int, string)) {
+	if len(t.Records) == 0 {
+		return
+	}
+	for _, gap := range l.gaps {
+		addGap(gap.Code, 0, gap.Detail)
+	}
+	t.retainFirst(l.record)
+}
+
 // filterSubagentMeta filters one subagent-meta record and returns its
 // encoding, or nil when the record is dropped, reported in an
 // unsupported_value_omitted gap that carries no content.
