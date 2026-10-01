@@ -215,13 +215,12 @@ Usage: agent-archive machines add [--name NAME] [--share-key]
 
 Create an encrypted pairing bundle after checking the source storage.
 Shared-key R2 beta requires --share-key and cannot revoke one recipient alone.
-S3 transfers settings and a profile name; configure that profile on the receiver.
+S3 transfers settings and a profile name. Configure the profile on the receiver.
 Deliver the bundle and six-word code separately. Pairing refuses in any coding
 agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
   --share-key    Explicitly share the active R2 key (beta)
-  --expires DURATION
-                 Lifetime from 5m to 24h (default: 15m)
+  --expires DURATION  Lifetime from 5m to 24h (default: 15m)
   --print        Print the encrypted bundle instead of copying it
   --file PATH    Create a private 0600 bundle file; never overwrite a file
   --yes          Require --name and deliberately print bundle and code
