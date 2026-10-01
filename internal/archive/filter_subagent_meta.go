@@ -16,8 +16,8 @@ import (
 //	{"type":"subagent-meta","description":…}
 //
 // Nothing else of the file is kept. worktreePath names a local path and
-// agentType stays on this machine; neither is read, and neither is reported as an
-// omitted key, since the file is not part of the transcript.
+// agentType stays on this machine; neither is read, and neither is reported
+// as an omitted key, since the file is not part of the transcript.
 //
 // subagentMetaType is the type of that record.
 const subagentMetaType = "subagent-meta"
