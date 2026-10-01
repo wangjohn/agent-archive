@@ -46,7 +46,7 @@ const (
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
-	latest := fs.Bool("latest", false, "the most recent session for the project")
+	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
 	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")

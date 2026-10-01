@@ -613,7 +613,14 @@ in the last 2 minutes. Several matches on a terminal open the
 picker on them; without one, or inside a coding agent, they are listed on
 stderr and the command exits 1, never guessing. A title skips the agent
 session running the command, unless --to is given.
-  --latest              The most recent session for the project
+  --latest              The most recent session for the project: one that ran
+                        at this path, else one from another checkout of the
+                        same repository (its remote origin), such as on
+                        another Mac. A match by repository alone is named
+                        before anything is downloaded and, on a terminal, asked
+                        about (default no); with no terminal it is refused
+                        and the SESSION_ID command printed, since a
+                        repository chooses its own origin
   --project DIR|NAME    The project to pick from and search, in place of
                         the current directory's repository: a directory, or
                         a project name (matched to project_name and the
