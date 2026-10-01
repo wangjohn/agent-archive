@@ -575,3 +575,19 @@ func TestNativePickerReportsPartialPreviewLabels(t *testing.T) {
 		t.Fatalf("partial label unreported: code=%d out=%s stderr=%s", code, out.String(), errOut.String())
 	}
 }
+
+// A directory alias must select the same canonical checkout as its target.
+// Regression: 2026-10 review BH-03.
+func TestNativeProjectAcceptsSymlinkToCheckout(t *testing.T) {
+	t.Parallel()
+	f := newNativeFixture(t)
+	f.add(t, "claude", "native-source", "Canonical checkout work", time.Hour)
+	alias := filepath.Join(t.TempDir(), "checkout-alias")
+	if err := os.Symlink(f.cwd, alias); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := runHandoff(t, f.env, "native-source", "--project", alias)
+	if code != 0 || !strings.Contains(out, "Canonical checkout work") {
+		t.Fatalf("directory alias rejected: code=%d out=%s stderr=%s", code, out, errOut)
+	}
+}

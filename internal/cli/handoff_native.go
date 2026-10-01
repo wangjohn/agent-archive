@@ -272,6 +272,11 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		if err != nil {
 			return fail(err)
 		}
+		canonical, resolveErr := env.nativeFiles().EvalSymlinks(dir)
+		if resolveErr != nil {
+			return fail(errors.New("before setup --project needs an existing directory, not a configured project label"))
+		}
+		dir = canonical
 		if info, e := env.nativeFiles().Lstat(dir); e != nil || !info.IsDir() {
 			return fail(errors.New("before setup --project needs an existing directory, not a configured project label"))
 		}
