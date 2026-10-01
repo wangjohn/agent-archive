@@ -312,7 +312,8 @@ class PurgeRecipeTest(unittest.TestCase):
     def test_resume_every_deletion_boundary_in_fresh_shell(self):
         for shell in self.shells:
             for prefix in ('agent-archive/', 'nested/archive/', ''):
-                for mode, prepare, count in [('machine', 'machine "$machine"', 6),
+                for mode, prepare, count in [('unreferenced', 'unreferenced', 3),
+                                             ('machine', 'machine "$machine"', 6),
                                              ('old', 'old 10', 4), ('all', 'all', 9)]:
                     for boundary in range(1, count + (1 if mode == 'all' and not prefix else 0) + 1):
                         with self.subTest(shell=shell, prefix=prefix, mode=mode, boundary=boundary):
@@ -325,12 +326,15 @@ purge_apply && exit 91
 unset FAKE_RM_FAIL_AT
 "$FAKE_SHELL" -c '. "$FAKE_HELPERS"; bucket=my-archive-bucket; prefix=$2; purge_resume "$1" && purge_apply' recovery "$original" "$prefix"
 '''
-                            names = ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
+                            names = ['list'] if mode == 'unreferenced' else ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
                             result = self.run_recipe(shell, prefix, names,
                                 env_extra={'FAKE_RM_FAIL_AT': str(boundary)}, tail=tail)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             remaining = self.keys(bucket)
-                            if mode == 'all':
+                            if mode == 'unreferenced':
+                                expected = [k for k in before if not (k.endswith('.jsonl.gz') and
+                                    ('/cursor/cccc/' in k or '/claude/aaaa/source.a0' in k or '/claude/aaaa/source.a1' in k))]
+                            elif mode == 'all':
                                 expected = [k for k in before if not k.startswith(prefix)]
                             else:
                                 dirs = ['claude/aaaa'] + (['cursor/dddd'] if mode == 'machine' else [])
@@ -365,7 +369,7 @@ exit 0
                 bucket = self.build(extra=['outside/keep'])
                 before = self.keys(bucket)
                 tail = r"""
-mv() { return 1; }
+mv() { case "$2" in */pending) return 1 ;; esac; command mv "$@"; }
 purge_apply && exit 91
 unset -f mv
 original=$purge_dir
@@ -429,6 +433,81 @@ purge_resume "$original" && exit 92
                         env_extra={'FAKE_RM_FAIL_AT':'2'}, tail=tail)
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertEqual(len(self.attempts()), 2, result.stderr)
+
+    def test_resume_rejects_corrupt_progress_and_reappeared_metadata(self):
+        for shell in self.shells:
+            for intervention in (
+                ': > "$original/removed"',
+                'echo bogus >> "$original/removed"',
+                'rm "$original/removed"',
+                'rm "$original/progress.json"',
+                'chmod 600 "$original/progress.json"; echo broken > "$original/progress.json"',
+                'echo bogus >> "$original/tombstones"'):
+                with self.subTest(shell=shell, intervention=intervention):
+                    self.build()
+                    tail = r'''
+original=$purge_dir
+purge_apply && exit 91
+unset FAKE_RM_FAIL_AT
+cp "$original/meta.1" "$FAKE_S3/my-archive-bucket/agent-archive/sessions/claude/aaaa/metadata.json"
+''' + intervention + r'''
+purge_resume "$original" && purge_apply && exit 92
+exit 0
+'''
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'machine'],
+                        env_extra={'FAKE_RM_FAIL_AT':'2'}, tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(self.attempts()), 2, result.stderr)
+                    self.assertIn('progress', result.stderr)
+
+    def test_crash_around_progress_capsule_rename_recovers(self):
+        for shell in self.shells:
+            for boundary in (2, 3):
+                for phase in ('before', 'after'):
+                    with self.subTest(shell=shell, boundary=boundary, phase=phase):
+                        bucket = self.build()
+                        before = self.keys(bucket)
+                        between = r'''
+progress_commits=0
+mv() {
+  case "$2" in
+    */progress.json)
+      progress_commits=$((progress_commits + 1))
+      if [ "$progress_commits" = "$FAKE_PROGRESS_CRASH_AT" ] && [ "$FAKE_PROGRESS_CRASH_PHASE" = before ]; then kill -KILL $$; fi
+      command mv "$@" || return 1
+      if [ "$progress_commits" = "$FAKE_PROGRESS_CRASH_AT" ] && [ "$FAKE_PROGRESS_CRASH_PHASE" = after ]; then kill -KILL $$; fi ;;
+    *) command mv "$@" ;;
+  esac
+}
+'''
+                        result = self.run_recipe(shell, 'agent-archive/', ['list', 'machine', 'delete'],
+                            between=between, env_extra={'FAKE_PROGRESS_CRASH_AT': str(boundary),
+                                'FAKE_PROGRESS_CRASH_PHASE': phase})
+                        self.assertNotEqual(result.returncode, 0)
+                        original = re.findall(r'Plan (.*?): [0-9]+ exact keys', result.stdout)[-1]
+                        tail = '. "$FAKE_HELPERS"; bucket=my-archive-bucket; prefix=agent-archive/; purge_resume "' + original + '" && purge_apply'
+                        resumed = self.run_recipe(shell, 'agent-archive/', [], tail=tail)
+                        if boundary == 2 and phase == 'after':
+                            # Write ahead committed, but delete invocation is uncertain.
+                            self.assertNotEqual(resumed.returncode, 0, resumed.stderr)
+                            self.assertEqual(self.attempts(), [])
+                            self.assertEqual(self.keys(bucket), before)
+                        else:
+                            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                            self.assertEqual(self.keys(bucket), [k for k in before if not any(
+                                k.startswith('agent-archive/sessions/' + d + '/') for d in ('claude/aaaa', 'cursor/dddd'))])
+
+    def test_progress_capsule_commit_failure_stops_before_deletion(self):
+        for shell in self.shells:
+            for blocked in ('progress.next', 'progress.json'):
+                with self.subTest(shell=shell, blocked=blocked):
+                    bucket = self.build()
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'machine', 'delete'],
+                        between='mkdir "$purge_dir/' + blocked + '"')
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.attempts(), [])
+                    self.assertEqual(self.keys(bucket), before)
 
     def test_empty_listing_is_a_valid_noop(self):
         for shell in self.shells:

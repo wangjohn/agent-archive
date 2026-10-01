@@ -114,8 +114,10 @@ purge_prepare all
 
 Review **every printed key**. An empty prefix plans the entire bucket. If the
 plan contains exactly what you intend, run `purge_apply` within five minutes
-in the same shell. A failed listing or metadata read means zero deletions;
-use `purge_resume` with the retained plan after fixing it. A delete failure reports the keys
+in the same shell. A failed listing or metadata read means zero deletions.
+If preparation fails before printing a valid plan, fix the issue and rerun
+`purge_prepare all`. After a valid plan has been printed, use `purge_resume`
+with its retained directory for recovery. A delete failure reports the keys
 already removed and those still pending. There is no rollback. External
 writers can race these shell commands, so keep all uploading machines paused
 throughout.

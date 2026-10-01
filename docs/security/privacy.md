@@ -314,6 +314,42 @@ purge_seal_attempt() {
     (cd "$purge_dir" && shasum -a 256 "meta.$n" >> attempt.sha256) || return 1
   done < "$purge_dir/metas"
 }
+# Commit the authoritative progress payload and its checksum with one rename.
+# Text logs remain useful diagnostics; the capsule preserves crash uncertainty.
+purge_progress_write() {
+  [ ! -d "$purge_dir/progress.json" ] && [ ! -L "$purge_dir/progress.json" ] || return 1
+  jq -n --arg inflight "$1" --rawfile removed "$purge_dir/removed" \
+    --rawfile tombstones "$purge_dir/tombstones" \
+    '{removed:($removed|split("\n")[:-1]),tombstones:($tombstones|split("\n")[:-1]),inflight:$inflight}' \
+    > "$purge_dir/progress.payload" || return 1
+  digest=$(shasum -a 256 "$purge_dir/progress.payload") || return 1
+  digest=${digest%% *}
+  jq -n --arg digest "$digest" --rawfile payload "$purge_dir/progress.payload" \
+    '{digest:$digest,payload:$payload}' > "$purge_dir/progress.next" || return 1
+  chmod 400 "$purge_dir/progress.next" || return 1
+  mv "$purge_dir/progress.next" "$purge_dir/progress.json"
+}
+purge_progress_check() {
+  jq -ejr '.payload | select(type == "string")' "$1/progress.json" > "$purge_dir/progress.check" || return 1
+  digest=$(shasum -a 256 "$purge_dir/progress.check") || return 1
+  digest=${digest%% *}
+  [ "$digest" = "$(jq -er '.digest' "$1/progress.json")" ] || return 1
+  jq -e --slurpfile manifest "$purge_dir/manifest.json" '
+    . as $state | $manifest[0].targets as $targets |
+    (.removed|type)=="array" and (.tombstones|type)=="array" and
+    (.inflight|type)=="string" and
+    all(.removed[],.tombstones[]; . as $key | $targets|index($key)) and
+    (.inflight == "" or (.inflight as $key | $targets|index($key)))
+    ' "$purge_dir/progress.check" >/dev/null || return 1
+  # A crash can append a successful inflight deletion before the capsule rename.
+  jq -r '.removed[]' "$purge_dir/progress.check" > "$purge_dir/progress.expected" || return 1
+  if ! cmp -s "$purge_dir/progress.expected" "$1/removed"; then
+    jq -er '.inflight | select(length > 0)' "$purge_dir/progress.check" >> "$purge_dir/progress.expected" || return 1
+    cmp -s "$purge_dir/progress.expected" "$1/removed" || return 1
+  fi
+  jq -r '.tombstones[]' "$purge_dir/progress.check" > "$purge_dir/progress.expected" || return 1
+  cmp -s "$purge_dir/progress.expected" "$1/tombstones"
+}
 purge_manifest() {
   jq -n --arg bucket "$bucket" --arg prefix "$prefix" --arg mode "$mode" \
     --arg selector "$selector" --arg identity "$(purge_identity)" \
@@ -440,6 +476,7 @@ purge_prepare() {
     done < "$purge_dir/selected"
   fi
   date +%s > "$purge_dir/created" || return 1
+  : > "$purge_dir/tombstones" || return 1
   purge_manifest || return 1
   purge_seal_attempt || return 1
   : > "$purge_dir/VALID" || return 1 # written only after every check succeeds
@@ -491,12 +528,15 @@ purge_apply() {
   : > "$purge_dir/errors" || return 1
   : > "$purge_dir/pending" || return 1
   cp "$purge_dir/targets" "$purge_dir/pending" || return 1
+  purge_progress_write "" || return 1
   while IFS= read -r key; do
     # Write ahead: if interrupted after remote deletion, listing resolves uncertainty.
     printf '%s\n' "$key" > "$purge_dir/inflight" || return 1
+    purge_progress_write "$key" || return 1
     if ! aws s3 rm "s3://$bucket/$key" </dev/null 2> "$purge_dir/error.next"; then
       cat "$purge_dir/error.next" >> "$purge_dir/errors" || return 1
       cat "$purge_dir/error.next" >&2
+      purge_progress_write "" || return 1
       rm "$purge_dir/inflight" || return 1
       echo "Delete failed at $key. Already removed:" >&2
       cat "$purge_dir/removed" >&2
@@ -510,6 +550,7 @@ purge_apply() {
       echo "Progress log failed after removing $key; stopped. Inspect the bucket." >&2
       return 1
     fi
+    purge_progress_write "" || return 1
     rm "$purge_dir/inflight" || return 1
   done < "$purge_dir/targets"
   echo "Deleted $(wc -l < "$purge_dir/removed" | tr -d ' ') keys."
@@ -551,11 +592,13 @@ purge_resume() {
   : > "$purge_dir/metas" || return 1
   : > "$purge_dir/targets" || return 1
   : > "$purge_dir/tombstones" || return 1
-  for progress in tombstones removed inflight; do
-    if [ -f "$original/$progress" ]; then
-      cat "$original/$progress" >> "$purge_dir/tombstones" || return 1
-    fi
-  done
+  if [ -e "$original/progress.json" ]; then
+    purge_progress_check "$original" || { echo "Corrupt progress; nothing deleted." >&2; return 1; }
+    jq -r '.tombstones[],.removed[],(.inflight|select(length>0))' \
+      "$purge_dir/progress.check" > "$purge_dir/tombstones" || return 1
+  elif [ -e "$original/removed" ] || [ -e "$original/pending" ] || [ -e "$original/inflight" ]; then
+    echo "Missing progress capsule; nothing deleted." >&2; return 1
+  fi
   jq -r '.metas[]' "$purge_dir/manifest.json" > "$purge_dir/original.metas" || return 1
   n=0; i=0
   while IFS= read -r meta; do
@@ -621,7 +664,7 @@ Review its printed remaining original keys and run `purge_apply` again within
 five minutes. Use the newest printed recovery directory for each subsequent retry, keeping
 its earlier directories until cleanup succeeds. Recovery uses the immutable
 manifest and a complete bucket listing, so a remote delete interrupted before local logging does not lose source keys.
-Changed or reappearing metadata and new objects abort recovery. An uncertain
+Changed or reappearing metadata, new objects, and corrupt or missing attempt progress abort recovery. An uncertain
 metadata deletion that still exists also aborts; inspect that conflict first.
 The recipes cannot guarantee atomicity against external writers. The private
 manifest retains metadata snapshots and object names, never transcript content
