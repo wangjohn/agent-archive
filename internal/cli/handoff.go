@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -336,32 +337,17 @@ func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTa
 }
 
 // hasPrompt reports whether a bundle holds anything the person said, so
-// `--latest` passes over a session that has only just started.
+// `--latest` passes over a session that has only just started. It is
+// archive.SessionLabels's second result, without deriving the labels.
 func hasPrompt(bundle archive.SourceBundle) bool {
-	_, ok := firstPrompt(bundle)
-	return ok
-}
-
-// sessionTitleWidth is how many columns firstPrompt keeps, as the archive's
-// metadata title does.
-const sessionTitleWidth = 72
-
-// firstPrompt is hasPrompt with a one-line preview of the first prompt, when
-// the transcript's structure shows one (a Cursor text transcript's does not).
-func firstPrompt(bundle archive.SourceBundle) (title string, ok bool) {
 	if len(bundle.NativeText) > 0 {
-		return "", true
+		return true
 	}
 	view, err := archive.ParseNormalized(bundle)
 	if err != nil {
-		return "", false
+		return false
 	}
-	for _, turn := range view.Turns {
-		if turn.Kind == archive.TurnKindHumanPrompt {
-			return ellipsize(strings.Join(strings.Fields(turn.Text), " "), sessionTitleWidth), true
-		}
-	}
-	return "", false
+	return slices.ContainsFunc(view.Turns, func(turn archive.NormalizedTurn) bool { return turn.Kind == archive.TurnKindHumanPrompt })
 }
 
 type handoffResolver struct {
@@ -578,8 +564,8 @@ func localRepoMatch(reg archive.SessionRegistration, bundle archive.SourceBundle
 	if reg.ProjectRoot != "" {
 		project = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
-	title, _ := firstPrompt(bundle)
-	return repoMatch{id: reg.ArchiveSessionID, machine: machineThis, started: reg.SessionStartedAt, project: project, title: title}
+	labels, _ := archive.SessionLabels(bundle)
+	return repoMatch{id: reg.ArchiveSessionID, machine: machineThis, started: reg.SessionStartedAt, project: project, title: labels.Title}
 }
 
 // archiveMatches are the archive's top-level sessions, newest capture first,
@@ -684,19 +670,7 @@ func pathForms(path string) []string {
 // projectIDs returns the archive project IDs dir can belong to: the
 // configured project whose root contains it, and dir's own ID.
 func (r handoffResolver) projectIDs(dir string) map[string]bool {
-	ids := map[string]bool{}
-	for _, form := range pathForms(dir) {
-		ids[archive.ProjectID(form)] = true
-	}
-	for _, project := range r.cfg.Archive.Projects {
-		if project.Root != "" && sameProject(project.Root, dir) {
-			ids[archive.ProjectID(project.Root)] = true
-			if project.ProjectID != "" {
-				ids[project.ProjectID] = true
-			}
-		}
-	}
-	return ids
+	return archiveProjectIDs(r.cfg, dir)
 }
 
 func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {

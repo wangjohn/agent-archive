@@ -42,7 +42,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -64,7 +64,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 | 0 | Success, and help. |
 | 1 | An operational failure. What a command was asked for goes to stdout; why it did not do it, or not all of it, goes to stderr. A `sync` that is paused, finds another command running, or fails for some sessions exits 1; its summary line, if it ran, stays on stdout. |
 | 2 | A usage error: an unknown command or flag, a bad flag value, or an unexpected argument. It is reported in one line on stderr before the command does anything. |
-| 128 + signal | `backfill` stopped at once by a second Ctrl-C (130), SIGHUP (129), or SIGTERM (143). |
+| 128 + signal | A command stopped by a signal exits with the shell's status for it: Ctrl-C (130), SIGHUP (129), SIGQUIT (131), or SIGTERM (143). `backfill` stops at once on a second Ctrl-C; `list`, `show` and `stats` restore the terminal first. |
 
 ## agent-archive setup
 
@@ -83,7 +83,7 @@ Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
   --refresh             After upgrading agent-archive: bring the app hooks, the
-                        background collector's plist, and the skill files up to
+                        background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
                         change nothing else. Asks nothing and needs no
                         terminal; the installer runs it. Prints "nothing to
@@ -114,7 +114,7 @@ An interrupted setup is recovered on the next run.
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
-                        saved apps, else those found on this Mac). It must
+                        saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
   --no-skills           Install no agent skills (such as /handoff), and
                         remove those setup wrote. Later setup runs keep
@@ -235,15 +235,24 @@ Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON outp
 Usage: agent-archive list [options]
 
 Find sessions using metadata; does not download conversation content.
-Default text columns: TITLE (first filtered prompt preview, or a short
-SESSION_ID prefix when none), relative capture time, harness, project,
-and a short SESSION_ID. On a terminal with an interactive stdin, list a
-numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
-wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
-never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
-is inside coding agents (see the configuration reference). On a terminal
-without interactive stdin, text is paged through $PAGER unless --no-pager.
+Run inside a project, it lists that repository's sessions (every checkout and
+worktree of it, and its sessions from other machines), with a heading naming the
+repository; when there are none, it lists all projects and says so. --project
+lists another project's, and --all-projects every project's. Outside any
+project it lists every session, grouped by project. On a terminal, the a key,
+typed alone, switches between the repository and all projects.
+Default text columns: TITLE (the name the session's agent gave it, else a
+preview of its first filtered prompt, else a short SESSION_ID prefix), PR (the
+last pull request the session linked or created, when any row has one),
+relative capture time, harness, project, and a short SESSION_ID. A harness or
+project every row shares is left out of the table and named in the heading.
+On a terminal with an interactive stdin, list a numbered table and pick a
+session to show its summary, then t for its transcript, Enter or b to go
+back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
+scroll. Piped or --json output is never interactive, nor is any run with
+AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
+configuration reference). On a terminal without interactive stdin, text is
+paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -262,6 +271,15 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --project DIR|NAME             List this project's sessions: the
+                                 repository of a directory, or a project
+                                 name (matched to project_name and the
+                                 configured project labels, exactly, ignoring
+                                 case). Default: the current directory's
+                                 repository
+  --all-projects                 List every project's sessions. Scripts that
+                                 read every session pass this, since list
+                                 run inside a project now lists only its own
   --rebuild-index                Rebuild the listing index from live metadata;
                                  scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
@@ -273,13 +291,18 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;
-                                 each session is live metadata. Usage errors
-                                 print no JSON. Never paged or interactive.
+                                 each session is live metadata. "scope"
+                                 ({"label", "all_projects", "fell_back",
+                                 "outside_matches"}) appears when the
+                                 listing looked at a project's sessions
+                                 first. Usage errors print no JSON. Never
+                                 paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all-projects` | no value | — |
 | `--complete` | no value | — |
 | `--harness` | a value | — |
 | `--hook-captured` | no value | — |
@@ -289,6 +312,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--project` | a value | — |
 | `--rebuild-index` | no value | — |
 | `--since` | a value | — |
 | `--skill` | a value | — |
@@ -403,6 +427,10 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --all                          With --json, list every project, skill and
+                                 MCP server, not the top five of each (models
+                                 are always all). Only with --json: the --html
+                                 page keeps its top lists
   --html                         Write one self-contained web page (inline
                                  styles and SVG; no script, no requests, works
                                  in light and dark and prints) to stdout, or
@@ -423,6 +451,7 @@ Example: agent-archive stats --html --output stats.html
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all` | no value | — |
 | `--by` | a value | — |
 | `--days` | a value | `30` |
 | `--detail` | no value | — |
@@ -468,7 +497,7 @@ Usage: agent-archive backfill [options]
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
-Import the Claude Code, Codex, and Cursor sessions already on this Mac that
+Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
 confirm. Projects the import needs are added to capture. Prints project
@@ -515,7 +544,7 @@ Usage: agent-archive backfill history
 
 List past imports, oldest first: each import's IMPORT_ID, when it started,
 how many sessions and projects it added, and its upload state (waiting,
-uploaded, interrupted, or undone). Reads this Mac's records only.
+uploaded, interrupted, or undone). Reads this machine's records only.
 Example: agent-archive backfill history
 ```
 
@@ -530,7 +559,7 @@ Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
-sessions are deleted from the bucket and this Mac, and the projects it added
+sessions are deleted from the bucket and this machine, and the projects it added
 are excluded from capture. Shows what it will do and asks first.
 Hook-captured sessions and the apps' own files are never touched. If the
 import raised retention, undo offers to put the shorter retention back,
@@ -558,7 +587,7 @@ Guide: [Continue a session in another agent](../guides/handoff.md).
 Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
 
 Continue a session in another coding agent. On a terminal, pick a session
-(this Mac's, including ones not yet uploaded, and archived ones), then pick
+(this machine's, including ones not yet uploaded, and archived ones), then pick
 where to continue: an installed agent starts in this terminal with the
 session as its context (Enter takes handoff.default_to in config.json, else
 Codex for a Claude Code session and Claude Code for the others), or print,
@@ -566,15 +595,20 @@ copy to the clipboard, or write to a file. Inside Claude Code, /handoff codex
 runs handoff --to codex, which opens Codex in a new terminal tab or window.
 The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
-this Mac is read from its transcript now; otherwise it is downloaded from
+this machine is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
 prints without asking. Without a terminal, give a SESSION_ID or TITLE,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
 A TITLE substring or short SESSION_ID matches as it does for show, in this
-Mac's sessions first (no network), then the archive's; a full SESSION_ID
-wins. Quote a title of several words. Several matches on a terminal open the
+machine's sessions first (no network), then the archive's; a full SESSION_ID
+wins. Quote a title of several words. Inside a project, the picker and a
+TITLE look at that repository's sessions first (every checkout and worktree
+of it), then everywhere; a note says how many more match in other projects.
+On the picker, the a key, typed alone, switches between the repository and
+all projects. The heading names what is shown, and a dot marks a session active
+in the last 2 minutes. Several matches on a terminal open the
 picker on them; without one, or inside a coding agent, they are listed on
 stderr and the command exits 1, never guessing. A title skips the agent
 session running the command, unless --to is given.
@@ -586,14 +620,19 @@ session running the command, unless --to is given.
                         about (default no); with no terminal it is refused
                         and the SESSION_ID command printed, since a
                         repository chooses its own origin
-  --project DIR         Project for --latest, and where the agent starts
-                        (default: current directory)
+  --project DIR|NAME    The project to pick from and search, in place of
+                        the current directory's repository: a directory, or
+                        a project name (matched to project_name and the
+                        configured project labels, exactly, ignoring case).
+                        With --latest, the directory it searches, and where
+                        the agent starts
+  --all-projects        Pick from and search every project
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
-                        this Mac's transcript when there is one, else the
+                        this machine's transcript when there is one, else the
                         archive; local or archive uses only that one
   --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
                         no limit. When trimmed, the full version is saved for
@@ -634,6 +673,7 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all-projects` | no value | — |
 | `--branch` | a value | — |
 | `--file` | a value | — |
 | `--force` | no value | — |
@@ -655,13 +695,18 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 Guide: [Uninstall](../getting-started/uninstall.md).
 
 ```text
-Usage: agent-archive uninstall [--delete-local-data] [--yes]
+Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
@@ -670,6 +715,7 @@ Example: agent-archive uninstall
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
+| `--skip-scheduler` | no value | — |
 | `--yes` | no value | — |
 
 ## agent-archive purge
@@ -683,7 +729,7 @@ Usage: agent-archive purge plan [--mode unreferenced|old-filter]
 
 Create a private five-minute deletion plan, then review its exact keys.
 Plan lists still-current older-filter sessions separately and never proposes
-their current sources for deletion. Pause every Mac uploading to this prefix
+their current sources for deletion. Pause every machine uploading to this prefix
 before apply. A versioned bucket keeps noncurrent versions and delete markers.
 ```
 
@@ -696,7 +742,7 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 ```text
 Usage: agent-archive purge apply PLAN [--yes]
 
-Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Pause every uploading machine first. Confirm the plan digest or use --yes.
 Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 ```

@@ -1,0 +1,13 @@
+Id=@REF@.timer
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=@TIMER@
+DropInPaths=
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=activating
+SubState=start
+FragmentPath=@SERVICE@
+DropInPaths=

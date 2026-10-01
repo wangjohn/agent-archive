@@ -10,18 +10,21 @@ import (
 )
 
 type handoffOptions struct {
-	sessionID  string
-	project    string
-	harness    string
-	file       string
-	source     string
-	format     string
-	output     string
-	to         string
-	latest     bool
-	force      bool
-	noPreamble bool
-	maxBytes   int
+	sessionID string
+	project   string
+	harness   string
+	// allProjects searches and lists every project, not only the working
+	// directory's repository.
+	allProjects bool
+	file        string
+	source      string
+	format      string
+	output      string
+	to          string
+	latest      bool
+	force       bool
+	noPreamble  bool
+	maxBytes    int
 	// worktree launches in a new git worktree on branch (default
 	// handoff/<short id>) instead of the current checkout.
 	worktree bool
@@ -44,7 +47,8 @@ const (
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
-	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
+	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
+	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
 	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
@@ -68,7 +72,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
-	opts := handoffOptions{sessionID: sessionID, project: *project, harness: *harness,
+	opts := handoffOptions{sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
 		worktree: *worktree, branch: *branch}
@@ -121,8 +125,12 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		return "a session ID, --latest, and --file are mutually exclusive"
 	case opts.file != "" && opts.harness == "":
 		return "--file requires --harness (claude, codex, or cursor)"
-	case opts.project != "" && !opts.latest:
-		return "--project applies only to --latest"
+	case opts.project != "" && opts.allProjects:
+		return "--project and --all-projects cannot be used together: --project picks one project, --all-projects searches every project"
+	case opts.project != "" && opts.file != "":
+		return "--project does not apply to --file, which names a transcript"
+	case opts.allProjects && (opts.latest || opts.file != ""):
+		return "--all-projects applies to the picker and to a title, not to --latest or --file"
 	case opts.force && opts.output == "":
 		return "--force applies only to --output"
 	case opts.maxBytes < 0:

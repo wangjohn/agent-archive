@@ -36,14 +36,21 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
+		// Guided bucket creation waits for Cloudflare between checks; a
+		// test does not.
+		Pause: func(time.Duration) {},
+		// Tests never change the real process environment.
+		UnsetEnv: func(string) error { return nil },
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
 		OS: platform.Darwin,
+		// Nor this machine's ID: a Linux test that means a machine sets it.
+		HostFingerprint: func() string { return "" },
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
-		// Everything below would otherwise reach this Mac itself. Reads get
-		// a harmless answer; anything that would change the Mac fails the
+		// Everything below would otherwise reach this machine itself. Reads get
+		// a harmless answer; anything that would change the machine fails the
 		// test. A test that needs one sets it (setupTestEnv sets them all).
 		Scheduler: noLaunchd(t),
 		Credentials: func() (credentials.CredentialStore, error) {
@@ -52,7 +59,10 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")
 		},
-		WorkingDir:           func() (string, error) { return "", errors.New("no working directory in this test") },
+		WorkingDir: func() (string, error) { return "", errors.New("no working directory in this test") },
+		// Tests never run git to find a directory's repository key: no
+		// directory has an origin remote unless a test says so.
+		repoKey:              func(string) string { return "" },
 		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
@@ -75,7 +85,7 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 const testLessVersion = 668
 
 // noInterrupts is Env.Interrupts for tests that do not send signals. The
-// default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while
+// default installs real handlers for Ctrl-C, SIGTERM, SIGHUP, and SIGQUIT, and while
 // any parallel backfill test held them, a signal sent to the test run would
 // end it through exitOnSignal with a bare exit status instead of the
 // signal's name.

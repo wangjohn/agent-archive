@@ -14,7 +14,7 @@
 // retries it. It never considers another machine's sessions — registrations
 // only ever exist on the machine that created them.
 //
-// Every age it compares was stamped by this Mac's clock, so the clock alone
+// Every age it compares was stamped by this machine's clock, so the clock alone
 // can never be the reason something is deleted: before the first deletion
 // decided by age, a sweep checks the clock against the storage service's
 // and against the previous collector pass, and holds every such deletion
@@ -72,7 +72,7 @@ type Options struct {
 	ServerClock func(context.Context) (time.Time, error)
 	// PreviousScanAt is when the collector pass before this one ran (the
 	// Status.LastScanAt read before this pass began). A Now more than
-	// MaxPassGap past it means the clock jumped, or the Mac was off: either
+	// MaxPassGap past it means the clock jumped, or the machine was off: either
 	// way age-driven deletion waits one pass. Zero skips the check.
 	PreviousScanAt time.Time
 	// GracePeriod bounds how long a superseded (no longer current) source
@@ -578,8 +578,9 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 // whole-session expiry past the retention window: after deleting the session
 // from the current bucket, for a session that never published, and for one
 // published to a previous destination. ForgetIdleSession writes the record
-// under the request lock, so a session a hook kept alive gets none, and a
-// failed write keeps the session registered for the next sweep to retry.
+// before it forgets anything, so a failed write keeps the session registered
+// for the next sweep to retry, and takes it back from a session a hook kept
+// alive.
 func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
 	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
 		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,

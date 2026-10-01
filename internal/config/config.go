@@ -101,6 +101,23 @@ type Config struct {
 	// written before this field existed falls back to the current
 	// environment's paths.
 	HookFiles map[string]string `json:"hook_files,omitempty"`
+	// BackgroundBackend names the scheduler that runs the background collector
+	// ("systemd"), as setup recorded it. Status, uninstall, refresh and
+	// recovery address the job through this backend and never pick another.
+	// Setup leaves out "launchd", and an absent field means launchd on macOS
+	// and systemd on Linux, for all time, so a macOS configuration never
+	// changes and a binary that rewrites this file without the field cannot
+	// change what it means.
+	BackgroundBackend string `json:"background_backend,omitempty"`
+	// HostID is a digest of the Linux machine ID (local.HostFingerprint) of
+	// the machine that set this data directory up, recorded next to MachineID
+	// the first time setup runs there. Status and setup compare it with the
+	// machine they run on: a different one means the data directory was
+	// copied, typically with a cloned VM or container image, and the two
+	// machines now claim the same sessions. Empty on macOS (never recorded),
+	// and on a Linux system with no machine ID to read. It is local: it is
+	// not in any published file.
+	HostID string `json:"host_id,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this
@@ -179,7 +196,7 @@ func Load(home string) (cfg Config, found bool, err error) {
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this Mac's machine ID) and running agent-archive setup configures this Mac again", ErrUnreadable, path(home), err)
+		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)

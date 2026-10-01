@@ -34,10 +34,10 @@ func newRepoFixture(t *testing.T, harness, transcript string) handoffFixture {
 	return f
 }
 
-// otherMachine turns f into a second computer that has the archive but not
+// secondComputer turns f into a second computer that has the archive but not
 // the session: no registrations, another machine ID, and the working
 // directory a different checkout, returned. Its checkout has key.
-func otherMachine(t *testing.T, f *handoffFixture, key string) string {
+func secondComputer(t *testing.T, f *handoffFixture, key string) string {
 	t.Helper()
 	regs, err := os.ReadDir(filepath.Join(f.home, "registrations"))
 	if err != nil {
@@ -132,7 +132,7 @@ func TestArchiveHandoffCandidatesSplitByPathAndRepository(t *testing.T) {
 func TestHandoffLatestFindsAnotherMachinesSessionByRepository(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "claude", claudeHandoffTranscript)
-	otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	f.env.currentBranch = func(string) string { return "main" }
 	out, errOut, code := runPicker(t, f.env, "y\np\n", "--latest")
 	if code != 0 {
@@ -180,7 +180,7 @@ func TestHandoffRepositoryMatchAsksBeforeLaunching(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newRepoFixture(t, "codex", handoffTranscript)
-			otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+			secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 			var l launches
 			l.watch(&f.env)
 			out, errOut, code := runPicker(t, f.env, tc.answer, "--latest", "--to", "claude")
@@ -220,7 +220,7 @@ func TestHandoffRepositoryMatchRefusesWithoutATerminal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newRepoFixture(t, "claude", claudeHandoffTranscript)
-			otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+			secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 			var l launches
 			l.watch(&f.env)
 			var out, errOut bytes.Buffer
@@ -257,7 +257,7 @@ func TestHandoffRepositoryMatchRefusesWithoutATerminal(t *testing.T) {
 func TestHandoffExplicitSessionIgnoresRepositoryMatching(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	out, errOut, code := runHandoff(t, f.env, f.id, "--source", "archive")
 	if code != 0 || !strings.Contains(out, "Fix the flaky widget test.") || strings.Contains(errOut, "matched by repository") {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
@@ -333,7 +333,7 @@ func TestHandoffLocalSessionInAnotherCloneMatchesByRepository(t *testing.T) {
 func TestHandoffWithoutAKeyIsTheOldPathRule(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, "")
+	secondComputer(t, &f, "")
 	out, errOut, code := runHandoff(t, f.env, "--latest")
 	if code != 1 || out != "" {
 		t.Fatalf("code=%d stdout=%q", code, out)
@@ -354,7 +354,7 @@ func TestHandoffWithoutAKeyIsTheOldPathRule(t *testing.T) {
 func TestHandoffNoMatchNamesTheRepositoryAndPathTried(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, archive.RepoKey("https://example.test/acme/unrelated.git"))
+	secondComputer(t, &f, archive.RepoKey("https://example.test/acme/unrelated.git"))
 	_, errOut, code := runHandoff(t, f.env, "--latest")
 	if code != 1 || !strings.Contains(errOut, "Tried this directory's repository (its remote origin), then its path.") ||
 		strings.Contains(errOut, "not in a git repository") || !strings.Contains(errOut, "agent-archive handoff "+f.id) {
@@ -366,7 +366,7 @@ func TestHandoffNoMatchNamesTheRepositoryAndPathTried(t *testing.T) {
 func TestHandoffRepositoryMatchHonorsHarnessAndSkipsTheCallingSession(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	if _, errOut, code := runPicker(t, f.env, "y\np\n", "--latest", "--harness", "claude"); code != 1 || !strings.Contains(errOut, "no session for") {
 		t.Fatalf("other harness: code=%d stderr=%s", code, errOut)
 	}
@@ -382,7 +382,7 @@ func TestHandoffRepositoryMatchHonorsHarnessAndSkipsTheCallingSession(t *testing
 func TestHandoffLaunchesAnotherMachinesArchivedSession(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	dir := otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	dir := secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	var l launches
 	l.watch(&f.env)
 	_, errOut, code := runPicker(t, f.env, "y\n", "--latest", "--to", "claude")
@@ -422,7 +422,7 @@ func TestHandoffLaunchesAnotherMachinesArchivedSession(t *testing.T) {
 func TestHandoffLaunchesAnotherMachinesSessionByIDWithoutATerminal(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, "")
+	secondComputer(t, &f, "")
 	var l launches
 	l.watch(&f.env)
 	if _, errOut, code := runHandoff(t, f.env, f.id, "--to", "claude"); code != 0 || l.windows != 1 {
@@ -438,7 +438,7 @@ func TestHandoffRepositoryKeyComesFromTheGitCheckoutOfTheDirectory(t *testing.T)
 		t.Skip("git is not installed")
 	}
 	f := newRepoFixture(t, "codex", handoffTranscript)
-	otherMachine(t, &f, "")
+	secondComputer(t, &f, "")
 	f.env.repoKey = nil
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "widget")

@@ -78,8 +78,9 @@ func TestOriginURLIgnoresARelativeRoot(t *testing.T) {
 
 func TestOriginURLGivesGitAtMostTheTimeout(t *testing.T) {
 	t.Parallel()
+	// The deadlines are checked against clock readings, not elapsed time, so
+	// a slow scheduler (-race on a loaded runner) cannot fail the test.
 	var deadline time.Time
-	start := time.Now()
 	slow := func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
 		deadline, _ = ctx.Deadline()
 		<-ctx.Done()
@@ -90,19 +91,29 @@ func TestOriginURLGivesGitAtMostTheTimeout(t *testing.T) {
 	if got := OriginURL(parent, t.TempDir(), slow); got != "" {
 		t.Errorf("OriginURL after a timeout = %q, want empty", got)
 	}
-	if time.Since(start) > Timeout {
-		t.Errorf("OriginURL took %v, want less than %v", time.Since(start), Timeout)
+	// A shorter parent's deadline is the one git gets.
+	if want, _ := parent.Deadline(); !deadline.Equal(want) {
+		t.Errorf("git's deadline is %v, want the parent's %v", deadline, want)
 	}
-	// With no shorter parent, git still gets no more than Timeout.
+	// With no shorter parent, git gets Timeout and no more: the deadline is
+	// Timeout past some moment between the call and git starting.
 	deadline = time.Time{}
+	var started time.Time
 	fast := func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		started = time.Now()
 		deadline, _ = ctx.Deadline()
 		return nil, errors.New("exit status 1")
 	}
-	begin := time.Now()
+	before := time.Now()
 	OriginURL(t.Context(), t.TempDir(), fast)
-	if deadline.IsZero() || deadline.After(begin.Add(Timeout+50*time.Millisecond)) {
-		t.Errorf("git's deadline is %v after the start, want at most %v", deadline.Sub(begin), Timeout)
+	if deadline.IsZero() {
+		t.Fatal("git ran without a deadline")
+	}
+	if deadline.After(started.Add(Timeout)) {
+		t.Errorf("git's deadline is %v after it started, want at most %v", deadline.Sub(started), Timeout)
+	}
+	if deadline.Before(before.Add(Timeout)) {
+		t.Errorf("git's deadline is %v after the call, want at least %v", deadline.Sub(before), Timeout)
 	}
 }
 

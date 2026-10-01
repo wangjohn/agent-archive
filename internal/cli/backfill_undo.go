@@ -21,7 +21,7 @@ import (
 
 // runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
 // DIR] [--yes] [--restore-retention]`: it removes the sessions an import
-// registered from the bucket and from this Mac, and excludes the projects the
+// registered from the bucket and from this machine, and excludes the projects the
 // import added. Retention the import raised goes back after confirmation, or
 // with --yes only when --restore-retention is given.
 //

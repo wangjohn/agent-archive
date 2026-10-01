@@ -6,12 +6,15 @@ a session.
 
 ```sh
 # Newest archived sessions matching the filters (at most 50 by default):
-# title (first filtered prompt preview), relative time, harness, project,
-# and short ID. Metadata only, never full transcript text. On an interactive
-# terminal, pick a numbered row to see that session's summary (see below).
+# title (the name your agent gave the session, else a preview of the first
+# filtered prompt), relative time, harness, project, and short ID. Metadata
+# only, never full transcript text. On an interactive terminal, pick a
+# numbered row to see that session's summary (see below).
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
 # use --no-pager to print directly.
 agent-archive list
+agent-archive list --all-projects     # every project, not only this repository's
+agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
@@ -52,9 +55,10 @@ agent-archive show SESSION_ID --transcript --max-bytes 0      # no limit
 A summary looks like this:
 
 ```text
-Fix flaky OAuth callback tests
+Stabilize the OAuth tests
 claude · agent-archive · 2h ago                                      ✓ completed
 
+  Prompt    Fix flaky OAuth callback tests
   When      Sep 29, 10:14 → 10:58 (44m)
   Agent     Claude Code 2.4.1
   Model     claude-opus-5-5 (high reasoning) · 31 responses
@@ -63,12 +67,14 @@ claude · agent-archive · 2h ago                                      ✓ compl
             1 compaction · 14 files edited
   Tools     Bash 42 · Edit 18 · Read 12 · Grep 9 ·
             mcp__github__create_pull_request 1
+  Branch    fix-oauth
   Git       2 commits · 1 push · PR #155 opened · PR #155 merged
+  PRs       wangjohn/agent-archive#155
   Skills    code-review, simplify
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.16.0 (partial) · filter 12
+     origin hook · parser 0.17.0 (partial) · filter 13
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -154,13 +160,18 @@ candidates on stderr and exits 1, exactly as when piped.
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
-it). A session whose metadata can't be read, for example because a newer
-version wrote it, is left out with a warning on stderr; the rest are listed.
+it). Once the cache knows a few hundred sessions, it also splits a full
+listing into key ranges that are listed in parallel, so a large archive is
+listed in a fraction of the time. A session whose metadata can't be read,
+for example because a newer version wrote it, is left out with a warning on
+stderr; the rest are listed.
 
-`list` shows each session's `title` when metadata has one (a short preview of
-the first filtered human prompt, derived at publish time). Older sidecars
-without a title fall back to the short SESSION_ID in that column. `project_name`
-in metadata labels the project when present; otherwise `list` uses this Mac's
+`list` shows each session's `name` when metadata has one: the name your agent
+gave the session (the one in Claude Code's sidebar, which `/rename` sets, or a
+Cursor chat's name). Otherwise it shows the `title`, a short preview of the
+first filtered human prompt, derived at publish time. Older sidecars without
+either fall back to the short SESSION_ID in that column. `project_name`
+in metadata labels the project when present; otherwise `list` uses this machine's
 configured project basename. The ID column is a short prefix you can pass to
 `show`; if multiple archived IDs share that prefix, use a longer ID from
 `list --verbose` or add `--harness`. Projects with the same basename stay in
@@ -181,6 +192,16 @@ From parser `0.15.0` metadata records the commits, pushes, and pull
 requests the session created or merged, when its own tool calls confirmed
 them; the `Git` row counts commits and pushes and names each pull request.
 See [JSON output](../reference/json-output.md#show).
+
+From parser `0.17.0` metadata also records the name your agent gave the
+session (`name`), the last git branch it recorded (`branch`), and the pull
+requests it was linked to (`pull_requests`). The summary's heading is the
+name, with the first prompt as a `Prompt` row, and it gains `Branch` and `PRs`
+rows; a session with no name keeps the first prompt as its heading. `PRs`
+lists the pull requests the agent linked to the session, where `Git` counts
+the ones its own commands opened or merged. A session published before the
+name was kept (privacy filter 13) gets one the next time the collector
+re-reads its transcript, if the transcript is still on the machine.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
@@ -343,7 +364,7 @@ custom parser version) are never counted as observed non-use.
 ## Feedback
 
 Write your assessment to a private UTF-8 text file, then attach it to a
-session owned by this Mac:
+session owned by this machine:
 
 ```sh
 agent-archive feedback SESSION_ID --file /private/path/feedback.txt

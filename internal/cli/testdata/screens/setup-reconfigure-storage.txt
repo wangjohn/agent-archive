@@ -16,8 +16,9 @@ Connect storage
 Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [2]: 
+  3) Amazon S3: create a new bucket for me
+  4) Show setup instructions
+Enter 1-4 [2]: 
 
 AWS profile [work]: 
 
@@ -47,7 +48,7 @@ Review your changes
   ✓ Hook file is valid      ~/.codex/hooks.json
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save

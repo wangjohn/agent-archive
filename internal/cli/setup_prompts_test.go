@@ -106,6 +106,7 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 }
 
 func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
 	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
@@ -121,6 +122,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 }
 
 func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"
@@ -355,7 +357,7 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("y\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
+	err := chooseCapture(newPrompter(strings.NewReader("n\ny\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
@@ -378,7 +380,7 @@ func TestLeavingEveryProjectOutAsksAgain(t *testing.T) {
 			if inRepo {
 				current := gitRepo(t)
 				env.WorkingDir = func() (string, error) { return current, nil }
-				input = "y\n1\n\n" + other + "\n\n"
+				input = "n\ny\n1\n\n" + other + "\n\n"
 			} else {
 				env.WorkingDir = func() (string, error) { return other, nil }
 			}
@@ -477,7 +479,7 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "Manage API tokens") {
+	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), bucketDocURL) {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -486,8 +488,8 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 func TestStorageHelpStaysOnTheMenu(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n3\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), "Manage API tokens") != 2 || strings.Count(out.String(), "Show setup instructions") != 3 {
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
+	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Show setup instructions") != 3 {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }

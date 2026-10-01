@@ -50,10 +50,13 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	return nil
 }
 
-// launchDir is the absolute directory the agent starts in: --project, else
-// the working directory.
+// launchDir is the absolute directory the agent starts in: the --project
+// of --latest, else the working directory.
 func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) {
-	dir := opts.project
+	dir := ""
+	if opts.latest {
+		dir = opts.project
+	}
 	var err error
 	if dir == "" {
 		dir, err = env.workingDir()

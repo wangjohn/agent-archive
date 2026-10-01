@@ -1,0 +1,13 @@
+Id=@REF@.timer
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=@TIMER@
+DropInPaths=
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=@SERVICE@
+DropInPaths=/usr/lib/systemd/user/service.d/10-timeout-abort.conf

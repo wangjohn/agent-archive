@@ -382,7 +382,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 }
 
 // addSubagent registers a subagent of parent under native, sharing parent's
-// transcript, as newer than everything else.
+// transcript, so it is as active as parent.
 func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string {
 	t.Helper()
 	reg, found, err := state.OpenReadOnly(f.home).LoadRegistration(parent)
@@ -390,8 +390,8 @@ func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string 
 		t.Fatalf("load %s: found=%v err=%v", parent, found, err)
 	}
 	id := "ffffffff" + parent[8:]
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, reg.NativeSessionID, "agent-1"
 	reg.ArchiveSessionID, reg.NativeSessionID = id, native
-	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, "native-new", "agent-1"
 	data, err := json.Marshal(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -417,6 +417,69 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if _, errOut, code := runHandoff(t, f.env, "--to", "claude"); code != 2 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
+}
+
+// publishArchivedSubagent puts session id in the archive as a subagent of
+// parent, last captured at captured.
+func (f handoffFixture) publishArchivedSubagent(t *testing.T, id, parent string, captured time.Time) {
+	t.Helper()
+	syntheticSession{id: id, harness: "codex", project: "sub-project", captured: captured, parent: parent}.publish(t, f.mem)
+}
+
+// An archived subagent, newer than every session here, is not offered, from
+// the merged list or the archive alone.
+func TestHandoffPickerSkipsArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := "eeeeeeee" + f.both[8:]
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+	for _, id := range []string{f.notUploaded, f.archiveOnly, f.both} {
+		pickerLine(t, out, id)
+	}
+	// Archive only: the subagent is not offered there either.
+	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("--source archive: code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+}
+
+// The footer's total counts top-level sessions only: the archived subagents
+// past the limit are not among the ones that can be offered.
+func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range defaultListLimit {
+		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
+	}
+	f.sync(t)
+	for i := range 3 {
+		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
+	}
+	out, errOut, code := runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A local subagent registration is skipped even when its parent is in the
+// archive, so a parent that is both registered and archived is offered once.
+// The subagent is archived too: its archived row is dropped before the merge,
+// and its registration, finding no archived row to join, must not come back
+// as a session not yet uploaded.
+func TestHandoffPickerSkipsSubagentRegistrationOfArchivedParent(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.both, "native-local-sub")
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
+	}
+	pickerLine(t, out, f.both)
 }
 
 // Picker titles come from the filtered record, never the raw transcript.
@@ -454,5 +517,36 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
 	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A session's row shows the name its agent gave it, the same before it is
+// uploaded (built from the local transcript) and after (from its metadata).
+func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	id := f.addSession(t, "claude", "claude-named", "  a first   prompt\nof a named session", f.env.now().Add(3*time.Hour))
+	transcript := filepath.Join(f.project, "claude-named.jsonl")
+	file, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = file.WriteString(`{"type":"custom-title","customTitle":"Old name","sessionId":"claude-named"}` + "\n" +
+		`{"type":"custom-title","customTitle":"Name the picker shows","sessionId":"claude-named"}` + "\n" +
+		`{"type":"pr-link","sessionId":"claude-named","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}` + "\n")
+	must(t, errors.Join(err, file.Close()))
+	must(t, os.Chtimes(transcript, f.env.now().Add(3*time.Hour), f.env.now().Add(3*time.Hour)))
+
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	local := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(local, "Name the picker shows") || strings.Contains(local, "Old name") || strings.Contains(local, "first prompt") {
+		t.Fatalf("local row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.sync(t)
+	f.unregister(t, id)
+	out, errOut, code = runPicker(t, f.env, "q\n")
+	published := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
+		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

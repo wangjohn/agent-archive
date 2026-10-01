@@ -29,6 +29,17 @@ type prompter struct {
 	// singleArea is set while setup changes one area of an installed
 	// setup, where step headings do not count steps.
 	singleArea bool
+	// reviewHint, when set, is a line the setup review repeats: where to
+	// change what an answer chose for the person.
+	reviewHint string
+	// createdBuckets are the S3 buckets setup created in this run (see
+	// setup_s3_create.go); in memory only.
+	createdBuckets []createdS3Bucket
+	// guided is a guided R2 bucket creation whose key setup has yet to
+	// stage; created is every bucket and key such creations left in the
+	// person's Cloudflare account in this run.
+	guided  *r2Handoff
+	created []*r2Created
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.
@@ -293,8 +304,12 @@ func (p *prompter) secret(label string) (string, error) {
 			}
 		}()
 		terminal.Print(p.out, p.labelText(label))
-		value, err := term.ReadPassword(fd)
+		value, err := readSecret(fd)
 		terminal.Println(p.out)
+		if errors.Is(err, io.EOF) {
+			// As for a line: no more input is an error, never a blank.
+			return "", fmt.Errorf("no more input: %w", err)
+		}
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}

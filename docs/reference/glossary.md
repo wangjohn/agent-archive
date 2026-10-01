@@ -27,7 +27,7 @@ with an ID that `backfill history` lists and `backfill undo` takes; see
 [backfill](../guides/backfill.md).
 
 **Capture.** Reading a session's transcript, filtering it, and building its
-source bundle and metadata on this Mac. Capture is local; publication is the
+source bundle and metadata on this machine. Capture is local; publication is the
 upload.
 
 **Capture gap.** A recorded, named piece of a session that is not in the
@@ -37,8 +37,8 @@ never the removed values. `list --complete` excludes sessions with any gap,
 and `status --json` counts them per app. The codes are in
 [`schemas/metadata.schema.json`](../../schemas/metadata.schema.json).
 
-**Collector.** The background job (a LaunchAgent, every 60 seconds; or
-`sync` on demand) that captures, publishes, reads back, and applies
+**Collector.** The background job (a LaunchAgent on macOS or a systemd user
+timer on Linux, every 60 seconds; or `sync` on demand) that captures, publishes, reads back, and applies
 retention.
 
 **Destination.** The bucket and prefix sessions publish to. Each session
@@ -47,7 +47,7 @@ storage starts a new one and leaves earlier sessions where they are.
 
 **Filter version.** The version of the privacy filter's rules
 (`filter_version`). A new version refilters and republishes every session
-whose transcript is still on the Mac; see
+whose transcript is still on the machine; see
 [privacy](../security/privacy.md#after-a-filter-upgrade) and the
 [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
@@ -77,7 +77,7 @@ per upload interval (3 minutes).
 and checks its SHA-256 and identity against what it sent. An installed app
 version is reported `verified_by_capture` (`installed_version_support` in
 `status --json`) once a session from that version has been published and
-read back on this Mac; until then it is `unverified`.
+read back on this machine; until then it is `unverified`.
 
 **Refresh-skip.** A local note that this build cannot re-derive a session's
 metadata from its uploaded source, or that the recorded source is gone, so
@@ -86,8 +86,8 @@ changes. `status` counts these as unrefreshable summaries; see
 [local state](local-state.md).
 
 **Retention.** How long a session is kept: 90 days by default (1 to 36,500),
-counted from its last capture. Only the Mac that captured a session deletes
-it; see [multiple Macs](../guides/multiple-macs.md).
+counted from its last capture. Only the machine that captured a session deletes
+it; see [multiple machines](../guides/multiple-machines.md).
 
 **Source bundle (source).** The gzip-compressed, filtered transcript of one
 session, `source.<sha256>.jsonl.gz`, plus supplemental evidence (hook

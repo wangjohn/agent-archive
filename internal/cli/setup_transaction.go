@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -114,6 +116,10 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 	if old.MachineID == "" {
 		return nil
 	}
+	if env.copiedFromAnotherMachine(old) {
+		first, rest := copiedMachineWarning(home)
+		p.warn(first, rest...)
+	}
 	if !destinationEqual(old.Storage, next.Storage) {
 		// A session still waiting for its transcript has nothing a sync could
 		// publish, so it must not hold the user at the old destination.
@@ -129,8 +135,8 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 			return err
 		}
 		p.warn("Storage is changing. Sessions already archived stay at the old destination,",
-			"and this Mac stops adding to or cleaning up there. Nothing is deleted from either bucket;",
-			"this Mac's local copies are removed once they pass the retention period.")
+			"and this machine stops adding to or cleaning up there. Nothing is deleted from either bucket;",
+			"this machine's local copies are removed once they pass the retention period.")
 		if returning > 0 {
 			p.warn(fmt.Sprintf("%d session(s) from when this destination was used before resume uploading there,", returning),
 				"and are deleted from it once they pass the retention period.")
@@ -317,6 +323,11 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			return err
 		}
 	}
+	// The machine this data directory was set up on, recorded once beside the
+	// machine ID and kept when it differs from this one's (see
+	// copiedFromAnotherMachine), so the warning does not go away by running
+	// setup again on a copy. Linux only: nothing is recorded elsewhere.
+	next.HostID = cmp.Or(old.HostID, env.hostFingerprint())
 	next.SchemaVersion = config.SchemaVersion
 	next.Paused = old.Paused
 	next.Archive.Enabled = true
@@ -337,6 +348,10 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 	// status checks them against it rather than against whatever path status
 	// was later started through. It is written with the same transaction.
 	next.InstalledExecutable = executable
+	// The scheduler this setup defines the job under, so status, uninstall,
+	// refresh and recovery address the job through the adapter that made it
+	// (launchd is left out: see host.Recorded).
+	next.BackgroundBackend = host.Recorded(env.scheduler().Name())
 	return nil
 }
 
@@ -406,7 +421,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job.State == scheduler.Unknown {
-		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.sched().Words().Tool)
+		return setupjournal.Journal{}, errors.New(unknownJobMessage(in.sched().Words(), problemOf(job)))
 	}
 	if job.State == scheduler.AnotherInstallation {
 		problem, words := problemOf(job), in.sched().Words()

@@ -40,8 +40,9 @@ Costliest       ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long
                 context, 38 subagents
 
 SKILLS AND MCP
-Skills  proj[31mRED]0;title 10 · 日本語のとても長いプロジ 4
-        · docs 3 · cursor-guide 2 sessions
+Skills  proj[31mRED]0;title 10 ·
+        日本語のとても長いプロジ 4 · docs 3 · cursor-guide 2
+        sessions
 MCP     [2J[Hgone 41 · linear 12 calls (abcdefghi)
 Skills count the sessions that used each one; MCP counts
 calls.

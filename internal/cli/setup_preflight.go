@@ -146,6 +146,9 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 	case scheduler.Unknown:
 		job.OK = false
 		job.Detail = fmt.Sprintf("%s did not say whether the %s job is loaded, and setup loads it only when it can tell", words.Tool, ref)
+		if problem.Reason != "" {
+			job.Detail = fmt.Sprintf("%s, so setup cannot tell whether the %s job is loaded, and loads it only when it can tell", problem.Reason, ref)
+		}
 		job.Fix = problem.Fix + ", then run agent-archive setup again."
 	case scheduler.AnotherInstallation:
 		job.OK = false
@@ -227,7 +230,7 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
-// before its first question: every app detected on this Mac that neither
+// before its first question: every app detected on this machine that neither
 // the saved configuration nor the unfinished setup leaves out, and every
 // app the saved configuration or the unfinished setup includes.
 func preflightApps(detected, saved, declined, draft []string) []string {

@@ -6,22 +6,19 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 Step 1 of 3 · Choose what to capture
 
-Include Claude Code? [Y/n] 
+Archive Claude Code sessions in ~/src/web-app? [Y/n] 
 
-Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder · 2 sessions · today
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
-Enter a blank line when finished.
-Projects: 
-
+Looking for your other projects...
+On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 Step 2 of 3 · Connect storage
 
 Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [1]: 2
+  3) Amazon S3: create a new bucket for me
+  4) Show setup instructions
+Enter 1-4 [1]: 2
 
 AWS profile: work
 
@@ -48,8 +45,9 @@ Step 3 of 3 · Ready to start
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.claude/settings.json
 
+  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Start archiving?
   1) Yes, start archiving
@@ -63,6 +61,11 @@ Installed /handoff, which continues a session in another agent: ~/.claude/skills
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
+Next, in each app:
+  Claude Code: nothing to approve; start a new session (or /clear).
+Sessions already open are not captured. Start a new one in an included project.
+Check progress with agent-archive status.
+
 Looking for past sessions in these projects… 2 found.
 Import the 2 past sessions from these projects? [Y/n] 
 
@@ -72,11 +75,6 @@ Uploaded 2 sessions (4 KB).
 See them with agent-archive list --imported.
 Undo with agent-archive backfill undo 2026-09-25-1.
 
-Next, in each app:
-  Claude Code: nothing to approve; start a new session (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
-Check progress with agent-archive status.
-
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
 [exit 0]

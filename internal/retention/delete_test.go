@@ -29,11 +29,15 @@ func (s *deleteRecordingStore) Delete(ctx context.Context, key string) error {
 // live metadata ever points at missing data; when the metadata delete fails,
 // it stops with an error and every source object is left in place.
 func TestDeleteWholeSession(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const metadata = "sessions/claude/session-1/metadata.json"
 	sources := []string{"sessions/claude/session-1/sources/a.json", "sessions/claude/session-1/sources/b.json"}
 	other := "sessions/claude/session-2/metadata.json"
-	seed := func(failKey string) *deleteRecordingStore {
+	// seed and keys take the subtest's t: the subtests run in parallel, after
+	// this function has returned, so they must not fail through its t.
+	seed := func(t *testing.T, failKey string) *deleteRecordingStore {
+		t.Helper()
 		store := &deleteRecordingStore{MemoryStore: storagetest.NewMemoryStore(), failKey: failKey}
 		for _, key := range append([]string{metadata, other}, sources...) {
 			if err := store.Put(ctx, key, []byte("x")); err != nil {
@@ -42,7 +46,8 @@ func TestDeleteWholeSession(t *testing.T) {
 		}
 		return store
 	}
-	keys := func(store *deleteRecordingStore) []string {
+	keys := func(t *testing.T, store *deleteRecordingStore) []string {
+		t.Helper()
 		objects, err := store.List(ctx, "")
 		if err != nil {
 			t.Fatal(err)
@@ -55,45 +60,48 @@ func TestDeleteWholeSession(t *testing.T) {
 	}
 
 	t.Run("metadata first", func(t *testing.T) {
-		store := seed("")
+		t.Parallel()
+		store := seed(t, "")
 		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err != nil {
 			t.Fatal(err)
 		}
 		if len(store.deleted) != 3 || store.deleted[0] != metadata {
 			t.Fatalf("deleted %v, want the metadata first and then both sources", store.deleted)
 		}
-		if got := keys(store); !slices.Equal(got, []string{other}) {
+		if got := keys(t, store); !slices.Equal(got, []string{other}) {
 			t.Fatalf("left %v, want only the other session", got)
 		}
 	})
 
 	t.Run("failed source delete finishes on a rerun", func(t *testing.T) {
-		store := seed(sources[1])
+		t.Parallel()
+		store := seed(t, sources[1])
 		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err == nil {
 			t.Fatal("a failed source delete was not reported")
 		}
 		// The metadata is gone, so nothing live points at the source left.
-		if got := keys(store); !slices.Equal(got, []string{sources[1], other}) {
+		if got := keys(t, store); !slices.Equal(got, []string{sources[1], other}) {
 			t.Fatalf("left %v after the failure", got)
 		}
 		store.failKey = ""
 		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err != nil {
 			t.Fatalf("rerun: %v", err)
 		}
-		if got := keys(store); !slices.Equal(got, []string{other}) {
+		if got := keys(t, store); !slices.Equal(got, []string{other}) {
 			t.Fatalf("left %v after the rerun", got)
 		}
 	})
 
 	t.Run("failed metadata delete leaves the sources", func(t *testing.T) {
-		store := seed(metadata)
+		t.Parallel()
+		store := seed(t, metadata)
 		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err == nil {
 			t.Fatal("a failed metadata delete was not reported")
 		}
 		if len(store.deleted) != 0 {
 			t.Fatalf("deleted %v after the metadata delete failed", store.deleted)
 		}
-		if got := keys(store); len(got) != 4 {
+		if got := keys(t, store); len(got) != 4 {
 			t.Fatalf("left %v, want every object", got)
 		}
 	})

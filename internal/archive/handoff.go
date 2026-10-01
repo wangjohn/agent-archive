@@ -492,13 +492,18 @@ func recordedWorkspace(bundle SourceBundle) HandoffWorkspace {
 	if root := workspaceRoot(bundle); root != "" {
 		directory = path.Base(root)
 	}
-	branch := ""
+	return HandoffWorkspace{Directory: directory, Branch: recordedBranch(bundle)}
+}
+
+// recordedBranch is the last git branch the transcript recorded, as written
+// ("" when it recorded none).
+func recordedBranch(bundle SourceBundle) string {
 	for i := len(bundle.NativeRecords) - 1; i >= 0; i-- {
-		if branch = firstStringDeep(bundle.NativeRecords[i], "gitBranch"); branch != "" {
-			break
+		if branch := firstStringDeep(bundle.NativeRecords[i], "gitBranch"); branch != "" {
+			return branch
 		}
 	}
-	return HandoffWorkspace{Directory: directory, Branch: branch}
+	return ""
 }
 
 // compareWorkspace marks where the recorded workspace differs from the

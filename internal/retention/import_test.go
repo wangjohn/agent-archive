@@ -29,6 +29,7 @@ func importedRegistration(id, transcriptPath string) archive.SessionRegistration
 // must age it from its admission: aging it from its start would expire it
 // the moment its first upload failed or its transcript was not yet read.
 func TestImportWithOldStartIsNotExpiredBeforeItPublishes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	// A first upload that fails leaves a pending publication.
@@ -78,6 +79,7 @@ func TestImportWithOldStartIsNotExpiredBeforeItPublishes(t *testing.T) {
 // deletes its objects there. A session admitted before the change is only
 // pruned locally.
 func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	cfg := config.Config{DestinationSince: importedAt.Add(-24 * time.Hour)}
@@ -118,6 +120,7 @@ func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
 // a never-published session, and after pruning one from a previous
 // destination. A session a hook kept alive gets none.
 func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -158,6 +161,7 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 // A removal record that cannot be written keeps the session registered and
 // reports the failure; the next sweep records and forgets it.
 func TestRetentionRetriesExpiryWhenTheRemovalRecordFails(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {

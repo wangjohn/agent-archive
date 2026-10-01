@@ -192,7 +192,7 @@ func TestHandoffRepositoryRefusalPrintsNoTextFromTheArchive(t *testing.T) {
 		s["project_name"] = hostileWords()
 		s["title"] = hostileWords()
 	})
-	otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	for name, args := range map[string][]string{"printing": {"--latest"}, "launching": {"--latest", "--to", "codex"}} {
 		var out, errOut bytes.Buffer
 		stdin := strings.NewReader("y\n")
@@ -225,7 +225,7 @@ func TestHandoffRepositoryQuestionShowsPlainCappedWords(t *testing.T) {
 		s["project_name"] = hostileWords()
 		s["title"] = hostileWords()
 	})
-	otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+	secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 	_, errOut, code := runPicker(t, f.env, "n\n", "--latest")
 	if code != 1 {
 		t.Fatalf("code=%d stderr=%.300s", code, errOut)
@@ -342,7 +342,7 @@ func TestHandoffRepositoryMatchReadsNoSourceBeforeConfirmation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newRepoFixture(t, "codex", handoffTranscript)
-			otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+			secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 			store := &sourceCountingStore{ObjectStore: f.mem}
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 			var out, errOut bytes.Buffer
@@ -530,7 +530,7 @@ func TestHandoffRepositoryRefusalRepeatsOnlyWellFormedIDs(t *testing.T) {
 			s["repo_key"] = archive.RepoKey(widgetOrigin)
 			s["captured_at"] = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
 		})
-		otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+		secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 		out, errOut, code := runHandoff(t, f.env, "--latest", "--to", "codex")
 		if code != 1 || out != "" {
 			t.Fatalf("code=%d stdout=%q stderr=%.300s", code, out, errOut)
@@ -556,7 +556,7 @@ func TestHandoffRepositoryRefusalRepeatsOnlyWellFormedIDs(t *testing.T) {
 	t.Run("a well-formed ID is named", func(t *testing.T) {
 		t.Parallel()
 		f := newRepoFixture(t, "codex", handoffTranscript)
-		otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+		secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 		_, errOut, code := runHandoff(t, f.env, "--latest")
 		if code != 1 || !strings.Contains(errOut, "they can run: agent-archive handoff "+f.id) {
 			t.Fatalf("code=%d stderr=%s", code, errOut)
@@ -586,7 +586,7 @@ func TestHandoffNoMatchListRepeatsOnlyWellFormedIDs(t *testing.T) {
 		s["project_id"] = "project-elsewhere"
 		s["captured_at"] = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	})
-	otherMachine(t, &f, "")
+	secondComputer(t, &f, "")
 	_, errOut, code := runHandoff(t, f.env, "--latest")
 	if code != 1 || !strings.Contains(errOut, "agent-archive handoff "+f.id) || strings.Contains(errOut, "IGNORE") || strings.Contains(errOut, "zzzz") {
 		t.Fatalf("code=%d stderr=%.800s", code, errOut)
@@ -625,7 +625,7 @@ func TestHandoffLatestSkipsArchivedSubagents(t *testing.T) {
 			s["repo_key"] = archive.RepoKey(widgetOrigin)
 			s["captured_at"] = newer
 		})
-		otherMachine(t, &f, archive.RepoKey(widgetOrigin))
+		secondComputer(t, &f, archive.RepoKey(widgetOrigin))
 		out, errOut, code := runPicker(t, f.env, "y\np\n", "--latest")
 		if code != 0 || !strings.Contains(errOut, f.id) || strings.Contains(errOut, "planted-subagent") || !strings.Contains(out, "Fix the flaky widget test.") {
 			t.Fatalf("code=%d stderr=%s", code, errOut)

@@ -13,6 +13,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
+// None of these tests is parallel: newRefreshInstall replaces launchctl.
+
 // staleHooks makes Claude Code's hook file run another executable, so a
 // refresh has hooks to repair without the running executable, and so the
 // collector's plist, having changed.

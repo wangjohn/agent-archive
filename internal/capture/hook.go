@@ -114,13 +114,13 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 // sends that capture does not use, a missing or disabled configuration, and
 // a paused archive are no-ops. While setup's transaction is open a start is
 // only explained by a diagnostic. Otherwise the event is handled under
-// hooks.lock, which it waits at most a second for.
+// hooks.lock, which it waits at most hooksLockWait for.
 func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...Option) error {
 	var o eventOptions
 	for _, option := range options {
 		option(&o)
 	}
-	return handleEvent(home, harness, payload, now, nil, o.repoKey)
+	return handleEvent(home, harness, payload, now, nil, nil, o.repoKey)
 }
 
 // Option adjusts HandleEvent.
@@ -230,9 +230,14 @@ func boundedRepoKey(repoKey RepoKeyFunc, root string) string {
 	return ""
 }
 
+// lockHooks takes hooks.lock, waiting at most wait: local.NamedLockWait.
+type lockHooks func(home string, wait time.Duration) (func(), error)
+
+// lock, when not nil, replaces local.NamedLockWait for hooks.lock, so the
+// busy-lock test can time the hook's wait apart from the writes after it.
 // afterLock is used by the contention test to model a bounded slow durable
-// write while hooks.lock is held. Production calls never provide it.
-func handleEvent(home, harness string, payload map[string]any, now time.Time, afterLock func(), repoKey RepoKeyFunc) error {
+// write while hooks.lock is held. Production calls provide neither.
+func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) error {
 	if payload == nil {
 		return nil
 	}
@@ -254,7 +259,12 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 	// Whatever the lookup used comes off the lock wait, so the two together
 	// stay inside the budget; the wait keeps a floor for an uncontended lock.
 	lockWait := lockWaitAfter(time.Since(lookupStarted))
-	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", lockWait)
+	if lock == nil {
+		lock = func(home string, wait time.Duration) (func(), error) {
+			return local.NamedLockWait(home, "hooks.lock", wait)
+		}
+	}
+	unlock, lockErr := lock(home, lockWait)
 	if lockErr != nil {
 		if errors.Is(lockErr, local.ErrBusy) {
 			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
@@ -289,6 +299,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 	if err != nil {
 		return fmt.Errorf("open local store: %w", err)
 	}
+	store = store.ForHook()
 	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
 	if nativeSessionID == "" {
 		return fmt.Errorf("hook payload for %s has no session identifier", eventName)

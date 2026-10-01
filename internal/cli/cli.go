@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -92,7 +93,7 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 type Env struct {
 	// sweepClock, set only by tests, adjusts the retention sweep's clock
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
-	// moves Now months ahead moves only this Mac's clock; the sweep rightly
+	// moves Now months ahead moves only this machine's clock; the sweep rightly
 	// refuses to delete by it unless the storage clock moves too.
 	sweepClock func(*retention.Options)
 	// observeFlags, set only by tests, sees every command flag set as it is
@@ -133,6 +134,15 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
+	// Cloudflare makes the client guided R2 creation uses for the pasted
+	// bootstrap API token. Defaults to the real Cloudflare API.
+	Cloudflare func(token string) cloudflare.API
+	// Pause waits between guided R2 creation's checks of a key Cloudflare
+	// has only just made. Defaults to sleeping; tests skip the wait.
+	Pause      func(time.Duration)
 	WorkingDir func() (string, error)
 	Home       func() (string, error)
 	Now        func() time.Time
@@ -157,6 +167,12 @@ type Env struct {
 	// it is the default installation, with the default launchd label.
 	// Defaults to os/user.Current's HomeDir.
 	AccountHome func() (string, error)
+	// HostFingerprint identifies the machine the command runs on, as
+	// local.HostFingerprint does (Linux only; "": cannot say). Setup records
+	// it beside the machine ID and status compares it, to notice a data
+	// directory copied from another machine. Defaults to
+	// local.HostFingerprint; it is read only on Linux.
+	HostFingerprint func() string
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -166,11 +182,16 @@ type Env struct {
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
 	// Scheduler is the background job manager: it reports the collector's job
-	// state, loads the LaunchAgent setup wrote so scheduled collection
-	// starts without a login/logout cycle, and stops it again (rolling setup
-	// back, or during uninstall). Defaults to this system's own, through
-	// newScheduler (launchd on macOS, through launchctl).
+	// state, loads the job setup defined so scheduled collection starts
+	// without a login/logout cycle, and stops it again (rolling setup back,
+	// or during uninstall). Defaults to the backend the installation's
+	// configuration records, through newScheduler: launchd on macOS (through
+	// launchctl) and systemd on Linux (through systemctl --user); setup uses
+	// this system's own and records it.
 	Scheduler scheduler.Scheduler
+	// choosesBackend is set for a command that picks the scheduler rather than
+	// addressing the installation's recorded one (see choosingBackend).
+	choosesBackend bool
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the
@@ -180,6 +201,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// UnsetEnv removes a variable from the process environment, so programs
+	// setup starts later do not inherit it. Guided R2 creation uses it for
+	// CLOUDFLARE_API_TOKEN once it has read it. Defaults to os.Unsetenv.
+	UnsetEnv func(string) error
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
@@ -232,9 +257,11 @@ type Env struct {
 	OpenTerminal func(termlaunch.Spec) (string, error)
 	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
 	Clipboard func([]byte) error
-	// Interrupts delivers the signals that stop backfill while it plans,
-	// registers, and uploads, and stop ends the delivery. Defaults to
-	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
+	// Interrupts delivers the signals that stop a command while it runs
+	// (backfill while it plans, registers, and uploads, the full-screen
+	// views until they restore the terminal, setup's storage check), and
+	// stop ends the delivery. Defaults to os/signal for os.Interrupt,
+	// SIGTERM, SIGHUP, and SIGQUIT.
 	Interrupts func() (signals <-chan os.Signal, stop func())
 	// RefreshCollectorWait is how long setup --refresh waits for a running
 	// collector pass to finish before it refuses. Defaults to
@@ -256,12 +283,19 @@ func (e Env) isTerminal(stream any) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
+// interrupts is the signal set of the commands a person runs. SIGQUIT is in
+// it so that a kill -QUIT from outside (Ctrl-\ is turned off while a screen
+// reads keys) is answered like the others: the terminal is restored and the
+// process exits with the shell's status for it, 131. Go's default for SIGQUIT
+// is a goroutine dump, which would leave the terminal raw on the alternate
+// screen. The collector and the hooks never register these, so their SIGQUIT
+// keeps the default.
 func (e Env) interrupts() (<-chan os.Signal, func()) {
 	if e.Interrupts != nil {
 		return e.Interrupts()
 	}
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	return signals, func() { signal.Stop(signals) }
 }
 
@@ -284,6 +318,13 @@ func (e Env) fileOwner(path string) (uid int, ok bool) {
 		return e.FileOwner(path)
 	}
 	return fileOwner(path)
+}
+
+func (e Env) unsetEnv(key string) error {
+	if e.UnsetEnv != nil {
+		return e.UnsetEnv(key)
+	}
+	return os.Unsetenv(key)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {
@@ -441,7 +482,7 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this Mac is not archiving: it has no saved
+// notSetUp reports whether this machine is not archiving: it has no saved
 // configuration, or uninstall left one with archiving disabled. It reads
 // only, and says nothing when the data directory cannot be read.
 func notSetUp(env Env) bool {
@@ -471,7 +512,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent

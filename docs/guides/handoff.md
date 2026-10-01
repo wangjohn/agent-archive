@@ -113,7 +113,7 @@ on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 
 1. **The session is read and filtered.** Everything the agent gets has passed
    the same [privacy filter](../security/privacy.md) as the archive. A
-   session on this Mac is read from its transcript as it is now, so nothing
+   session on this machine is read from its transcript as it is now, so nothing
    needs to sync first.
 2. **The record goes to a private file.** It is written to
    `handoffs/launch-<session>-<time>-<random>/handoff.md` in the data
@@ -204,7 +204,7 @@ made, the worktree is left in place and the error says where. When you are
 done, merge or cherry-pick the branch and run `git worktree remove` on the
 directory.
 
-Without `--worktree`, if the session being handed off is on this Mac, was
+Without `--worktree`, if the session being handed off is on this machine, was
 active in the last 2 minutes, and belongs to the checkout the agent would
 start in, a terminal asks first:
 
@@ -230,19 +230,19 @@ agent-archive handoff "fix the auth bug" --to claude --worktree
 
 It matches the way `show` does: a substring of the title (the session's
 first prompt), case-insensitively, a short session ID, or an ID prefix. A
-full session ID, of a session on this Mac or in the archive, names that
+full session ID, of a session on this machine or in the archive, names that
 session, even when another title mentions it. `--harness` and `--source`
 narrow the search. When the command runs inside a Claude Code or Codex
 session, that session is not offered for a title (as `--latest` passes over
 it), unless `--to` is set, which hands off a session the caller names.
 
-The search looks at this Mac's sessions first, which needs no network and no
+The search looks at this machine's sessions first, which needs no network and no
 upload (a session's title, its first prompt, is read from its transcript file
-on this Mac, and only the title is matched, never the rest of the
+on this machine, and only the title is matched, never the rest of the
 conversation), and goes on to the archive's sessions only when none of this
-Mac's match, so an archive that cannot be reached does not fail a title this
-Mac can answer. `--source local` or `--source archive` limits it to one. Only
-the 50 most recently active sessions on this Mac that have a prompt are
+machine's match, so an archive that cannot be reached does not fail a title this
+machine can answer. `--source local` or `--source archive` limits it to one. Only
+the 50 most recently active sessions on this machine that have a prompt are
 searched by title; an older one that was uploaded is found in the archive.
 
 One match is handed off, and then everything else applies to it: `--to`,
@@ -253,19 +253,20 @@ they are printed to standard error, each with its short ID, app, project,
 age, and title, and the command exits with code 1, so the caller can ask
 which and run it again with an ID. At most the 20 newest are listed, with a
 count of the rest; add more of the title, or `--harness`, to narrow. One
-match on this Mac is taken even when the archive holds others, so name an ID
+match on this machine is taken even when the archive holds others, so name an ID
 when in doubt. With none, the message points to `agent-archive list`.
 
 ## Where the session comes from
 
 With no session selector, `handoff` opens a numbered session picker when
-stdin and stdout are terminals. It lists this Mac's sessions, including ones
+stdin and stdout are terminals. It lists this machine's sessions, including ones
 marked `not yet uploaded`, together with archived ones, most recently active
-first; a session that is both appears once. Sessions with no prompt yet are
-left out, and `--harness` narrows the list. When the archive cannot be read
-(offline, say), the picker lists this Mac's sessions and says why archived
-ones are missing. Quit with `q` without producing a handoff. In a script or
-pipeline, pass a session ID or title, `--latest`, or `--file`.
+first; a session that is both appears once. Subagent sessions and sessions
+with no prompt yet are left out, and `--harness` narrows the list. When the
+archive cannot be read (offline, say), the picker lists this machine's sessions
+and says why archived ones are missing. Quit with `q` without producing a
+handoff. In a script or pipeline, pass a session ID or title, `--latest`, or
+`--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
@@ -281,10 +282,10 @@ session for the current directory, as `--latest --harness cursor` would.
 That is not a prompt, so it works while prompts are off. Otherwise a terminal
 gets the picker, and anything else is told to name a session.
 
-A session registered on this Mac is read from its transcript as it is now, so
+A session registered on this machine is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is
 paused; nothing is uploaded. Otherwise the session is downloaded from the
-archive, which is how a second Mac hands off a session from the first.
+archive, which is how a second machine hands off a session from the first.
 `--source local|archive` forces one or the other; with neither, a local
 transcript that cannot be read falls back to the archive's copy. Either kind
 can be launched with `--to`.
@@ -435,7 +436,7 @@ agent-archive handoff "fix the auth bug" --output /tmp/handoff.md
 # The same content as JSON
 agent-archive handoff SESSION_ID --format json
 
-# A transcript the archive never captured, on this Mac; needs no setup
+# A transcript the archive never captured, on this machine; needs no setup
 agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
 ```
 

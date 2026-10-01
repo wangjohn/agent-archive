@@ -6,22 +6,19 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 Step 1 of 3 · Choose what to capture
 
-Include Claude Code? [Y/n] 
+Archive Claude Code sessions in ~/src/web-app? [Y/n] 
 
-Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
-Enter a blank line when finished.
-Projects: 
-
+Looking for your other projects...
+On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 Step 2 of 3 · Connect storage
 
 Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [1]: 2
+  3) Amazon S3: create a new bucket for me
+  4) Show setup instructions
+Enter 1-4 [1]: 2
 
 AWS profile: work
 
@@ -48,8 +45,9 @@ Step 3 of 3 · Ready to start
     Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.claude/settings.json
 
+  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Fix what is marked ✗ above first.
   1) Check again

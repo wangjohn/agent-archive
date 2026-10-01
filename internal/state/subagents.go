@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -59,29 +60,34 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
-	unlock, err := s.lockSubagentCandidate(candidate.ArchiveSessionID)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	path := s.subagentCandidatePath(candidate.ArchiveSessionID)
-	var prior SubagentCandidate
-	if err := local.Read(path, &prior); err == nil {
-		if prior.NativeSessionID != candidate.NativeSessionID || prior.ParentArchiveSessionID != candidate.ParentArchiveSessionID || prior.ParentNativeSessionID != candidate.ParentNativeSessionID || prior.ProjectID != candidate.ProjectID || prior.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(prior.Harness.Name, candidate.Harness.Name) || prior.AgentID != candidate.AgentID || prior.TranscriptPath != candidate.TranscriptPath {
-			return ErrSubagentCandidateConflict
-		}
-		if prior.ObservedAt.After(candidate.ObservedAt) {
-			candidate.ObservedAt = prior.ObservedAt
-		}
-		// The first stop that named a type keeps it: like the path and
-		// owner, a later delivery never replaces it.
-		if prior.AgentType != "" {
-			candidate.AgentType = prior.AgentType
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read subagent candidate: %w", err)
-	}
-	return local.Write(path, candidate)
+	// The write syncs outside the candidate's lock, which a hook waits only
+	// a second for (see writeUnderLock).
+	return s.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return s.lockSubagentCandidate(candidate.ArchiveSessionID) },
+		path: s.subagentCandidatePath(candidate.ArchiveSessionID),
+		change: func(current fileSnapshot) (any, bool, error) {
+			merged := candidate
+			if !current.found {
+				return merged, true, nil
+			}
+			var prior SubagentCandidate
+			if err := json.Unmarshal(current.data, &prior); err != nil {
+				return nil, false, fmt.Errorf("read subagent candidate: %w", err)
+			}
+			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || !strings.EqualFold(prior.Harness.Name, merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
+				return nil, false, ErrSubagentCandidateConflict
+			}
+			if prior.ObservedAt.After(merged.ObservedAt) {
+				merged.ObservedAt = prior.ObservedAt
+			}
+			// The first stop that named a type keeps it: like the path and
+			// owner, a later delivery never replaces it.
+			if prior.AgentType != "" {
+				merged.AgentType = prior.AgentType
+			}
+			return merged, true, nil
+		},
+	})
 }
 
 // LoadSubagentCandidates returns every subagent candidate hooks and backfill
@@ -119,7 +125,7 @@ func (s *Store) lockSubagentCandidate(id string) (func(), error) {
 	if !safeFileComponent(id) {
 		return nil, errors.New("invalid subagent candidate ID")
 	}
-	return local.NamedLockWait(s.home, subagentLockName(id), time.Second)
+	return s.namedLockWait(subagentLockName(id), time.Second)
 }
 
 // subagentLockName is the lock file guarding one subagent candidate, relative
@@ -181,22 +187,84 @@ func (s *Store) removeSubagentCandidate(id string) error {
 // subagent or its parent. Another session's unreadable candidate does not
 // stand in the way (the scan quarantines one that does not decode).
 func (s *Store) removeSubagentCandidatesForSession(id string) error {
-	candidates, issues, err := s.ScanSubagentCandidates()
+	ids, err := s.subagentCandidatesForSession(id)
 	if err != nil {
 		return err
+	}
+	for _, candidateID := range ids {
+		if err := s.RemoveSubagentCandidate(candidateID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeSubagentCandidatesWithoutWaiting is removeSubagentCandidatesForSession
+// for a caller holding the session's request lock, which hooks wait on for a
+// second: it takes each candidate's lock without waiting, and removes nothing
+// unless it has them all. busy reports a candidate lock held by a hook or the
+// collector, at work on the session's subagents right now.
+func (s *Store) removeSubagentCandidatesWithoutWaiting(id string) (busy bool, err error) {
+	ids, err := s.subagentCandidatesForSession(id)
+	if errors.Is(err, local.ErrBusy) {
+		// The session's own candidate does not decode, and its lock is held
+		// right now: a writer is replacing it.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var unlocks []func()
+	defer func() {
+		for _, unlock := range unlocks {
+			unlock()
+		}
+	}()
+	for _, candidateID := range ids {
+		if !safeFileComponent(candidateID) {
+			return false, errors.New("invalid subagent candidate ID")
+		}
+		unlock, err := local.NamedLock(s.home, subagentLockName(candidateID))
+		if errors.Is(err, local.ErrBusy) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	for _, candidateID := range ids {
+		if err := s.removeSubagentCandidate(candidateID); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// subagentCandidatesForSession lists the candidates naming id as the
+// subagent or its parent.
+//
+// Its callers hold the session's request lock, which hooks wait only a
+// second for, so the scan does not wait for the lock of a candidate that
+// does not decode: a held one is left for a later scan to move aside, and
+// when it is the session's own the forget fails, for the next attempt to
+// retry.
+func (s *Store) subagentCandidatesForSession(id string) ([]string, error) {
+	candidates, issues, err := s.scanSubagentCandidates(0)
+	if err != nil {
+		return nil, err
 	}
 	// The session's own candidate could not be read, so it cannot be
 	// removed: forgetting the session anyway would leave a candidate that
 	// registers it again once readable. A quarantined one is already gone.
 	if issue := issues[id]; issue != nil && !errors.Is(issue, ErrQuarantined) {
-		return issue
+		return nil, issue
 	}
+	var ids []string
 	for _, candidate := range candidates {
 		if candidate.ArchiveSessionID == id || candidate.ParentArchiveSessionID == id {
-			if err := s.RemoveSubagentCandidate(candidate.ArchiveSessionID); err != nil {
-				return err
-			}
+			ids = append(ids, candidate.ArchiveSessionID)
 		}
 	}
-	return nil
+	return ids, nil
 }

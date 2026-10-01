@@ -85,7 +85,13 @@ var terminalPackageUses = classifiedCalls{
 	// prompter.secret hides what is typed. Reached only from the setup
 	// prompts (behind Env.interactive) and from readR2Secret, which refuses a
 	// terminal that interaction is switched off for before it gets here.
-	"prompt.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 2, "term.ReadPassword": 1},
+	"prompt.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 2},
+	// readSecret, prompter.secret's reader (above), and the same elsewhere.
+	"secret_unix.go": {
+		"unix.IoctlGetTermios": 1, "unix.IoctlSetTermios": 2, "unix.ECHO": 1, "unix.ICANON": 1,
+		"unix.ISIG": 1, "unix.ICRNL": 1,
+	},
+	"secret_other.go": {"term.ReadPassword": 1},
 }
 
 // promptSites are the mentions of newPrompter (and of a prompter built by

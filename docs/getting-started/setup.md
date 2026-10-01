@@ -1,18 +1,19 @@
 # Set up capture
 
-Before enabling capture, read [what leaves your Mac](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Setup captures new sessions in explicitly included projects; [backfill](../guides/backfill.md) imports older sessions only when you choose it.
+Before enabling capture, read [what leaves your machine](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Setup captures new sessions in explicitly included projects; [backfill](../guides/backfill.md) imports older sessions only when you choose it.
 
 ```sh
 agent-archive setup
 ```
 
 Setup has three steps: choose apps and projects, connect storage, then review
-and start. You need an existing private Cloudflare R2 or Amazon S3 bucket
-([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
-has the least access it needs). Run it from inside a project you want
+and start. You need a private Cloudflare R2 or Amazon S3 bucket: an existing
+one ([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
+has the least access it needs), or, for S3, one setup creates for you in
+your own AWS account. Run it from inside a project you want
 archived, so setup can offer it, or from anywhere: setup then offers the
-projects your apps have sessions in. Type `help` at the storage prompt for
-provider instructions. Setup asks questions, so it needs a terminal: without one it
+projects your apps have sessions in. Choose "Show setup instructions" at the
+storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions, so it needs a terminal: without one it
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
@@ -27,34 +28,52 @@ for each check: a ✓, or a ✗ with the problem and how to fix it.
   keys. A problem names the file, line, and column, such as
   `~/.claude/settings.json:2:3`. A file that doesn't exist yet is fine;
   setup creates it.
-- **Background job.** `launchctl` must say whether the collector's job is
-  already loaded.
-- **Keychain.** When your saved settings or an unfinished setup store in
-  R2, the macOS Keychain, where the R2 key is kept, must open. (A build
-  without a Keychain checks the credentials file instead:
-  [where credentials are kept](../security/privacy.md#where-credentials-are-kept).)
+- **Background job.** The scheduler must say whether the collector's job is
+  already loaded: `launchctl` on macOS, and on Linux `systemctl --user`, which
+  needs a systemd user manager you can reach and systemd 240 or newer
+  ([setup on Linux](#setup-on-linux)).
+- **Keychain** (macOS) **or credentials file** (Linux). When your saved
+  settings or an unfinished setup store in R2, the place where the R2 key is
+  kept must open: the macOS Keychain, or on Linux the private credentials file
+  folder ([where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
 
 A ✗ stops setup before it asks anything: nothing is changed, and an
 unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
 again. To leave out an app whose file you don't want to change, choose the
 apps with [`setup --yes --apps`](#set-up-without-questions). `setup --yes`
 makes the same checks, for the apps it would include, and checks the
-Keychain when it stores in R2.
+credential store (the Keychain, or on Linux the credentials folder) when it
+stores in R2.
 
 Setup captures only **new** sessions in the projects you include. To import
-conversations already on this Mac, run [`agent-archive
+conversations already on this machine, run [`agent-archive
 backfill`](../guides/backfill.md) afterwards.
 
 ## 1. Apps and projects
 
-Setup offers the apps it finds together: "Include Codex and Claude Code?"
-Accept to continue, or decline to choose apps individually. If no apps are
+The first time, when you run setup inside a Git project and it finds apps,
+it asks one question for both: "Archive Codex and Claude Code sessions in
+~/src/web-app?" Accept to continue: the apps and that project are chosen, and
+retention is the default 90 days. If your apps have sessions in other
+projects, setup says how many; the review at the end repeats that "Edit a
+setting" adds projects, drops apps, or changes retention. Decline to answer
+the questions below instead. A repository that is your home folder or holds
+it (a dotfiles checkout, say), or that is one of the temporary folders
+backfill skips (`/tmp`, `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds
+one, is too broad to archive on one Enter: setup says so in one line, offers
+no project, pre-selects none below either, and asks for the projects. A
+repository inside a temporary folder, such as `/tmp/x`, is an ordinary project.
+While it reads your apps' history for the count of other projects, setup
+shows "Looking for your other projects...".
+
+Otherwise setup offers the apps it finds together: "Include Codex and Claude
+Code?" Accept to continue, or decline to choose apps individually. If no apps are
 found, it opens the individual choices immediately. On reconfiguration, it
 lists the apps included and not included, then asks "Change which apps are
 included? [y/N]".
 
 Setup then lists projects to archive: the ones Claude Code and Codex
-sessions on this Mac ran in, most recent first, with how many sessions each
+sessions on this machine ran in, most recent first, with how many sessions each
 has and when one was last used. Enter their numbers (`1 3`, or a range such
 as `2-4`), `a` for all of them, or type a project path; a blank line
 finishes. With no history to offer, it asks for paths.
@@ -71,13 +90,31 @@ captured. If you finish with no project included, setup asks again.
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
+- **Cloudflare R2: create a new bucket for me** (experimental, and hidden
+  unless `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` is set in the shell that
+  runs setup): setup makes a new bucket and a key for it from one Cloudflare
+  API token you paste (or set as `CLOUDFLARE_API_TOKEN`, with
+  `CLOUDFLARE_ACCOUNT_ID`). It prints the token's permissions first, then asks
+  for the bucket name and an optional data location. It is offered only in
+  this interactive setup, never by `setup --yes`. The [bucket
+  guide](bucket.md#let-setup-create-it-experimental) has the steps, and
+  [privacy](../security/privacy.md#guided-r2-bucket-creation) what happens to
+  the token. If something fails, setup says what to fix, and you can try
+  again with the same bucket, choose another storage option, or stop. A
+  Ctrl-C while it creates and checks the key stops it and revokes that key's
+  token; a Ctrl-C after the key exists, while setup stores it, leaves that
+  key's token in your account (its name was printed when it was created).
+  However else setup ends without using the new bucket and key (you cancel
+  the review, an error, an interrupted storage check), it says they exist and
+  how to remove them, or that your saved setup draft uses them; it says
+  nothing when they are in use.
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
   account and the bucket, so the bucket isn't asked for. Any other S3 API
   endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
-  on a terminal and stored in the macOS Keychain (or, on a build without one,
-  in a private credentials file).
+  on a terminal and stored in the macOS Keychain (on Linux, in a private
+  credentials file).
 - **S3:** choose an existing AWS profile, then the bucket. Setup offers
   the profiles in your AWS settings. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
@@ -100,13 +137,58 @@ already have a profile with credentials, and R2 otherwise.
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
 
-Setup checks the connection with one temporary synthetic object
-(`.setup-test/<random>.json`), which it deletes again. That proves the
-credentials work; it does not prove the bucket is private. Setup then
+  **Create a new S3 bucket.** Choose "Amazon S3: create a new bucket for
+  me" at the storage question. After the profile, setup asks for the region
+  (the profile's, unless you type another) and a name, suggesting
+  `agent-archive-` and eight random characters, since bucket names are
+  shared by everyone on AWS. A suggested name that turns out to be in use
+  is replaced once by another random one; a name you typed is asked for
+  again, and after two in-use answers in a row setup also offers to pick an
+  existing bucket instead. Only the standard AWS regions (such as `us-east-1`
+  or `eu-west-2`) are supported here, not China or GovCloud; pick an existing
+  bucket for those.
+  Setup then creates the bucket, turns on all four Block Public Access
+  settings, and reads them back, showing "Checked: Block Public Access is
+  on". It sets no lifecycle rule and no bucket policy, and it never creates
+  IAM users or access keys.
+
+  Creating a bucket needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`, which the [runtime
+  policy](../security/bucket-permissions.md) deliberately does not grant, so
+  use a profile that has them for this step. If the profile is refused,
+  setup says which permissions are missing (an organization policy can also
+  forbid creation) and goes on to pick an existing bucket. If S3 gives no
+  clear answer to the request, setup says the bucket may exist and to check
+  the S3 console; it deletes nothing in that case. If the bucket was created
+  but Block Public Access could not be turned on, setup does not use it: it
+  offers to try again, to delete the empty bucket (after you type its name),
+  or to stop. When it succeeds, setup prints the runtime policy for the new
+  bucket (not for a folder name with characters other than letters, digits
+  and `. _ - /`; it says so and points at the guide) and asks which AWS
+  profile archiving should use. The profile that created the bucket is the
+  default, and it is usually far broader than archiving needs: attach the
+  policy to a separate IAM identity, save it as its own profile, and choose
+  that profile here to archive with less. The usual storage check then
+  verifies whichever you chose. If you choose storage again later in the same
+  run, setup offers the bucket it already created instead of making another,
+  and if setup ends without using a bucket it created, it says so and that
+  the bucket is empty, so you can delete it (or, when your saved setup draft
+  still names it, that running setup again resumes with it). Guided creation is interactive
+  only; `setup --yes` still takes an existing bucket.
+
+Setup checks the connection in two steps. (After **Cloudflare R2: create a new
+bucket for me** setup has already made this check on the new key before storing
+it, so a key that doesn't work is revoked at once; the check then runs again on
+the stored key.) First it lists at most one object
+under `.setup-test/`, which writes nothing, so a wrong account ID, key, or
+profile fails within moments with an explanation. Then it writes one
+temporary synthetic object (`.setup-test/<random>.json`), reads it back, and
+deletes it. That proves the credentials work; it does not prove the bucket is private. Setup then
 inspects the bucket's public-access settings read-only (S3 only; see
 [privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
 read those settings, so for R2 the review reminds you to check that public
-access is disabled in the Cloudflare dashboard.
+access is disabled in the Cloudflare dashboard. A bucket setup created
+reports what its Cloudflare token could read at that moment, while you set up.
 
 Never pass secrets as command arguments; secret input fails rather than
 falling back to visible keystrokes.
@@ -192,7 +274,7 @@ times, paused state, and unrelated hooks.
 
 ## Set up without questions
 
-For a second Mac, or any scripted setup, pass the answers as flags with
+For a second machine, or any scripted setup, pass the answers as flags with
 `--yes`. Setup then asks nothing, runs the same
 [checks](#before-the-first-question) and storage check, and saves;
 if an answer is missing or the check fails, it says so and changes nothing.
@@ -222,14 +304,14 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--r2-account` also takes the bucket URL, which names the bucket too.
 - For S3, `--region` defaults to the profile's region, and must look like a
   region, such as `us-east-1`.
-- `--apps` defaults to the apps already set up, else those found on this Mac.
+- `--apps` defaults to the apps already set up, else those found on this machine.
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
-- `--no-skills` installs no [agent skills](#what-setup-changes-on-your-mac)
+- `--no-skills` installs no [agent skills](#what-setup-changes-on-your-machine)
   (such as `/handoff`) and removes the ones setup wrote earlier; a file that
   is not setup's is left alone and named. It works with or without `--yes`
   (without it, setup on a finished installation first asks what to change,
@@ -244,19 +326,21 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 
 ## Refreshing after an upgrade
 
-The hooks, the background collector's plist, and the skill files name the
+The hooks, the background job's definition (the LaunchAgent's plist, or the
+systemd unit files), and the skill files name the
 `agent-archive` binary and its flags, so a new binary needs them rewritten.
 `agent-archive setup --refresh` does that, and nothing else: it asks
 nothing, needs no terminal, and never touches storage, credentials,
 projects, retention, or your saved answers. It prints `nothing to refresh`
 (exit 0) when all is current, or one line saying what it refreshed
 (`--verbose` lists the files). [The installer](install.md#install-with-the-script)
-runs it for you when it finds a set-up Mac.
+runs it for you when it finds a set-up machine.
 
 - It uses the saved settings and the hook files setup recorded, and the
   executable you run it from. If the recorded executable differs (it moved,
   or was deleted, the case `status` calls "capture has stopped"), it points
-  the hooks, the plist, and the skills at the running one and records it.
+  the hooks, the job's definition, and the skills at the running one and
+  records it.
   It refuses a temporary build (`go run`) or a file that cannot run.
 - Skills follow the same rules as in setup: a stale file of setup's is
   replaced, a file that is not setup's is left and named, and with
@@ -264,10 +348,10 @@ runs it for you when it finds a set-up Mac.
   skill or hook file you deleted by hand is written again (to keep the
   skills off, use `--no-skills`; to stop capture, use `agent-archive
   uninstall` or `pause`, not deleting the hooks).
-- It changes the LaunchAgent's job only when the plist itself changes (a
+- It changes the background job only when its definition itself changes (a
   moved binary) for a job that is loaded: that job is stopped and started
-  again so it runs the new plist. A job that is not loaded stays that way,
-  and an unchanged plist leaves launchd alone.
+  again so it runs the new definition. A job that is not loaded stays that
+  way, and an unchanged definition leaves the scheduler alone.
 - All of it is one transaction with setup's journal, so a failure puts every
   file back, and a Ctrl-C or closed terminal while it writes does not stop
   it halfway. It waits up to ten seconds for a background collection pass
@@ -281,7 +365,94 @@ runs it for you when it finds a set-up Mac.
   yourself. Any other flag except `--verbose` is a usage error
   (exit 2).
 
-## What setup changes on your Mac
+## Setup on Linux
+
+Setup is the same on Linux, with these differences ([what was tested, and
+what was not](install.md#platforms)).
+
+- **The background job is a systemd user timer.** Setup writes
+  `agent-archive-collector.service` (a one-shot that runs `agent-archive
+  _collect`, with its output appended to `collector.log` and
+  `collector-error.log` in the data directory) and
+  `agent-archive-collector.timer` (a minute after boot, so at once when setup
+  starts it, then a minute after each start; in a container the first run can
+  wait up to a minute) into `~/.config/systemd/user`, then runs
+  `systemctl --user daemon-reload` and `enable --now` on the timer. It needs
+  systemd 240 or newer (RHEL 8 and its rebuilds from 8.3); an older one is
+  refused. There is no cron or other fallback: without a systemd user manager
+  setup stops.
+- **No user bus.** Over SSH without `pam_systemd`, in a container, or after
+  `su`, `systemctl --user` cannot reach a user manager. Setup then stops at
+  its first check, before it asks anything or changes anything:
+
+  ```text
+  Checking installed applications...
+    ✓ Claude Code hooks: ~/.claude/settings.json
+    ✗ Background job: the systemd user manager cannot be reached (this session has no user bus), so setup cannot tell whether the agent-archive-collector job is loaded, and loads it only when it can tell
+      Run this from a login session that has a systemd user bus (a desktop or console login, or ssh with pam_systemd), or run `loginctl enable-linger` once so the user manager runs without a login, then check that `systemctl --user status` works, then run agent-archive setup again.
+  Setup incomplete. Nothing was changed, and any unfinished setup is kept. Fix what is marked ✗ above, then run agent-archive setup again.
+  ```
+
+  After `loginctl enable-linger` the manager starts at boot, but a shell that
+  was already open may still lack the bus: log in again, or `export
+  XDG_RUNTIME_DIR=/run/user/$(id -u)`, and `systemctl --user status` should
+  answer. Then run `agent-archive setup` again.
+- **Lingering.** Without it, the user manager exists only while you are logged
+  in, so the collector stops when you log out. Hooks keep recording sessions
+  and the next pass after you log in uploads them, but nothing uploads while
+  you are away. `status` and `status --json` (`background_warnings`) say so
+  while the job is otherwise working; `loginctl enable-linger` fixes it. A
+  server or a machine you reach over SSH wants lingering on.
+- **Where the units go.** Always `~/.config/systemd/user`, whatever
+  `XDG_CONFIG_HOME` your shell has. The user manager reads
+  `$XDG_CONFIG_HOME/systemd/user` instead only when its own environment sets
+  the variable (as `pam_env` or a `user@.service` drop-in can); a variable
+  exported in your shell, the usual place, never reaches it. If the manager
+  does look elsewhere, `enable --now` fails with "Unit file ... does not
+  exist", setup puts everything back and the message names the directory the
+  units were written to; `systemctl --user show --property=UnitPath` lists
+  where the manager looks. Setup has no option to write the units elsewhere:
+  unset the variable for the manager (look in `/etc/environment`, `pam_env`
+  and any `user@.service` drop-in), log in again, and run setup again.
+- **`XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are forwarded to the job** when
+  your shell sets them to an absolute path, so backfill from your shell and
+  the scheduled collector find the same Cursor database and keep Cursor
+  database copies in the same place (`~/.cache/agent-archive/cursor-snapshots`
+  by default, never `/tmp`). A relative or empty value counts as unset.
+  `status` warns when the shell's value later differs from the job's.
+  **A limit to know about:** a systemd user manager can get these two
+  variables from outside your shell (an `environment.d` file, a desktop
+  session's `import-environment`). Setup records only what the shell has, so
+  if the shell had neither variable when setup ran, the job uses whatever
+  the manager has. `status` compares only your shell's values with the ones
+  recorded and cannot see the manager's, so it cannot warn that the job and a
+  backfill from your shell look in different places. The workaround is to export the same values in
+  the shell as the manager has, and run `agent-archive setup` again, which
+  records them.
+- **The job's `PATH`** is your shell's usable `PATH` entries when setup ran,
+  then systemd's own default (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`),
+  so a `credential_process` helper such as `aws-vault`, `op` or one in
+  `~/.local/bin` is found. A directory that does not exist when setup runs
+  is not recorded; run setup again after installing a helper there.
+- **Credentials.** There is no Keychain. An R2 key is kept in a private file
+  that is not encrypted, and an S3 profile stores no secret of
+  agent-archive's own; prefer S3 on Linux. In a container or a service, set
+  `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`
+  instead. See [where credentials are kept](../security/privacy.md#where-credentials-are-kept).
+- **Cursor** is best effort, and setup cannot detect its version (it says
+  "version not detected"); see [what is not verified](install.md#platforms).
+- **Moving or copying.** A data directory copied to another machine, or a
+  cloned VM or container image, makes `status` and `setup` warn that it was
+  set up on a different machine; see [cloned machines on
+  Linux](../guides/multiple-machines.md#cloned-machines-on-linux). A home
+  directory shared by several machines is not supported.
+- **Uninstalling without a user bus.** `agent-archive uninstall` refuses
+  when the manager cannot say whether the job is loaded;
+  `uninstall --skip-scheduler` removes the units, the hooks and the skill
+  files anyway and prints the `systemctl --user stop` command to run from a
+  session that has the bus ([uninstall](uninstall.md#when-the-background-scheduler-cannot-be-reached)).
+
+## What setup changes on your machine
 
 - **Hooks**, where each app reads them: Claude Code's
   `$CLAUDE_CONFIG_DIR/settings.json` and Codex's `$CODEX_HOME/hooks.json`
@@ -299,10 +470,15 @@ runs it for you when it finds a set-up Mac.
   Setup refuses a file it cannot edit safely and says where the problem is:
   anything that is not plain JSON (a comment, a trailing comma, a byte-order
   mark), or a key that appears twice inside `hooks`.
-- **A LaunchAgent**, `~/Library/LaunchAgents/com.agent-archive.collector.plist`,
-  which runs the collector every 60 seconds. launchd gives it none of your
-  shell's environment, so for S3 the plist also carries what setup's storage
-  check ran with: `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`,
+- **A background job** that runs the collector every 60 seconds: on macOS a
+  LaunchAgent, `~/Library/LaunchAgents/com.agent-archive.collector.plist`; on
+  Linux a systemd user timer and service,
+  `~/.config/systemd/user/agent-archive-collector.timer` and `.service`, each
+  mode 0600, plus the link `systemctl --user enable` makes in
+  `timers.target.wants` ([setup on Linux](#setup-on-linux)). The scheduler
+  gives it none of your shell's environment, so for S3 its definition (the
+  plist, or the service's `Environment=` lines) also carries what setup's
+  storage check ran with: `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`,
   `AWS_CA_BUNDLE`, the `AWS_ENDPOINT_URL` overrides, the proxy
   variables (a proxy URL with a password is left out), and aws-vault's and
   1Password's settings for where credentials live, when set, and your
@@ -335,21 +511,23 @@ runs it for you when it finds a set-up Mac.
   It holds registrations, frozen uploads, and caches; transcripts are read in
   place, not copied, except a Cursor database copy that exists only while a
   read of it is in progress.
-- **A Keychain item** (service `agent-archive`) for R2 credentials (on a
-  build without a Keychain, a credentials file in the data directory). S3
-  credentials stay in your AWS profile.
+- **A Keychain item** (service `agent-archive`) for R2 credentials on macOS;
+  on Linux, a credentials file (mode 0600, in a mode 0700 folder) in the data
+  directory. S3 credentials stay in your AWS profile.
 
 `agent-archive uninstall` removes the hooks, the skill files, and the
-LaunchAgent;
+background job (the LaunchAgent, or the systemd units and their enable link);
 `--delete-local-data` also removes the local state and the Keychain item
 (or credentials file).
 Neither touches the bucket ([uninstall](uninstall.md)).
 
 Only the account's own default installation, in `~/.local/share/agent-archive`
-under the home directory macOS records for your account, uses the launchd
-label `com.agent-archive.collector`. Any other data directory, whether set
+under the home directory the system records for your account, uses the
+job name `com.agent-archive.collector` (launchd) or `agent-archive-collector`
+(systemd). Any other data directory, whether set
 with `AGENT_ARCHIVE_HOME` or moved by a sandbox that overrides `HOME`, gets a
-label of its own (`com.agent-archive.collector.<hash>`), and its hooks carry
+name of its own (`com.agent-archive.collector.<hash>`, or
+`agent-archive-collector-<hash>` under systemd), and its hooks carry
 the directory in their command, since apps run hooks without your shell's
 environment. That directory is also how each installation recognizes its own
 hooks: setup replaces and uninstall removes only handlers whose command runs
@@ -361,34 +539,17 @@ you choose that app, setup stops right after the apps and projects step,
 before asking about storage, and keeps your answers. `status` reports it too;
 uninstall that installation first, or give the new one its own `HOME` (or
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME`) so the apps' hook files are separate
-too. Before stopping a job, setup and uninstall check that launchd loaded it
-from this installation's own plist; a job loaded from any other plist is left
-running and reported. These keep a second or test installation from stopping
-or replacing the default one. They do not stop it from loading its own job
-into your real launchd: stub `launchctl` in tests (see
+too. Before stopping a job, setup and uninstall check that the scheduler loaded
+it from this installation's own definition (plist or unit file); a job loaded
+from any other one is left running and reported. These keep a second or test
+installation from stopping or replacing the default one. They do not stop it
+from loading its own job into your real launchd or systemd user manager: stub
+`launchctl` or `systemctl` in tests (see
 [testing](../../dev/contributing/testing.md)).
 
 ## After setup
 
-When the projects you chose have past sessions on this Mac that aren't in
-the archive yet, setup offers to import them:
-
-```text
-Looking for past sessions in these projects… 214 found.
-Import the 214 past sessions from these projects? [Y/n]
-```
-
-Yes runs the same import as `agent-archive backfill --project DIR` for each
-chosen project, with the same checks, and uploads the sessions; it ends with
-the import's ID, and `agent-archive backfill undo ID` removes them again (see
-[backfill](../guides/backfill.md)). If the import stops or fails, setup
-stays done and prints the `agent-archive backfill` command that finishes
-it. No changes
-nothing; you can run `agent-archive backfill` any time. Setup skips the offer
-while capture is paused, when there is nothing to import, and with `--yes`,
-which asks nothing and mentions `agent-archive backfill` instead.
-
-Then setup says, with one line per app, what to do next:
+After "Configuration saved.", setup says, with one line per app, what to do next:
 
 - **Codex:** run `/hooks` and approve the archive hooks, then start a new
   session. Codex doesn't run hooks it hasn't approved, and this is the most
@@ -417,19 +578,40 @@ agent-archive status --json
 
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
+
+Once it has said how to check capture, setup offers to import the past
+sessions of the projects you chose, when they have some on this machine that
+aren't in the archive yet:
+
+```text
+Looking for past sessions in these projects… 214 found.
+Import the 214 past sessions from these projects? [Y/n]
+```
+
+Yes runs the same import as `agent-archive backfill --project DIR` for each
+chosen project, with the same checks, and uploads the sessions; it ends with
+the import's ID, and `agent-archive backfill undo ID` removes them again (see
+[backfill](../guides/backfill.md)). If the import stops or fails, setup
+stays done and prints the `agent-archive backfill` command that finishes
+it. No changes
+nothing; you can run `agent-archive backfill` any time. Setup skips the offer
+while capture is paused, when there is nothing to import, and with `--yes`,
+which asks nothing and mentions `agent-archive backfill` in its next steps
+instead.
+
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
-Setup's last line is the command that sets up another Mac with the same
+Setup's last line, after the import offer, is the command that sets up another machine with the same
 storage, apps and projects ([without questions](#set-up-without-questions)),
 ready to copy:
 
 ```text
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --project ~/code/app
 ```
 
 Projects in your home folder are written from `~`. For R2 the command never
 carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
-`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other Mac first. `--yes` has
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. `--yes` has
 no option for the folder inside the bucket, so when you changed it, setup
 adds a line saying to set it there with `agent-archive setup`.

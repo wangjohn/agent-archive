@@ -9,7 +9,7 @@ Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
 ## Problem
 
 A person switching coding agents mid-task (Codex → Claude Code, Claude Code
-→ Cursor, or the same agent on another Mac) has no way to carry the
+→ Cursor, or the same agent on another machine) has no way to carry the
 conversation over. Each app resumes only its own sessions, from its own
 local files. Today the closest path is `agent-archive show ID --normalized`,
 which prints ~350 KB of JSON for a medium Claude session, omits every tool
@@ -68,7 +68,8 @@ agent-archive handoff [SESSION_ID | --latest] [flags]
 |---|---|---|
 | `SESSION_ID` | — | Archive session ID from `list`. Mutually exclusive with `--latest` and `--file`. |
 | `--latest` | off | Most recent session for the project (see [Selection](#selection)). |
-| `--project DIR` | current directory | Project used by `--latest`: matched by its path and, when it is in a repository with an `origin` remote, by that repository (see [Matching by repository](#matching-by-repository)). |
+| `--project DIR\|NAME` | current directory | The project the picker and a title look at first (a directory's repository, or a project name), and the directory `--latest` searches, matched by its path and, when it is in a repository with an `origin` remote, by that repository (see [Matching by repository](#matching-by-repository)). See [session finding](session-finding.md#3-scope-this-repository-first). |
+| `--all-projects` | off | The picker and a title look at every project, not only the working directory's repository. Not with `--project`, `--latest`, or `--file`. |
 | `--harness NAME` | any | Restrict `--latest`, or disambiguate an ID, to `claude`, `codex`, or `cursor`. |
 | `--file PATH --harness NAME` | — | Render a native transcript file directly. Same machine only; still filtered. |
 | `--source auto\|local\|archive` | `auto` | Where the session content comes from (see [Content source](#content-source)). |
@@ -100,6 +101,9 @@ macOS `ARG_MAX` is 1 MB, so the default budget is safe as a command
 argument.
 
 ## Selection
+
+How the picker and title search find a session (scope, native names,
+filtering) is planned in [session-finding.md](session-finding.md).
 
 An explicit `SESSION_ID` resolves as `show` does: the local registration
 first when `--source` allows it, otherwise `locateMetadataKey`.
@@ -691,8 +695,9 @@ which hands off *that* session and opens Codex in a new terminal tab.
 ### Behavior
 
 1. **Selection (A).** The handoff picker merges this machine's top-level
-   registrations with archived rows, joined on `ArchiveSessionID`; a local
-   row wins and is marked "not yet uploaded" when the archive lacks it.
+   registrations with top-level archived rows, joined on
+   `ArchiveSessionID`; a local row wins and is marked "not yet uploaded"
+   when the archive lacks it.
    Sessions with no prompt yet are hidden. When the archive cannot be
    read (not set up for storage, offline), the picker shows local rows
    and says why archived ones are missing. With `--to` and no selector:
