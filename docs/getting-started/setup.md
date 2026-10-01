@@ -444,8 +444,16 @@ what was not](install.md#platforms)).
 - **Moving or copying.** A data directory copied to another machine, or a
   cloned VM or container image, makes `status` and `setup` warn that it was
   set up on a different machine; see [cloned machines on
-  Linux](../guides/multiple-machines.md#cloned-machines-on-linux). A home
-  directory shared by several machines is not supported.
+  Linux](../guides/multiple-machines.md#cloned-machines-on-linux).
+- **A network home.** If the data directory or `~/.config/systemd/user` is on
+  a network filesystem (NFS, SMB/CIFS, sshfs and the like), setup refuses
+  before its first question and changes nothing: machines sharing a home would
+  share one machine ID, cannot rely on file locks and would each run the
+  collector. Put the data directory on local disk with `AGENT_ARCHIVE_HOME`,
+  or, for a home only one machine mounts, run `agent-archive setup
+  --allow-network-home`, which is recorded in `config.json` and does not stop
+  `status` warning. See [a home directory shared across
+  machines](../guides/multiple-machines.md#a-home-directory-shared-across-machines).
 - **Uninstalling without a user bus.** `agent-archive uninstall` refuses
   when the manager cannot say whether the job is loaded;
   `uninstall --skip-scheduler` removes the units, the hooks and the skill

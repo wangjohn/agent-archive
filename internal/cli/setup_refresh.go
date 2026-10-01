@@ -120,8 +120,13 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if err != nil {
 		return plan, "", err
 	}
-	if _, err = refreshableConfig(home); err != nil {
+	saved, err := refreshableConfig(home)
+	if err != nil {
 		return plan, userHome, err
+	}
+	// Before the locks, which are file locks in the data directory.
+	if problem := env.networkRefreshProblem(saved, home, userHome); problem != "" {
+		return plan, userHome, refuse("%s", problem)
 	}
 	if problem := env.rootProblem(home, userHome); problem != "" {
 		return plan, userHome, refuse("%s", problem)

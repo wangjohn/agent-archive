@@ -74,6 +74,15 @@ type Locations struct {
 	ClaudeDesktopScratch string
 	CodexDocuments       string
 
+	// UserUnitDir is where the user's own systemd units are, which the
+	// systemd scheduler writes the collector's job into: <home>/.config/
+	// systemd/user, whatever XDG_CONFIG_HOME says (the user manager reads
+	// that variable only from its own environment, so a shell's value would
+	// name a directory it does not search; see the systemd adapter's
+	// UnitDir, which a test holds this equal to). "" on any system but
+	// Linux, and with no home.
+	UserUnitDir string
+
 	// TempRoots are the temporary directories besides $TMPDIR: sessions in
 	// one are skipped as temporary. macOS has /tmp (a link to /private/tmp)
 	// and the per-user folders under /var/folders, both spellings of each;
@@ -113,6 +122,9 @@ func NewLocations(os OS, home string, getenv func(string) string, deps LocationD
 			l.CursorAppDir = filepath.Join(dir, "Cursor")
 		} else if home != "" {
 			l.CursorAppDir = filepath.Join(home, ".config", "Cursor")
+		}
+		if home != "" {
+			l.UserUnitDir = filepath.Join(home, ".config", "systemd", "user")
 		}
 		l.TempRoots = []string{"/tmp", "/var/tmp"}
 	case Unknown:

@@ -119,6 +119,15 @@ type Config struct {
 	// and on a Linux system with no machine ID to read. It is local: it is
 	// not in any published file.
 	HostID string `json:"host_id,omitempty"`
+	// AllowNetworkHome records that the person allowed this installation's
+	// data directory or systemd unit directory to be on a network
+	// filesystem (setup --allow-network-home), which setup and setup
+	// --refresh otherwise refuse on Linux, since a home shared between
+	// machines shares one machine ID, cannot rely on file locks and runs the
+	// background job on every machine. Setup records it only while a
+	// directory is on one. Status warns of the network filesystem whether or
+	// not it is set. Absent otherwise, and always on macOS.
+	AllowNetworkHome bool `json:"allow_network_home,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this

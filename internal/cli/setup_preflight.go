@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -50,17 +51,20 @@ func (c preflightChecks) blocked() bool {
 
 // print writes one line per check: a ✓, or a ✗ with, under it, the
 // problem and the fix. Long lines wrap under their own text.
-func (c preflightChecks) print(p *prompter) {
+func (c preflightChecks) print(p *prompter) { c.write(p.out, p.style) }
+
+// write is print to out, in style.
+func (c preflightChecks) write(out io.Writer, style textStyle) {
 	for _, check := range c {
 		line := check.Label + ": " + check.Detail
 		if check.OK {
-			terminal.Println(p.out, p.style.hang("  "+p.style.okMark()+" ", line))
+			terminal.Println(out, style.hang("  "+style.okMark()+" ", line))
 			continue
 		}
-		terminal.Println(p.out, p.style.hang("  "+p.style.failMark()+" ", line))
+		terminal.Println(out, style.hang("  "+style.failMark()+" ", line))
 		for _, text := range []string{check.Problem, check.Fix} {
 			if text != "" {
-				terminal.Println(p.out, p.style.hang("    ", text))
+				terminal.Println(out, style.hang("    ", text))
 			}
 		}
 	}

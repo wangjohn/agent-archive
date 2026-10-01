@@ -148,6 +148,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return 1
 		}
 	}
+	// Before anything is created or locked: the data directory's lock is a file
+	// lock, and a network filesystem is what makes it unreliable.
+	if code, refused := refuseNetworkHome(opts, stdout, stderr, env); refused {
+		return code
+	}
 	if opts.yes {
 		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "Setup incomplete: %v\n", err)
@@ -167,7 +172,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice()); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice(), opts.allowNetworkHome); err != nil {
 		// The checks above already name each blocker, marked ✗, so the exit
 		// only says what to do. setup --yes names them again on standard
 		// error, which is what a script reads.
@@ -195,8 +200,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 
 // setup is interactive setup. verbose prints a failed storage check's own
 // error under its diagnosis; skills is --no-skills or --skills, which no
-// question follows.
-func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice) error {
+// question follows; allowNetworkHome is --allow-network-home.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice, allowNetworkHome bool) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -276,6 +281,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
+	draft.Config.AllowNetworkHome = env.networkHomeOptIn(home, userHome, allowNetworkHome, existing)
 	err = runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
 	// However setup ended, a bucket it created and did not keep is not left
 	// without a word.
