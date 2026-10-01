@@ -254,8 +254,12 @@ var appStepAfterSetup = map[string]string{
 func privacyCheck(cfg config.Config, at time.Time) reviewCheck {
 	report := currentBucketPrivacy(cfg, at)
 	switch {
+	case report.State == "verified_private" && report.Reason == "r2_public_domains_disabled":
+		return reviewCheck{mark: symbolOK, label: "Bucket is private", detail: "r2.dev off; no enabled custom domains (checked at setup)"}
 	case report.State == "verified_private":
 		return reviewCheck{mark: symbolOK, label: "Bucket is private", detail: "all public access blocked"}
+	case report.State == "public_or_risky" && report.Reason == "r2_public_access_enabled":
+		return reviewCheck{mark: symbolWarn, label: "Bucket is public", detail: "you chose to continue", more: []string{"Turn off public access in the Cloudflare dashboard:"}, link: report.GuidanceURL}
 	case report.State == "public_or_risky":
 		return reviewCheck{mark: symbolFail, label: "Bucket is public", detail: privacyReasonText(report.Reason), more: []string{"Fix its access before archiving:"}, link: report.GuidanceURL}
 	case report.Reason == r2PrivacyUnreadable:
@@ -350,8 +354,12 @@ func printReviewNotes(p *prompter) {
 func printReviewPrivacy(p *prompter, cfg config.Config) {
 	report := currentBucketPrivacy(cfg, p.clock())
 	switch {
+	case report.State == "verified_private" && report.Reason == "r2_public_domains_disabled":
+		p.item(p.style.ok("✓"), "Bucket privacy: r2.dev off and no enabled custom domains at the last check.", nil)
 	case report.State == "verified_private":
 		p.item(p.style.ok("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
+	case report.State == "public_or_risky" && report.Reason == "r2_public_access_enabled":
+		p.warn("Bucket privacy: R2 public access was enabled at the last check.", "Turn it off in the Cloudflare dashboard: "+report.GuidanceURL)
 	case report.State == "public_or_risky":
 		p.item(p.style.fail("!"), p.style.fail("The bucket looks public ("+privacyReasonText(report.Reason)+")."), []string{"Fix its access before archiving: " + report.GuidanceURL})
 	case report.Reason == r2PrivacyUnreadable:
@@ -363,8 +371,8 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	}
 }
 
-// r2PrivacyUnreadable is the privacy reason of every R2 bucket: its object
-// keys cannot read public-access settings (storage.UnknownPrivacy).
+// r2PrivacyUnreadable is the privacy reason when R2's object key is the only
+// credential available: it cannot read public-access settings.
 const r2PrivacyUnreadable = "r2_management_credentials_not_configured"
 
 func privacyReasonText(reason string) string {
@@ -378,6 +386,10 @@ func privacyReasonText(reason string) string {
 		return "not every public-access setting could be confirmed"
 	case "inspection_stale":
 		return "the last check is more than a day old"
+	case "r2_public_access_enabled":
+		return "R2 public access is enabled"
+	case "r2_public_access_not_fully_checked":
+		return "not every R2 public-access setting could be checked"
 	case "storage_configuration_changed":
 		return "storage changed since the last check"
 	case "public_bucket_policy":

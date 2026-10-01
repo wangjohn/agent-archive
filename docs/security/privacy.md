@@ -587,7 +587,7 @@ Setup tests object access and inspects native bucket public-access controls sepa
 
 For AWS S3, all four bucket-level Block Public Access flags must be observed enabled before the tool reports `verified_private`. Otherwise it checks policy status and the bucket ACL for public configuration. A public policy or ACL yields `public_or_risky`; incomplete or denied checks yield `not_verified`. Account-level controls might further restrict access, so `public_or_risky` identifies configuration that needs review, not proof of anonymous object access. A private bucket policy or ACL alone is insufficient because object ACLs and access points can expose data.
 
-For R2, setup stores S3-compatible object credentials, not a Cloudflare management API token. These cannot inspect managed/custom public domains. R2 therefore remains `not_verified` and links the public-bucket settings instructions. The tool does not request another token or send object credentials to the management API. The one exception to what setup can see is a bucket it creates itself ([below](#guided-r2-bucket-creation)).
+For R2, setup stores S3-compatible object credentials, not a Cloudflare management API token. These cannot inspect managed/custom public domains. A manually configured R2 bucket therefore remains `not_verified` and links the public-bucket settings instructions. The tool does not send object credentials to the management API. When setup creates the bucket itself, it can inspect public access with the temporary bootstrap token ([below](#guided-r2-bucket-creation)).
 
 ### Guided R2 bucket creation
 
@@ -631,22 +631,24 @@ uses. Setup treats it accordingly:
 things about the new bucket once: whether its public `r2.dev` URL is on, and
 whether it has custom domains. It prints what it found, such as "r2.dev public
 access: off (checked at setup)". That is a snapshot from the moment of
-creation. It is not saved as bucket privacy evidence, is not repeated, and
-does not say the bucket is private: it says nothing about signed URLs, access
-granted later in the dashboard, or copies of what you archive. The bucket
-privacy row in the review and in `status` stays "not verified" for R2. If
-either read is refused, setup says it did not check and goes on (a read that
-failed never hides what the other found). If the `r2.dev` URL is on, or a
+creation. Setup saves this check as bucket privacy evidence. If both reads
+succeed and show `r2.dev` off with no enabled custom domains, the review reports the
+bucket private **at setup**. This does not cover signed URLs, access granted
+later in the dashboard, applications that proxy reads, or copies of what you
+archive. If either read is refused, the review keeps privacy unknown; a read
+that failed never hides what the other found. If the `r2.dev` URL is on, or a
 custom domain serves the bucket, setup stops and asks what now: check again
 (after you turn it off in the dashboard), choose another storage option, or
 continue anyway; Enter chooses another storage option. Choosing another
 revokes the key's token, which was made and checked but not stored, and says
 the empty bucket is left in your account. Turning public access off is up to
-you.
+you. The collector cannot repeat the management API reads with the bucket's
+object key. Its next privacy refresh returns to `not_verified`; without a
+refresh, the saved observation becomes stale after 24 hours.
 
 Inspection covers native bucket public access. It does not assess applications that proxy authorized reads, shared signed URLs, or copies of archived data.
 
-The result includes fixed diagnostic codes, scope, check time, and a storage-configuration fingerprint. Setup records it in the resumable setup draft as soon as the storage connection succeeds and commits it to the active configuration only when setup is confirmed; resuming a draft inspects again. Status reads the local result, never a remote API. After 24 hours, a clock rollback, or a storage configuration change, status reports privacy as unverified. The scheduled background collector refreshes the evidence with the same read-only inspection whenever the saved result is missing, is for another storage configuration, or is more than 12 hours old, so an active install stays verified without rerunning setup; a paused install is never inspected, and running setup also refreshes it. Provider errors and credentials are not included in the report.
+The result includes fixed diagnostic codes, scope, check time, and a storage-configuration fingerprint. Setup records it in the resumable setup draft and commits it to the active configuration only when setup is confirmed. Resuming a draft checks storage again; guided R2 privacy retains its original setup-time observation because the bootstrap token is gone. Status reads the local result, never a remote API. After 24 hours, a clock rollback, or a storage configuration change, status reports privacy as unverified. The scheduled background collector refreshes evidence when the saved result is missing, is for another storage configuration, or is more than 12 hours old. It can refresh S3 privacy through the existing credentials; for R2 it returns to `not_verified` without a management token. A paused install is never inspected. Provider errors and credentials are not included in the report.
 
 References used for the implementation:
 
