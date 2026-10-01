@@ -782,7 +782,7 @@ guide. Live check on the owner's Mac:
 - PR 7: the description is cut to 512 bytes, after redaction (a cut before it
   could leave half a secret that no pattern matches) and then redacted again
   until stable, with a `content_truncated` gap. The plan said "a sane cap";
-  512 is far under a prompt string's 64 KB, and the parser cuts `name` to 72
+  512 is far under a prompt string's 64 KB, and the parser cuts `name` to 128
   runes anyway.
 - PR 7: the `subagent-meta` record is written only when the transcript has
   records of its own. The collector reads an empty subagent transcript as

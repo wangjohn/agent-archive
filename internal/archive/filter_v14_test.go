@@ -379,7 +379,7 @@ func TestSubagentNameComesFromTheDescription(t *testing.T) {
 	if labels.Name != "Find the retention tests" || labels.Title != "" {
 		t.Fatalf("labels = %#v", labels)
 	}
-	long := subagentBundle(t, fmt.Sprintf(`{"description":%q}`, strings.Repeat("é", 100)))
+	long := subagentBundle(t, fmt.Sprintf(`{"description":%q}`, strings.Repeat("é", sessionTitleLimit+30)))
 	longLabels, _ := SessionLabels(long)
 	if want := strings.Repeat("é", sessionTitleLimit) + "…"; longLabels.Name != want {
 		t.Fatalf("name = %q, want %d runes and an ellipsis", longLabels.Name, sessionTitleLimit)
