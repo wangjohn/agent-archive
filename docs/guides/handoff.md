@@ -229,8 +229,8 @@ agent-archive handoff "fix the auth bug" --to claude --worktree
 ```
 
 It matches the way `show` and `list "<words>"` do: every word must appear,
-case-insensitively, in some field of the session (its name, its title, the
-first prompt, its branch, its project name, or its app), or start its
+case-insensitively, in some field of the session (its name, its title (the
+first prompt), its branch, its project name, or its app), or start its
 session ID, and a word like `#212` or `212` also matches a pull request the
 session linked or created. Words may match different fields, so a topic, a
 PR number, a branch, or a project name all work. A session ID, full or the

@@ -128,10 +128,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
 	// The index lists the newest sessions of every project. A scope is
-	// applied before --limit, so it reads them all; so does a browser that
-	// may switch to the scope, a search, and a table, which leaves subagents
-	// out before --limit counts.
-	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || scope.Label != "" && browsing || !q.empty() || !opts.jsonOut
+	// applied before --limit, so it reads them all; so does a search, and
+	// every table and browser, which leave subagents out before --limit
+	// counts (a browser may also switch to the scope).
+	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || !opts.jsonOut
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
