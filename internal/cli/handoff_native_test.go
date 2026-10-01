@@ -35,7 +35,7 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 	f.env = testEnv(t, f.data, f.at)
 	f.env.WorkingDir = func() (string, error) { return f.cwd, nil }
 	f.env.currentBranch = func(string) string { return "main" }
-	f.env.nativeStoreRoots = []nativesessions.StoreRoot{{Harness: "claude", Path: f.claude}, {Harness: "codex", Path: f.codex, Recursive: true}}
+	f.env.nativeStoreRoots = []nativesessions.StoreRoot{{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: f.claude}, {Harness: "codex", Prefix: "rollout-", Suffix: ".jsonl", Path: f.codex, Recursive: true}}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 		t.Fatal("native route opened storage/credentials")
 		return nil, errors.New("forbidden")
@@ -271,7 +271,7 @@ func TestNativeSelectedTranscriptReplacementAndIdentityRewriteFail(t *testing.T)
 	f := newNativeFixture(t)
 	path := f.add(t, "claude", "native-source", "Original work", time.Hour)
 	files := f.env.nativeFiles()
-	r, e := nativesessions.Discover(context.Background(), files, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	r, e := nativesessions.Discover(context.Background(), productionAgents, files, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 	if e != nil || len(r.Candidates) != 1 {
 		t.Fatalf("discover %v %v", r, e)
 	}
@@ -392,7 +392,7 @@ func TestNativeSelectedSnapshotIncludesNewCompleteAppendAndRejectsIdentityChange
 	f := newNativeFixture(t)
 	path := f.add(t, "claude", "native-source", "Original work", time.Hour)
 	files := f.env.nativeFiles()
-	r, err := nativesessions.Discover(context.Background(), files, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	r, err := nativesessions.Discover(context.Background(), productionAgents, files, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 	if err != nil || len(r.Candidates) != 1 {
 		t.Fatalf("discover %+v %v", r, err)
 	}

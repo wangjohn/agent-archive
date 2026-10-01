@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,7 +191,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	t.Parallel()
 	f := newUndoFixture(t)
-	env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
 	code := "/work/code"
 	codeID := f.include(code)
 	secretID := archive.ProjectID(code + "/secret")

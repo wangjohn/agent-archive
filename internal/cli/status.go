@@ -895,7 +895,7 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		view.Apps[i].VersionObservedAt = appDiscovery.ObservedAt
 		view.Apps[i].VersionKind = appDiscovery.VersionKind
 		view.Apps[i].VersionState = appDiscovery.VersionState
-		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
+		view.Apps[i].Capabilities = captureCapabilityProfile(env.agentRegistry(), view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
 		in := env.installation(home, userHome)
 		installed, e := hooks.Installed(hookFiles, in.hook(executable), view.Apps[i].Name)

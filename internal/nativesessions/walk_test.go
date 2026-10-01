@@ -28,13 +28,13 @@ func TestWalkStopsAtFileCapAndCancellation(t *testing.T) {
 		}
 	}
 	n := 0
-	c, err := Walk(context.Background(), disk{}, StoreRoot{Harness: "claude", Path: root}, 2, func(Ref) (bool, error) { n++; return true, nil })
+	c, err := Walk(context.Background(), disk{}, StoreRoot{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}, 2, func(Ref) (bool, error) { n++; return true, nil })
 	if err != nil || c.Complete || n != 2 || c.Enumerated != 2 {
 		t.Fatalf("cap: %+v %d %v", c, n, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	c, err = Walk(ctx, disk{}, StoreRoot{Harness: "claude", Path: root}, 0, func(Ref) (bool, error) { t.Fatal("canceled visit"); return true, nil })
+	c, err = Walk(ctx, disk{}, StoreRoot{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}, 0, func(Ref) (bool, error) { t.Fatal("canceled visit"); return true, nil })
 	if !errors.Is(err, context.Canceled) || c.Complete {
 		t.Fatalf("cancel: %+v %v", c, err)
 	}
@@ -56,7 +56,7 @@ func BenchmarkWalk(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				c, err := Walk(context.Background(), disk{}, StoreRoot{Harness: "claude", Path: root}, 10000, func(Ref) (bool, error) { return true, nil })
+				c, err := Walk(context.Background(), disk{}, StoreRoot{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}, 10000, func(Ref) (bool, error) { return true, nil })
 				if err != nil || !c.Complete || c.Enumerated != count {
 					b.Fatalf("%+v %v", c, err)
 				}
@@ -78,7 +78,7 @@ func TestWalkFileCapStopsBeforeLaterDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := &countingDirectories{}
-	coverage, err := Walk(context.Background(), files, StoreRoot{Harness: "claude", Path: root}, 1, func(Ref) (bool, error) { return true, nil })
+	coverage, err := Walk(context.Background(), files, StoreRoot{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}, 1, func(Ref) (bool, error) { return true, nil })
 	if err != nil || coverage.Complete || coverage.Enumerated != 1 || files.reads != 2 {
 		t.Fatalf("coverage=%+v directory reads=%d err=%v", coverage, files.reads, err)
 	}

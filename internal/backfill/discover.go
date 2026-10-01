@@ -151,7 +151,7 @@ func (n nativeDirectories) ReadDir(path string) ([]fs.DirEntry, error) { return 
 
 func discoverClaudeIn(ctx context.Context, env Environment, root string, u *unreadable) []*transcript {
 	var found []*transcript
-	coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root}, 0, func(ref nativesessions.Ref) (bool, error) {
+	coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root, Depth: 1, Suffix: ".jsonl"}, 0, func(ref nativesessions.Ref) (bool, error) {
 		size, ok := fileSize(env, ref.Path)
 		if ok {
 			found = append(found, &transcript{harness: harnessClaude, path: ref.Path, size: size, nativeID: strings.TrimSuffix(filepath.Base(ref.Path), ".jsonl")})
@@ -190,7 +190,7 @@ func discoverCodex(ctx context.Context, env Environment, u *unreadable) []*trans
 func discoverCodexIn(ctx context.Context, env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
 	var found []*transcript
 	for index, store := range []string{"sessions", "archived_sessions"} {
-		coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0}, 0, func(ref nativesessions.Ref) (bool, error) {
+		coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0, Prefix: "rollout-", Suffix: ".jsonl"}, 0, func(ref nativesessions.Ref) (bool, error) {
 			name := filepath.Base(ref.Path)
 			if seen[name] {
 				return true, nil
@@ -269,7 +269,7 @@ func readHead(env Environment, t *transcript) error {
 	if t.harness == harnessCursor {
 		return nil
 	}
-	h, err := nativesessions.Inspect(string(t.harness), t.path, func(visit func([]byte) bool) error { return scanRecords(env, t.path, visit) })
+	h, err := nativesessions.Inspect(env.NativeHeaders, string(t.harness), t.path, func(visit func([]byte) bool) error { return scanRecords(env, t.path, visit) })
 	t.cwd = h.Directory
 	t.nativeID = h.NativeID
 	t.metaStart = h.StartedAt

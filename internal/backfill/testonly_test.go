@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
@@ -18,5 +19,5 @@ func CursorStateDatabase(home string) string {
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under
 // home on this machine.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	return CursorDatabaseReaderFor(Environment{Home: home})
+	return CursorDatabaseReaderFor(Environment{NativeHeaders: builtin.NewBuiltins(), Home: home})
 }

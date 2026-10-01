@@ -466,7 +466,7 @@ func (e Env) discoverApplications(userHome string) map[string]applicationDiscove
 	if e.DiscoverApplications != nil {
 		return e.DiscoverApplications(userHome)
 	}
-	return discoverApplications(userHome)
+	return discoverApplicationsWith(e.agentRegistry(), userHome, e.operatingSystem())
 }
 
 func (e Env) credentialStore() (credentials.CredentialStore, error) {

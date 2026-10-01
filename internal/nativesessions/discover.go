@@ -2,14 +2,13 @@ package nativesessions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"io/fs"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -73,80 +72,31 @@ var errSubagent = errors.New("native subagent-only transcript")
 
 // InspectNative requires transcript content to establish the selected identity.
 // Import's compatibility parser deliberately retains its separate semantics.
-func InspectNative(ctx context.Context, s *transcriptio.Snapshot, ref Ref, window, record int64) (Header, transcriptio.RecordWindow, error) {
-	if ref.Harness == "codex" {
-		var w transcriptio.RecordWindow
-		var subagent bool
-		h, err := Inspect(ref.Harness, ref.Path, func(visit func([]byte) bool) error {
-			var err error
-			w, err = s.Records(ctx, false, window, record, func(line []byte) bool {
-				var meta struct {
-					Type    string `json:"type"`
-					Payload struct {
-						Source json.RawMessage `json:"source"`
-					} `json:"payload"`
-				}
-				if json.Unmarshal(line, &meta) == nil && meta.Type == "session_meta" {
-					var source struct {
-						Subagent json.RawMessage `json:"subagent"`
-					}
-					if json.Unmarshal(meta.Payload.Source, &source) == nil && len(source.Subagent) > 0 {
-						subagent = true
-					}
-				}
-				return visit(line)
-			})
-			return err
-		})
-		if subagent && err == nil {
-			err = errSubagent
-		}
-		return h, w, err
+func InspectNative(ctx context.Context, ports agentapi.NativeHeadersLookup, s *transcriptio.Snapshot, ref Ref, window, record int64) (Header, transcriptio.RecordWindow, error) {
+	var w transcriptio.RecordWindow
+	if ports == nil {
+		return Header{}, w, errors.New("native header lookup required")
 	}
-	var h Header
-	var sidechain bool
-	w, err := s.Records(ctx, false, window, record, func(line []byte) bool {
-		var r struct {
-			ID        string `json:"sessionId"`
-			Cwd       string `json:"cwd"`
-			Timestamp string `json:"timestamp"`
-			Sidechain bool   `json:"isSidechain"`
-		}
-		if json.Unmarshal(line, &r) != nil {
-			return true
-		}
-		if r.Sidechain {
-			sidechain = true
-			return true
-		}
-		if r.ID != "" {
-			if h.NativeID != "" && h.NativeID != r.ID {
-				h.IdentityMismatch = true
-			}
-			h.NativeID = r.ID
-		}
-		if h.Directory == "" {
-			h.Directory = r.Cwd
-		}
-		if h.StartedAt.IsZero() {
-			h.StartedAt, _ = time.Parse(time.RFC3339Nano, r.Timestamp)
-		}
-		return true
-	})
-	if h.NativeID == "" && sidechain && err == nil {
-		return h, w, errSubagent
+	inspector, ok := ports.LookupNativeHeaders(ref.Harness)
+	if !ok {
+		return Header{}, w, errors.New("native header inspection unavailable")
 	}
-	if h.NativeID == "" || h.NativeID != strings.TrimSuffix(filepath.Base(ref.Path), ".jsonl") {
-		h.IdentityMismatch = true
+	h, err := inspector.InspectHeader(agentapi.NativeHeaderRequest{Purpose: agentapi.DiscoveryHandoff, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
+		var err error
+		w, err = s.Records(ctx, false, window, record, visit)
+		return err
+	}})
+	if h.SubagentOnly && err == nil {
+		err = errSubagent
 	}
 	return h, w, err
 }
 
 // Discover enumerates bounded references and inspects them with a fixed pool.
 // Only the coordinator canonicalizes checkout paths or mutates the catalog.
-func Discover(ctx context.Context, files FileSystem, roots []StoreRoot, scope Scope, limits Limits) (Result, error) {
+func Discover(ctx context.Context, ports agentapi.NativeHeadersLookup, files FileSystem, roots []StoreRoot, scope Scope, limits Limits) (Result, error) {
 	var out Result
-	if files == nil || limits.Files <= 0 || limits.HeaderBytes <= 0 || limits.RecordBytes <= 0 || limits.TotalBytes <= 0 || limits.Workers <= 0 {
+	if ports == nil || files == nil || limits.Files <= 0 || limits.HeaderBytes <= 0 || limits.RecordBytes <= 0 || limits.TotalBytes <= 0 || limits.Workers <= 0 {
 		return out, errors.New("native discovery requires filesystem and positive limits")
 	}
 	refs, coverage, err := enumerateNativeRefs(ctx, files, roots, limits.Files)
@@ -158,7 +108,7 @@ func Discover(ctx context.Context, files FileSystem, roots []StoreRoot, scope Sc
 	if err != nil {
 		return out, err
 	}
-	answers, err := inspectNativeHeaders(ctx, files, jobs, limits)
+	answers, err := inspectNativeHeaders(ctx, ports, files, jobs, limits)
 	if err != nil {
 		return out, err
 	}
@@ -273,13 +223,13 @@ func reserveNativeHeaders(ctx context.Context, files FileSystem, refs []Ref, lim
 	return jobs, nil
 }
 
-func inspectNativeHeader(ctx context.Context, files FileSystem, j headerJob, limits Limits) headerAnswer {
+func inspectNativeHeader(ctx context.Context, ports agentapi.NativeHeadersLookup, files FileSystem, j headerJob, limits Limits) headerAnswer {
 	s, err := transcriptio.Open(files, j.ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true, Root: j.ref.Store})
 	if err != nil {
 		return headerAnswer{err: err}
 	}
 	defer func() { _ = s.Close() }()
-	h, w, err := InspectNative(ctx, s, j.ref, j.window, limits.RecordBytes)
+	h, w, err := InspectNative(ctx, ports, s, j.ref, j.window, limits.RecordBytes)
 	if err == nil && (h.IdentityMismatch || !validNativeID(h.NativeID) || !filepath.IsAbs(h.Directory)) {
 		err = errors.New("native identity or checkout unavailable")
 	}
@@ -305,7 +255,7 @@ func validNativeID(id string) bool {
 	return true
 }
 
-func inspectNativeHeaders(ctx context.Context, files FileSystem, scheduled []headerJob, limits Limits) ([]headerAnswer, error) {
+func inspectNativeHeaders(ctx context.Context, ports agentapi.NativeHeadersLookup, files FileSystem, scheduled []headerJob, limits Limits) ([]headerAnswer, error) {
 	type indexedAnswer struct {
 		index  int
 		answer headerAnswer
@@ -316,7 +266,7 @@ func inspectNativeHeaders(ctx context.Context, files FileSystem, scheduled []hea
 	for range limits.Workers {
 		workers.Go(func() {
 			for j := range jobs {
-				a := inspectNativeHeader(ctx, files, j, limits)
+				a := inspectNativeHeader(ctx, ports, files, j, limits)
 				select {
 				case results <- indexedAnswer{index: j.index, answer: a}:
 				case <-ctx.Done():

@@ -687,7 +687,7 @@ func (e Env) backfillTempDirs() []string {
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	claude, codex := e.appSessionDirs(userHome, cfg)
 	env := backfill.Environment{
-		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
+		Home: userHome, ClaudeDirs: claude, CodexDirs: codex, NativeHeaders: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,

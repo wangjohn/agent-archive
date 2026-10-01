@@ -3,6 +3,7 @@ package nativesessions
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io/fs"
 	"path/filepath"
 	"sort"
@@ -15,12 +16,8 @@ type DirectoryReader interface {
 	ReadDir(string) ([]fs.DirEntry, error)
 }
 
-// StoreRoot names a Claude projects store or Codex sessions/archived store.
-type StoreRoot struct {
-	Harness   string
-	Path      string
-	Recursive bool
-}
+// StoreRoot declares integration-owned traversal layout.
+type StoreRoot = agentapi.NativeStoreRoot
 
 // Ref is a process-local native transcript reference.
 type Ref struct {
@@ -37,7 +34,7 @@ type WalkCoverage struct {
 	Complete          bool
 }
 
-// Walk enumerates known layouts, bounded before callbacks and traversal continue.
+// Walk enumerates declared layouts, bounded before callbacks and traversal continue.
 // A zero file cap is unlimited for import's complete planning mode.
 func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles int, visit func(Ref) (bool, error)) (WalkCoverage, error) {
 	c := WalkCoverage{Complete: true}
@@ -76,7 +73,7 @@ func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles i
 			}
 			path := filepath.Join(dir, e.Name())
 			if e.IsDir() {
-				if root.Harness == "claude" && depth == 0 || root.Harness == "codex" && root.Recursive {
+				if root.Recursive || depth < root.Depth {
 					more, err := walk(path, depth+1)
 					if err != nil || !more {
 						return more, err
@@ -84,7 +81,7 @@ func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles i
 				}
 				continue
 			}
-			valid := e.Type().IsRegular() && (root.Harness == "claude" && depth == 1 && strings.HasSuffix(e.Name(), ".jsonl") || root.Harness == "codex" && strings.HasPrefix(e.Name(), "rollout-") && strings.HasSuffix(e.Name(), ".jsonl"))
+			valid := e.Type().IsRegular() && (root.Recursive || depth == root.Depth) && strings.HasPrefix(e.Name(), root.Prefix) && strings.HasSuffix(e.Name(), root.Suffix)
 			if !valid {
 				continue
 			}

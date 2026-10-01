@@ -29,6 +29,12 @@ const ManagedHooks Operation = "managed-hooks"
 // Skills means native skill planning and inspection are implemented.
 const Skills Operation = "skills"
 
+// NativeInspection means bounded purpose-specific native header inspection is implemented.
+const NativeInspection Operation = "native-inspection"
+
+// VersionInspection means installed-version observation is implemented.
+const VersionInspection Operation = "version-inspection"
+
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
 	ID          ID
@@ -66,7 +72,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != ManagedHooks && op != Skills) || seen[op] {
+			if (op != Launch && op != ManagedHooks && op != Skills && op != NativeInspection && op != VersionInspection) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

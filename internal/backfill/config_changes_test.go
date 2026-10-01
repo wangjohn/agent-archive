@@ -3,6 +3,7 @@ package backfill
 import (
 	"bytes"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"reflect"
 	"slices"
 	"strings"
@@ -108,7 +109,7 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	}
 
 	f.cfg = cfg
-	undo, err := PlanUndo(Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, cfg, []Batch{b}, b, "")
+	undo, err := PlanUndo(Environment{NativeHeaders: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, cfg, []Batch{b}, b, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 	f := newUndoFixture(t)
 	f.include("/work/p")
 	f.cfg.RetentionDays = 365
-	env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
 	day := 24 * time.Hour
 	b := f.batch("2026-09-23-1", fixedNow.Add(-time.Hour))
 	b.Retention = &RetentionChange{From: 30, To: 365}

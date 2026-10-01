@@ -19,6 +19,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
@@ -236,6 +237,7 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	NativeHeaders agentapi.NativeHeadersLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep

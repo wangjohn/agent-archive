@@ -14,11 +14,14 @@ import (
 
 // Integration binds implemented operations to an identity declaration.
 type Integration struct {
-	Descriptor agentmeta.Descriptor
-	Launcher   agentapi.Launcher
-	Hooks      agentapi.HookConfigurator
-	Decoder    agentapi.HookDecoder
-	Skills     agentapi.SkillProvider
+	Descriptor    agentmeta.Descriptor
+	Launcher      agentapi.Launcher
+	Hooks         agentapi.HookConfigurator
+	Decoder       agentapi.HookDecoder
+	Skills        agentapi.SkillProvider
+	NativeHeaders agentapi.NativeHeaderInspector
+	Evidence      agentapi.CapabilityEvidenceProvider
+	Version       agentapi.VersionInspector
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -62,6 +65,22 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			}
 			d.Operations = append(d.Operations, agentmeta.Skills)
 		}
+		if b.NativeHeaders != nil {
+			if nilImplementation(b.NativeHeaders) {
+				return nil, fmt.Errorf("typed nil native headers for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.NativeInspection)
+		}
+		if b.Version != nil {
+			if nilImplementation(b.Version) {
+				return nil, fmt.Errorf("typed nil version inspector for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.VersionInspection)
+		}
+		if b.Evidence != nil && nilImplementation(b.Evidence) {
+			return nil, fmt.Errorf("typed nil evidence provider for %s", d.ID)
+		}
+
 		b.Descriptor = d
 		r.bindings[d.ID] = b
 	}
@@ -120,9 +139,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}},
 	})
 	if err != nil {
 		panic(err)
@@ -164,4 +183,44 @@ func (r *Registry) SkillAgents() []string {
 		out = append(out, string(b.Descriptor.ID))
 	}
 	return out
+}
+
+// LookupNativeHeaders resolves bounded read-only identity interpretation.
+func (r *Registry) LookupNativeHeaders(name string) (agentapi.NativeHeaderInspector, bool) {
+	b, ok := r.Lookup(name)
+	return b.NativeHeaders, ok && b.NativeHeaders != nil
+}
+
+// NativeHeaderAgents lists bound inspectors without probing the host.
+func (r *Registry) NativeHeaderAgents() []string {
+	var out []string
+	for _, d := range r.catalog.All() {
+		if _, ok := r.LookupNativeHeaders(string(d.ID)); ok {
+			out = append(out, string(d.ID))
+		}
+	}
+	return out
+}
+
+// LookupCapabilityEvidence resolves declared support evidence independently of health.
+func (r *Registry) LookupCapabilityEvidence(name string) (agentapi.CapabilityEvidenceProvider, bool) {
+	b, ok := r.Lookup(name)
+	return b.Evidence, ok && b.Evidence != nil
+}
+
+// LookupVersionInspector resolves native installed-version observation.
+func (r *Registry) LookupVersionInspector(name string) (agentapi.VersionInspector, bool) {
+	b, ok := r.Lookup(name)
+	return b.Version, ok && b.Version != nil
+}
+
+// VersionAgents lists bound inspectors without eager probes.
+func (r *Registry) VersionAgents() []string {
+	var names []string
+	for _, d := range r.catalog.All() {
+		if _, ok := r.LookupVersionInspector(string(d.ID)); ok {
+			names = append(names, string(d.ID))
+		}
+	}
+	return names
 }

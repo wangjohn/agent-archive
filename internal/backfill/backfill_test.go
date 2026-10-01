@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +87,7 @@ func (tr *tree) worktree(repoRel, rel, name string) string {
 }
 
 func (tr *tree) env() Environment {
-	return Environment{
+	return Environment{NativeHeaders: builtin.NewBuiltins(),
 		Home: tr.home,
 		// These tests model a Mac (Library folders, Documents/Codex, TCC);
 		// linux_test.go covers the other branch.
