@@ -1,7 +1,6 @@
 package capture
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,79 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
+
+func TestFirstAdmissionStagesWithoutHoldingQueueLock(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	payload := claudeStart(project, "first", "startup", "")
+	intent, ok, err := hookAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	if err != nil || !ok {
+		t.Fatalf("intent=%t error=%v", ok, err)
+	}
+	entered, resume := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		staged, err := stageAdmissionIntent(home, intent, payload, filepath.Join(admissionIntentDir(home), "first.json"), func(path string, value any) (*local.Staged, error) {
+			if _, err := os.Stat(admissionIntentDir(home)); err != nil {
+				return nil, err
+			}
+			// Hold the durable staging operation independently of wall-clock
+			// speed. Another hook and administrative operations must proceed.
+			close(entered)
+			<-resume
+			return local.StageInExistingDir(path, value)
+		})
+		staged.Discard()
+		done <- err
+	}()
+	<-entered
+	queued, queueErr := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "second", "startup", ""), at)
+	cfg, _, loadErr := config.Load(home)
+	pruneErr := PruneAdmissionIntents(home, cfg)
+	clearErr := ClearAdmissionIntents(home)
+	close(resume)
+	stageErr := <-done
+	if !queued || queueErr != nil || loadErr != nil || pruneErr != nil || clearErr != nil || stageErr != nil {
+		t.Fatalf("queued=%t queue=%v load=%v prune=%v clear=%v stage=%v", queued, queueErr, loadErr, pruneErr, clearErr, stageErr)
+	}
+}
+
+func TestPurgeBetweenFirstQueueCreationAndStageDoesNotRecreateDirectory(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	payload := claudeStart(project, "first", "startup", "")
+	intent, _, err := hookAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := stageAdmissionIntent(home, intent, payload, filepath.Join(admissionIntentDir(home), "first.json"), func(path string, value any) (*local.Staged, error) {
+		if _, err := os.Stat(admissionIntentDir(home)); err != nil {
+			return nil, err
+		}
+		unlock, err := local.NamedLock(home, "admission-intents.lock")
+		if err != nil {
+			return nil, err
+		}
+		err = os.RemoveAll(admissionIntentDir(home))
+		if err == nil {
+			err = os.Remove(filepath.Join(home, "config.json"))
+		}
+		unlock()
+		if err != nil {
+			return nil, err
+		}
+		return local.StageInExistingDir(path, value)
+	})
+	staged.Discard()
+	if err != nil || staged != nil {
+		t.Fatalf("staged=%v error=%v", staged, err)
+	}
+	if _, err := os.Stat(admissionIntentDir(home)); !os.IsNotExist(err) {
+		t.Fatalf("purged queue directory was recreated: %v", err)
+	}
+}
 
 // queueFiles lists the admission queue folder: queued intents and any staged
 // temporary files. A missing folder lists as nil.
@@ -126,12 +198,6 @@ func TestAHookOverlappingAPurgeLeavesNoIntentFolder(t *testing.T) {
 			}
 			var purgeErr error
 			queued, err := queueAdmissionIntentAfterStage(home, "claude", hookEventStart, claudeStart(project, "native-1", "startup", ""), at, func() {
-				// A purge may already have run: staging outside the lock
-				// must not have created the folder.
-				if _, statErr := os.Stat(admissionIntentDir(home)); !folderExisted && !os.IsNotExist(statErr) {
-					purgeErr = errors.New("staging outside the lock created the queue folder")
-					return
-				}
 				release, lockErr := local.NamedLock(home, "admission-intents.lock")
 				if lockErr != nil {
 					purgeErr = lockErr

@@ -135,15 +135,6 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 	return included
 }
 
-// queueAdmissionIntent queues a proven start, or a Cursor response/stop that
-// supplies a valid transcript path, when hooks.lock timed out or (for a
-// Cursor follow-up) the session has not registered yet. A follow-up can
-// update an existing registration but never admit a new session. The queue
-// lock bounds the count across concurrent hook processes.
-func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
-	return queueAdmissionIntentAfterStage(home, harness, kind, payload, now, nil)
-}
-
 // queueAdmissionIntentInGeneration binds a contended event to the capture
 // window observed before its lock wait, rather than whichever window is active
 // after that wait. A complete pause/resume cycle must not admit the old start.
@@ -151,23 +142,14 @@ func queueAdmissionIntentInGeneration(home, harness string, kind hookEventKind, 
 	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, nil, &generation)
 }
 
-// queueAdmissionIntentAfterStage is queueAdmissionIntent with afterStage,
-// when not nil, called once the intent is staged and synced and before the
-// queue lock is taken, so a test can act in that window.
-//
 // The intent is written and synced before the lock and only renamed into
 // the queue under it; the directory is synced after the lock is released.
 // Each sync is an F_FULLFSYNC on macOS and can take seconds on a busy
 // machine, and setup's prune and pause's clear wait for this lock, so
 // neither waits for a hook's disk. Each intent has a file of its own, so
-// nothing another holder does can make the staged file stale. Only the
-// first intent, before the queue's folder exists, is staged under the lock:
-// staging outside it would create the folder, and could recreate one that
-// uninstall's purge had just deleted under the lock.
-func queueAdmissionIntentAfterStage(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func()) (bool, error) {
-	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, afterStage, nil)
-}
-
+// nothing another holder does can make the staged file stale. The first
+// intent creates only the queue directory under the lock, then stages without
+// creating directories, so uninstall's purge cannot be undone by its write.
 func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func(), generation *string) (bool, error) {
 	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
 	if err != nil || !queued {
@@ -181,15 +163,15 @@ func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind
 		return false, err
 	}
 	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
-	staged, err := local.StageInExistingDir(path, intent)
-	if err != nil && !os.IsNotExist(err) {
+	staged, err := stageAdmissionIntent(home, intent, payload, path, local.StageInExistingDir)
+	if err != nil || staged == nil {
 		return false, err
 	}
 	defer staged.Discard()
 	if afterStage != nil {
 		afterStage()
 	}
-	committed, err := commitAdmissionIntent(home, intent, payload, path, staged)
+	committed, err := commitAdmissionIntent(home, intent, payload, staged)
 	if err != nil || committed == nil {
 		return false, err
 	}
@@ -199,12 +181,38 @@ func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind
 	return true, nil
 }
 
+// Create the first queue directory under its lock, but sync every intent
+// outside it. Staging never creates a directory, so a concurrent purge cannot
+// be undone by a hook that was waiting for its disk write.
+func stageAdmissionIntent(home string, intent admissionIntent, payload map[string]any, path string, stage func(string, any) (*local.Staged, error)) (*local.Staged, error) {
+	staged, err := stage(path, intent)
+	if !os.IsNotExist(err) {
+		return staged, err
+	}
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
+	if err != nil {
+		return nil, fmt.Errorf("lock admission intent queue: %w", err)
+	}
+	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	if err == nil && ok {
+		err = os.MkdirAll(admissionIntentDir(home), 0700)
+	}
+	unlock()
+	if err != nil || !ok {
+		return nil, err
+	}
+	staged, err = stage(path, intent)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return staged, err
+}
+
 // commitAdmissionIntent puts an intent in the queue under the queue lock,
 // unless the queue is full or the intent is no longer valid, and returns
 // the committed file (nil when it queued nothing). staged is the intent
-// already staged at path, or nil to stage it here, under the lock; the
-// caller discards its own staged file if it is not committed.
-func commitAdmissionIntent(home string, intent admissionIntent, payload map[string]any, path string, staged *local.Staged) (*local.Staged, error) {
+// already staged; the caller discards it if it is not committed.
+func commitAdmissionIntent(home string, intent admissionIntent, payload map[string]any, staged *local.Staged) (*local.Staged, error) {
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
 	if err != nil {
 		return nil, fmt.Errorf("lock admission intent queue: %w", err)
@@ -213,12 +221,6 @@ func commitAdmissionIntent(home string, intent admissionIntent, payload map[stri
 	ok, err := admissionIntentStillQueueable(home, intent, payload)
 	if err != nil || !ok {
 		return nil, err
-	}
-	if staged == nil {
-		if staged, err = local.Stage(path, intent); err != nil {
-			return nil, err
-		}
-		defer staged.Discard()
 	}
 	if err := staged.Commit(); err != nil {
 		return nil, err
