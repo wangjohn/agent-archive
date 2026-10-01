@@ -10,6 +10,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
+
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
 - Interactive session browsing and search, project-aware listings, richer

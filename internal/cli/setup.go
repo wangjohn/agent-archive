@@ -36,6 +36,7 @@ const defaultRetentionDays = 90
 var allHarnesses = []string{"codex", "claude", "cursor"}
 
 type setupDraft struct {
+	PairingID     string        `json:"pairing_id,omitempty"`
 	StagedRefs    []string      `json:"staged_credential_refs,omitempty"`
 	Version       int           `json:"version"`
 	Config        config.Config `json:"config"`
@@ -112,6 +113,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
+	}
+	if opts.pair || opts.pairFile != "" {
+		return runPairingSetupCommand(opts, *refresh, *abandon, fs, stdin, stdout, stderr, env)
 	}
 	if *refresh {
 		if other := refreshCompanions(fs); other != "" {
@@ -2155,4 +2159,15 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 func isGoBuildDir(name string) bool {
 	digits, ok := strings.CutPrefix(name, "go-build")
 	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
+}
+
+func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 {
+		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
+	}
+	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {
+		terminal.Printf(stderr, "Pairing incomplete: %v\n", err)
+		return 1
+	}
+	return 0
 }

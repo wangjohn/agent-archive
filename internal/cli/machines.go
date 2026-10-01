@@ -136,8 +136,12 @@ func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
 		return machineCommandError(errOut, errors.New("could not open archive storage"))
 	}
 	result := machines.List(ctx, store)
+	observePairingClaims(home, cfg.DestinationID(), result, env.now())
 	if *asJSON {
-		if err := json.NewEncoder(out).Encode(result); err != nil {
+		if err := json.NewEncoder(out).Encode(struct {
+			machines.ListResult
+			PairingWarnings []string `json:"pairing_warnings,omitempty"`
+		}{result, pairingWarnings(home, env.now())}); err != nil {
 			return machineCommandError(errOut, err)
 		}
 	} else {
@@ -153,6 +157,9 @@ func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
 		}
 		terminal.Println(out, "Not checked against the provider. Bucket records are untrusted claims, not proof of ownership or access removal.")
 		terminal.Println(out, "Heartbeat is updated at most daily; it does not indicate current activity.")
+		for _, warning := range pairingWarnings(home, env.now()) {
+			terminal.Println(out, warning)
+		}
 	}
 	if result.Partial || len(result.Unreadable) > 0 {
 		return 1

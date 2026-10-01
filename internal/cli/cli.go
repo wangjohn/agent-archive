@@ -267,6 +267,12 @@ type Env struct {
 	// Clipboard replaces the clipboard's contents. Defaults to pbcopy on
 	// macOS, or wl-copy, xclip, or xsel for a connected Linux desktop.
 	Clipboard func([]byte) error
+	// PairingClipboardRead reads clipboard contents for conditional cleanup only.
+	PairingClipboardRead func() ([]byte, error)
+	// PairingCode supplies hidden interactive code input in isolated tests.
+	PairingCode func() (string, error)
+	// PairingRepoRoot is a bounded source scope lookup, injected by tests.
+	PairingRepoRoot func(context.Context, string) (string, error)
 	// Interrupts delivers the signals that stop a command while it runs
 	// (backfill while it plans, registers, and uploads, the full-screen
 	// views until they restore the terminal, setup's storage check), and
@@ -569,6 +575,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		terminal.Print(stdout, usage)
 		return 0
 	}
+	if err := pairingInvocationError(args, env); err != nil {
+		terminal.Println(stderr, err.Error())
+		return 1
+	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
 	}
@@ -592,7 +602,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
 	case "machines":
-		return runMachinesCommand(args[1:], stdout, stderr, env)
+		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":

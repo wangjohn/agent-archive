@@ -86,6 +86,11 @@ Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --pair                Receive an encrypted bundle and hidden terminal code
+  --pair-file PATH|-    Read a bounded bundle file or stdin; with --yes read and
+                        unset AGENT_ARCHIVE_PAIRING_CODE. Never a code flag.
+                        Pairing refuses inside coding agents. --yes refuses a
+                        destination change; interactive review requires consent.
   --refresh             After upgrading agent-archive: bring the app hooks, the
                         background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
@@ -165,6 +170,8 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--bucket` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
+| `--pair` | no value | — |
+| `--pair-file` | a value | — |
 | `--prefix` | a value | — |
 | `--project` | a value | — |
 | `--project-repo` | a value | — |
@@ -197,6 +204,41 @@ Unreadable records and incomplete listings are reported; those exit with code 1.
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--json` | no value | — |
+
+## agent-archive machines add
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines add [--name NAME] [--share-key]
+       [--expires 15m] [--print | --file PATH] [--yes]
+
+Create an encrypted pairing bundle after checking the source storage.
+Shared-key R2 beta requires --share-key and cannot revoke one recipient alone.
+S3 transfers settings and a profile name; configure that profile on the receiver.
+Deliver the bundle and six-word code separately. Pairing refuses in any coding
+agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
+  --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
+  --share-key    Explicitly share the active R2 key (beta)
+  --expires DURATION
+                 Lifetime from 5m to 24h (default: 15m)
+  --print        Print the encrypted bundle instead of copying it
+  --file PATH    Create a private 0600 bundle file; never overwrite a file
+  --yes          Require --name and deliberately print bundle and code
+                 (with --file, print only the separately delivered code)
+Interactive codes appear on a cleared alternate screen. Clipboard contents are
+cleared on normal exit only if they still equal the bundle. Interrupted delivery
+remains uncertain in the local ledger; shared credentials remain active.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--expires` | a value | `15m0s` |
+| `--file` | a value | — |
+| `--name` | a value | — |
+| `--print` | no value | — |
+| `--share-key` | no value | — |
+| `--yes` | no value | — |
 
 ## agent-archive machines rename
 
