@@ -119,3 +119,34 @@ func TestRegisterOrMergeConcurrentArrivalsPreserveOneProvenance(t *testing.T) {
 		t.Fatal("merge changed immutable facts")
 	}
 }
+
+func TestNamespacedIndexSurvivesCrashBeforeRegistration(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	first, created, err := store.EnsureAgentSessionID("codex", "native-crash")
+	if err != nil || !created {
+		t.Fatal("index allocation failed", err)
+	}
+	// A process stops after the durable index write, before registration exists.
+	reg, err := store.RegisterOrMerge("native-crash", func(id string) archive.SessionRegistration {
+		r := registrationFor(id)
+		r.Harness.Name = "codex"
+		r.NativeSessionID = "native-crash"
+		return r
+	})
+	if err != nil || reg.ArchiveSessionID != first {
+		t.Fatal("orphan index changed identity", err)
+	}
+}
+
+func TestFreshIdentityLookupDoesNotEnumerateRegistrations(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	// An unreadable unrelated registration must not block a genuinely new ID.
+	if err := os.WriteFile(store.registrationPath("unrelated"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.AgentSessionID("codex", "fresh"); err != nil || found {
+		t.Fatal("fresh lookup enumerated registrations", err)
+	}
+}

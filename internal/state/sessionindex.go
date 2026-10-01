@@ -149,23 +149,11 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 			return legacy.ArchiveSessionID, true, nil
 		}
 	}
-	// Recover an interrupted registration/index write without allocating another ID.
-	regs, e := s.LoadRegistrations()
-	if e != nil {
-		return "", false, e
-	}
-	id := ""
-	for _, reg := range regs {
-		if archive.CanonicalHarness(reg.Harness.Name) == agent && reg.NativeSessionID == native {
-			if id != "" && id != reg.ArchiveSessionID {
-				return "", false, errors.New("ambiguous identity needs repair")
-			}
-			id = reg.ArchiveSessionID
-		}
-	}
-	if id != "" {
-		return id, true, nil
-	}
+	// Both old and new admission durably write an index before registration.
+	// A normal crash can therefore leave an orphan index, never a registration
+	// with no index. Do not enumerate every registration for a fresh identity
+	// while the caller holds hooks.lock. Arbitrary deleted indexes require a
+	// separate reconciliation; present corrupt mappings fail closed below.
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", false, errors.New("legacy identity index needs repair")
 	}

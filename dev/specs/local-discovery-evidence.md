@@ -76,3 +76,16 @@ Further scheduling/cache design and dated-directory, concurrent-hook,
 release-platform CPU/RSS and admission p99 measurements are required before
 activation. This implementation deliberately leaves these acceptance gates
 open rather than interpreting directory names or mtimes as eligibility.
+
+## Remaining identity reconciliation boundary
+
+Admission now allocates and syncs a namespaced index before writing its
+registration. A crash between those writes reuses the orphan index and keeps
+one archive identity. Fresh lookup does not enumerate registrations under the
+admission lock. Present corrupt or conflicting index files fail closed.
+However, removal of both a registration's legacy and namespaced index files
+is not diagnosed by this fast lookup; separate bounded/off-lock integrity
+reconciliation is still required to prevent duplicate allocation after that
+external state damage. Legacy pending-parent ownership also still scans
+subagent candidate metadata. Both are unresolved mechanism acceptance items,
+not covered by the normal crash-order guarantee.
