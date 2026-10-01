@@ -88,13 +88,21 @@ func TestClientBucketNameCollisionIsAlreadyExists(t *testing.T) {
 	srv.Buckets["taken-name"] = ""
 	err := client.CreateBucket(context.Background(), cloudflaretest.AccountID, cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: "taken-name"}})
 	apiErr := apiError(t, err)
-	if !apiErr.AlreadyExists() || apiErr.Status != http.StatusConflict || len(apiErr.Codes) != 1 || apiErr.Codes[0] != 10004 {
+	if !apiErr.AlreadyExists() || apiErr.Status != http.StatusConflict || len(apiErr.Codes) != 1 || apiErr.Codes[0] != 10073 {
 		t.Fatalf("error %+v", apiErr)
 	}
-	// Cloudflare words it as a message too, whatever the status.
-	other := &cloudflare.Error{Status: http.StatusBadRequest, Messages: []string{"The bucket you tried to create Already Exists."}}
-	if !other.AlreadyExists() || (&cloudflare.Error{Status: 400, Messages: []string{"bad name"}}).AlreadyExists() {
-		t.Fatal("AlreadyExists should follow the message")
+	// Only the documented code, with its 409, is a name collision: not a bare
+	// 409, not a message that happens to say so, not the code on another status.
+	for name, other := range map[string]*cloudflare.Error{
+		"bare conflict":  {Status: http.StatusConflict},
+		"message only":   {Status: http.StatusConflict, Messages: []string{"The bucket already exists."}},
+		"other code":     {Status: http.StatusConflict, Codes: []int{10008}},
+		"code, bad 400":  {Status: http.StatusBadRequest, Codes: []int{10073}},
+		"message at 400": {Status: http.StatusBadRequest, Messages: []string{"Bucket name already exists."}},
+	} {
+		if other.AlreadyExists() {
+			t.Errorf("%s counts as a name collision", name)
+		}
 	}
 }
 
@@ -329,7 +337,6 @@ func TestClientClassifiesFailures(t *testing.T) {
 		{http.StatusUnauthorized, (*cloudflare.Error).Unauthorized},
 		{http.StatusForbidden, (*cloudflare.Error).Forbidden},
 		{http.StatusNotFound, (*cloudflare.Error).NotFound},
-		{http.StatusConflict, (*cloudflare.Error).AlreadyExists},
 		{http.StatusInternalServerError, (*cloudflare.Error).ServerError},
 		{http.StatusBadGateway, (*cloudflare.Error).ServerError},
 	}

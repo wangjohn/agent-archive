@@ -458,7 +458,7 @@ func TestGuidedR2ValidatesTheBucketName(t *testing.T) {
 func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10004, Message: "The bucket you tried to create already exists, and you own it.", Times: 1})
+	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 1})
 	out := g.run(t, g.happy(), 0)
 	if !strings.Contains(out, "is taken; trying") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)
@@ -611,7 +611,7 @@ func TestGuidedR2StepFailures(t *testing.T) {
 		{"token forbidden", cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden, Message: "Unauthorized to access requested resource"},
 			[]string{"Couldn't create the key", cloudflare.PermissionTokensWrite, "subset of their own permissions", "administrator"}, true, nil},
 		{"token conflict", cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusConflict},
-			[]string{"Couldn't create the key", "already exists"}, true, nil},
+			[]string{"Couldn't create the key", "refused the request (HTTP 409)"}, true, nil},
 		{"token server error", cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusBadGateway},
 			[]string{"Cloudflare had a problem (HTTP 502)", "If Cloudflare did create it, revoke the token named"}, true, nil},
 	}
@@ -860,7 +860,8 @@ func TestExplainCloudflare(t *testing.T) {
 		{"unauthorized", &cloudflare.Error{Status: 401}, []string{"didn't accept the API token"}},
 		{"forbidden with step text", &cloudflare.Error{Status: 403}, []string{"STEP TEXT"}},
 		{"not found", &cloudflare.Error{Status: 404}, []string{"doesn't know that account or bucket"}},
-		{"conflict", &cloudflare.Error{Status: 409}, []string{"already exists"}},
+		{"bucket name conflict", &cloudflare.Error{Status: 409, Codes: []int{10073}}, []string{"already exists"}},
+		{"other conflict", &cloudflare.Error{Status: 409, Messages: []string{"something else"}}, []string{"refused the request (HTTP 409)", "Cloudflare said: something else"}},
 		{"rate limited without a wait", &cloudflare.Error{Status: 429}, []string{"limiting this token's requests. Try again in a few minutes."}},
 		{"rate limited", &cloudflare.Error{Status: 429, RetryAfter: 90 * time.Second}, []string{"asked for a wait of 90 seconds"}},
 		{"server", &cloudflare.Error{Status: 503}, []string{"HTTP 503"}},

@@ -549,8 +549,12 @@ open-source acceptance record.
       bucket, or set a lifecycle rule. The docs describe bucket-level scope
       only; setup treats prefix scoping as unavailable.
 - [ ] **Bucket name collision.** Creating a name that is taken returns what
-      `cloudflare.Error.AlreadyExists` expects (HTTP 409, or a message saying
-      it already exists), and the retry with a new name works.
+      `cloudflare.Error.AlreadyExists` expects: HTTP 409 with R2 error code
+      10073 (BucketConflict, "Bucket name already exists.", from
+      Cloudflare's R2 error-code page; an earlier plan guessed 10004, which
+      that page does not list). Any other answer is shown as Cloudflare's own
+      message and is not retried as a name collision, so confirm the real
+      status and code, and that the retry with a new name works.
 - [ ] **Jurisdictions.** For each of `eu`, `us`, and `fedramp` (the ones setup
       offers): a bucket created with the jurisdiction, and its token resource
       string `..._<jurisdiction>_<bucket>`, pass the storage check at

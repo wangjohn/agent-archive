@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -171,19 +172,17 @@ func (e *Error) RateLimited() bool { return e.Status == http.StatusTooManyReques
 // ServerError reports a failure on Cloudflare's side.
 func (e *Error) ServerError() bool { return e.Status >= 500 }
 
-// AlreadyExists reports that Cloudflare said the name is taken: a conflict,
-// or a message saying it already exists (how Cloudflare words a bucket name
-// collision).
+// codeBucketConflict is the R2 error code for a bucket name that is taken
+// (BucketConflict, HTTP 409: "Bucket name already exists."), from
+// https://developers.cloudflare.com/r2/api/error-codes/. Whether a real
+// account answers so is a live acceptance item.
+const codeBucketConflict = 10073
+
+// AlreadyExists reports that Cloudflare said the bucket name is taken: R2's
+// BucketConflict code, with the 409 it is documented to come with. Any other
+// conflict is not a name collision.
 func (e *Error) AlreadyExists() bool {
-	if e.Status == http.StatusConflict {
-		return true
-	}
-	for _, m := range e.Messages {
-		if strings.Contains(strings.ToLower(m), "already exists") {
-			return true
-		}
-	}
-	return false
+	return e.Status == http.StatusConflict && slices.Contains(e.Codes, codeBucketConflict)
 }
 
 // envelope is the JSON wrapper around every Cloudflare answer.
