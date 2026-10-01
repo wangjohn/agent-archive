@@ -640,7 +640,7 @@ guide. Live check on the owner's Mac (the steps are under
   project
 - `/linux` finds the Linux session from `show`, `list`, and `handoff`
 - `/208` finds the PR-208 reviewer under its parent
-- from Claude Code, "hand off my flaky retention test session to Codex"
+- from Codex, "pull in my flaky retention test session from Claude Code"
   resolves without asking
 - a Claude Code CLI session (not the desktop app) is checked for whether it
   writes `custom-title` without `/rename`, and the guide says what was seen
@@ -780,7 +780,7 @@ width, and file it before merging PR 8.
   type `linux`. Repeat in `agent-archive list` and `agent-archive handoff`.
 
   Expect: in each, the session named like `Implement Linux support for
-  agent-archive` (PR `#212`) is listed. `▸` is on the first match, newest
+  agent-archive` (PR `#208`, the last pull request it linked) is listed. `▸` is on the first match, newest
   first, so if another session mentions Linux it starts there and ↓ reaches
   this one. Press Esc to clear. Press
   `q` to leave (in `handoff`, do not press Enter on it, unless you want to
@@ -804,11 +804,11 @@ width, and file it before merging PR 8.
   agent-archive handoff
   ```
 
-  Expect: the parent (`Implement Linux support for agent-archive`, `#212`) and,
-  indented under it, `↳ Review and fix PR #208 (5b-1b)`, with `▸` on the
-  reviewer (or on an earlier match, if a newer session also mentions 208). The
-  parent is shown although `208` is not in its name. ↑ moves the mark to the
-  parent. Esc, then `q`.
+  Expect: the parent (`Implement Linux support for agent-archive`, `#208`) and,
+  indented under it, `↳ Review and fix PR #208 (5b-1b)`. The parent linked
+  PR 208 itself, so it matches on its own and `▸` starts on it (or on an
+  earlier match, if a newer session also mentions 208); ↓ moves the mark to
+  the reviewer. Esc, then `q`.
 
   If the reviewer is missing, or its row shows a short ID instead of a
   description, its `.meta.json` was not there when the collector read it
@@ -820,32 +820,35 @@ width, and file it before merging PR 8.
   parent's `native_session_id` from `agent-archive show <parent ID> --json`),
   and file it.
 
-### 6. From Claude Code, the words resolve without asking
+### 6. From Codex, the words resolve without asking
 
-- [ ] **Say it in Claude Code, started in this repository:**
+The case this is for: Claude Code has hit its rate limit, so you continue in
+Codex and pull the Claude Code session in from there. Claude Code takes no
+part.
+
+- [ ] **Say it in Codex, started in this repository:**
 
   ```text
-  hand off my flaky retention test session to Codex
+  pull in my flaky retention test session from Claude Code
   ```
 
-  Expect: Claude Code may ask permission the first time it uses the
-  `agent-archive` skill and its commands (that is the permission prompt, not
-  a question about which session); it runs `agent-archive handoff "<words>"` or
-  `agent-archive list "<words>" --json` with words like `flaky retention`, and
-  names the one session it found (`Fix flaky retention hook-request test`, PR
-  `#213`) **without asking which one you mean**.
+  Expect: Codex may ask permission the first time it runs `agent-archive`
+  (that is the permission prompt, not a question about which session). It
+  runs `agent-archive handoff "<words>" --harness claude` (or without
+  `--harness`) with words like `flaky retention`, names the one session it
+  found (`Fix flaky retention hook-request test`, PR `#213`) **without asking
+  which one you mean**, says in one line which session it pulled in, and
+  continues with it as context. Codex's hooks need not be approved for this:
+  they archive Codex's own sessions, and reading the archive does not use
+  them.
 
-  The skill never adds `--to` (that belongs to `/handoff`), so the agent
-  will not start Codex itself: it pulls the session in as context, or tells you
-  the command to run (`agent-archive handoff <ID> --to codex`). That is not a
-  failure. Asking "which of these?" over several candidates when "flaky
-  retention" matches exactly one is. So is `--harness codex` on any command
-  it runs: Codex is where you want to continue, not the agent the session was
-  in, and the skill adds `--harness` only for the latter. With it, `handoff`
-  searches Codex's sessions only and prints `no session matches "flaky
-  retention" … for codex`. If you see a miss, record the exact commands the
-  agent ran (Claude Code shows each one) and what they printed. Check what the
-  words match:
+  A miss is asking "which of these?" over several candidates when "flaky
+  retention" matches exactly one, or `--harness codex` on any command it runs:
+  Claude Code is the agent the session was in, so `--harness codex` searches
+  Codex's sessions only and prints `no session matches "flaky retention" …
+  for codex`. The skill never adds `--to` (that starts another agent and
+  belongs to `/handoff`). If you see a miss, record the exact commands Codex
+  ran and what they printed. Check what the words match:
 
   ```sh
   agent-archive list "flaky retention" --json | jq '.sessions | length'
@@ -1292,6 +1295,9 @@ the answer goes into the guide.
 - PR 8: the live check's Esc item is "Esc, then `q`": in the session browser
   and in `stats`, Esc clears a filter or typed text and never quits (so a split
   arrow key cannot close the screen), so the restore check presses Esc mid-use
-  and quits with `q`. The "hand off ... to Codex" item expects the session to
-  be found without a which-one question, not for Codex to start: the
-  `agent-archive` skill never adds `--to`, which belongs to `/handoff`.
+  and quits with `q`. The words item is run from Codex, pulling in a Claude
+  Code session, rather than from Claude Code handing off to Codex: the reason
+  to switch agents is usually that Claude Code has hit its rate limit, when it
+  cannot run anything. It expects the session to be found without a
+  which-one question; the `agent-archive` skill never adds `--to`, which
+  belongs to `/handoff`.
