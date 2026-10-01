@@ -35,8 +35,10 @@ func TestSessionKeyPreservesExactIdentity(t *testing.T) {
 		t.Fatalf("encoding %x != %x", key.Encoding(), expected)
 	}
 	// The encoding itself remains unambiguous independent of agent validation.
-	a := SessionKey{Agent: "a", NativeID: "b:c"}
-	b := SessionKey{Agent: "a:b", NativeID: "c"}
+	const testAgentA ID = "a"
+	const testAgentColon ID = "a:b"
+	a := SessionKey{Agent: testAgentA, NativeID: "b:c"}
+	b := SessionKey{Agent: testAgentColon, NativeID: "c"}
 	if bytes.Equal(a.Encoding(), b.Encoding()) {
 		t.Fatal("delimiter collision")
 	}

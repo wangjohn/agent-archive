@@ -306,7 +306,7 @@ func (s *Store) finishSessionIndex(key agentmeta.SessionKey, id string) error {
 func (s *Store) removeSessionIndex(key agentmeta.SessionKey, id string) error {
 	paths := []string{qualifiedSessionIndexPath(s.home, key), nativeSessionIndexPath(s.home, key.NativeID)}
 	for i, path := range paths {
-		var entry sessionIndexEntry
+		var entryID string
 		if i == 0 {
 			var qualified qualifiedSessionIndexEntry
 			err := local.Read(path, &qualified)
@@ -319,17 +319,19 @@ func (s *Store) removeSessionIndex(key agentmeta.SessionKey, id string) error {
 			if qualified.Agent != key.Agent || qualified.NativeID != key.NativeID {
 				continue
 			}
-			entry.ArchiveSessionID = qualified.ArchiveSessionID
+			entryID = qualified.ArchiveSessionID
 		} else {
-			err := local.Read(path, &entry)
+			var legacy sessionIndexEntry
+			err := local.Read(path, &legacy)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
 				return err
 			}
+			entryID = legacy.ArchiveSessionID
 		}
-		if entry.ArchiveSessionID != id {
+		if entryID != id {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

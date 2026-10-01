@@ -28,7 +28,9 @@ The collector runs recovery on its first qualified-index pass and when a hook
 requests it. Recovery enumerates registrations once per attempt, refuses
 same-agent duplicate native identities, and atomically repairs unique entries.
 An interrupted or unreadable census remains incomplete in `session-index.json`;
-partial enumeration cannot prove an identity absent. Individually validated
+partial enumeration cannot prove an identity absent. Recovery completion is
+guarded by the local marker generation, so a hook request arriving during the
+census or completion remains pending for another recovery attempt. Individually validated
 registrations remain readable. A requested damaged identity is recorded absent
 only after a complete census succeeds. Outstanding child candidates retain
 their reserved archive IDs; they cannot recreate a missing parent.
