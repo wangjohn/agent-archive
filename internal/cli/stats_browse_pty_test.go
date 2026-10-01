@@ -44,7 +44,7 @@ func TestStatsScreenOnARealTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "resize", "suspend", "save"} {
+	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "sigquit", "savequit", "resize", "suspend", "save"} {
 		dir := t.TempDir()
 		out, err := runStatsPTYScript(python, binary, mode, dir)
 		if err != nil {
@@ -122,20 +122,33 @@ def wait_frame(text, after, end='q quit'):
 def wait_for(text, start=0):
     while output.find(text, start) < 0: pump()
     return output.find(text, start) + len(text)
+def drain():
+    # Whatever the child wrote is still to be read once it has exited or
+    # stopped: the script can be descheduled while the child writes and
+    # exits, and on Linux output reaches the master through a worker a
+    # moment after the write. A marker written on the slave side queues
+    # behind all of it, so the output is complete once the marker is read.
+    # Output, unlike input, is not echoed or discarded by the terminal's
+    # modes, and pump gives up at the deadline.
+    global output
+    marker = b'<<end of output>>'
+    while not select.select([], [slave], [], 0)[1]: pump()
+    os.write(slave, marker)
+    while marker not in output: pump()
+    output = output.replace(marker, b'')
 def finish(code):
     while p.poll() is None: pump()
+    drain()
     assert p.returncode == code, (p.returncode, output[-800:])
 def wait_stopped():
-    global output
     limit = min(deadline, time.monotonic() + 30)
     while True:
         pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
         if pid: break
         if time.monotonic() > limit: raise RuntimeError('the job did not stop', output[-300:])
         pump()
-    while select.select([master], [], [], 0)[0]:
-        try: output += os.read(master, 65536)
-        except OSError: break
+    # What it wrote before it stopped.
+    drain()
     return status
 def resize(rows, cols):
     # As the terminal emulator does: the size changes and the foreground job
@@ -184,6 +197,28 @@ try:
     elif mode == 'hup':
         p.send_signal(signal.SIGHUP)
         finish(129)
+        check_restored()
+    elif mode == 'sigquit':
+        # From outside (Ctrl-\ is off in key mode): handled like the others,
+        # no goroutine dump, the terminal given back, the shell's status.
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
+        check_restored()
+    elif mode == 'savequit':
+        # A page saved with h, then a signal from outside: the terminal is
+        # given back first, and then the path is printed on the normal screen,
+        # as after a quit.
+        os.write(master, b'h'); n = wait_frame('Save redacted HTML as', n, 'Esc cancels): ')
+        os.write(master, b'saved.html\r'); n = wait_frame('Saved ', n, 'names replaced)')
+        assert os.path.exists(os.path.join(cwd, 'saved.html'))
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
+        wait_for(b'saved.html\r\n', output.rindex(LEAVE))
+        assert re.search(rb'\x1b\[\?25h\x1b\[\?1049lWrote [^\n]*saved\.html\r?\n$', output), output[-300:]
+        assert output.count(b'Wrote ') == 1, output[-300:]
+        assert os.listdir(cwd) == ['saved.html'], os.listdir(cwd)
         check_restored()
     elif mode == 'resize':
         resize(12, 60)

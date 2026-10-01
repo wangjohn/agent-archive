@@ -62,11 +62,12 @@ func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target hand
 // agent, it warns and continues.
 func checkActiveSource(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (useWorktree bool, err error) {
 	// Only this machine's own sessions have a checkout here to share.
-	if target.source != "local" || target.lastActivityAt.IsZero() {
+	if target.source != "local" {
 		return false, nil
 	}
 	now := env.now()
-	if now.Sub(target.lastActivityAt).Abs() > activeSourceWindow {
+	// The same test that puts the live dot on the picker's row.
+	if !activeNow(now, target.lastActivityAt) {
 		return false, nil
 	}
 	reg, ok := sourceRegistration(env, target.bundle.ArchiveSessionID)

@@ -366,7 +366,8 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 	metadata.Models = models
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
-	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
+	labels := deriveLabels(bundle, view)
+	metadata.Name, metadata.Title, metadata.Branch, metadata.PullRequests = labels.Name, labels.Title, labels.Branch, labels.PullRequests
 	feedback := 0
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind == EvidenceKindExplicitFeedback {

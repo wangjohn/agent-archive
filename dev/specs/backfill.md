@@ -83,8 +83,8 @@ app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
 Ctrl-C during registration exits `1`, because the import is incomplete until a
 rerun; Ctrl-C during upload exits `0`, because the collector finishes it. The
 first Ctrl-C, in planning, registration, or upload, prints that it is
-stopping. A second Ctrl-C, or SIGTERM or SIGHUP at any point, exits at once
-with the shell's status for the signal (130, 143, 129), after
+stopping. A second Ctrl-C, or SIGTERM, SIGHUP or SIGQUIT at any point, exits at once
+with the shell's status for the signal (130, 143, 129, 131), after
 `cursorstore.RemoveOwnSnapshots` removes the database copies this process's
 Readers hold (the one-step backup can't be interrupted, and those Readers
 are never closed).
@@ -946,7 +946,9 @@ snapshot is published as a replacement, and the chat carries one
 `cursor_chat_rewritten` capture gap (collector evidence, provenance
 `collector:cursor-rewrite`, no content) whose detail counts the rewrites and
 whose observation time is the last one's, so a chat Cursor rewrites often
-(late token counts are routine) does not grow a gap per rewrite.
+(late token counts are routine) does not grow a gap per rewrite. A change to
+the chat's name alone, which filter 13 keeps on the chat's first record, is
+not a rewrite: the chat is republished with its new name and no gap.
 
 **Everywhere else a transcript file was assumed.** The collector reads each
 registration through a small `sourceReader` interface (`Signature`,

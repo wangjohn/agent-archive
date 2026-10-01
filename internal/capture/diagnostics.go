@@ -202,7 +202,7 @@ func (u diagnosticsUpdate) run(home string) error {
 		case changed:
 			continue
 		case replaced:
-			return local.SyncDir(path)
+			return staged.SyncDir()
 		default:
 			return nil
 		}
@@ -234,7 +234,7 @@ func (u diagnosticsUpdate) commit(home string, before diagnosticsFile, staged *l
 			return false, false, err
 		}
 	}
-	if err := staged.Replace(); err != nil {
+	if err := staged.Commit(); err != nil {
 		return false, false, err
 	}
 	return true, false, nil

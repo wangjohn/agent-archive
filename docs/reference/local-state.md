@@ -23,8 +23,12 @@ S3 credentials stay in your AWS profile.
   index, subagent candidates, removal records, refresh-skips, and
   `status.json`. Its `Store` holds the rules for each file and the
   per-session locks (`request-locks/`) that keep a hook and the collector
-  from interleaving; `state.OwnedEntries()` lists every top-level entry it can
-  create. It never reads transcripts or talks to storage.
+  from interleaving. A hook waits only a second for one, so writers sync to
+  disk outside it: a writer syncs its temporary file first and holds the lock
+  only to check and rename. A hook that another writer overtook meanwhile
+  holds it for its next attempt; any other writer retries later instead.
+  Subagent candidates are written the same way under their own locks. `state.OwnedEntries()` lists every
+  top-level entry it can create. It never reads transcripts or talks to storage.
 - **`internal/config`** owns `config.json`; **`internal/cli`** owns setup's
   files, logs, diagnostics, the collector-lock record, and `handoffs/`;
   **`internal/backfill`** owns `imports/`; **`internal/reader`** owns
@@ -34,7 +38,7 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `config.json` | The configuration: storage, projects, apps, retention, pause. See [configuration](configuration.md). |
+| `config.json` | The configuration: storage, projects, apps, retention, pause, and on Linux a digest of the machine ID setup first ran on (`host_id`, never uploaded), which lets `status` and `setup` notice a copied data directory. See [configuration](configuration.md). |
 | `setup-draft.json` | Setup's saved progress, so an interrupted setup can continue. Holds no secrets. |
 | `setup-transaction.json` | Present only while setup is changing files, or after it was interrupted; see [troubleshooting](../guides/troubleshooting.md#an-interrupted-setup). |
 | `application-versions.json` | Installed app versions setup found. |

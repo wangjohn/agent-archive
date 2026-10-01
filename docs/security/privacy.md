@@ -55,8 +55,10 @@ For each captured session, two objects (see
 [bucket layout](../reference/bucket-layout.md)): the source bundle, which
 holds the filtered transcript, skill evidence, and hook observations, and
 the metadata sidecar. The sidecar's optional `title` is a short, truncated
-preview of the first filtered human prompt (for `list`); it is still
-filter-derived text stored in the bucket, not a separate redaction pass.
+preview of the first filtered human prompt, and its optional `name` the
+session's name as the filtered transcript holds it (the last Claude Code
+session name, or Cursor's chat name), cut the same way (for `list`); both
+are filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
   replies; tool calls with their arguments (Edit bodies, shell commands,
@@ -64,7 +66,13 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   64 KB; working directories (which usually contain your username); Git
   branch names; model names; token counts; timestamps; the app's own session
   and message IDs; summaries the app wrote when compacting a conversation;
-  and final messages hooks reported.
+  the names the app gave the session, which pass the same redaction as
+  your prompts: every Claude Code session name the transcript records (set
+  automatically from your prompt or by `/rename`; renaming adds a name and
+  does not remove the earlier ones) and Cursor's current chat name; the
+  pull requests a Claude Code session linked (their `owner/repo`, number,
+  and GitHub link, and nothing of the pull requests' text); and final
+  messages hooks reported.
 - **Skill evidence**: fresh setup defaults to `metadata`: names and SHA-256
   hashes of filtered `SKILL.md` text, with no body. Choose `none` for no
   filesystem skill inventory or snapshots, or `body` to include up to 16 KB
@@ -97,7 +105,9 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   called and how often, token counts (in total and per model), the git work
   the session's tool calls confirmed (commit SHAs, branch names, `owner/repo`,
   pull request numbers and links; never commit messages, pull request text,
-  or commands), and the
+  or commands), the last Git branch the transcript recorded, the pull
+  requests a Claude Code session linked (`owner/repo`, number, and GitHub
+  link), and the
   capture gaps the filter recorded (the names of omitted fields, never their
   values).
 - **Repository key** (`repo_key`, in the metadata): when a project is a git
@@ -168,9 +178,9 @@ something was removed.
 For the current configured bucket, `agent-archive purge plan` inventories
 unreferenced source objects and separately lists sessions whose current source
 still uses an older filter. It writes a private, expiring plan under the local
-data directory. `agent-archive purge plan --mode old-filter --before-filter 12`
+data directory. `agent-archive purge plan --mode old-filter --before-filter 13`
 narrows deletion candidates to unreferenced sources made by older filter
-versions; replace `12` with the version you are upgrading to. Review the
+versions; replace `13` with the version you are upgrading to. Review the
 printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
 to the prefix, then run `agent-archive purge apply PLAN` within five minutes
 and enter the digest prefix, or pass `--yes` for a noninteractive run. The
@@ -426,8 +436,8 @@ cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
 nothing broader: no bucket credentials, no raw transcript files, no files of
 your projects. `status` adds your setup's summary: the storage destination,
 the included project folders, and the state of capture. `list` shows titles
-(each is the session's first prompt) across all your projects. Three things
-follow.
+(each is the session's name, else its first prompt) across all your
+projects. Three things follow.
 
 - **It is shown to that agent's provider.** A pulled-in session becomes part
   of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and

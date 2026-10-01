@@ -182,6 +182,11 @@ var fuzzSecretRecords = []struct {
 	{CodexAdapter{}, `{"type":"response_item","timestamp":"2026-09-01T00:00:00Z","payload":{"type":"function_call_output","call_id":"c","output":"{\"output\":\"password: %s\",\"metadata\":{\"exit_code\":0}}"}}`},
 	{CursorAdapter{}, `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"fill_form","input":{"elements":[{"uid":"1_5","value":"%s"}]}}]}}`},
 	{CursorAdapter{}, `{"role":"user","message":{"content":[{"type":"text","text":"export ANTHROPIC_API_KEY=sk-ant-api03-%s"}]}}`},
+	// Filter 13: a session's name and linked pull request.
+	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"export ANTHROPIC_API_KEY=sk-ant-api03-%s","sessionId":"s"}`},
+	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"{\"client_secret\":\"%s\"}","sessionId":"s"}`},
+	{ClaudeAdapter{}, `{"type":"pr-link","prNumber":"1","prRepository":"a/b","prUrl":"https://github.com/a/b/pull/1?token=%s","sessionId":"s"}`},
+	{ClaudeAdapter{}, `{"type":"pr-link","prNumber":"1","prRepository":"a/b","prUrl":"https://x:%s@github.com/a/b/pull/1","sessionId":"s"}`},
 }
 
 // FuzzFilterJSONLDropsSecrets puts fuzzed secrets into every shape of

@@ -29,7 +29,7 @@ type altScreenDependencies interface {
 // piling up in scrollback, and leaving it restores the screen as it was. It
 // does nothing when out is not a terminal. leave is safe to call more than
 // once and from the interrupt handler, which restores the screen before
-// the process exits on Ctrl-C, SIGTERM, or SIGHUP.
+// the process exits on Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT.
 //
 // While a pager owns the terminal, the handler leaves Ctrl-C to it (less
 // uses it to cancel a search) and answers any other signal by stopping the
@@ -49,6 +49,10 @@ type altScreen struct {
 	// the screen is left, on every way out: quitting, an error, a panic,
 	// or a signal.
 	restoreInput func()
+	// afterSignal, when set, runs once the screen is left for a signal and
+	// before the process exits, so what must stay in the scrollback (the
+	// files stats saved) is still printed.
+	afterSignal func()
 }
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
@@ -76,8 +80,7 @@ func (s *altScreen) start(signals <-chan os.Signal, stop func()) {
 				if s.pagerSignal(sig) {
 					continue
 				}
-				s.leave()
-				s.exit(signalExitCode(sig))
+				s.exitForSignal(sig)
 				return
 			case <-done:
 				return
@@ -146,7 +149,21 @@ func (s *altScreen) hide() {
 // exitForSignal restores the screen and exits as sig would have.
 func (s *altScreen) exitForSignal(sig os.Signal) {
 	s.leave()
+	s.mu.Lock()
+	after := s.afterSignal
+	s.mu.Unlock()
+	if after != nil {
+		after()
+	}
 	s.exit(signalExitCode(sig))
+}
+
+// printAfterSignal has f run when a signal ends the process, once the
+// screen is left.
+func (s *altScreen) printAfterSignal(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afterSignal = f
 }
 
 func (e Env) exit(code int) {

@@ -64,10 +64,10 @@ func TestWriteCompactIsAtomicCompactJSON(t *testing.T) {
 	}
 }
 
-// A staged file leaves its target alone until Replace, which gives the
+// A staged file leaves its target alone until Commit, which gives the
 // target Write's bytes and mode; Discard removes a staged file that was not
-// renamed, and leaves one that was.
-func TestStagedFileReplacesItsTargetOnlyOnReplace(t *testing.T) {
+// committed, and leaves one that was.
+func TestStagedFileReplacesItsTargetOnlyOnCommit(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "state.json")
 	if e := Write(p, map[string]int{"a": 1}); e != nil {
@@ -92,11 +92,11 @@ func TestStagedFileReplacesItsTargetOnlyOnReplace(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e := staged.Replace(); e != nil {
+	if e := staged.Commit(); e != nil {
 		t.Fatal(e)
 	}
 	staged.Discard()
-	if e := SyncDir(p); e != nil {
+	if e := staged.SyncDir(); e != nil {
 		t.Fatal(e)
 	}
 	want := filepath.Join(dir, "want.json")
