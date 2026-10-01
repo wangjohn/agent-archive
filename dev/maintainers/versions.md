@@ -47,8 +47,8 @@ is re-uploaded unless it changed.
   clear refusal.
 - Update the version line in this file.
 
-Discovery-bearing configuration is writer schema 2, while legacy/hook-only
-configuration retains schema 1. The validated `skill_evidence` compatibility
+Configuration upgraded for namespaced identity or discovery writing is schema
+2. Untouched legacy configuration remains schema 1. The validated `skill_evidence` compatibility
 marker blocks earlier writers that ignored schema numbers (see
 [configuration rollback](../../docs/reference/configuration.md#discovery-authorization-and-rollback)).
 Status JSON is version 4; source/metadata provenance fields are optional

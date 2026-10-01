@@ -70,7 +70,15 @@ func checkActiveSource(env worktreeDependencies, opts handoffOptions, target han
 	if !activeNow(now, target.lastActivityAt) {
 		return false, nil
 	}
-	reg, ok := sourceRegistration(env, target.bundle.ArchiveSessionID)
+	var reg archive.SessionRegistration
+	var ok bool
+	if target.native != nil {
+		c := target.native
+		reg = archive.SessionRegistration{NativeSessionID: c.NativeID, ProjectRoot: c.Directory, Harness: archive.Harness{Name: c.Ref.Harness}}
+		ok = true
+	} else {
+		reg, ok = sourceRegistration(env, target.bundle.ArchiveSessionID)
+	}
 	if !ok || !sameProject(reg.ProjectRoot, dir) {
 		return false, nil
 	}
@@ -328,6 +336,9 @@ func operationInProgress(ctx context.Context, env worktreeDependencies, top stri
 // characters of its archive ID, limited to characters safe in both.
 func handoffShortID(target handoffTarget) string {
 	name := handoffFileName(target.bundle)
+	if target.native != nil {
+		name = target.native.NativeID
+	}
 	if len(name) > 8 {
 		name = name[:8]
 	}

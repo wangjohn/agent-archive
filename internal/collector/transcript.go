@@ -85,7 +85,7 @@ func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter ar
 	if err := ctx.Err(); err != nil {
 		return archive.FilteredTranscript{}, stat, err
 	}
-	jsonBoundary, err := completeJSONLBoundary(file, boundary, recordLimit)
+	jsonBoundary, err := completeJSONLBoundary(contextReaderAt{ctx: ctx, reader: file}, boundary, recordLimit)
 	if errors.Is(err, errRecordTooLarge) {
 		return archive.FilteredTranscript{}, stat, err
 	}
@@ -123,6 +123,18 @@ func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter ar
 		return archive.FilteredTranscript{}, stat, change
 	}
 	return filtered, stat, checkFilteredSize(filtered, maxBytes)
+}
+
+type contextReaderAt struct {
+	ctx    context.Context
+	reader io.ReaderAt
+}
+
+func (r contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.ReadAt(p, off)
 }
 
 // errNotRegularFile means a hook-supplied transcript path names something

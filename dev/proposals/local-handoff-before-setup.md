@@ -1,11 +1,11 @@
 # First local handoff before bucket setup
 
-> **Proposed.** Not implemented or scheduled. Prepared 2026-10-01 against
-> `main` at `737e83e`. The user confirmed that this should be a one-time
-> utility, rather than a persistent local archive. Revised after the user
-> accepted the decisions below. Numeric budgets and API/package shapes remain
-> provisional until implementation and measurement. Current code and user documentation remain
-> the contract until implementation ships.
+> **Implemented in the local handoff changes.** Read-only discovery/I/O extraction
+> and native preview/browser/launch integration follow the accepted design below.
+> Synthetic filesystem and launcher coverage is included. Disposable actual
+> Claude Code/Codex histories and current identity variables on macOS and Linux
+> remain unverified; no live-platform acceptance is claimed. Prepared 2026-10-01.
+
 
 ## Goal
 

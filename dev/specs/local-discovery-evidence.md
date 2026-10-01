@@ -77,15 +77,42 @@ release-platform CPU/RSS and admission p99 measurements are required before
 activation. This implementation deliberately leaves these acceptance gates
 open rather than interpreting directory names or mtimes as eligibility.
 
-## Remaining identity reconciliation boundary
+## Identity integrity and compatibility
 
-Admission now allocates and syncs a namespaced index before writing its
-registration. A crash between those writes reuses the orphan index and keeps
-one archive identity. Fresh lookup does not enumerate registrations under the
-admission lock. Present corrupt or conflicting index files fail closed.
-However, removal of both a registration's legacy and namespaced index files
-is not diagnosed by this fast lookup; separate bounded/off-lock integrity
-reconciliation is still required to prevent duplicate allocation after that
-external state damage. Legacy pending-parent ownership also still scans
-subagent candidate metadata. Both are unresolved mechanism acceptance items,
-not covered by the normal crash-order guarantee.
+Every new namespaced identity first writes an authoritative identity journal
+record, then its derived namespace index, then registration. Deleting both
+derived indexes recovers the same ID from that journal; present corrupt or
+conflicting authoritative records fail closed. Legacy registrations and pending
+parent/child candidates migrate in bounded directory batches. Initial decoding
+runs outside admission locks; each record is revalidated under hooks.lock
+before a journal write. New starts defer into the existing durable hook intent
+queue while migration is incomplete. The collector advances migration before
+storage initialization even with discovery disabled; explicit backfill completes
+it before admitting its confirmed batch. Removed identities retain tombstone
+semantics. The journal and migration state are authoritative local state;
+corruption requires repair instead of allocating replacement identities.
+
+Before any namespace or journal write on configured machines, the durable
+writer marker protects the whole new-state contract, including legacy configs
+without discovery consent. It preserves effective skill policy and grants no
+discovery intervals. Older supported-enum writers refuse the marked config.
+Disablement preserves the marker; hand editing it is not safe downgrade.
+
+## Integrated source and scheduling behavior
+
+Historical import and native handoff retain their own policy while sharing
+Codex metadata decoding through nativesessions. Discovery and collector use
+context-aware verified transcriptio snapshots; discovery retains its strict
+root-descriptor confinement, first-start and bounded header requirements.
+First-start timestamp checks permit one second of negative quantization and
+at most two minutes after header creation. Current date and adjacent UTC date
+directories are bounded scheduling hints, with 64 header probes/1,024 entries
+reserved for priority and the remaining budget for fair backlog. Header time,
+identity, source support and authorization still decide eligibility. The flat
+root measurements above remain failed universal warm-latency evidence.
+
+Existing discovery registrations can follow a validated active/archive move
+without a new generation granting earlier start eligibility. A current active
+source is preferred over an archived source, and a missing locator can be
+repaired. Native identity, original start/cwd, admission, destination and
+provenance remain immutable; publication revalidates the selected snapshot.

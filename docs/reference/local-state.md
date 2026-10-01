@@ -143,3 +143,11 @@ not in routine scan diagnostics. Corruption rebuilds this disposable catalog;
 a rebuilt catalog cannot widen authorization. `sessions/` indexes now hash
 canonical agent plus native ID; verified legacy mappings migrate lazily without
 changing archive IDs. Removal records continue to outlive indexes.
+
+Namespaced identity writing also owns `identity-journal/` (authoritative
+agent/native-to-archive mappings), `identity-migration.json` (bounded legacy
+continuation) and `identity-migration.lock`. Derived index loss recovers from
+the journal. Corrupt authoritative identity state refuses allocation and needs
+repair; it is not silently discarded as a cache. Migration is independent of
+discovery consent and storage availability. Fresh hook starts defer durably
+until their legacy identity catalog is reconciled.

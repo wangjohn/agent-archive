@@ -100,3 +100,10 @@ permission history. A schema number alone cannot protect those older writers.
 The marker survives disablement and journal recovery. Do not edit it away:
 rollback needs an explicit safe downgrade that disables discovery and resets
 future-only authorization. No downgrade command is supplied in this release.
+
+The first namespaced identity write also installs this compatibility marker on
+a legacy configuration, with discovery disabled and no authorization intervals.
+It preserves the effective skill setting. This protects identity history even
+when automatic discovery has never been enabled; earlier binaries refuse the
+configuration. Keep the marked configuration and identity journal together
+when restoring state.

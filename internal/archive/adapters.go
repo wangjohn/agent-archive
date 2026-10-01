@@ -639,7 +639,6 @@ var blockedKeys = map[string]bool{
 // records (see ClaudeAdapter.FilterSubagentJSONL); it is not part of what was
 // read, so it counts toward no recognition, timestamp, or identity.
 func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any) (FilteredTranscript, error) {
-	result := FilteredTranscript{Format: format, NativeStartComplete: true}
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -648,6 +647,17 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	// its maximum and the initial buffer's capacity, so the initial buffer
 	// must not exceed the limit either.
 	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
+	return filterRecords(format, knownTypes, lead, func() ([]byte, bool) {
+		if scanner.Scan() {
+			return scanner.Bytes(), true
+		}
+		return nil, false
+	}, scanner.Err)
+}
+
+// filterRecords applies exactly the full filter's record rules to a record stream.
+func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error) (FilteredTranscript, error) {
+	result := FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
 	// Filter 2 collapsed every omission into one content-free gap, so a reader
@@ -676,9 +686,12 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			return FilteredTranscript{}, err
 		}
 	}
-	for scanner.Scan() {
+	for {
+		line, more := next()
+		if !more {
+			break
+		}
 		lineNo++
-		line := scanner.Bytes()
 		// bytes.TrimSpace, not strings.TrimSpace(string(line)): the same test
 		// without copying a record that can be tens of megabytes.
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -722,7 +735,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			continue
 		}
 		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
-		if !knownTypes[kind] && !cursorRoleContent {
+		if !recordTypeAllowed(knownTypes, kind, cursorRoleContent) {
 			addGap("unknown_record_type", lineNo, "record omitted")
 			continue
 		}
@@ -741,7 +754,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 		}
 		result.retain(encoded)
 	}
-	if err := scanner.Err(); err != nil {
+	if err := readError(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
 			return FilteredTranscript{}, ErrRecordTooLarge
 		}
@@ -1422,4 +1435,8 @@ func isHiddenRole(value string) bool {
 	default:
 		return false
 	}
+}
+
+func recordTypeAllowed(known map[string]bool, kind string, cursorRole bool) bool {
+	return known[kind] || cursorRole
 }
