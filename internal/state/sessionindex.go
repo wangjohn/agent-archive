@@ -141,14 +141,12 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 		}
 	}
 	if err == nil && safeFileComponent(legacy.ArchiveSessionID) {
-		candidates, e := s.LoadSubagentCandidates()
+		owned, e := s.legacyCandidateOwned(agent, native, legacy.ArchiveSessionID)
 		if e != nil {
 			return "", false, e
 		}
-		for _, candidate := range candidates {
-			if archive.CanonicalHarness(candidate.Harness.Name) == agent && ((candidate.NativeSessionID == native && candidate.ArchiveSessionID == legacy.ArchiveSessionID) || (candidate.ParentNativeSessionID == native && candidate.ParentArchiveSessionID == legacy.ArchiveSessionID)) {
-				return legacy.ArchiveSessionID, true, nil
-			}
+		if owned {
+			return legacy.ArchiveSessionID, true, nil
 		}
 	}
 	// Recover an interrupted registration/index write without allocating another ID.
@@ -172,6 +170,22 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 		return "", false, errors.New("legacy identity index needs repair")
 	}
 	return "", false, nil
+}
+
+func (s *Store) legacyCandidateOwned(agent, native, id string) (bool, error) {
+	candidates, err := s.LoadSubagentCandidates()
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range candidates {
+		if archive.CanonicalHarness(candidate.Harness.Name) != agent {
+			continue
+		}
+		if (candidate.NativeSessionID == native && candidate.ArchiveSessionID == id) || (candidate.ParentNativeSessionID == native && candidate.ParentArchiveSessionID == id) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // EnsureAgentSessionID allocates an identity in an agent namespace.

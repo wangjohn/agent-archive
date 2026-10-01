@@ -109,7 +109,7 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 	}
 	deadline := time.Now().Add(Budget)
 	for len(c.Queue) > 0 && h.Probes < HeaderProbes && h.Entries < 2048 && time.Now().Before(deadline) {
-		if ctx.Err() != nil || (o.Stop != nil && o.Stop()) {
+		if scanStopped(ctx, o) {
 			break
 		}
 		d := c.Queue[0]
@@ -121,7 +121,7 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 		}
 		worker := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, supported: supported}
 		for _, name := range names {
-			if ctx.Err() != nil || (o.Stop != nil && o.Stop()) || time.Now().After(deadline) {
+			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
 				next = d.Offset
 				break
@@ -151,6 +151,10 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 		return h, errors.New("discovery state write failed; retry next scan")
 	}
 	return h, nil
+}
+
+func scanStopped(ctx context.Context, o Options) bool {
+	return ctx.Err() != nil || (o.Stop != nil && o.Stop())
 }
 
 func approvedRoots(homes []string) []string {
