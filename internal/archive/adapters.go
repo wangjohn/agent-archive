@@ -126,8 +126,7 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // that is still empty stays empty, and it never makes an unrecognized
 // transcript acceptable.
 func (ClaudeAdapter) FilterSubagentJSONL(r io.Reader, metaJSON []byte) (FilteredTranscript, error) {
-	lead, _ := subagentMetaLead(metaJSON)
-	return filterClaudeJSONL(r, lead)
+	return filterClaudeJSONL(r, subagentMetaLead(metaJSON))
 }
 
 // filterClaudeJSONL is the Claude Code filter, with lead, when not nil, a

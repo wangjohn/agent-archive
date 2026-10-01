@@ -59,23 +59,23 @@ func SubagentMetaPath(transcriptPath string) (path string, ok bool) {
 
 // subagentMetaLead is the raw record FilterSubagentJSONL feeds the filter for
 // the contents of a .meta.json: its description, as a subagent-meta record,
-// and nothing else of the file. ok is false when the file holds no usable
+// and nothing else of the file. It is nil when the file holds no usable
 // description: it is empty, oversized, not a JSON object, or its description
 // is missing, not a string, or blank. The file is optional, so none of these
 // is an error or a gap.
-func subagentMetaLead(metaJSON []byte) (map[string]any, bool) {
+func subagentMetaLead(metaJSON []byte) map[string]any {
 	if len(metaJSON) == 0 || len(metaJSON) > MaxSubagentMetaBytes {
-		return nil, false
+		return nil
 	}
 	var meta map[string]any
 	if json.Unmarshal(metaJSON, &meta) != nil {
-		return nil, false
+		return nil
 	}
 	description, _ := meta[subagentDescriptionKey].(string)
 	if strings.TrimSpace(description) == "" {
-		return nil, false
+		return nil
 	}
-	return map[string]any{"type": subagentMetaType, subagentDescriptionKey: description}, true
+	return map[string]any{"type": subagentMetaType, subagentDescriptionKey: description}
 }
 
 // subagentMetaRecord rebuilds a subagent-meta record from the one string it

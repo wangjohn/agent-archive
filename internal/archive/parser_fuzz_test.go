@@ -225,8 +225,8 @@ const fuzzSubagentTranscript = `{"type":"user","uuid":"u","sessionId":"s","agent
 // bytes. Whatever they hold: the filter does not panic or fail; what it
 // keeps is at most one record of its own, first, with the type and a
 // description of valid UTF-8 within the bound, and nothing else of the file;
-// the output filters again unchanged; and a secret placed in the description
-// does not survive.
+// and the output filters again unchanged. FuzzSubagentMetaDropsSecrets checks
+// that a secret in the description does not survive.
 func FuzzSubagentMeta(f *testing.F) {
 	for _, seed := range []string{
 		`{"agentType":"general-purpose","description":"Find the tests","worktreePath":"/work/x"}`,
