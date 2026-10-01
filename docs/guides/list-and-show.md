@@ -207,7 +207,8 @@ session's summary replace each other instead of piling up:
   a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
   open the browser with the words already in the filter. Esc clears them and
   shows the plain list: for `list`, the sessions it lists without words; for a
-  `show` query, the sessions it matched.
+  `show` query, the sessions it matched. On the filter line `a`, `n`, `p`,
+  `q`, and digits are typed text: press Esc first to use them as keys.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
@@ -216,7 +217,7 @@ session's summary replace each other instead of piling up:
   as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
   summary through the pager, as `t` does the transcript.
 - `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
-  anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
+  anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
 - Every place a session is picked from a list is this one browser: `list`,

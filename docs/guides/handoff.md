@@ -294,8 +294,10 @@ archive holds other matches, so name an ID when in doubt.
 
 - On a terminal, the [picker](#the-picker) opens on just those sessions, with
   the words already in its filter (heading `Hand off · "flaky" matches 3`).
-  Press Esc to clear the words and see the whole list; pick one with the number
-  or ▸ and Enter. Every match is listed, however many.
+  `▸` marks the first match and Enter hands it off (↑ and ↓ move it). On the
+  filter line digits and `q` are typed text, so press Esc first to pick by
+  number or to quit with `q`; Esc lists the same matches without the filter.
+  Every match is listed, however many.
 - Without a terminal, and inside a coding agent (where nothing is asked), they
   are printed to standard error and the command exits with code 1, so the
   caller can ask which one and run it again with an ID:

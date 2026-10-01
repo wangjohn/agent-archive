@@ -741,7 +741,8 @@ width, and file it before merging PR 8.
   ```
 
   Expect: the same screen with the heading `Hand off · "flaky" matches 3 ·
-  agent-archive · claude · Esc clear`. Press `q` to leave without handing anything off.
+  agent-archive · claude · Esc clear`. Press Esc, then `q`, to leave without
+  handing anything off (on the filter line `q` is typed text).
 - [ ] **Without a terminal it prints candidates and a `Next:` line.**
 
   ```sh
@@ -864,7 +865,9 @@ the answer goes into the guide.
   Expect: either a count of `0` (the CLI wrote no name), or a count above `0` and
   a last line holding `"customTitle":"…"`. Do not `/rename` in this session.
   Then resume it with `claude --continue` (still in `/tmp/name-check`), send
-  three or four more prompts, `/exit`, and run the two `grep` commands again, since a name may arrive only after several turns.
+  three or four more prompts, `/exit`, and run the `f=$(ls -t …)` line and the
+  two `grep` commands again (the `f=` line first, in case the resumed session
+  wrote a new `.jsonl`), since a name may arrive only after several turns.
 - [ ] **Record what you saw in the guide, on PR 8's branch.** The placeholder
   is not on `main`, so check out the branch first (`git checkout
   claude/session-finding-pr8-docs && git pull`). In
@@ -891,7 +894,8 @@ the answer goes into the guide.
   Expect: the picker closes, `Continue in:` and its choices appear, and the
   question is answered at once by the `q` you typed before it appeared, so
   `handoff` exits without waiting for you. Lost input looks like the question
-  staying up, waiting at `Enter 1-2, p, c, w, or q`, for an answer you have
+  staying up, waiting at `Enter 1-N, p, c, w, or q` (N being the number of
+  agents listed), for an answer you have
   already typed. Repeat once with nothing typed ahead to check that the question
   and its default (`[1]`) still show and work (answer `q`).
 - [ ] **The terminal is restored after `q`, Esc, and Ctrl-C.** For each, run the
