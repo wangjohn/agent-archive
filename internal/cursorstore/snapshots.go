@@ -224,12 +224,12 @@ func writeCacheDirTag(dir string) {
 }
 
 // abandonedSnapshotAge is how old the lock file of an unlocked snapshot
-// directory must be before the directory is removed. A Reader takes the lock
-// right after creating the file, and the lock is released only by Close,
-// which removes the directory, or by the process dying; so an unlocked lock
-// file older than this was left by a process that died (Ctrl-C, a crash).
-// The grace only covers the instant between creating the file and locking
-// it.
+// directory must be before the directory is removed. A Reader's lock file
+// appears already locked (see lockSnapshot), and the lock is released only
+// by Close, which removes the directory, or by the process dying; so an
+// unlocked lock file was left by a process that died (Ctrl-C, a crash). The
+// grace is for a Reader of an earlier release, such as a collector not yet
+// restarted after an upgrade, which created the file before locking it.
 const abandonedSnapshotAge = time.Minute
 
 // ownSnapshots are the snapshot directories this process's Readers created

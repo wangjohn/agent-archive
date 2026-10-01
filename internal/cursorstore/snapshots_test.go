@@ -106,6 +106,45 @@ func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
 	}
 }
 
+// TestASweepNeverFailsAReadStarting: a sweep's snapshotInUse takes a lock
+// file's lock for an instant. A Reader's lock file appears already locked,
+// so a sweep probing it the moment it appears finds it in use and leaves it
+// alone; had the Reader locked the file only after creating it, the probe
+// could hold the lock just then and fail the read ("lock a Cursor database
+// snapshot directory").
+func TestASweepNeverFailsAReadStarting(t *testing.T) {
+	root := useTempSnapshots(t)
+	path := StateDatabase(t.TempDir())
+	startWriter(t, path).put(chatRows())
+	probed, inUse := false, false
+	hooks := readerHooks{lockPlaced: func(lockPath string) {
+		probed = true
+		// A sweep's probe, stopped while it would hold the lock.
+		f, err := os.Open(lockPath)
+		if err != nil {
+			t.Errorf("open the lock file: %v", err)
+			return
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		inUse = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
+		// A whole sweep now keeps the directory, however old.
+		old := time.Now().Add(-2 * staleSnapshotAge)
+		for _, p := range []string{filepath.Dir(lockPath), lockPath} {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Error(err)
+			}
+		}
+		RemoveStaleSnapshots()
+	}}
+	if _, _, err := readComposerWith(context.Background(), path, "c", hooks); err != nil {
+		t.Fatalf("a read with a sweep probing as it started: %v", err)
+	}
+	if !probed || !inUse {
+		t.Fatalf("probed %t, found the lock file in use %t", probed, inUse)
+	}
+	assertEmpty(t, root)
+}
+
 // TestSnapshotRootIsTheSystemsOwn: the snapshot root is
 // platform.Locations.SnapshotRoot wired to this package's getconf, this
 // process's environment and the account's home (the choice itself, on both
