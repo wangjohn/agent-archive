@@ -229,11 +229,12 @@ func (p *prompter) guidedR2Privacy(cfg config.Config) *storage.PrivacyReport {
 		return &report
 	}
 	if report := cfg.BucketPrivacy; report != nil && report.ConfigurationID == privacyConfigurationID(cfg) && report.CheckedAt != nil {
+		//lint:ignore LV1001 storage.PrivacyReport.Reason is an untyped string owned by package storage
 		switch report.Reason {
 		case "r2_public_domains_disabled", "r2_public_access_enabled", "r2_public_access_not_fully_checked":
 			if age, ok := privacyEvidenceAge(cfg, p.clock()); ok && age <= bucketPrivacyStaleAfter {
-				copy := *report
-				return &copy
+				savedReport := *report
+				return &savedReport
 			}
 		}
 	}
