@@ -278,9 +278,13 @@ func (r *handoffQueryResolver) within(rows []handoffPickerRow) []handoffPickerRo
 }
 
 // match keeps the rows the query matches, in order, leaving out the sessions
-// whose native ID is in skip. An exact ID wins outright.
+// whose native ID is in skip and archived ones with no prompt, which the
+// picker does not offer either (an ID still names those: exactID). An exact
+// ID wins outright.
 func (r *handoffQueryResolver) match(rows []handoffPickerRow) []handoffPickerRow {
-	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return r.skip[row.metadata.NativeSessionID] })
+	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
+		return r.skip[row.metadata.NativeSessionID] || archivedWithoutPrompt(row.metadata)
+	})
 	return matchPool(rows, r.q, func(row handoffPickerRow) sessionFields {
 		return fieldsOf(row.metadata, sessionProjectName(row.metadata, r.labels))
 	})

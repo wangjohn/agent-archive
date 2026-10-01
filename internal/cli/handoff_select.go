@@ -196,6 +196,15 @@ type handoffPickerRow struct {
 	notUploaded bool
 	// reg is the session's registration on this machine, when it has one.
 	reg *archive.SessionRegistration
+	// noPrompt is set for an archived session whose metadata holds no prompt.
+	noPrompt bool
+}
+
+// archivedWithoutPrompt reports whether an archived session holds no prompt,
+// so has nothing to hand off: its metadata counts no human prompt
+// (counts.turns, which a text transcript or a failed parse leaves unknown).
+func archivedWithoutPrompt(m archive.Metadata) bool {
+	return m.Counts.Turns != nil && *m.Counts.Turns == 0
 }
 
 type handoffPicker struct {
@@ -222,10 +231,12 @@ type handoffPicker struct {
 // copy, read for all registrations at once (collector.LastActivities opens
 // the Cursor database once). Only a registration the archive lacks has its
 // transcript read, and only while rows are still needed, to title it and pass
-// over one with no prompt yet. Subagents, archived or registered, are never
-// offered. total counts the sessions that can be offered, or is -1 when some
-// past the limit were not read to tell; truncated is set when any are left
-// out.
+// over one with no prompt yet. An archived session with no prompt is passed
+// over too, unless it is registered here and its transcript, read as one the
+// archive lacks is, has one by now. Subagents, archived or registered, are
+// never offered. total counts the sessions that can be offered, or is -1 when
+// some past the limit were not read to tell; truncated is set when any are
+// left out.
 func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) (rows []handoffPickerRow, total int, truncated bool) {
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
 		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
@@ -245,7 +256,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			continue
 		}
 		index[m.SessionID] = len(all)
-		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt})
+		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt, noPrompt: archivedWithoutPrompt(m)})
 	}
 	// A copy, which leaves registered pointing at the registrations as they were.
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
@@ -264,15 +275,19 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		}
 		if i, found := index[reg.ArchiveSessionID]; found {
 			all[i].active, all[i].registered, all[i].reg = active, true, &reg
+			if all[i].noPrompt && p.source != "archive" {
+				// Archived before its first prompt: the transcript may hold one now.
+				all[i].unbuilt = &reg
+			}
 			continue
 		}
 		if p.source != "archive" {
 			all = append(all, handoffPickerRow{active: active, registered: true, reg: &reg, unbuilt: &reg, notUploaded: p.archiveRead})
 		}
 	}
-	if p.source == "local" {
-		all = slices.DeleteFunc(all, func(row handoffPickerRow) bool { return !row.registered })
-	}
+	all = slices.DeleteFunc(all, func(row handoffPickerRow) bool {
+		return (p.source == "local" && !row.registered) || (row.noPrompt && row.unbuilt == nil)
+	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
 	for i, row := range all {
