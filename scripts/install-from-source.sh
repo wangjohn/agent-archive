@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build this checkout for the current Mac and install a persistent dev binary.
-# It also builds for Linux (CGO_ENABLED=0), which is not yet a supported platform.
+# Build this checkout for the current machine (macOS or Linux) and install a
+# persistent dev binary. Linux builds use CGO_ENABLED=0.
 set -euo pipefail
 
 usage() {
@@ -11,7 +11,7 @@ Build the current source tree, including uncommitted changes. By default,
 install to ~/.local/share/agent-archive-dev/bin/agent-archive without changing
 the release installation. --replace-current replaces the agent-archive found
 on PATH. --destination installs to an explicit absolute executable path.
-The script does not run setup or change archive data, hooks, or launchd.
+The script does not run setup or change archive data, hooks, or the background job.
 EOF
 }
 

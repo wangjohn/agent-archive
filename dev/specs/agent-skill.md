@@ -532,7 +532,7 @@ it renames the package.
 ### PR 7 — Docs and live check (docs + a run log)
 
 - Guide `docs/guides/agent-skills.md`; README and setup guide mention;
-  `setup.md` "what setup changes on your Mac" lists the skill files;
+  `setup.md` "what setup changes on your machine" lists the skill files;
   uninstall guide; troubleshooting ("agent doesn't use the skill"). PR 5
   wrote most of the guide; PR 7 read every user document as a new reader
   would, tightened what the live check contradicted, and added what an agent
