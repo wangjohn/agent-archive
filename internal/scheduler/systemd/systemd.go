@@ -37,13 +37,19 @@ const stateTimeout = 3 * time.Second
 // that sets none: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin, with
 // /sbin:/bin after them (systemd.exec(5), $PATH; the last two are the
 // default of a build for a system whose /bin and /sbin are not links into
-// /usr, and harmless on one where they are). The user manager passes its
-// own environment to its services except for PATH, which it replaces with
-// its build's user PATH (by default this same value; a distribution may
-// configure another, and an environment.d file may set one), so this is the
-// value the collector's environment can rely on and no more. It is taken
-// from the documentation and systemd's source, not read from a live
-// manager; the Linux job environment work (5c) revisits it.
+// /usr, and harmless on one where they are).
+//
+// What a user manager's services actually get is its own PATH, which a
+// distribution may extend: a service started by the user manager of Ubuntu
+// 24.04 (systemd 255), run to see it, had
+// /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin,
+// this value followed by what /etc/environment adds. It is never the login
+// shell's: nothing in ~/.profile or ~/.bashrc reaches it, so no directory
+// under the home (~/.local/bin, where aws-vault, 1Password's op and pipx
+// installs go, or ~/go/bin, ~/.cargo/bin) is on it. This value is therefore
+// what the collector's environment can rely on and no more, and the job's
+// PATH is this shell's usable entries followed by it (cli's collectorPath),
+// which is how a helper under the home is found.
 const DefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // collectorRef is the unit name (without .service or .timer) of the default
