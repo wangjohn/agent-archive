@@ -26,6 +26,14 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
 
+### Fixed
+
+- Native handoff keeps verified IDs selectable when its cumulative label-read
+  budget is exhausted, and reuses unused header reservations after inspection.
+  Incomplete local `--latest` offers an explicit picker or known-ID recipes
+  rather than selecting automatically. Cancellation during canonical checkout
+  scoping stops further path resolution.
+
 ### Changed
 
 - Native session identities are now namespaced by agent. Compatible legacy
