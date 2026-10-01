@@ -156,7 +156,7 @@ func TestTraceFinishesOnce(t *testing.T) {
 	if errOut.String() != written {
 		t.Fatalf("a second finishTraceNow wrote the trace again:\n%s", errOut.String())
 	}
-	for _, kv := range childEnv([]string{envTrace + "=1", "HOME=/h"}) {
+	for _, kv := range childEnv([]string{envTrace + "=1", "HOME=/h"}, launchEnvironmentKeys(Env{})) {
 		if strings.HasPrefix(kv, envTrace+"=") {
 			t.Fatalf("a launched agent inherits %s", kv)
 		}

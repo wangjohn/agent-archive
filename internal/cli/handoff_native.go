@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -219,18 +220,18 @@ func nativeIdentity(candidates []nativesessions.Candidate, query, harness string
 
 func nativeCurrent(candidates []nativesessions.Candidate, harness string, env currentSessionDependencies) (*nativesessions.Candidate, error) {
 	var found *nativesessions.Candidate
-	for _, v := range currentSessionEnv {
-		if harness != "" && harness != v.harness {
+	for _, observation := range runtimeObservations(env) {
+		if harness != "" && harness != string(observation.Agent) {
 			continue
 		}
-		value, ok := env.lookupEnv(v.key)
-		if !ok || strings.TrimSpace(value) == "" {
+		value := observation.NativeID
+		if value == "" {
 			continue
 		}
 		// Current identity is exact; short prefixes never identify a running agent.
 		var matches []nativesessions.Candidate
 		for _, c := range candidates {
-			if c.Ref.Harness == v.harness && c.NativeID == strings.TrimSpace(value) {
+			if c.Ref.Harness == string(observation.Agent) && c.NativeID == value {
 				matches = append(matches, c)
 			}
 		}
@@ -412,8 +413,9 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 		if !result.Coverage.IdentityComplete {
 			return nil, errors.New("--latest requires complete local identity and checkout discovery; select a known native ID explicitly")
 		}
+		observations := runtimeObservations(env)
 		for _, c := range candidates {
-			if !isCurrentNative(c, env) {
+			if !isCurrentNative(c, observations) {
 				return &c, nil
 			}
 		}
@@ -435,9 +437,9 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 	return nil, nil
 }
 
-func isCurrentNative(c nativesessions.Candidate, env currentSessionDependencies) bool {
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && v.harness == c.Ref.Harness && strings.TrimSpace(value) == c.NativeID {
+func isCurrentNative(c nativesessions.Candidate, observations []agentapi.AgentRuntime) bool {
+	for _, observation := range observations {
+		if observation.NativeID != "" && string(observation.Agent) == c.Ref.Harness && observation.NativeID == c.NativeID {
 			return true
 		}
 	}

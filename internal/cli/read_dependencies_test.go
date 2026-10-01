@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"strings"
@@ -128,3 +129,5 @@ func TestHandoffResolverUsesReadStoreBoundary(t *testing.T) {
 }
 
 var _ handoffFileDependencies = (*resolverStub)(nil)
+
+func (sessionStub) runtimeLookup() agentapi.RuntimeLookup { return productionAgents }
