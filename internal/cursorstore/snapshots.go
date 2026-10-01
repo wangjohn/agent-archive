@@ -56,7 +56,7 @@ func snapshotCacheDir() string {
 // currentSnapshotLocations are the locations of the running system for this
 // process's environment and account.
 func currentSnapshotLocations() platform.Locations {
-	return snapshotLocations(platform.Current(), os.Getenv, accountHome())
+	return snapshotLocations(platform.Current(), os.Getenv, accountHome)
 }
 
 // accountHome is the account's home directory from the user database (not
@@ -70,10 +70,16 @@ func accountHome() string {
 }
 
 // snapshotLocations are the locations of system, reading the environment
-// through getenv, the account's home directory as given, and the system's
-// per-user temporary directory as this package finds it. There is no $HOME:
-// nothing about the snapshot root depends on it.
-func snapshotLocations(system platform.OS, getenv func(string) string, home string) platform.Locations {
+// through getenv, the account's home directory as accountHome finds it, and
+// the system's per-user temporary directory as this package finds it. There
+// is no $HOME: nothing about the snapshot root depends on it. Only Linux
+// places the root by the account's home, so only Linux calls accountHome (a
+// user database read): on macOS finding the root does what it always did.
+func snapshotLocations(system platform.OS, getenv func(string) string, accountHome func() string) platform.Locations {
+	home := ""
+	if system == platform.Linux && accountHome != nil {
+		home = accountHome()
+	}
 	return platform.NewLocations(system, "", getenv, platform.LocationDeps{
 		DarwinUserTempDir: darwinUserTempDir,
 		ProcessTempDir:    os.TempDir,
@@ -161,9 +167,10 @@ const cacheDirTag = "Signature: 8a477f597d28d172789f06886806bc55\n" +
 const cacheDirTagName = "CACHEDIR.TAG"
 
 // errCacheDirNotPrivate means agent-archive's folder in the cache home exists
-// but is not a directory of this user's that nobody else can write to. A
-// directory another account can write to could have the snapshot directory
-// inside it renamed away and replaced between the checks and the copy.
+// but is not a directory of this user's that nobody else can write to, or the
+// cache home is one every account can write to (without the sticky bit). A
+// directory another account can write to could have the directory inside it
+// renamed away and replaced between the checks and the copy.
 var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache directory is not private to this user")
 
 // prepareCacheDir makes dir, agent-archive's folder in the cache home (and
@@ -174,9 +181,20 @@ var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache dire
 // Cursor's chats under it. The tag is best effort: a copy is removed as soon
 // as it is read, so a tool that backs up a leftover one is an inconvenience,
 // and a failure to write the tag must not stop the read.
+//
+// A cache home that was already there is the user's and is left as it is
+// (its mode is never changed), unless every account can write to it without
+// the sticky bit: anyone could then rename dir away and put their own in its
+// place between the checks and the copy, so it is refused, the way dir is.
 func prepareCacheDir(dir string) error {
-	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+	cache := filepath.Dir(dir)
+	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return errors.New("create the cache directory")
+	}
+	if info, err := os.Stat(cache); err != nil || !info.IsDir() {
+		return errors.New("inspect the cache directory")
+	} else if info.Mode().Perm()&0o002 != 0 && info.Mode()&fs.ModeSticky == 0 {
+		return fmt.Errorf("%w: every account can write to the cache directory %s; set XDG_CACHE_HOME to a directory of yours, or take that write access away (chmod o-w)", errCacheDirNotPrivate, cache)
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return errors.New("create agent-archive's folder in the cache directory")

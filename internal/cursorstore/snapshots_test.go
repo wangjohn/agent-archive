@@ -156,7 +156,7 @@ func TestSnapshotRootIsTheSystemsOwn(t *testing.T) {
 // SnapshotRoot fails closed instead of using a shared temporary directory.
 func TestUnknownSystemHasNoSnapshotRoot(t *testing.T) {
 	t.Parallel()
-	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }, "/home/ada").SnapshotRoot(); got != "" {
+	if got := snapshotLocations(platform.Unknown, func(string) string { return "/tmp/mine" }, func() string { return "/home/ada" }).SnapshotRoot(); got != "" {
 		t.Errorf("the snapshot root on an unknown system is %q, want none", got)
 	}
 	if root, err := preparedSnapshotRoot("", ""); !errors.Is(err, errSnapshotUnsupportedSystem) || root != "" {
@@ -168,9 +168,33 @@ func TestUnknownSystemHasNoSnapshotRoot(t *testing.T) {
 // and SnapshotRoot fails closed rather than use a temporary directory.
 func TestLinuxWithoutACacheHomeHasNoSnapshotRoot(t *testing.T) {
 	t.Parallel()
-	got := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"TMPDIR": "/tmp/mine"}[name] }, "")
+	got := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"TMPDIR": "/tmp/mine"}[name] }, func() string { return "" })
 	if got.SnapshotRoot() != "" || got.SnapshotCacheDir() != "" {
 		t.Errorf("root %q, cache directory %q, want none", got.SnapshotRoot(), got.SnapshotCacheDir())
+	}
+}
+
+// The account's home this package finds is what places the Linux root when
+// XDG_CACHE_HOME is not set ($HOME is not consulted at all), and only Linux
+// asks for it: macOS's root does not depend on it, so finding the root there
+// reads no user database.
+func TestOnlyLinuxAsksForTheAccountsHome(t *testing.T) {
+	t.Parallel()
+	asked := 0
+	lookup := func() string { asked++; return "/home/ada" }
+	env := func(name string) string { return map[string]string{"HOME": "/sandbox/home"}[name] }
+	if got, want := snapshotLocations(platform.Linux, env, lookup).SnapshotRoot(), "/home/ada/.cache/agent-archive/cursor-snapshots"; got != want || asked != 1 {
+		t.Errorf("Linux root %q after %d lookups, want %q after one", got, asked, want)
+	}
+	asked = 0
+	for _, system := range []platform.OS{platform.Darwin, platform.Unknown} {
+		snapshotLocations(system, env, lookup).SnapshotRoot()
+	}
+	if asked != 0 {
+		t.Errorf("the account's home was looked up %d times off Linux", asked)
+	}
+	if got := snapshotLocations(platform.Linux, env, nil).SnapshotRoot(); got != "" {
+		t.Errorf("Linux root with no way to find the account's home %q, want none", got)
 	}
 }
 
@@ -296,7 +320,7 @@ func TestSnapshotRootIsRejectedWhenNotPrivate(t *testing.T) {
 func TestLinuxSnapshotRootIsMadeUnderTheCacheDirectoryWithATag(t *testing.T) {
 	t.Parallel()
 	cache := filepath.Join(t.TempDir(), "new-cache-home")
-	loc := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"XDG_CACHE_HOME": cache}[name] }, "/home/ignored")
+	loc := snapshotLocations(platform.Linux, func(name string) string { return map[string]string{"XDG_CACHE_HOME": cache}[name] }, func() string { return "/home/ignored" })
 	root, err := preparedSnapshotRoot(loc.SnapshotRoot(), loc.SnapshotCacheDir())
 	if err != nil {
 		t.Fatal(err)
@@ -415,5 +439,83 @@ func TestCacheDirectoryIsNotFollowedThroughALink(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(elsewhere, "cursor-snapshots")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a snapshot root was made through the link: %v", err)
+	}
+}
+
+// agent-archive's folder in the cache home, and the snapshot root in it, must
+// be the user's own: one another account owns could be emptied or swapped by
+// it whatever its mode. Making a directory another account's takes root, so
+// this runs only as root (a container run of the tests); elsewhere it skips.
+func TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() != 0 {
+		t.Skip("giving a directory to another account needs root")
+	}
+	const nobody = 65534
+	dir := filepath.Join(t.TempDir(), "agent-archive")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(dir, nobody, nobody); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir); !errors.Is(err, errCacheDirNotPrivate) {
+		t.Errorf("agent-archive's folder owned by another account: err %v, want errCacheDirNotPrivate", err)
+	}
+	dir = filepath.Join(t.TempDir(), "agent-archive")
+	root := filepath.Join(dir, "cursor-snapshots")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(root, nobody, nobody); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparedSnapshotRoot(root, dir); !errors.Is(err, errSnapshotRootNotPrivate) {
+		t.Errorf("snapshot root owned by another account: err %v, want errSnapshotRootNotPrivate", err)
+	}
+}
+
+// A cache home that was already there keeps its mode (0755 and 0775 are the
+// user's to choose, and are not tightened), but one that every account can
+// write to without the sticky bit is refused before anything is made in it:
+// anyone could rename agent-archive's folder away and put their own in its
+// place. A sticky one (like /tmp) is fine: only its owner can rename what is
+// in it.
+func TestExistingCacheHomeKeepsItsModeUnlessEveryoneCanWriteToIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode fs.FileMode
+		ok   bool
+	}{
+		{0o755, true},
+		{0o775, true},
+		{0o700, true},
+		{0o777 | fs.ModeSticky, true},
+		{0o777, false},
+		{0o703, false},
+	} {
+		cache := filepath.Join(t.TempDir(), "cache")
+		if err := os.Mkdir(cache, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(cache, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(cache, "agent-archive")
+		_, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir)
+		if tc.ok && err != nil {
+			t.Errorf("cache home %v: %v", tc.mode, err)
+		}
+		if !tc.ok {
+			if !errors.Is(err, errCacheDirNotPrivate) || !strings.Contains(err.Error(), cache) || !strings.Contains(err.Error(), "XDG_CACHE_HOME") {
+				t.Errorf("cache home %v: err %v, want errCacheDirNotPrivate naming it", tc.mode, err)
+			}
+			if _, statErr := os.Lstat(dir); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Errorf("cache home %v: agent-archive's folder was made in it", tc.mode)
+			}
+		}
+		if info, err := os.Stat(cache); err != nil || info.Mode()&(fs.ModePerm|fs.ModeSticky) != tc.mode {
+			t.Errorf("cache home %v: now %v, %v; want its mode left alone", tc.mode, info.Mode(), err)
+		}
 	}
 }
