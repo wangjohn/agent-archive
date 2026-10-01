@@ -183,7 +183,7 @@ func TestStatsHTMLAtomicCreateFailureNeverFallsBackToReplacement(t *testing.T) {
 			if err == nil {
 				t.Fatal("failed atomic create reported success")
 			}
-			if tc.err == unsupported && !errors.Is(err, unsupported) {
+			if errors.Is(tc.err, unsupported) && !errors.Is(err, unsupported) {
 				t.Fatalf("link failure was lost: %v", err)
 			}
 			kept, readErr := os.ReadFile(path)
