@@ -221,7 +221,9 @@ type option struct {
 
 // actionOption is a visible, unnumbered action at a storage prompt.
 type actionOption struct {
-	Key, Shortcut, Label string
+	Key      string
+	Shortcut string
+	Label    string
 }
 
 // actions keeps primary choices numbered and renders navigation separately.

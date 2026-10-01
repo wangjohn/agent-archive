@@ -157,9 +157,7 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	if err = c.connect(); err != nil {
 		return credentials.Config{}, none, false, err
 	}
-	if err = c.askBucket(); err != nil {
-		return credentials.Config{}, none, false, err
-	}
+	c.askBucket()
 	key, err := c.createUntilVerified()
 	if err != nil {
 		if errors.Is(err, errUseExistingStorage) && c.bucketCreated {
@@ -177,6 +175,17 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	p.guided = &r2Handoff{c: c}
 	return c.storageConfig(), key, true, nil
 }
+
+// r2ConnectChoice is the recovery action after a bootstrap permission failure.
+type r2ConnectChoice string
+
+const (
+	r2ConnectToken    r2ConnectChoice = "token"
+	r2ConnectRetry    r2ConnectChoice = "retry"
+	r2ConnectOther    r2ConnectChoice = "other"
+	r2ConnectStop     r2ConnectChoice = "stop"
+	r2ConnectExisting r2ConnectChoice = "existing"
+)
 
 // connect checks the account and archive-key permission before asking for
 // bucket settings. Recovery prompts run outside the request signal handler.
@@ -200,12 +209,14 @@ func (c *r2Creator) connect() error {
 		if !errors.Is(err, errChooseStorageAgain) && err != nil && c.account == "" {
 			return err
 		}
-		choice, err := c.p.actions("What next?", "token", []option{{"token", "Paste a different token"}, {"retry", "Retry after updating permissions"}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"other", "b", "Back"}, {"stop", "q", "Stop setup"}})
+		choice, err := c.p.actions("What next?", string(r2ConnectToken),
+			[]option{{string(r2ConnectToken), "Paste a different token"}, {string(r2ConnectRetry), "Retry after updating permissions"}},
+			[]actionOption{{string(r2ConnectExisting), "e", "Use an existing bucket"}, {string(r2ConnectOther), "b", "Back"}, {string(r2ConnectStop), "q", "Stop setup"}})
 		if err != nil {
 			return err
 		}
-		switch choice {
-		case "token":
+		switch r2ConnectChoice(choice) {
+		case r2ConnectToken:
 			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
 			if err != nil {
 				return err
@@ -217,12 +228,14 @@ func (c *r2Creator) connect() error {
 			c.api = c.env.cloudflareAPI(token)
 			c.account, c.groupID = "", ""
 			c.tokenFromEnv = false
-		case "retry":
+		case r2ConnectRetry:
 			continue
-		case "other":
+		case r2ConnectOther:
 			return errChooseStorageAgain
-		case "existing":
+		case r2ConnectExisting:
 			return errUseExistingStorage
+		case r2ConnectStop:
+			return errors.New("guided bucket creation stopped")
 		default:
 			return errors.New("guided bucket creation stopped")
 		}
@@ -456,10 +469,9 @@ func parseR2AccountID(input string) (string, error) {
 	return loc.AccountID, nil
 }
 
-// askBucket asks for the bucket's name and its optional location.
-func (c *r2Creator) askBucket() error {
+// askBucket prepares a suggested name for the creation summary.
+func (c *r2Creator) askBucket() {
 	c.bucket.Name, c.defaultName = newBucketName(), true
-	return nil
 }
 
 func (c *r2Creator) askBucketName(label, def string) (string, error) {

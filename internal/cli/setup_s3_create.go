@@ -233,23 +233,25 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 				}
 			}
 		}
-		def := "retry"
-		options := []option{{"retry", "Review settings and retry"}, {"profile", "Choose another creation profile"}}
+		def := string(s3RecoveryRetry)
+		options := []option{{string(s3RecoveryRetry), "Review settings and retry"}, {string(s3RecoveryProfile), "Choose another creation profile"}}
 		if noCredentials {
-			def, options = "profile", options[1:]
+			def, options = string(s3RecoveryProfile), options[1:]
 		}
 		choice, e := p.actions("What next?", def, options, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if e != nil {
 			return newS3Bucket{}, false, e
 		}
-		switch choice {
-		case "existing":
+		switch s3RecoveryChoice(choice) {
+		case s3RecoveryExisting:
 			return newS3Bucket{}, false, nil
-		case "back":
+		case s3RecoveryBack:
 			return newS3Bucket{}, false, errChooseStorageAgain
-		case "stop":
+		case s3RecoveryStop:
 			return newS3Bucket{}, false, errors.New("guided bucket creation stopped")
-		case "profile":
+		case s3RecoveryRetry:
+			continue
+		case s3RecoveryProfile:
 			profileRegion, noCredentials, err = chooseS3Profile(p, cfg, env)
 			if err != nil {
 				return newS3Bucket{}, false, err
@@ -281,10 +283,44 @@ func openS3CreationClient(p *prompter, cfg *credentials.Config, env Env, region,
 	return creator
 }
 
+// s3RecoveryChoice is an action after a bucket creation failure.
+type s3RecoveryChoice string
+
+const (
+	s3RecoveryRetry    s3RecoveryChoice = "retry"
+	s3RecoveryProfile  s3RecoveryChoice = "profile"
+	s3RecoveryExisting s3RecoveryChoice = "existing"
+	s3RecoveryBack     s3RecoveryChoice = "back"
+	s3RecoveryStop     s3RecoveryChoice = "stop"
+)
+
+// s3SummaryChoice is an action on the creation summary.
+type s3SummaryChoice string
+
+const (
+	s3SummaryCreate    s3SummaryChoice = "create"
+	s3SummaryCustomize s3SummaryChoice = "customize"
+	s3SummaryExisting  s3SummaryChoice = "existing"
+	s3SummaryBack      s3SummaryChoice = "back"
+)
+
+// s3CustomizeChoice is a setting to edit before creation.
+type s3CustomizeChoice string
+
+const (
+	s3CustomizeName    s3CustomizeChoice = "name"
+	s3CustomizeRegion  s3CustomizeChoice = "region"
+	s3CustomizeProfile s3CustomizeChoice = "profile"
+	s3CustomizeBack    s3CustomizeChoice = "back"
+)
+
 // s3CreationSettings keeps customization separate from bucket mutations.
 type s3CreationSettings struct {
-	name, region                                 string
-	explicitRegion, automaticName, noCredentials bool
+	name           string
+	region         string
+	explicitRegion bool
+	automaticName  bool
+	noCredentials  bool
 }
 
 // confirm returns false only for the explicit existing-bucket route.
@@ -298,19 +334,19 @@ func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env E
 		if err != nil {
 			return false, err
 		}
-		switch choice {
-		case "existing":
+		switch s3SummaryChoice(choice) {
+		case s3SummaryExisting:
 			return false, nil
-		case "back":
+		case s3SummaryBack:
 			return false, errChooseStorageAgain
-		case "customize":
+		case s3SummaryCustomize:
 			if err := s.customize(p, cfg, env); err != nil {
 				return false, err
 			}
 			if s.noCredentials || s.region == "" {
 				return true, nil
 			}
-		case "create":
+		case s3SummaryCreate:
 			if standardAWSRegion(s.region) {
 				return true, nil
 			}
@@ -323,14 +359,16 @@ func (s *s3CreationSettings) customize(p *prompter, cfg *credentials.Config, env
 	if err != nil {
 		return err
 	}
-	switch edit {
-	case "name":
+	switch s3CustomizeChoice(edit) {
+	case s3CustomizeBack:
+		return nil
+	case s3CustomizeName:
 		s.name, err = promptNewBucketName(p, s.name)
 		s.automaticName = false
-	case "region":
+	case s3CustomizeRegion:
 		s.region, err = promptRegion(p, "Region for the new bucket", s.region)
 		s.explicitRegion = true
-	case "profile":
+	case s3CustomizeProfile:
 		var profileRegion string
 		profileRegion, s.noCredentials, err = chooseS3Profile(p, cfg, env)
 		if !s.explicitRegion {

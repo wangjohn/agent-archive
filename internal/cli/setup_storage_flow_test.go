@@ -13,7 +13,10 @@ import (
 
 func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ input, want string }{{"\n", "create"}, {"c\n", "customize"}, {"customize\n", "customize"}, {"e\n", "existing"}, {"b\n", "back"}, {"x\ne\n", "existing"}} {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{{"\n", "create"}, {"c\n", "customize"}, {"customize\n", "customize"}, {"e\n", "existing"}, {"b\n", "back"}, {"x\ne\n", "existing"}} {
 		var out bytes.Buffer
 		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize"}, {"existing", "e", "Existing"}, {"back", "b", "Back"}})
 		if err != nil || got != tc.want {
@@ -38,7 +41,10 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 
 func TestStorageProviderNumbersAndModeAliases(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ input, want string }{{"\n", "r2"}, {"2\n", "s3"}, {"r2-existing\n", "r2-existing"}, {"r2-\ns3\n", "s3"}} {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{{"\n", "r2"}, {"2\n", "s3"}, {"r2-existing\n", "r2-existing"}, {"r2-\ns3\n", "s3"}} {
 		var out bytes.Buffer
 		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Provider", "r2", storageMenuOptions(), nil, option{"r2-existing", ""}, option{"r2-create", ""})
 		if err != nil || got != tc.want {

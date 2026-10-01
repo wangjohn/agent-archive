@@ -8,12 +8,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// storageNavigation carries an explicit destination, rather than a failure.
-type storageNavigation string
+// storageNavigationError carries an explicit destination, rather than a failure.
+type storageNavigationError string
 
-func (n storageNavigation) Error() string { return string(n) }
+func (n storageNavigationError) Error() string { return string(n) }
 
-const errUseExistingStorage storageNavigation = "use existing storage"
+const errUseExistingStorage storageNavigationError = "use existing storage"
+
+// storageProviderChoice includes explicit new and existing storage routes.
+type storageProviderChoice string
+
+const (
+	storageProviderR2Existing storageProviderChoice = "r2-existing"
+	storageProviderS3Existing storageProviderChoice = "s3-existing"
+	storageProviderR2Create   storageProviderChoice = guidedR2Choice
+	storageProviderS3Create   storageProviderChoice = storageChoiceS3New
+)
 
 func storageHelp(p *prompter) {
 	terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
@@ -54,10 +64,10 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		}
 		provider := strings.Split(choice, "-")[0]
 		mode := "new"
-		switch choice {
-		case "r2-existing", "s3-existing":
+		switch storageProviderChoice(choice) {
+		case storageProviderR2Existing, storageProviderS3Existing:
 			mode = "existing"
-		case guidedR2Choice, storageChoiceS3New:
+		case storageProviderR2Create, storageProviderS3Create:
 		default:
 			if provider == existing.Provider && existing.Bucket != "" {
 				mode = "existing"
