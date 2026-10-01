@@ -36,10 +36,10 @@ type prompter struct {
 	// setup_s3_create.go); in memory only.
 	createdBuckets []createdS3Bucket
 	// guided is a guided R2 bucket creation whose key setup has yet to
-	// stage; created is what the last one left in the person's Cloudflare
-	// account.
+	// stage; created is every bucket and key such creations left in the
+	// person's Cloudflare account in this run.
 	guided  *r2Handoff
-	created *r2Created
+	created []*r2Created
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.

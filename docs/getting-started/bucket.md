@@ -34,7 +34,7 @@ pricing](https://developers.cloudflare.com/r2/pricing/)).
    asked (it is hidden). If your shell sets `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID`, as Cloudflare's own tools expect, setup uses them
    and doesn't ask.
-3. Setup asks for a bucket name (suggesting `agent-archive-` and six random
+3. Setup asks for a bucket name (suggesting `agent-archive-` and eight random
    characters) and lets you pick a data location if you care. It then creates
    a new bucket (Cloudflare buckets have no public access by default), creates
    a second token that can read, write, and list objects in **that one bucket

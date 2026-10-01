@@ -195,7 +195,7 @@ func (g *guidedR2Fixture) assertNothingHolds(t *testing.T, output string, secret
 	}
 }
 
-var defaultBucketName = regexp.MustCompile(`^agent-archive-[0-9a-f]{6}$`)
+var defaultBucketName = regexp.MustCompile(`^agent-archive-[0-9a-f]{8}$`)
 
 func routes(reqs []cloudflaretest.Request) []string {
 	var names []string
@@ -986,6 +986,38 @@ func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
 		}
 		g.savedConfig(t)
 	})
+}
+
+// Two guided runs in one setup (the first one's key staged, then "Edit a
+// setting" > storage, and a second bucket made): committing the second names
+// the first's bucket and token, and only those.
+func TestGuidedR2ReportsEveryPairTheCommittedConfigDoesNotUse(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	input := guidedAnswers(append(append(append(append([]string{}, askToken...), "", "n", "", "edit", "storage", guidedR2Choice), askToken...), acceptedRest...)...)
+	out := g.run(t, input, 0)
+	tokens := g.cf.Tokens()
+	if len(tokens) != 2 || len(g.cf.Buckets) != 2 {
+		t.Fatalf("tokens %+v, buckets %v\n%s", tokens, g.cf.Buckets, out)
+	}
+	used := g.savedConfig(t).Storage.Bucket
+	for bucket := range g.cf.Buckets {
+		mentioned := strings.Contains(out, "Setup created the bucket "+bucket+" (it is empty)")
+		if mentioned == (bucket == used) {
+			t.Errorf("bucket %s (committed %s): mentioned %v\n%s", bucket, used, mentioned, out)
+		}
+		if bucket != used {
+			var name string
+			for _, token := range tokens {
+				if strings.Contains(token.Name, " "+bucket+" ") {
+					name = token.Name
+				}
+			}
+			if name == "" || !strings.Contains(out, `an API token named "`+name+`" for it. Neither is used`) {
+				t.Errorf("the token of %s is not named (%q):\n%s", bucket, name, out)
+			}
+		}
+	}
 }
 
 // A failure to reach Cloudflare is never reported as a problem with the token:

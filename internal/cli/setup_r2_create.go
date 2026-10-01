@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -195,7 +193,7 @@ func (p *prompter) finishGuidedCreation() {
 	}
 	p.guided = nil
 	h.c.api.Discard()
-	p.created = &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName}
+	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName})
 	if h.c.tokenFromEnv {
 		terminal.Println(p.out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN, and has dropped it.")
 		return
@@ -224,11 +222,17 @@ func (p *prompter) rollbackGuidedCreation(err error) error {
 // Cloudflare account, and the bootstrap token that could revoke the key is
 // gone.
 func printGuidedLeftovers(p *prompter, cfg credentials.Config) {
-	if p.created == nil || cfg.Bucket != p.created.bucket {
+	var c *r2Created
+	for _, made := range p.created {
+		if made.bucket == cfg.Bucket {
+			c = made
+		}
+	}
+	if c == nil {
 		return
 	}
-	p.created.reported = true
-	terminal.Println(p.out, "Setup created the bucket "+p.created.bucket+" and an API token named \""+p.created.tokenName+"\" for it; both are still in your Cloudflare account.")
+	c.reported = true
+	terminal.Println(p.out, "Setup created the bucket "+c.bucket+" and an API token named \""+c.tokenName+"\" for it; both are still in your Cloudflare account.")
 	terminal.Println(p.out, "If you stop or use other storage, delete the bucket and revoke that token in the dashboard (Manage account > Account API tokens).")
 	terminal.Println(p.out, "")
 }
@@ -240,23 +244,22 @@ func printGuidedLeftovers(p *prompter, cfg credentials.Config) {
 // failed storage check already said it. A saved setup draft that uses the
 // bucket is named, since running setup again resumes with it.
 func noteUnusedCreatedR2(p *prompter, home string) {
-	c := p.created
-	if c == nil || c.reported {
-		return
+	for _, c := range p.created {
+		if c.reported {
+			continue
+		}
+		committed, drafted := savedStorageUses(home, credentials.ProviderR2, c.bucket)
+		if committed {
+			continue
+		}
+		c.reported = true
+		what := "Setup created the bucket " + c.bucket + " (it is empty) and an API token named \"" + c.tokenName + "\" for it."
+		if drafted {
+			terminal.Println(p.out, what+" Your saved setup draft uses them, so running setup again will resume with them. To not use them, choose other storage there, then delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
+			continue
+		}
+		terminal.Println(p.out, what+" Neither is used by your saved setup. To not keep them, delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
 	}
-	uses := func(cfg credentials.Config) bool {
-		return cfg.Provider == credentials.ProviderR2 && cfg.Bucket == c.bucket
-	}
-	if cfg, found, err := config.Load(home); err == nil && found && uses(cfg.Storage) {
-		return
-	}
-	c.reported = true
-	what := "Setup created the bucket " + c.bucket + " (it is empty) and an API token named \"" + c.tokenName + "\" for it."
-	if draft, found, problem, err := readDraft(home); err == nil && found && problem == "" && uses(draft.Config.Storage) {
-		terminal.Println(p.out, what+" Your saved setup draft uses them, so running setup again will resume with them. To not use them, choose other storage there, then delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
-		return
-	}
-	terminal.Println(p.out, what+" Neither is used by your saved setup. To not keep them, delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
 }
 
 // storageConfig is what a pasted account ID or bucket URL would have made:
@@ -367,10 +370,7 @@ func parseR2AccountID(input string) (string, error) {
 // go-ahead.
 func (c *r2Creator) askBucket() error {
 	p := c.p
-	suggested, err := randomBucketName()
-	if err != nil {
-		return err
-	}
+	suggested := newBucketName()
 	name, err := c.askBucketName("Bucket name", suggested)
 	if err != nil {
 		return err
@@ -435,23 +435,6 @@ func (c *r2Creator) askLocation() error {
 		}
 		terminal.Println(p.out, "Choose one of "+strings.Join(cloudflare.LocationHints, ", ")+", or press Enter for automatic.")
 	}
-}
-
-// randomBucketName is agent-archive-<6 random hex>.
-func randomBucketName() (string, error) {
-	suffix, err := randomHex(3)
-	if err != nil {
-		return "", err
-	}
-	return "agent-archive-" + suffix, nil
-}
-
-func randomHex(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("random name: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
 }
 
 // createUntilVerified creates the bucket, mints the key, and checks it, and
@@ -615,10 +598,7 @@ func (c *r2Creator) createBucket(ctx context.Context) error {
 			terminal.Printf(p.out, "A bucket named %s may have been created by the earlier request, which got no answer. Setup can't tell it from a bucket that was already yours, so it won't use it: delete it in the dashboard if it is empty and new, or choose another name.\n", c.bucket.Name)
 		case c.defaultName && !replaced:
 			replaced = true
-			name, e := randomBucketName()
-			if e != nil {
-				return e
-			}
+			name := newBucketName()
 			terminal.Printf(p.out, "The name %s is taken; trying %s.\n", c.bucket.Name, name)
 			c.bucket.Name = name
 			continue
@@ -661,11 +641,8 @@ const tokenWriteHint = "The token needs the " + cloudflare.PermissionTokensWrite
 // what to do.
 func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name string, key credentials.R2Credentials, err error) {
 	p := c.p
-	suffix, err := randomHex(3)
-	if err != nil {
-		return token, "", key, err
-	}
-	name = "agent-archive " + c.bucket.Name + " " + suffix
+	// The default bucket name's random part tells this Mac's tokens apart.
+	name = "agent-archive " + c.bucket.Name + " " + strings.TrimPrefix(newBucketName(), "agent-archive-")
 	resource, err := cloudflare.BucketResource(c.account, c.bucket.BucketRef)
 	if err != nil {
 		return token, name, key, err
