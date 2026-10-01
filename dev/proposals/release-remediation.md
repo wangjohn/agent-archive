@@ -1,34 +1,36 @@
 # Release remediation implementation plan
 
-Status: implementation in progress; independent review/CI and disposable live
-acceptance gates remain. Integration is pending. Prepared: 2026-10-01. Refreshed baseline:
-`61d068b` on `main`, compared with `v0.1.1`. The original investigation used
-`d85766f`; its observations below are historical reproductions, not claims
-that every failure remains on the refreshed baseline.
+Status: implementation record; final review, commit, CI, and integration evidence
+are maintained in the linked PRs. Release sign-off still requires disposable
+live acceptance. Prepared: 2026-10-01. Refreshed baseline: `61d068b` on `main`,
+compared with `v0.1.1`. The original investigation used `d85766f`; its observations
+below are historical reproductions, not claims that every failure remains on
+the refreshed baseline.
 
 ## Refreshed execution record
 
-- A: resumable cleanup is implemented in [PR #261](https://github.com/wangjohn/agent-archive/pull/261) and remains under independent review. The
-  manifest remains immutable; recovery builds a new reviewable plan from
-  original surviving keys. Integration and live disposable-provider acceptance
-  are pending.
+- A: [PR #261](https://github.com/wangjohn/agent-archive/pull/261) implements
+  resumable cleanup. The manifest remains immutable; recovery builds a new
+  reviewable plan from original surviving keys. Consult its review and checks for the final
+  deletion-boundary and recovery evidence.
 - B: the refreshed baseline already retains immutable rendered pager bytes.
-  The remaining change tests complete fallback for startup failures, including
-  shell exits 126/127 ([PR #259](https://github.com/wangjohn/agent-archive/pull/259)).
-  Ordinary pager exit, signals, and Ctrl-C must preserve
-  current behavior without replaying the listing.
-- C/D: [PR #264](https://github.com/wangjohn/agent-archive/pull/264) makes the README reach app-specific verified
-  capture and uses `list --all-projects --json --limit 0` for sizing. Live
-  per-app onboarding acceptance remains pending.
+  [PR #259](https://github.com/wangjohn/agent-archive/pull/259) tests complete
+  fallback for startup failures, including shell exits 126/127. Ordinary pager
+  exit, signals, and Ctrl-C preserve behavior without replaying the listing.
+- C/D: [PR #264](https://github.com/wangjohn/agent-archive/pull/264) makes the
+  README reach app-specific verified capture and uses
+  `list --all-projects --json --limit 0` for sizing. Local documentation and
+  CLI verification is recorded below; live per-app acceptance remains pending.
 - E: the baseline already uses a bounded durable admission-intent queue and
-  moves staging disk synchronization outside its short queue lock. The
-  remaining implementation in [PR #262](https://github.com/wangjohn/agent-archive/pull/262) addresses a pause/resume generation race so delayed
-  intents cannot cross that boundary. Review, integration, final contention
-  results, and latency evidence remain pending.
+  moves staging disk synchronization outside its short queue lock.
+  [PR #262](https://github.com/wangjohn/agent-archive/pull/262) implements the
+  pause/resume generation boundary fix for delayed intents. Consult its final review,
+  head, and checks for contention and registration regression evidence.
 
 The package designs below retain the original requirements, adjusted where the
-refreshed implementation changed their premise. No completed review, merge, or
-final integrated test run is asserted by this record.
+refreshed implementation changed their premise. Consult each PR for its final
+reviewed head, check results, and integration state; local implementation and
+test evidence do not establish disposable live release acceptance.
 
 ## Outcome and scope
 
@@ -270,8 +272,8 @@ this plan with the event format, lock order, replay ownership, and migration:
 
 The refreshed baseline has implemented the admission-intent inbox. Retain the
 requirements above as the design and regression checklist, and audit delayed
-publication across pause/resume generations. E stays incomplete until the
-remaining boundary fix satisfies the acceptance criteria. Ordinary lock exhaustion
+publication across pause/resume generations. The boundary fix and its final
+regression evidence are tracked in PR #262. Ordinary lock exhaustion
 currently only reaches stderr; ensure unrecoverable contention is visible in
 status using the existing content-free, bounded diagnostic conventions.
 
@@ -361,15 +363,15 @@ and disposable S3/R2 cleanup recovery. Missing access or an unavailable platform
 is a named pending gate, not evidence of success. Do not test against the real
 user's archive, hooks, LaunchAgent, or credentials.
 
-| Gate | Pass condition | Initial status |
+| Gate | Pass condition | Evidence / live status |
 | --- | --- | --- |
-| A | Every deletion-boundary failure resumes to exact targeted cleanup; unrelated objects remain. | Pending |
-| B | Pager startup failure after partial/full consumption retains the full fallback listing; ordinary exit/signals do not replay. | Pending |
-| C | Main quickstart reaches an app-specific verified capture. | Pending |
-| D | Sizing denominator uses total sessions, including archives larger than 50. | Pending |
-| E | Contention tests and repeat macOS overlap runs pass with bounded hook latency and no admission/index regressions. | Pending |
-| Integration | Stable final-commit required CI is green; changelog/migration/install docs match that commit. | Pending |
-| Release acceptance | Signed asset, upgrade, actual-provider read-back and cleanup recovery evidence recorded; coverage gaps explicit. | Pending |
+| A | Every deletion-boundary failure resumes to exact targeted cleanup; unrelated objects remain. | Local test evidence and final review status: [PR #261](https://github.com/wangjohn/agent-archive/pull/261). Disposable provider acceptance: Pending. |
+| B | Pager startup failure after partial/full consumption retains the full fallback listing; ordinary exit/signals do not replay. | Completed local regression checks and reviewed-head evidence: [PR #259](https://github.com/wangjohn/agent-archive/pull/259). |
+| C | Main quickstart reaches an app-specific verified capture. | Completed local documentation/CLI checks: [PR #264](https://github.com/wangjohn/agent-archive/pull/264). Live per-app acceptance: Pending. |
+| D | Sizing denominator uses total sessions, including archives larger than 50. | Completed temporary 200-session fixture and documentation checks: [PR #264](https://github.com/wangjohn/agent-archive/pull/264). |
+| E | Contention tests and repeat macOS overlap runs pass with bounded hook latency and no admission/index regressions. | Local regression evidence and final review status: [PR #262](https://github.com/wangjohn/agent-archive/pull/262). Live macOS overlap/latency acceptance: Pending. |
+| Integration | Stable final-commit required CI is green; changelog/migration/install docs match that commit. | Final heads, required CI, and merge evidence: linked PRs #259, #261, #262, and #264. |
+| Release acceptance | Signed asset, upgrade, actual-provider read-back and cleanup recovery evidence recorded; coverage gaps explicit. | Pending; record live evidence in the release acceptance record. |
 
 Release sign-off requires A through E and integration to pass. Publishing a
 candidate to obtain signed-asset evidence is distinct from promoting it as
