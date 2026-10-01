@@ -152,12 +152,66 @@ func tableHeader(opts listFormatOptions) []string {
 	return append(cols, "ID")
 }
 
+// subagentHint is what follows a title about the subagents: " · 45 subagents"
+// after a parent, " · subagent of d7a77938" after a subagent.
+func subagentHint(r listRow) string {
+	switch {
+	case r.Depth > 0:
+		// Shown under its parent, which the indent says.
+		return ""
+	case r.Parent != "":
+		return " · subagent of " + r.Parent
+	case r.Children == 1:
+		return " · 1 subagent"
+	case r.Children > 1:
+		return " · " + strconv.Itoa(r.Children) + " subagents"
+	}
+	return ""
+}
+
 // liveMark leads the title of a session active right now.
 const liveMark = "●"
 
+// cursorMark leads the title of the row Enter acts on while the browser
+// filters.
+const cursorMark = "▸"
+
+// subagentMark leads the title of a subagent shown under its parent.
+const subagentMark = "↳"
+
+// rowNumber is the number a row is chosen by, which is blank for a row that
+// had none before the filter brought it in (a subagent).
+func rowNumber(r listRow) string {
+	if r.Index <= 0 {
+		return ""
+	}
+	return strconv.Itoa(r.Index)
+}
+
+// indentedTitle is the title of a subagent shown under its parent, set in
+// from the parents' titles.
+func indentedTitle(r listRow) string {
+	if r.Depth <= 0 {
+		return r.Title
+	}
+	return strings.Repeat("  ", r.Depth) + subagentMark + " " + r.Title
+}
+
+// cursorCell leads a title with the mark of the row Enter acts on, or room
+// for it, when the table has one.
+func cursorCell(r listRow, opts listFormatOptions) string {
+	switch {
+	case !opts.Cursor:
+		return ""
+	case r.Highlight:
+		return cursorMark + " "
+	}
+	return "  "
+}
+
 // tableCells is one row of the plain table, in tableHeader's columns.
 func tableCells(r listRow, opts listFormatOptions) []string {
-	title := r.Title
+	title := indentedTitle(r)
 	if opts.LiveMarks {
 		// Room for the dot on every row, so titles stay aligned.
 		if r.Live {
@@ -166,11 +220,12 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 			title = "  " + title
 		}
 	}
-	if r.SkillHint != "" {
+	title = cursorCell(r, opts) + title
+	if hints := r.SkillHint + subagentHint(r); hints != "" {
 		if opts.Style.color {
-			title += opts.Style.dim(r.SkillHint)
+			title += opts.Style.dim(hints)
 		} else {
-			title += r.SkillHint
+			title += hints
 		}
 	}
 	id := archive.DisplayLine(r.ShortID)
@@ -179,7 +234,7 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 	}
 	var cells []string
 	if opts.Numbered {
-		cells = append(cells, strconv.Itoa(r.Index))
+		cells = append(cells, rowNumber(r))
 	}
 	cells = append(cells, title)
 	if opts.ShowPR {
@@ -198,12 +253,12 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 func printSessionRow(tw *tabwriter.Writer, r listRow, opts listFormatOptions) {
 	if opts.Verbose {
 		if opts.Numbered {
-			terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				r.Index, r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
+			terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				rowNumber(r), cursorCell(r, opts)+indentedTitle(r), archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
 			return
 		}
 		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
+			cursorCell(r, opts)+indentedTitle(r), archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
 		return
 	}
 	terminal.Println(tw, strings.Join(tableCells(r, opts), "\t"))

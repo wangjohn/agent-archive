@@ -18,6 +18,7 @@ agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
+agent-archive list "flaky retention"  # the sessions these words find, as for show (below)
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -37,7 +38,11 @@ agent-archive list --rebuild-index  # one-time full scan for older archives
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same
-# session browser as list. A title substring or short ID also works.
+# session browser as list. Words also work, as for `list "<words>"`: every
+# word must appear in the session's name, title, branch, project, app, or
+# the start of its ID (4 characters or more), and #212 or 212 also matches a
+# pull request number, never the start of an ID. This repository's sessions
+# are searched first, subagent sessions last.
 agent-archive show
 agent-archive show SESSION_ID
 agent-archive show "OAuth callback"
@@ -74,7 +79,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.17.0 (partial) · filter 13
+     origin hook · parser 0.18.0 (partial) · filter 14
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -115,9 +120,25 @@ session's summary replace each other instead of piling up:
   row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
   the top and bottom. A status line below it says where you are (`Top`, a
   percentage, `Bottom`, or `All` when the whole list fits), for example
-  `Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit`. A
+  `Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit`. A
   project scrolled into keeps its heading at the top, marked
-  `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
+  `(continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
+- Press `/` to filter the rows as you type, as in `less`: a line at the
+  bottom takes the words, and the rows narrow with each character. The words
+  are the ones `list "<words>"` takes: every word must appear in a session's
+  name, title, branch, project, app, or the start of its ID, and `#212` or
+  `212` also matches a pull request number. The first session that matches
+  is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
+  (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
+  Backspace on an empty one does too. Rows keep the numbers they have
+  unfiltered; a session the filter finds past the list's limit is numbered
+  on from its last row, and is chosen with the mark (after Esc only the
+  list's own numbers choose). A subagent session that matches is shown indented under its
+  parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
+  when it does not match (the mark starts on the subagent, not the parent);
+  a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
+  open the browser with the words already in the filter, and the rest of the
+  archive is one Esc away.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
@@ -129,20 +150,26 @@ session's summary replace each other instead of piling up:
   anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
-- Wherever else a session is picked from a list (the handoff picker, bare
-  `show --json`, and a `show` query that matches more than one session),
-  you type an answer and press Enter. A list taller than the window is
-  shown a page at a time there, with a line such as
-  `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p` move
-  between pages, and a project whose sessions started on the previous page
-  is headed again, marked `(continued)`. The browser reads lines the same
-  way when its input is not a terminal; there, a summary taller than the
-  window is cut with `… N more lines`, and without a pager `m` prints the
-  lines left out.
+- Every place a session is picked from a list is this one browser: `list`,
+  bare `show`, bare `show --json` (a heading `Show ·`, and Enter prints the
+  chosen sidecar instead of opening its summary), a `show` query that
+  matches more than one session (the heading says `"words" matches 3`), and
+  the [handoff picker](handoff.md#where-the-session-comes-from).
+- When the terminal's input cannot be read a key at a time, the browser reads
+  lines. A list taller than the window is shown a page at a time, with a line
+  such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p`
+  move between pages, and a project whose sessions started on the previous
+  page is headed again, marked `(continued)`. Type a row number or short
+  SESSION_ID to choose; any other answer is words to filter by, the table is
+  drawn again with the sessions that match (`3 sessions match "flaky" · a
+  number, more words, or Enter for all`), and more words narrow it further.
+  An empty answer clears the filter, and quits when there is none. A summary
+  taller than the window is cut with `… N more lines`, and without a pager
+  `m` prints the lines left out.
 
 Bare `show --transcript` is a usage error: pick a session with `show` and
-press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker
-and prints the chosen sidecar.
+press `t`, or give a SESSION_ID. Bare `show --json` picks one session in the
+browser and prints its sidecar.
 
 On an interactive terminal, bare `agent-archive` (no command) opens the
 same session browser as `list` when capture is already set up.
@@ -151,8 +178,8 @@ None of this happens when a coding agent runs the command, even if its shell
 is a pseudo-terminal. With `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment, or `AGENT_ARCHIVE_NONINTERACTIVE=1`,
 `list` prints its table without a pager or browser, bare `show` asks for a
-SESSION_ID, and a `show` title that matches several sessions prints the
-candidates on stderr and exits 1, exactly as when piped.
+SESSION_ID, and `show` words that match several sessions print the
+candidates on stderr and exit 1, exactly as when piped.
 `AGENT_ARCHIVE_NONINTERACTIVE=0` brings the browser back; see
 [configuration](../reference/configuration.md#environment-variables) and
 [troubleshooting](troubleshooting.md#no-picker-or-prompt-in-an-agents-terminal).
@@ -176,6 +203,15 @@ configured project basename. The ID column is a short prefix you can pass to
 `show`; if multiple archived IDs share that prefix, use a longer ID from
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
+
+Codex currently uses the first-prompt preview because its sidebar title is
+stored separately from the transcript. The table leaves subagent sessions
+out: the footer says how many, and a parent carries a `· N subagents` hint.
+Words find one, as for `list "<words>"`, and its row reads `· subagent of`
+its parent's short ID; a Claude Code subagent's name is the description its
+parent gave the task (see below). New and refreshed previews keep up to 128
+characters from parser `0.17.1`; older metadata keeps its shorter saved
+preview.
 
 Metadata also says what a session did without downloading its transcript:
 when it ended (`ended_at`), its most-called tools (`tools_used`), and how
@@ -201,7 +237,10 @@ rows; a session with no name keeps the first prompt as its heading. `PRs`
 lists the pull requests the agent linked to the session, where `Git` counts
 the ones its own commands opened or merged. A session published before the
 name was kept (privacy filter 13) gets one the next time the collector
-re-reads its transcript, if the transcript is still on the machine.
+re-reads its transcript, if the transcript is still on the machine. A Claude
+Code subagent's name is the description its parent gave the task (filter 14
+and parser `0.18.0`), so a subagent archived before that gets one the same
+way.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its

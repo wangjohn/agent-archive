@@ -14,14 +14,23 @@ available with `--limit 0`, and an older archive without an index uses that
 scan until `list --rebuild-index` completes. The index is a hint: every
 displayed session must pass a live sidecar read and validation.
 
-The target covers a listing of every project: `list` outside any project,
-and `list --all-projects` piped or with `--json`. Inside a project, `list`
-applies the repository's scope before `--limit` (see
-[session finding](../specs/session-finding.md#deviations)), so it reads the
-whole listing, through the local metadata cache, as the handoff picker and
-bare `show` do; so does `list --all-projects` on a terminal, whose `a` key
-can switch to the scope. The index's repository-scoped window is to bring
-those back under the target.
+The target covers `list --json` without search words, outside any project
+or with `--all-projects`. Every other listing reads the whole listing,
+through the local metadata cache, as the handoff picker and bare `show` do
+(see [session finding](../specs/session-finding.md#deviations)):
+
+- Inside a project, `list` and `list --json` apply the repository's scope
+  before `--limit`.
+- `list`'s table and browser, wherever they run (outside any project and
+  with `--all-projects` too), leave subagent sessions out before `--limit`
+  counts, and count them for the footer and each parent's `· N subagents`
+  hint. The index's newest page cannot do either: a top-level filter on it
+  would still read several subagent sidecars for each session shown, and the
+  counts need every one.
+- `list "<words>"` searches every session.
+
+The index's repository-scoped window and its per-parent subagent counts are
+to bring those back under the target.
 
 The benchmark in `internal/reader/list_index_bench_test.go` reports elapsed
 time and allocations for the cold full-scan baseline, indexed cold listing,

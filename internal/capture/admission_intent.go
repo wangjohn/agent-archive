@@ -36,6 +36,14 @@ const (
 	maxAdmissionIntents   = 128
 	maxAdmissionIntentAge = 24 * time.Hour
 	admissionQueueWait    = 200 * time.Millisecond
+	// pruneAdmissionIntentsWait is setup's wait for the queue lock. Hooks sync
+	// outside it, but a rename under it can still stall for over a second on
+	// a busy machine. Setup runs on no hook's budget; this bound only keeps a
+	// wedged holder from hanging it.
+	pruneAdmissionIntentsWait = 10 * time.Second
+	// clearAdmissionIntentsWait stays short: pause and resume clear holding
+	// hooks.lock, which hooks wait on inside their own budget.
+	clearAdmissionIntentsWait = 2 * time.Second
 )
 
 type cursorFollowupEvent string
@@ -51,7 +59,7 @@ func admissionIntentDir(home string) string { return filepath.Join(home, "admiss
 // hooks.lock while changing the pause flag, so a hook that times out during
 // that change either queues before this purge or observes the paused config.
 func ClearAdmissionIntents(home string) error {
-	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", clearAdmissionIntentsWait)
 	if err != nil {
 		return fmt.Errorf("lock admission intent queue: %w", err)
 	}
@@ -78,7 +86,7 @@ func ClearAdmissionIntents(home string) error {
 // PruneAdmissionIntents removes retry records whose project or destination
 // setup changed. The queue lock also serializes this with hook-side writes.
 func PruneAdmissionIntents(home string, cfg config.Config) error {
-	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", pruneAdmissionIntentsWait)
 	if err != nil {
 		return fmt.Errorf("lock admission intent queue: %w", err)
 	}
@@ -126,21 +134,81 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 	return included
 }
 
-// queueAdmissionIntent is only used after hooks.lock times out. It queues a
-// proven start, or a Cursor response/stop that supplies a valid transcript
-// path. A follow-up can update an existing registration but never admit a new
-// session. The queue lock bounds the count across concurrent hook processes.
+// queueAdmissionIntent queues a proven start, or a Cursor response/stop that
+// supplies a valid transcript path, when hooks.lock timed out or (for a
+// Cursor follow-up) the session has not registered yet. A follow-up can
+// update an existing registration but never admit a new session. The queue
+// lock bounds the count across concurrent hook processes.
 func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
+	return queueAdmissionIntentAfterStage(home, harness, kind, payload, now, nil)
+}
+
+// queueAdmissionIntentAfterStage is queueAdmissionIntent with afterStage,
+// when not nil, called once the intent is staged and synced and before the
+// queue lock is taken, so a test can act in that window.
+//
+// The intent is written and synced before the lock and only renamed into
+// the queue under it; the directory is synced after the lock is released.
+// Each sync is an F_FULLFSYNC on macOS and can take seconds on a busy
+// machine, and setup's prune and pause's clear wait for this lock, so
+// neither waits for a hook's disk. Each intent has a file of its own, so
+// nothing another holder does can make the staged file stale. Only the
+// first intent, before the queue's folder exists, is staged under the lock:
+// staging outside it would create the folder, and could recreate one that
+// uninstall's purge had just deleted under the lock.
+func queueAdmissionIntentAfterStage(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func()) (bool, error) {
 	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
 	if err != nil || !queued {
 		return false, err
 	}
+	id, err := local.ID()
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
+	staged, err := local.StageInExistingDir(path, intent)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	defer staged.Discard()
+	if afterStage != nil {
+		afterStage()
+	}
+	committed, err := commitAdmissionIntent(home, intent, payload, path, staged)
+	if err != nil || committed == nil {
+		return false, err
+	}
+	if err := committed.SyncDir(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// commitAdmissionIntent puts an intent in the queue under the queue lock,
+// unless the queue is full or the intent is no longer valid, and returns
+// the committed file (nil when it queued nothing). staged is the intent
+// already staged at path, or nil to stage it here, under the lock; the
+// caller discards its own staged file if it is not committed.
+func commitAdmissionIntent(home string, intent admissionIntent, payload map[string]any, path string, staged *local.Staged) (*local.Staged, error) {
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
 	if err != nil {
-		return false, fmt.Errorf("lock admission intent queue: %w", err)
+		return nil, fmt.Errorf("lock admission intent queue: %w", err)
 	}
 	defer unlock()
-	return writeAdmissionIntent(home, intent, payload)
+	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if staged == nil {
+		if staged, err = local.Stage(path, intent); err != nil {
+			return nil, err
+		}
+		defer staged.Discard()
+	}
+	if err := staged.Commit(); err != nil {
+		return nil, err
+	}
+	return staged, nil
 }
 
 func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (admissionIntent, bool, error) {
@@ -179,7 +247,9 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	return intent, true, nil
 }
 
-func writeAdmissionIntent(home string, intent admissionIntent, payload map[string]any) (bool, error) {
+// admissionIntentStillQueueable is the check made under the queue lock
+// before an intent goes in.
+func admissionIntentStillQueueable(home string, intent admissionIntent, payload map[string]any) (bool, error) {
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
@@ -195,15 +265,17 @@ func writeAdmissionIntent(home string, intent admissionIntent, payload map[strin
 	if !os.IsNotExist(err) && err != nil {
 		return false, err
 	}
-	if len(entries) >= maxAdmissionIntents {
+	// Only queued intents count. Hooks stage theirs in the same folder before
+	// taking the lock, and those temporary files, this hook's own among them,
+	// are not in the queue.
+	queued := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			queued++
+		}
+	}
+	if queued >= maxAdmissionIntents {
 		return false, errors.New("admission intent queue is full")
-	}
-	id, err := local.ID()
-	if err != nil {
-		return false, err
-	}
-	if err := local.Write(filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id)), intent); err != nil {
-		return false, err
 	}
 	return true, nil
 }

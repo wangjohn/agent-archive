@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1, 2 and 4 merged, PR 3 (parser 0.17.0) in review, the rest not started. Where this
-plan and the code differ once packages merge, the code is the reference and
-differences go under Deviations.
+PRs 1 to 5 and 7 merged, PR 6 (one browser) in review, PR 8 not started.
+Where this plan and the code differ once packages merge, the code is the
+reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -764,3 +764,242 @@ guide. Live check on the owner's Mac:
   `TestFilterV13NewRecordsChangeOnlyNameAndPullRequests`, asserting that they
   change `name` and `pull_requests` and nothing else. The non-interactive
   ambiguous-`show` list also prints `DisplayTitle`.
+- PR 5: the matcher's `prs` is parallel to `words` (`prs[i]` is word i read as
+  a PR number, 0 when it is not one), so each word is checked on its own. A
+  word `#N` matches a PR number exactly, or the text `#N` in a field when the
+  next character is not a digit (so `#21` finds neither PR 213 nor "PR
+  #213"); a bare number of 1 to 6 digits matches a PR exactly or as any other
+  text does (a substring). `fieldsOf` collects every PR the session linked
+  (`pull_requests`) and every `pr_created` in `git_activity`, deduplicated,
+  not merged ones; `LatestPR` stays the PR column's.
+- PR 5: an exact session ID is a single word equal to a full ID, or to an
+  ID's first 8 characters (the short ID the table shows). It wins before the
+  tiers, as §3's first tier, across every session the search reads: an exact
+  ID of an out-of-scope session or a subagent outranks an in-scope title that
+  mentions it, so a candidate table's `Next:` command takes the row it names.
+  In `handoff` the exact full-ID reads (registered, then the archive) still
+  come first, unchanged; then an exact short ID among this machine's sessions,
+  and then, for a word of 8 hex characters only, the archive's (subagents
+  too), so other words still need no network when this machine answers them.
+- PR 5: `--harness`, `--since` and the other filters are applied when the
+  archive is listed, before the tiers, rather than after them, so a filter can
+  never empty a tier and hide a lower one. `--limit` applies last, as planned.
+- PR 5: the tiers' shared code is `searchSessions` (archived metadata: `list`,
+  `show`) and `matchPool` (`handoff`'s rows, which read this machine's sessions
+  before the archive). Local subagent registrations are never searched (the
+  picker never listed them; one is still handed off by its full ID), so
+  `handoff`'s subagent tier is the archive's.
+- PR 5: `list`'s table and browser always read every session's metadata (the
+  cache applies) instead of the index's newest page, so subagents can be left
+  out before `--limit` and counted for the footer; `list --json` without a
+  query keeps the index fast path. The index spec's per-parent counts will
+  bring the fast path back. A table with an index-limited count ("Showing 2
+  or more") no longer exists.
+- PR 5: with a query, `list` in a scope shows only the first tier's sessions
+  in that scope, and an empty scope falls back to all projects as PR 4's
+  fallback does, so `a` toggles between "in scope" and "everywhere" for the
+  same words. The note about matches elsewhere is `list`'s footer line (in
+  place of the count when nothing was cut, after it otherwise), and the
+  browser, which names the toggle in its heading, prints the same line.
+  `scope.outside_matches` counts the sessions of the answering tier outside
+  the scope (top-level ones, or subagents when those answered).
+- PR 5: the footer's hidden count reads as §1 has it, ending in a period:
+  `42 sessions (318 subagent sessions hidden; search to find one).`; when
+  `--limit` cut the list, the same parenthesis follows the existing `Showing
+  N of M session(s)`. A query hides nothing: subagents are a tier, not hidden.
+- PR 5: `show "<words>"` has no `--all-projects` or `--project`, so it always
+  searches from the working directory's scope, and prints the "N more in other
+  projects" note on stderr too, where the plan names only `handoff` and
+  `list`. Its several-matches terminal chooser is still the line-mode
+  `pickBrowseSession`; PR 6 replaces it with the browser.
+- PR 5: the candidate table is `candidateList` (`candidates.go`), shared by
+  `handoff` and `show`. It shows the PROJECT column only when the rows span
+  projects and the PR column only when a row has a PR; it names the scope in
+  its first line (`matches 3 sessions in agent-archive`) only when the scope
+  answered. The `(or: agent-archive list "<words>" --json)` line repeats
+  `--harness`, `--all-projects` and `--project` when `handoff` was given them,
+  and is left out when the query was cut for display or holds control
+  characters, since the command would not be the one searched. `show`'s table
+  ends with the same two lines, the `Next:` one being `agent-archive show <ID>`.
+- PR 5: a subagent is labelled `· subagent of <parent short ID>` after its
+  title (the parent's first 8 characters, `listRow.Parent`), in every table
+  that holds one, not only the candidate table; PR 6's indented `↳` row
+  replaces it. A parent's hint is `· N subagents` (`· 1 subagent`), after the
+  skill hint, counted from the sessions already loaded
+  (`listFormatOptions.Children`).
+- PR 5: `list "<words>"` takes one positional argument, before or after the
+  flags; a blank one is a usage error, and a query nothing matches prints `No
+  archived sessions match "<words>".` and exits 0, as an empty list does.
+  Pre-filling the browser's `/` filter with the query is PR 6's; until then it
+  opens over the matched rows.
+- PR 5: `sessionFields` declares one field per line (`Name`, `Title`, `Branch`,
+  `Project`, `Harness`, `SessionID`, then `PRs []int`), because the repository's
+  lint (LV1003) rejects several names in one declaration; the names and types
+  are those of the shared-names table.
+- PR 5: "short or full ID prefix" (§4) is read per word with two limits. A
+  word that is a PR number (`#N`, or a bare number of 1 to 6 digits) never
+  matches the start of an ID, and any other word does only from 4 characters
+  (`minIDPrefixWord`, git's shortest abbreviation). Session IDs are random
+  hex, so without them `handoff 21` meant for PR 21 also matched about one
+  session in 256 by its ID, a 3-digit PR one in 4096, and a short word such as
+  "add" or "bed" one in 4096, making PR and word searches ambiguous in a large
+  archive (and a test flaky when a fixture's random ID began with "212"). The
+  old matcher took a prefix of any length, but only of the whole query, which
+  had no PR numbers. An exact full ID, or exactly the 8-character short ID,
+  still wins outright (`exactIDWins`); an ID that starts with digits only is
+  found by more than 6 of its characters.
+- PR 7: the `.meta.json` reaches the filter through
+  `ClaudeAdapter.FilterSubagentJSONL(r io.Reader, metaJSON []byte)`, not a
+  field on the `Adapter` interface, which stays a reader of one transcript. The
+  collector's `filterReader` calls it when the adapter is Claude Code's, the
+  registration has a `ParentSessionID`, and the transcript is named
+  `agent-<id>.jsonl` (`archive.SubagentMetaPath`: the sibling is
+  `agent-<id>.meta.json`). The file is read through the same non-blocking
+  regular-file open as the transcript and at most `MaxSubagentMetaBytes`
+  (16 KB) of it, after an `Lstat` that refuses a symbolic link (and a check
+  that the file opened is the one found), so a link never makes it read a
+  file elsewhere; anything else (missing, a link, a directory or pipe,
+  oversized, not a JSON object, no non-blank string `description`) is as if
+  absent, with no gap and no warning. Only `description` is read;
+  `worktreePath` and `agentType` are never kept, and are not reported as
+  omitted keys.
+- PR 7: the description is cut to 512 bytes, after redaction (a cut before it
+  could leave half a secret that no pattern matches) and then redacted again
+  until stable, with a `content_truncated` gap. The plan said "a sane cap";
+  512 is far under a prompt string's 64 KB, and the parser cuts `name` to 128
+  runes anyway.
+- PR 7: the `subagent-meta` record is written only when the transcript has
+  records of its own. The collector reads an empty subagent transcript as
+  "not written yet" (`subagentTranscriptEmpty`) and waits, and a transcript
+  with no recognized record as unsafe; the record must change neither. It has
+  no `sessionId`, `agentId`, or timestamp, so the provenance checks are
+  unchanged. The filter also accepts a `subagent-meta` record in its own
+  input, because a retained snapshot is filtered again when the filter
+  version changes (`refilterBundle`), and keeps at most one (the file's wins,
+  else the first; later ones are dropped with an `unsupported_value_omitted`
+  gap). A top-level transcript that holds such a line would get a name from it,
+  as it would from a `custom-title` line; both are the person's own file and
+  pass the prompt rules.
+- PR 7: the plan put a subagent's `name` in parser 0.17.0's field table. It is
+  in parser 0.18.0 (`DefaultParserVersion` 0.17.1 to 0.18.0), because 0.17.0
+  and 0.17.1 shipped without it: `deriveSessionName` also reads
+  `subagent-meta`. The record is first, so a `custom-title` (which a subagent
+  transcript does not normally hold) comes later and wins, as the last name
+  always does. A subagent's own prompts are sidechain records, which are not
+  the person's, so its `title` is empty and `name` is its only label.
+- PR 7: backfill needs no code. `claudeSubagents` only lists the
+  `agent-<id>.jsonl` files (and already ignores the `.meta.json` beside them);
+  the plan's filter call there (`FilterTranscriptFile`, which has no
+  registration) is a check that the collector would register the subagent and
+  its output is not kept. An import saves a subagent candidate, and the
+  collector filters it with the registration it assembles from the parent
+  (`ParentSessionID` set, `TranscriptPath` the same file), which is where the
+  description is read, so imported and hook-reported subagents are the same
+  path (`TestImportedSubagentIsPublishedWithItsDescription`).
+  `FilterTranscriptFile` (`handoff --file`, backfill's check) reads no
+  `.meta.json`.
+- PR 7: a changed or late `.meta.json` is not treated as a rewrite. The
+  collector's check that a new snapshot extends the last one
+  (`nativeEvidenceExtends`) leaves a leading `subagent-meta` record out of
+  both sides (`archive.WithoutSubagentMeta`), as it does a Cursor chat's name;
+  without that, a subagent captured before its file existed would be blocked
+  with `transcript_rewritten` the next time its transcript grew. The scan
+  signature that lets an unchanged session skip a read is the transcript's
+  size and modification time only, so a `.meta.json` that appears or changes
+  beside a transcript that does not change is not noticed until the transcript
+  changes or a filter or adapter version changes (a parser version alone
+  re-derives metadata from the retained snapshot, not the file). A subagent is
+  registered when its `SubagentStop` fires, or when backfill finds it, so
+  the file is normally there at the first read; one captured before it was
+  written and never rescanned stays without a name.
+- PR 7: `filter-golden.json` gains one entry, for the new
+  `claude-subagent.jsonl` fixture, whose golden test filters it with the
+  `claude-subagent.meta.json` beside it; every existing entry is unchanged,
+  since a transcript filtered without a file is byte for byte what it was.
+  Fixtures filtered before it that the golden file never listed were left
+  unlisted. Two fuzz targets are added (`FuzzSubagentMeta`,
+  `FuzzSubagentMetaDropsSecrets`) beside the description shapes in
+  `fuzzSecretRecords`.
+- PR 6: `browserSpec` carries `Choices *scopeChoices` (PR 4's rows for the
+  scope and for all projects, which `a` switches between) in place of the
+  plan's `Rows []listRow`, and also `Command`, `Store` and `NoPager`. A caller
+  whose rows are already chosen (an ambiguous word's matches) wraps them with
+  `rowChoices`, a scope-less choices. `runBrowser(ctx, env, p, stdout, stderr,
+  spec) (row, picked, code)` takes the prompter, the writers and a context
+  (the details read the archive, and the `show` resolver has one) besides the
+  environment and spec. `runSessionBrowser` is folded into it, not kept as a
+  wrapper: its browse mode is `Mode: browseSessions`. The sessionBrowser's
+  details functions take the context as a parameter.
+- PR 6: `Query` fills the filter for every caller. `list "<words>"` opens over
+  the scope's top-level sessions with the words in the filter, and the filter
+  searches every session of the scope (subagents too, and past `--limit`; row
+  numbers continue past the last unfiltered row, and a subagent has none; the
+  table's rows keep the table's numbers even when the search, read later,
+  orders them otherwise, as the handoff picker's does when one of this
+  machine's sessions was active in between (`withTableNumbers`); in
+  the handoff picker a session not uploaded yet is searched only within the
+  picker's 50 rows, as a title search reads them, since its title takes
+  reading its transcript), so editing the words widens the search; Esc clears
+  the filter to the plain list. PR 5's tiers still decide which scope the
+  browser opens on (a scope with no match falls back to all projects, saying
+  so while the filter holds the opening words; the scope's sessions are still
+  one `a` away, since only the words missed them) and the note about matches
+  elsewhere, which shows while the filter holds the opening words; the
+  subagent tier's "last, only when nothing else matches" is replaced in the
+  browser by nesting under the parent (§5). The ambiguous `show` and `handoff`
+  choosers pass their matches as the rows and the words as `Query`, so their
+  heading is `"words" matches N` and Esc lists the matches. Their interactive
+  picker lists every match, not the first 20 (`handoffCandidateLimit` still
+  bounds what a pipe or an agent is shown): it scrolls and filters, and a cap
+  would have hidden what Esc and the filter are for.
+- PR 6: `show "<words>"` with several matches on a terminal browses (Enter
+  shows the details, as the table says) unless `--json` or `--transcript` is
+  given, when it picks one session (`Show ·`) for the caller to print, since
+  the browser cannot print JSON or a transcript for a session it also keeps
+  open. `resolveShowQuery` takes `noPager` and `pickOne` for it.
+- PR 6: while the filter line is open, `a`, `n`, `p` and `q` are typed text
+  (§5 says they act outside it), so the other scope is one Esc away; digits
+  are typed text too, so in key mode a row is chosen by its number after
+  Esc, and in line mode at once. A row the filter finds past the table's limit is
+  numbered on from the table's last row, and is chosen in the filter: with
+  the highlight and Enter in key mode, and in line mode by its number while
+  the page drawn shows it. Once the filter is gone (and in line mode on
+  another page of it), a number past the table picks nothing (key mode
+  refuses it, line mode takes it as words), so it never names a session the
+  person has not seen; the table's own numbers always pick, as §5 asks; the
+  heading while filtering names `Esc clear`, not `a`. Esc clears the words and
+  closes the line in one press, and Backspace on an empty filter closes it. In
+  line mode `a` still switches the scope with a filter on, and keeps it.
+- PR 6: the `/ filter` hint is on the key-mode status line, not in the
+  heading as §5's picture has it, so a `list` outside any project (which has
+  no heading) names it too. The highlight starts on the first row the words
+  match, not the first row shown, as §5's `/208` picture has it: a parent
+  shown only for its subagent is not what Enter acts on until ↑ moves there. The heading while filtering is `<verb> · <scope>
+  · "words" matches N · … · Esc clear` and the marked row has `▸` before its
+  live dot (`listFormatOptions.Cursor`); a subagent is `  ↳ title`, indented
+  two spaces, with no `· subagent of` hint, and the parent keeps its `· N
+  subagents` hint while filtering. Columns a filter's rows no longer share
+  come back (`filteredFormat`: PR, HARNESS, PROJECT, the live dot).
+- PR 6: in line mode an unmatched number is words (a PR number, `208`), and
+  so is a word shorter than `minIDPrefixWord` (4) that is not a number, even
+  when a listed ID starts with it: once words filter, `db` or `add` must not
+  pick the one session whose ID begins so (a typed ID needs 4 characters, as
+  the matcher's ID prefix does). `n`
+  and `p` always turn pages (`Everything is on this page.` when there is one),
+  and more words add to the filter (`Enter for all` clears it). The question
+  now says `words to filter`, which wraps one row more at 40 columns, so
+  `list-page-2.txt` and two width-dependent tests moved a row. Typed text
+  that is not a number, ID or command word no longer gets a "bad answer"
+  message, so the tests pinning those messages were removed.
+- PR 6: the picker, `show --json` and the ambiguous pickers now enter the
+  alternate screen when stdout is a terminal, even where keys cannot be read
+  (as `list` always did), so the line-mode fallback also leaves no table
+  behind; the tests that read the picker's output strip the screen's control
+  sequences.
+- PR 6: handoff's answers are one `bufio.Reader` over a `handedBack` reader
+  (`typedInput`), so the key browser can read the real terminal
+  (`prompter.source`) and hand back what it read but did not use: text and
+  Enter typed after the pick, with Backspace applied and other keys dropped,
+  go to the front of the answers. Closing the key terminal then does not flush
+  the input still waiting (it is read by the prompts as lines). Only a pick
+  hands back; quitting still flushes, as before.

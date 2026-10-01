@@ -36,9 +36,10 @@ Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 `,
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
-               [--no-skills | --skills]
+               [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
+               [--allow-network-home]
        agent-archive setup --refresh [--verbose]
 
 Choose apps and projects, connect storage, then review and enable capture.
@@ -54,11 +55,14 @@ An interrupted setup is recovered on the next run.
                         refresh" when all is current. It refuses, changing
                         nothing, before setup has finished, while a setup
                         needs recovery, after uninstall, when another
-                        installation's hooks are in the way, or when this
-                        executable is a temporary build. It points the hooks
-                        at the executable now running, which repairs hooks
-                        left pointing at one that moved or was deleted. Takes
-                        no other flag than --verbose (which lists the files)
+                        installation's hooks are in the way, when this
+                        executable is a temporary build, or (Linux) when the
+                        data directory or the systemd unit directory is on a
+                        network filesystem that --allow-network-home never
+                        allowed. It points the hooks at the executable now
+                        running, which repairs hooks left pointing at one
+                        that moved or was deleted. Takes no other flag than
+                        --verbose (which lists the files)
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again
@@ -84,6 +88,13 @@ An interrupted setup is recovered on the next run.
                         remove those setup wrote. Later setup runs keep
                         them off until --skills
   --skills              Turn the agent skills back on and install them
+  --allow-network-home  Linux: allow the data directory or the systemd unit
+                        directory (under your home) on a network filesystem
+                        (NFS, SMB, ...), which setup otherwise refuses,
+                        changing nothing, because machines that share a home
+                        share one identity, cannot rely on file locks, and
+                        each run the background job. Only for a home that one
+                        machine ever mounts; recorded while it is needed
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -152,24 +163,46 @@ there and changes nothing.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
 `,
-	"list": `Usage: agent-archive list [options]
+	"list": `Usage: agent-archive list [WORDS] [options]
 
 Find sessions using metadata; does not download conversation content.
+With WORDS (quote them: one argument), list only the sessions they match.
+Every word must appear, in any case, in some field of a session: its name,
+title, branch, project name, harness, or the start of its SESSION_ID (4
+characters or more). A word like #212 or 212 also matches a pull request
+number, and never the start of a SESSION_ID. Words may match different
+fields, so "linux 212" finds the session named for Linux that opened PR 212.
+Inside a project the search looks at that repository's top-level sessions
+first, then at every project's, and only then at subagent sessions, in that
+order; the first that has a match answers, and a note says how many more match
+in other projects. The words are matched against metadata, never the
+conversation. Without WORDS, the table and browser list top-level sessions
+only: subagent sessions are left out before --limit counts, and the footer
+says how many; a parent shows how many it has. --json lists every session,
+subagents included.
 Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
 lists another project's, and --all-projects every project's. Outside any
 project it lists every session, grouped by project. On a terminal, the a key,
 typed alone, switches between the repository and all projects.
-Default text columns: TITLE (the name the session's agent gave it, else a
-preview of its first filtered prompt, else a short SESSION_ID prefix), PR (the
+Default text columns: TITLE (the Claude Code or Cursor session name when
+available, else a preview of its first filtered prompt, else a short
+SESSION_ID prefix; Codex uses the prompt preview), PR (the
 last pull request the session linked or created, when any row has one),
 relative capture time, harness, project, and a short SESSION_ID. A harness or
 project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Piped or --json output is never interactive, nor is any run with
+scroll. Press / to filter the rows as you type, with the words WORDS takes:
+the first match is highlighted, the arrows move the highlight, Enter shows it,
+and Esc clears the filter. A subagent that matches is shown under its parent,
+which is shown too. Rows keep their numbers while filtered. WORDS open the
+browser with the filter already filled in, to edit. Where keys cannot be read,
+the browser reads lines, and an answer that is not a row number, a
+SESSION_ID, or q is words to filter by (an empty answer clears them). Piped
+or --json output is never interactive, nor is any run with
 AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
 configuration reference). On a terminal without interactive stdin, text is
 paged through $PAGER unless --no-pager.
@@ -217,20 +250,28 @@ paged through $PAGER unless --no-pager.
                                  listing looked at a project's sessions
                                  first. Usage errors print no JSON. Never
                                  paged or interactive.
+Example: agent-archive list "flaky retention" --json
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
-	"show": `Usage: agent-archive show [SESSION_ID|TITLE] [options]
+	"show": `Usage: agent-archive show [SESSION_ID|WORDS] [options]
 
 Print a readable summary of a session's metadata: title, when, app, models,
 activity counts, skills, subagents, and capture gaps. --json prints the
-metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
-several matches on a terminal open a picker. With no SESSION_ID on a
-terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit. On a terminal, the
-summary and transcript are paged; in the default less, scroll with the mouse
-wheel, arrows, or space, search with /, and quit with q. Nothing is asked
-when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
-a SESSION_ID.
+metadata sidecar instead. WORDS also work, as in list: every word must appear
+in some field of a session (name, title, branch, project, harness, the start
+of its SESSION_ID from 4 characters, or a PR number such as #212), looking at
+this repository's sessions first. One match is shown; several on a terminal
+open the browser on them, with the words in its filter, and without one they
+are listed with the command to run next. With --json or --transcript the
+browser picks the one session to print instead.
+With no SESSION_ID on a terminal, browse sessions as list does: pick one for
+its summary, then t for its transcript, Enter or b to go back, or q to quit,
+and press / to filter the rows as you type. With --json, it picks one session
+and prints its sidecar.
+On a terminal, the summary and transcript are paged; in the default less,
+scroll with the mouse wheel, arrows, or space, search with /, and quit with
+q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
+coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -326,7 +367,7 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
 Example: agent-archive stats --since 2026-09-01 --by project
 Example: agent-archive stats --html --output stats.html
 `,
-	"handoff": `Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
+	"handoff": `Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
 Continue a session in another coding agent. On a terminal, pick a session
 (this machine's, including ones not yet uploaded, and archived ones), then pick
@@ -339,22 +380,38 @@ The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
 this machine is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
-prints without asking. Without a terminal, give a SESSION_ID or TITLE,
+prints without asking. Without a terminal, give a SESSION_ID or WORDS,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
-A TITLE substring or short SESSION_ID matches as it does for show, in this
-machine's sessions first (no network), then the archive's; a full SESSION_ID
-wins. Quote a title of several words. Inside a project, the picker and a
-TITLE look at that repository's sessions first (every checkout and worktree
-of it), then everywhere; a note says how many more match in other projects.
+WORDS are matched as list matches them: every word must appear, in any case,
+in some field of a session (its name, title, branch, project name, harness, or
+the start of its SESSION_ID, from 4 characters), and a word like #212 or 212
+also matches a pull request number, never a SESSION_ID. Quote them as one
+argument, and use one or two distinctive words: a topic, a PR number, a
+branch, or a project name. They look in this machine's sessions first (no
+network), then the archive's; a full SESSION_ID wins, and subagent sessions
+answer only when no other session matches. Inside a project, the picker and
+WORDS look at that repository's sessions first (every checkout and worktree of
+it), then everywhere; a note says how many more match in other projects.
 On the picker, the a key, typed alone, switches between the repository and
-all projects. The heading names what is shown, and a dot marks a session active
-in the last 2 minutes. Several matches on a terminal open the
-picker on them; without one, or inside a coding agent, they are listed on
-stderr and the command exits 1, never guessing. A title skips the agent
-session running the command, unless --to is given.
-  --latest              The most recent session for the project
+all projects, and / filters the rows as you type (the arrows move the
+highlight, Enter hands off the highlighted session, Esc clears the filter; a
+subagent that matches shows under its parent). The heading names what is shown,
+and a dot marks a session active in the last 2 minutes. Several matches on a
+terminal open the same picker on them, with the words in its filter; without
+one, or inside a coding agent, they are listed on
+stderr, with a PR column and the exact command to run next, and the command
+exits 1, never guessing. WORDS skip the agent session running the command,
+unless --to is given.
+  --latest              The most recent session for the project: one that ran
+                        at this path, else one from another checkout of the
+                        same repository (its remote origin), such as on
+                        another Mac. A match by repository alone is named
+                        before anything is downloaded and, on a terminal, asked
+                        about (default no); with no terminal it is refused
+                        and the SESSION_ID command printed, since a
+                        repository chooses its own origin
   --project DIR|NAME    The project to pick from and search, in place of
                         the current directory's repository: a directory, or
                         a project name (matched to project_name and the
@@ -400,6 +457,7 @@ session running the command, unless --to is given.
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
+Example: agent-archive handoff "#212"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
@@ -584,21 +642,28 @@ func (f *commandFlags) parseFlagsOnly(args []string) bool {
 // package otherwise stops at the first positional value. It returns the
 // argument, or "" when there is none.
 func (f *commandFlags) parseWithArgument(args []string) (string, bool) {
+	argument, _, ok := f.parseWithOptionalArgument(args)
+	return argument, ok
+}
+
+// parseWithOptionalArgument is parseWithArgument that also reports whether
+// the argument was given, so an empty one ("") can be told from none.
+func (f *commandFlags) parseWithOptionalArgument(args []string) (argument string, given, ok bool) {
 	if !f.parse(args) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() == 0 {
-		return "", true
+		return "", false, true
 	}
-	argument := f.Arg(0)
+	argument = f.Arg(0)
 	if !f.parse(f.Args()[1:]) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() != 0 {
 		f.usageError("unexpected argument %q", f.Arg(0))
-		return "", false
+		return "", false, false
 	}
-	return argument, true
+	return argument, true, true
 }
 
 var flagValueError = regexp.MustCompile(`^invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-+([^:]+): (.*)$`)

@@ -427,7 +427,7 @@ func TestFilterV13NewRecordsChangeOnlyNameAndPullRequests(t *testing.T) {
 
 // The filter changelog has a section for the current filter version, and the
 // one for filter 13 names every key it newly keeps and the records that stay
-// dropped.
+// dropped; the one for filter 14 names the record it writes and what it drops.
 func TestFilterChangelogDescribesTheCurrentVersion(t *testing.T) {
 	t.Parallel()
 	changelog, err := os.ReadFile(filepath.Join("..", "..", "dev", "specs", "privacy-filter-changelog.md"))
@@ -447,6 +447,12 @@ func TestFilterChangelogDescribesTheCurrentVersion(t *testing.T) {
 	for _, want := range []string{"custom-title", "customTitle", "pr-link", "prNumber", "prRepository", "prUrl", "sessionId", "timestamp", "chat.name", "agent-name", "last-prompt", "0.13.0"} {
 		if !strings.Contains(thirteen, want) {
 			t.Errorf("the version 13 section does not mention %q", want)
+		}
+	}
+	fourteen := section("14")
+	for _, want := range []string{"subagent-meta", ".meta.json", "description", "worktreePath", "agentType", "512 bytes", "0.14.0", "0.18.0"} {
+		if !strings.Contains(fourteen, want) {
+			t.Errorf("the version 14 section does not mention %q", want)
 		}
 	}
 }

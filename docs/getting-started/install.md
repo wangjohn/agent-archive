@@ -69,8 +69,9 @@ What is **not** verified on Linux:
 - **Real R2 and Amazon S3 from Linux.** The live run uploaded to a MinIO
   bucket; the storage code is the same as on macOS.
 - **A real logout with lingering off** (the no-user-bus case is simulated),
-  **a desktop login** (the live run was a headless container), **WSL**, and **a home directory shared across several machines**, which is
-  [not supported](../guides/multiple-machines.md#a-home-directory-shared-across-machines-is-not-supported).
+  **a desktop login** (the live run was a headless container), **WSL**, and **a home directory shared across several machines**, which on Linux setup
+  [refuses on a network filesystem](../guides/multiple-machines.md#a-home-directory-shared-across-machines)
+  unless you allow it for a home only one machine mounts.
 
 Windows is not supported.
 

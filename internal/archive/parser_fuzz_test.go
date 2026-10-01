@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // The parser fuzz targets. Each is seeded from testdata/ (checked-in seeds
@@ -187,6 +188,11 @@ var fuzzSecretRecords = []struct {
 	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"{\"client_secret\":\"%s\"}","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"pr-link","prNumber":"1","prRepository":"a/b","prUrl":"https://github.com/a/b/pull/1?token=%s","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"pr-link","prNumber":"1","prRepository":"a/b","prUrl":"https://x:%s@github.com/a/b/pull/1","sessionId":"s"}`},
+	// Filter 14: a subagent's description, in a retained snapshot filtered
+	// again. The same text from a .meta.json is FuzzSubagentMeta's.
+	{ClaudeAdapter{}, `{"type":"subagent-meta","description":"export ANTHROPIC_API_KEY=sk-ant-api03-%s"}`},
+	{ClaudeAdapter{}, `{"type":"subagent-meta","description":"{\"client_secret\":\"%s\"}"}`},
+	{ClaudeAdapter{}, `{"type":"subagent-meta","description":"curl -u admin:%s https://x.test"}`},
 }
 
 // FuzzFilterJSONLDropsSecrets puts fuzzed secrets into every shape of
@@ -207,6 +213,100 @@ func FuzzFilterJSONLDropsSecrets(f *testing.F) {
 		}
 		if joined := string(bytes.Join(filtered.Records, []byte("\n"))); strings.Contains(joined, secret) {
 			t.Fatalf("secret survived:\n in  %s\n out %s", line, joined)
+		}
+	})
+}
+
+// fuzzSubagentTranscript is one record of a subagent's own, which a
+// description is written before.
+const fuzzSubagentTranscript = `{"type":"user","uuid":"u","sessionId":"s","agentId":"agent-1","isSidechain":true,"timestamp":"2026-09-30T11:00:00Z","message":{"role":"user","content":"Task"}}` + "\n"
+
+// FuzzSubagentMeta filters a subagent transcript with arbitrary .meta.json
+// bytes. Whatever they hold: the filter does not panic or fail; what it
+// keeps is at most one record of its own, first, with the type and a
+// description of valid UTF-8 within the bound, and nothing else of the file;
+// and the output filters again unchanged. FuzzSubagentMetaDropsSecrets checks
+// that a secret in the description does not survive.
+func FuzzSubagentMeta(f *testing.F) {
+	for _, seed := range []string{
+		`{"agentType":"general-purpose","description":"Find the tests","worktreePath":"/work/x"}`,
+		`{"description":"export ANTHROPIC_API_KEY=sk-ant-api03-Zq8WvK3pLmN5xR2t"}`,
+		`{"description":"{\"client_secret\":\"Zq8WvK3pLmN5xR2t\"}"}`,
+		`{"description":"<system-reminder>x</system-reminder>"}`,
+		`{"description":"` + strings.Repeat("é", 400) + `"}`,
+		`{"description":"password=Zq8WvK3pLmN5xR2t ` + strings.Repeat("a ", 250) + `"}`,
+		`{"description":7}`, `[]`, `{`, ``,
+	} {
+		f.Add([]byte(seed))
+	}
+	plain, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(fuzzSubagentTranscript))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, meta []byte) {
+		filtered, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(fuzzSubagentTranscript), meta)
+		if err != nil {
+			t.Fatalf("filtering with a .meta.json failed: %v", err)
+		}
+		records := make([][]byte, 0, len(filtered.Records))
+		for _, record := range filtered.Records {
+			var object map[string]any
+			if json.Unmarshal(record, &object) != nil {
+				t.Fatalf("retained record is not a JSON object: %s", record)
+			}
+			if object["type"] == subagentMetaType {
+				description, ok := object[subagentDescriptionKey].(string)
+				if len(records) != 0 || len(object) != 2 || !ok || strings.TrimSpace(description) == "" || len(description) > maxSubagentDescriptionBytes || !utf8.ValidString(description) {
+					t.Fatalf("bad subagent-meta record at %d: %s", len(records), record)
+				}
+			} else {
+				records = append(records, record)
+			}
+		}
+		if len(records) != len(plain.Records) {
+			t.Fatalf("the transcript's records changed: %d, want %d", len(records), len(plain.Records))
+		}
+		again, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(bytes.Join(filtered.Records, []byte("\n"))))
+		if err != nil || len(again.Records) != len(filtered.Records) {
+			t.Fatalf("refiltering failed or changed the count (err=%v)", err)
+		}
+		for i := range again.Records {
+			if !bytes.Equal(again.Records[i], filtered.Records[i]) {
+				t.Fatalf("refiltering changed a record:\n once  %s\n twice %s", filtered.Records[i], again.Records[i])
+			}
+		}
+	})
+}
+
+// FuzzSubagentMetaDropsSecrets puts a fuzzed secret into a description as a
+// .meta.json holds it, at several positions among filler, so the length cap
+// may fall in or beside it, and checks that none survives.
+func FuzzSubagentMetaDropsSecrets(f *testing.F) {
+	templates := []string{
+		"export ANTHROPIC_API_KEY=sk-ant-api03-%s",
+		"password=%s",
+		"curl -u admin:%s https://x.test",
+		`{"client_secret":"%s"}`,
+		"DB_PASSWORD=%s HOST=db",
+	}
+	for i := range templates {
+		f.Add(uint(i), uint(i*97), "Zq8WvK3pLmN5xR2t")
+	}
+	f.Fuzz(func(t *testing.T, index, pad uint, secret string) {
+		if !plainSecret.MatchString(secret) || strings.Contains(secret, "REDACTED") {
+			t.Skip()
+		}
+		text := strings.Repeat("a ", int(pad%300)) + strings.Replace(templates[index%uint(len(templates))], "%s", secret, 1)
+		meta, err := json.Marshal(map[string]string{"description": text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		filtered, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(fuzzSubagentTranscript), meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if joined := string(bytes.Join(filtered.Records, []byte("\n"))); strings.Contains(joined, secret) {
+			t.Fatalf("secret survived:\n in  %s\n out %s", meta, joined)
 		}
 	})
 }

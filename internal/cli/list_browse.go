@@ -64,38 +64,7 @@ type sessionBrowser struct {
 	last *sessionView
 }
 
-// runSessionBrowser browses sessions until the user quits (q, an empty
-// answer at the list, or end of input), then prints the last session viewed.
-func runSessionBrowser(env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, store storage.ObjectStore, choices *scopeChoices, noPager bool, command string) int {
-	screen := enterAltScreen(stdout, env)
-	// Only a screen that clears can draw a page again in place.
-	var redraw func()
-	if screen.clears() {
-		redraw = screen.clear
-	}
-	keys := browserKeys(env, p, screen)
-	// Deferred as well, so not even a panic leaves the terminal on the
-	// alternate screen, or without echo; leave and close do nothing the
-	// second time.
-	defer screen.leave()
-	if keys != nil {
-		defer keys.close()
-	}
-	list := &sessionPicker{env: env, clear: redraw, keys: keys}
-	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: choices.format, noPager: noPager, screen: screen, keys: keys, list: list}
-	err := b.run(choices)
-	b.screen.leave()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
-		return 1
-	}
-	if b.last != nil {
-		renderSessionSummary(stdout, *b.last, b.summaryOptions(true))
-	}
-	return 0
-}
-
-func (b *sessionBrowser) run(choices *scopeChoices) error {
+func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 	for {
 		b.screen.clear()
 		row, ok, err := b.list.pickScoped(b.prompt, b.stdout, choices, "show")
@@ -103,13 +72,13 @@ func (b *sessionBrowser) run(choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		view, err := readSessionView(context.Background(), b.store, row.HarnessKey, row.SessionID)
+		view, err := readSessionView(ctx, b.store, row.HarnessKey, row.SessionID)
 		stop()
 		if err != nil {
 			return err
 		}
 		b.last = &view
-		action, err := b.details(view, row)
+		action, err := b.details(ctx, view, row)
 		if err != nil || action == browseQuit {
 			return err
 		}
@@ -117,9 +86,9 @@ func (b *sessionBrowser) run(choices *scopeChoices) error {
 }
 
 // details shows one session's summary and reads what to do next.
-func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, error) {
+func (b *sessionBrowser) details(ctx context.Context, view sessionView, row listRow) (browseAction, error) {
 	if b.keys != nil {
-		return b.detailsKeys(view, row)
+		return b.detailsKeys(ctx, view, row)
 	}
 	var notice browseNotice
 	for {
@@ -130,7 +99,7 @@ func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, e
 		var rest string
 		var redraw bool
 		rest, notice, redraw = b.drawDetails(summary.String(), hint, notice)
-		action, next, err := b.detailsPrompt(row, summary.Bytes(), rest, hint, notice, redraw)
+		action, next, err := b.detailsPrompt(ctx, row, summary.Bytes(), rest, hint, notice, redraw)
 		if err != nil || action != browseRedraw {
 			return action, err
 		}
@@ -251,7 +220,7 @@ func (b *sessionBrowser) transcriptHint() string {
 // detailsPrompt reads what to do with the details drawn above it. A
 // message about an answer is printed below the prompt, or, when redraw is
 // set, returned with browseRedraw to be shown on the details drawn again.
-func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint string, notice browseNotice, redraw bool) (browseAction, browseNotice, error) {
+func (b *sessionBrowser) detailsPrompt(ctx context.Context, row listRow, summary []byte, rest, hint string, notice browseNotice, redraw bool) (browseAction, browseNotice, error) {
 	for first := true; ; first = false {
 		if first && notice.text != "" {
 			notice.print(b.stdout, b.stderr)
@@ -273,7 +242,7 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 		case "q", "quit":
 			return browseQuit, browseNotice{}, nil
 		case "t", "transcript":
-			action, failure, err := b.transcript(row)
+			action, failure, err := b.transcript(ctx, row)
 			if err != nil || action != browseStay {
 				return action, browseNotice{}, err
 			}
@@ -292,7 +261,7 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 				continue
 			}
 			// The whole summary, through the pager as the transcript is.
-			action, err := b.page(summary)
+			action, err := b.page(ctx, summary)
 			return action, browseNotice{}, err
 		default:
 			if rest != "" {
@@ -311,22 +280,21 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 // transcript downloads and verifies the session's bundle and shows its
 // transcript through the pager. A bundle that cannot be read is reported
 // in failure, with browseStay: the details stay open.
-func (b *sessionBrowser) transcript(row listRow) (action browseAction, failure string, err error) {
-	ctx := context.Background()
+func (b *sessionBrowser) transcript(ctx context.Context, row listRow) (action browseAction, failure string, err error) {
 	stop := startActivity(b.stdout, "Loading transcript…")
 	text, err := b.renderTranscript(ctx, row)
 	stop()
 	if err != nil {
 		return browseStay, "agent-archive: show: " + describeBundleError(err, row.SessionID, "--transcript"), nil
 	}
-	action, err = b.page(text)
+	action, err = b.page(ctx, text)
 	return action, "", err
 }
 
 // page shows text through the pager on a cleared screen and returns to the
 // details once the user is done with it. A signal while the pager runs
 // stops the pager, then the browser restores the screen and exits.
-func (b *sessionBrowser) page(text []byte) (browseAction, error) {
+func (b *sessionBrowser) page(ctx context.Context, text []byte) (browseAction, error) {
 	b.screen.clear()
 	endPaging := func() {}
 	if b.keys != nil {
@@ -334,7 +302,7 @@ func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 		endPaging = b.keys.page()
 	}
 	restoreTerminal := saveTerminalState(b.prompt.source)
-	pagerCtx, stopPager := context.WithCancel(context.Background())
+	pagerCtx, stopPager := context.WithCancel(ctx)
 	b.screen.startPaging(stopPager)
 	paged, waited, err := pageText(pagerCtx, b.stdout, b.stderr, b.env, b.noPager, true, text)
 	sig := b.screen.endPaging()
@@ -423,21 +391,6 @@ func endOfInput(err error) (browseAction, error) {
 	return browseQuit, err
 }
 
-// pickBrowseSession prints the numbered table and prompts until the user
-// selects a row (ok=true), quits or input ends (ok=false), or an error
-// occurs. A table taller than the terminal is shown a page at a time.
-func pickBrowseSession(env terminalSizeDependencies, p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (row listRow, ok bool, err error) {
-	list := &sessionPicker{env: env}
-	return list.pick(p, stdout, sessions, totalMatched, truncated, format, action)
-}
-
-// pickBrowseRow is pickBrowseSession for rows already built, which handoff
-// annotates with sessions not yet uploaded. format.Numbered must be set.
-func pickBrowseRow(env terminalSizeDependencies, p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (row listRow, ok bool, err error) {
-	list := &sessionPicker{env: env}
-	return list.pickRows(p, stdout, rows, totalMatched, truncated, format, action)
-}
-
 // minPickerPageRows is the fewest rows a page of the picker shows, however
 // short the terminal.
 const minPickerPageRows = 3
@@ -474,6 +427,37 @@ type sessionPicker struct {
 	// list then returns with toggled set, and the caller shows the other.
 	toggles bool
 	toggled bool
+
+	// verb is what Enter does, which leads the heading of a browser that
+	// picks ("Hand off", "Show").
+	verb string
+	// filter is the words the table is narrowed to; blank shows every row.
+	// filtering is set while the key browser's filter line is open: typed
+	// characters then go to the filter, and cursor, the position of a row
+	// from the top of the table, is the row Enter acts on.
+	filter    string
+	filtering bool
+	cursor    int
+	// moved is set once a key moved the highlight; until then it is on the
+	// first row the filter's words match.
+	moved bool
+	// search, when set, lists every session of the table's scope for the
+	// filter to search, which the table's rows alone would not (a limit cut
+	// them, and they leave out subagents); searched holds what it returned.
+	search     func() []listRow
+	searched   []listRow
+	searchRead bool
+	// headingFor, when set, words the heading for the table shown, and for
+	// a filter's words and how many sessions match them.
+	headingFor func(words string, matches int) string
+	// noteText is a line the footer adds while the filter holds noteWords.
+	noteText  string
+	noteWords string
+	// shown is the heading of the table drawn last, which the table's pages
+	// leave room for.
+	shown string
+	// memo is the table drawn last, kept until the filter changes.
+	memo *pickerView
 }
 
 // pickScoped is pickRows over the scope's choices: it shows the one now
@@ -483,6 +467,11 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 	for {
 		c := choices.shown()
 		l.heading, l.toggles, l.toggled = c.heading, choices.canToggle(), false
+		l.headingFor = func(words string, matches int) string {
+			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil})
+		}
+		l.search, l.searched, l.searchRead = c.search, nil, false
+		l.noteText, l.noteWords = c.searchNote, c.searchWords
 		row, ok, err := l.pickRows(p, stdout, c.rows, c.total, c.truncated, c.format, action)
 		if !l.toggled || err != nil {
 			return row, ok, err
@@ -497,18 +486,27 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 }
 
 // lineCommand is what an answer at the line-mode prompt asks for besides a
-// row: to leave, or (when the scope can change) the other scope.
+// row or words to filter by: to leave, to clear the filter, or (when the
+// scope can change) the other scope.
 type lineCommand int
 
 const (
 	lineOther lineCommand = iota
 	lineQuit
 	lineScope
+	lineClear
 )
 
+// lineCommand reads a command word. An empty answer clears the filter, and
+// quits when there is none.
 func (l *sessionPicker) lineCommand(answer string) lineCommand {
 	switch {
-	case answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit"):
+	case answer == "":
+		if l.words() != "" {
+			return lineClear
+		}
+		return lineQuit
+	case strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit"):
 		return lineQuit
 	case l.toggles && strings.EqualFold(answer, "a"):
 		return lineScope
@@ -519,14 +517,14 @@ func (l *sessionPicker) lineCommand(answer string) lineCommand {
 // printHeading writes the heading, cut to one row of a terminal width
 // columns wide (0 when its size is unknown).
 func (l *sessionPicker) printHeading(stdout io.Writer, width int) {
-	if l.heading != "" {
-		terminal.Println(stdout, oneRow(l.heading, width))
+	if l.shown != "" {
+		terminal.Println(stdout, oneRow(l.shown, width))
 	}
 }
 
 // headRows is how many terminal rows the heading takes: one, cut to fit.
 func (l *sessionPicker) headRows() int {
-	if l.heading == "" {
+	if l.shown == "" {
 		return 0
 	}
 	return 1
@@ -549,24 +547,23 @@ type pickerPages struct {
 	pages    []pickerPage
 }
 
-func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	format.Numbered = true
-	return l.pickRows(p, stdout, formatSessionRows(sessions, format), totalMatched, truncated, format, action)
-}
-
-// pickRows is pick for rows already built, which handoff annotates with
-// sessions not yet uploaded. format.Numbered must be set.
+// pickRows shows the numbered table of rows and prompts until the user
+// selects a row (ok=true), quits or input ends (ok=false), or an error occurs.
+// A table taller than the terminal is shown a page at a time, or scrolled
+// when keys are read. format.Numbered must be set. An answer that is not a
+// row's number (matchRow), an ID, or a command word is words to filter the
+// table by; they add to the filter already there.
 func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+	l.memo = nil
 	if l.keys != nil {
 		return l.pickKeys(p, stdout, rows, totalMatched, truncated, format, action)
 	}
-	groups := sessionTableGroups(rows, format)
-	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
-	var footer bytes.Buffer
-	printListFooter(&footer, len(rows), totalMatched, truncated, format.NarrowHint)
+	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", words to filter, or q to quit", true, nil, -1, ": ")
 	notice := ""
 	for {
-		pages, width, sized := l.pages(stdout, groups, format, len(rows), footer.String(), question)
+		v := l.view(rows, totalMatched, truncated, format)
+		l.shown = v.heading
+		pages, width, sized := l.pages(stdout, v.groups, v.format, len(v.rows), v.footer, question)
 		// A message is shown in place on a redrawn screen of known size.
 		redraw := sized && l.clear != nil
 		page := 0
@@ -579,20 +576,20 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 		l.printHeading(stdout, width)
 		if paged {
 			l.start = pages[page].start
-			if err := printSessionGroups(stdout, pageSessionGroups(groups, pages[page]), format); err != nil {
+			if err := printSessionGroups(stdout, pageSessionGroups(v.groups, pages[page]), v.format); err != nil {
 				return listRow{}, false, err
 			}
 		} else {
 			l.start = 0
-			if err := printSessionGroups(stdout, groups, format); err != nil {
+			if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 				return listRow{}, false, err
 			}
 		}
-		terminal.Print(stdout, footer.String())
+		terminal.Print(stdout, v.footer)
 		if paged {
-			terminal.Println(stdout, pageLine(page, len(pages), len(rows)))
+			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
 		}
-		if len(rows) == 0 {
+		if len(rows) == 0 && v.words == "" {
 			return listRow{}, false, nil
 		}
 		for {
@@ -611,45 +608,38 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				return listRow{}, false, err
 			}
 			answer = strings.TrimSpace(answer)
-			if command := l.lineCommand(answer); command != lineOther {
+			command := l.lineCommand(answer)
+			if command == lineQuit || command == lineScope {
 				l.toggled = command == lineScope
 				return listRow{}, false, nil
 			}
-			message, turned := "", false
-			if paged {
-				switch strings.ToLower(answer) {
-				case "n", "next":
-					turned = true
-					if page == len(pages)-1 {
-						message = "This is the last page; p goes back."
-					} else {
-						l.start = pages[page+1].start
-					}
-				case "p", "prev", "previous":
-					turned = true
-					if page == 0 {
-						message = "This is the first page; n goes on."
-					} else {
-						l.start = pages[page-1].start
-					}
+			var message string
+			var again bool
+			switch {
+			case command == lineClear:
+				l.setFilter("")
+				again = true
+			case isPageWord(answer):
+				message = l.turnPage(pages, page, answer)
+				again = message == "" || redraw
+			default:
+				onPage := v.order
+				if paged {
+					onPage = v.order[pages[page].start:pages[page].end]
 				}
-			}
-			if !turned {
-				row, matched := matchBrowseRow(answer, rows)
-				if matched {
+				if row, matched := l.matchRow(answer, v.rows, onPage, rows); matched {
 					return row, true, nil
 				}
-				if paged {
-					message = "Enter a listed number or short ID, n or p for another page, or q to quit."
-				} else {
-					message = "Enter a listed number or unique short SESSION_ID, or q to quit."
-				}
+				// Words to narrow the table by, added to those already there.
+				l.setFilter(l.words() + " " + answer)
+				again = true
 			}
-			if message != "" && !redraw {
+			if !again {
 				terminal.Println(stdout, message)
 				continue
 			}
-			// Another page, or this one again with the message.
+			// Another page, or the table again narrowed, or this page again
+			// with the message.
 			notice = message
 			break
 		}
@@ -657,6 +647,64 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 			l.clear()
 		}
 	}
+}
+
+// isPageWord reports whether an answer asks for another page of the table.
+func isPageWord(answer string) bool {
+	switch strings.ToLower(answer) {
+	case "n", "next", "p", "prev", "previous":
+		return true
+	}
+	return false
+}
+
+// turnPage moves to the next or the previous page, as the answer asks. It
+// returns a message when there is no such page, or when the table has only
+// one.
+func (l *sessionPicker) turnPage(pages []pickerPage, page int, answer string) string {
+	next := strings.HasPrefix(strings.ToLower(answer), "n")
+	switch {
+	case len(pages) < 2:
+		return "Everything is on this page."
+	case next && page == len(pages)-1:
+		return "This is the last page; p goes back."
+	case !next && page == 0:
+		return "This is the first page; n goes on."
+	case next:
+		l.start = pages[page+1].start
+	default:
+		l.start = pages[page-1].start
+	}
+	return ""
+}
+
+// matchRow resolves an answer to a row listed: by its number, one of the
+// table's rows (the number it has unfiltered), or one past the table that
+// the filter shows on the page drawn (onPage); by its ID, one of those the
+// filter shows. A number past the table on another page of the filter, or
+// on none, names a session the person has not seen, and is words. A word
+// shorter than the ID prefixes the matcher takes (minIDPrefixWord) is words,
+// not an ID: "db" or "add" would otherwise pick the one session whose ID
+// starts with it.
+func (l *sessionPicker) matchRow(answer string, shown, onPage, rows []listRow) (listRow, bool) {
+	if _, err := strconv.Atoi(answer); err != nil && len(answer) < minIDPrefixWord {
+		return listRow{}, false
+	}
+	if l.words() == "" {
+		return matchBrowseRow(answer, rows)
+	}
+	if n, err := strconv.Atoi(answer); err == nil && len(answer) < minShortSessionID {
+		if n >= 1 && n <= len(rows) {
+			return rows[n-1], true
+		}
+		for _, r := range onPage {
+			if r.Index == n && n > 0 {
+				return r, true
+			}
+		}
+		return listRow{}, false
+	}
+	return matchBrowseRow(answer, shown)
 }
 
 // pages splits the table's n rows into pages that fit the terminal above
@@ -836,12 +884,30 @@ func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectSt
 }
 
 // archiveRows builds the choices of a browser over archived sessions, read
-// without a limit: each scope's rows are its sessions, newest first, cut to
-// limit (0 for all).
+// without a limit: each scope's rows are its top-level sessions, newest first,
+// cut to limit (0 for all). Subagents are dropped before the limit and
+// counted in the footer; a parent carries a hint of how many it has.
 func archiveRows(sessions []archive.Metadata, limit int, format listFormatOptions) scopeRowsFunc {
+	format.Children = childCounts(sessions)
 	return func(scope sessionScope) scopeView {
-		shown, total, truncated := applyListLimit(scope.filter(sessions), limit)
-		return scopeView{rows: formatSessionRows(shown, format), total: total, truncated: truncated}
+		v := topLevelView(sessions, scope, limit)
+		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden,
+			search: archiveSearch(sessions, scope, format)}
+	}
+}
+
+// archiveSearch lists the sessions of a scope for the filter to search: every
+// top-level session, numbered as the table numbers them (past its limit too),
+// then every subagent, which has no number.
+func archiveSearch(sessions []archive.Metadata, scope sessionScope, format listFormatOptions) func() []listRow {
+	return func() []listRow {
+		scoped := scope.filter(sessions)
+		rows := formatSessionRows(topLevelSessions(scoped), format)
+		subagents := formatSessionRows(subagentSessions(scoped), format)
+		for i := range subagents {
+			subagents[i].Index = 0
+		}
+		return append(rows, subagents...)
 	}
 }
 
@@ -870,20 +936,23 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 	return choices, true, 0
 }
 
-// selectArchivedSession is `show --json`'s one-shot picker; handoff's also
-// lists local sessions (selectHandoffSession).
-// It returns selected=false when the archive is empty or the user quits.
-func selectArchivedSession(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, action string) (row listRow, selected bool, code int) {
+// archivedSessionDependencies is what `show --json`'s picker uses: the
+// archive's listing and the browser.
+type archivedSessionDependencies interface {
+	sessionSelectionDependencies
+	sessionBrowserDependencies
+}
+
+// selectArchivedSession is `show --json`'s one-shot picker: the browser, which
+// returns the session chosen; handoff's also lists local sessions
+// (selectHandoffSession). verb is what Enter does, as the heading says it. It
+// returns selected=false when the archive is empty or the user quits.
+func selectArchivedSession(env archivedSessionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, verb string) (row listRow, selected bool, code int) {
 	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, command)
 	if !ok {
 		return listRow{}, false, code
 	}
-	row, selected, err := (&sessionPicker{env: env}).pickScoped(newPrompter(stdin, stdout), stdout, choices, action)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
-		return listRow{}, false, 1
-	}
-	return row, selected, 0
+	return runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
 }
 
 // saveTerminalState records the terminal modes of in, when it is a

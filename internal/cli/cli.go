@@ -36,6 +36,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -105,6 +106,9 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// currentBranch, set only by tests, replaces the git lookup of the
+	// branch checked out in a directory (see gitBranch).
+	currentBranch func(dir string) string
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults
@@ -170,6 +174,12 @@ type Env struct {
 	// directory copied from another machine. Defaults to
 	// local.HostFingerprint; it is read only on Linux.
 	HostFingerprint func() string
+	// MountTable returns this machine's mount table in the format of
+	// /proc/self/mountinfo, which setup, setup --refresh and status read on
+	// Linux to tell whether the data directory or the systemd unit directory
+	// is on a network filesystem. Defaults to reading /proc/self/mountinfo; it
+	// is read only on Linux, and a table that cannot be read stops nothing.
+	MountTable func() ([]byte, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -353,6 +363,7 @@ func (e Env) now() time.Time {
 }
 
 func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -360,6 +371,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -542,6 +554,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 			return 2
 		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			startTrace("list", stderr, env)
+			defer finishTraceNow()
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {
@@ -559,6 +573,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
+	startTrace(args[0], stderr, env)
+	defer finishTraceNow()
 
 	switch args[0] {
 	case "-h", "--help", "help":

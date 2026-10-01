@@ -1,6 +1,6 @@
 # Portable handoff, lower-friction setup, and Linux: plan and specification
 
-> **Proposed.** Parts 1 and 2 are being implemented; Part 3 (Linux) is planned as a separate effort. Prepared 2026-09-29 from a read of the current code (no builds or tests were run). File and line references are to `main` at commit 5563546.
+> **Implemented**, with the open items under [Outcome](#outcome-as-built). Part 1 (repo-key handoff matching) and Part 2 (guided bucket creation) shipped in PRs #157, #161, #167, #171 and #184; Part 3 (Linux) shipped through the series that [platform-abstraction.md](platform-abstraction.md) re-planned. Prepared 2026-09-29 from a read of the code at commit 5563546 (no builds or tests were run); the file and line references below are to that commit and the sections are kept as the design record, so where they differ from the code, the code and the Outcome section win.
 
 Three changes that back the product's main claim, "switch computers and coding agents without losing your session":
 
@@ -9,6 +9,35 @@ Three changes that back the product's main claim, "switch computers and coding a
 3. **Linux support**: full persistent capture, not only the ephemeral cloud mode in [cloud-capture.md](cloud-capture.md).
 
 They are independent except for a few shared seams, called out under [Sequencing](#sequencing).
+
+## Outcome (as built)
+
+Updated 2026-10-01. What shipped, and where it differs from the plan below.
+
+| Package | PR | Notes |
+| --- | --- | --- |
+| Plan | #153 | This document. |
+| R1: `repo_key` | #161 | Hash of the normalized `origin` remote, never the URL. Parser `0.16.0` (`0.14.0` and `0.15.0` went to the token fields and git activity first). |
+| S1: setup trims | #157 | One capture question on a first run from a repository; import offer after the next steps; `storage.Probe` before `VerifyAccess`. A repository that is the home folder or a temporary folder is never pre-selected. |
+| S3: guided S3 creation | #167 | After the profile, setup asks which profile archiving should use (the creation profile stays the default); no lifecycle rule; no explicit encryption call. |
+| S2: guided R2 creation | #171 | Experimental: offered only with `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`. No lifecycle rule. A public r2.dev URL or custom domain stops setup with a menu. |
+| R2: handoff matching | #184 | Path matches outrank repository matches; a repository-only match needs confirmation on a terminal and is refused, with no bucket-controlled text, without one. See the threat model in `docs/security/privacy.md`. |
+| Linux | see [platform-abstraction.md](platform-abstraction.md) | The Linux series, with the scheduler and OS work re-planned there. |
+
+**Differences from the plan.**
+
+- **Lifecycle rules were dropped** for both providers: a per-object age rule contradicts the collector's retention (it can delete sessions the user meant to keep, or leave metadata pointing at expired sources). See 2a step 7 and 2b step 5.
+- **Local-only mode and the folder backend were not built**, as decided in Part 2's scope.
+- **Repository-only handoff matches are untrusted.** The plan matched by recency alone. Review found that a cloned repository controls its own `origin`, so path matches always rank first and a repository-only match is confirmed (see `dev/specs/handoff.md` and `docs/security/privacy.md`).
+- **S4 (acceptance record) was not done as a package.** Docs shipped with each PR; `dev/maintainers/open-source-acceptance.md` does not yet cover guided creation or repository matching.
+- **The `AGENT_ARCHIVE_*` printout** from 2c is not done: it waits for cloud capture (see the 2c status).
+
+**Open items.**
+
+- Guided R2 has never run against real Cloudflare. Every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` is unrun (the S3 key derivation, the bucket-conflict code `10073`, the permissions the account and domain reads need, token expiry and the delete 404). Remove the gate only after a real-account run.
+- Guided S3 has never run against real AWS (what `HeadBucket` answers for a free name without list permission, how `GetCallerIdentity` behaves through SSO and assume-role profiles, and the printed runtime policy, which is marked untested).
+- Partly applied review fixes: after creating an S3 bucket, a Ctrl-C at a later prompt leaves an unreported empty bucket (the reminder covers only the archiving-profile question), and the R2 and S3 flows keep separate trackers of what they created.
+- Sessions captured before `repo_key` have no key until a metadata refresh, so they match by path only.
 
 ## Decisions needed from the owner
 

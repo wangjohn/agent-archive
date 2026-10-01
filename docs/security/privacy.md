@@ -36,6 +36,40 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   access only to machines you trust, and treat a handoff from a shared bucket
   like any other text you paste into an agent (see
   [handoff](../guides/handoff.md#what-the-receiving-agent-is-told)).
+- **A repository can claim another's identity.** `handoff --latest` finds a
+  session from another computer by the repository key (see
+  [what is uploaded](#what-is-uploaded)), a hash of the `origin` remote in
+  the directory's git configuration. Anyone who wrote a repository you clone
+  controls that configuration, and anyone who can write to your prefix can
+  put any key on a session (the key is also a hash of a guessable public
+  URL), so a hostile repository can declare
+  `origin = https://github.com/you/private` and make `--latest` in its
+  directory choose your session of that repository, whose text a coding agent
+  started there would then read. The key is a convenience for finding your
+  own work, not authentication. What limits the damage:
+  - A session that matched only by key never displaces one that matched by
+    path, so this cannot turn a working `--latest` into something else.
+  - `handoff` puts a key-only match to a check before downloading any of the
+    session's source. On a terminal it names the session (this or another
+    Mac, project, start time, first prompt, each cut short) and asks, default
+    No. Where it cannot ask (a pipe, or an agent's shell) it refuses and
+    prints only the machine (this or another Mac), the start time, and the
+    command that selects the session by ID, worded for the person, with the
+    ID only when it is 32 lowercase hexadecimal digits (otherwise "agent-archive
+    list"). It prints no other text from the session or the archive there,
+    since an agent reads it. The command carries the agent and `--worktree`
+    you gave, not `--format`, `--output`, `--max-bytes`, or `--branch`.
+  - That refusal is a speed bump, not a barrier. It stops a steered agent
+    from using such a session by accident; an agent can still name the
+    session ID itself, run the command it printed, or set
+    `AGENT_ARCHIVE_NONINTERACTIVE=0`.
+  - A path match, an explicit session ID, and the picker are never
+    questioned, because nothing there is chosen by a key. A path match cannot
+    be steered by a hostile repository, but a writer of the archive can forge
+    one (a project ID is a hash of a path), which is the previous point again.
+  This does not protect against someone who can write to your prefix, who can
+  plant sessions outright (see the previous point), and nothing stops you
+  from answering yes.
 - **The recorded agent runs as you.** The coding agent whose session is
   being archived runs with your account's permissions. It can read and
   change agent-archive's local state and configuration, the apps' hook
@@ -57,7 +91,8 @@ holds the filtered transcript, skill evidence, and hook observations, and
 the metadata sidecar. The sidecar's optional `title` is a short, truncated
 preview of the first filtered human prompt, and its optional `name` the
 session's name as the filtered transcript holds it (the last Claude Code
-session name, or Cursor's chat name), cut the same way (for `list`); both
+session name, Cursor's chat name, or, for a Claude Code subagent, the
+description its parent gave the task), cut the same way (for `list`); both
 are filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
@@ -69,10 +104,15 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   the names the app gave the session, which pass the same redaction as
   your prompts: every Claude Code session name the transcript records (set
   automatically from your prompt or by `/rename`; renaming adds a name and
-  does not remove the earlier ones) and Cursor's current chat name; the
-  pull requests a Claude Code session linked (their `owner/repo`, number,
-  and GitHub link, and nothing of the pull requests' text); and final
-  messages hooks reported.
+  does not remove the earlier ones) and Cursor's current chat name; for a
+  Claude Code subagent, the description its parent gave the task ("find the
+  retention tests"), read from the `agent-<id>.meta.json` file Claude Code
+  writes beside the subagent's transcript, passed through the same
+  redaction as your prompts and cut to 512 bytes (nothing else in that
+  file, such as the path of a worktree, is uploaded); the pull requests a
+  Claude Code session linked (their `owner/repo`, number, and GitHub link,
+  and nothing of the pull requests' text); and final messages hooks
+  reported.
 - **Skill evidence**: fresh setup defaults to `metadata`: names and SHA-256
   hashes of filtered `SKILL.md` text, with no body. Choose `none` for no
   filesystem skill inventory or snapshots, or `body` to include up to 16 KB
@@ -132,7 +172,11 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   be out of date: one recorded when the session started is never looked up
   again; one derived later stays if the remote is removed or git cannot be
   run; a changed remote replaces it only at the session's next content
-  publish or metadata refresh; and a finished session never updates.
+  publish or metadata refresh; and a finished session never updates. The key
+  is also read from the directory you run `handoff --latest` in, and is a
+  convenience, not proof of identity: see the
+  [threat model](#threat-model) for what a repository that lies about its
+  `origin` can do and what `handoff` does about it.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
@@ -179,9 +223,9 @@ something was removed.
 For the current configured bucket, `agent-archive purge plan` inventories
 unreferenced source objects and separately lists sessions whose current source
 still uses an older filter. It writes a private, expiring plan under the local
-data directory. `agent-archive purge plan --mode old-filter --before-filter 13`
+data directory. `agent-archive purge plan --mode old-filter --before-filter 14`
 narrows deletion candidates to unreferenced sources made by older filter
-versions; replace `13` with the version you are upgrading to. Review the
+versions; replace `14` with the version you are upgrading to. Review the
 printed bucket, prefix, keys, sizes, and digest. Pause **every** machine uploading
 to the prefix, then run `agent-archive purge apply PLAN` within five minutes
 and enter the digest prefix, or pass `--yes` for a noninteractive run. The
