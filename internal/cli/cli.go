@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -133,9 +134,15 @@ type Env struct {
 	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
 	// for profile, in region. Defaults to S3 with the profile's credentials.
 	AWSBucketCreator func(profile, region string) (BucketCreator, error)
-	WorkingDir       func() (string, error)
-	Home             func() (string, error)
-	Now              func() time.Time
+	// Cloudflare makes the client guided R2 creation uses for the pasted
+	// bootstrap API token. Defaults to the real Cloudflare API.
+	Cloudflare func(token string) cloudflare.API
+	// Pause waits between guided R2 creation's checks of a key Cloudflare
+	// has only just made. Defaults to sleeping; tests skip the wait.
+	Pause      func(time.Duration)
+	WorkingDir func() (string, error)
+	Home       func() (string, error)
+	Now        func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -191,6 +198,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// UnsetEnv removes a variable from the process environment, so programs
+	// setup starts later do not inherit it. Guided R2 creation uses it for
+	// CLOUDFLARE_API_TOKEN once it has read it. Defaults to os.Unsetenv.
+	UnsetEnv func(string) error
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
@@ -304,6 +315,13 @@ func (e Env) fileOwner(path string) (uid int, ok bool) {
 		return e.FileOwner(path)
 	}
 	return fileOwner(path)
+}
+
+func (e Env) unsetEnv(key string) error {
+	if e.UnsetEnv != nil {
+		return e.UnsetEnv(key)
+	}
+	return os.Unsetenv(key)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {

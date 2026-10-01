@@ -81,6 +81,21 @@ follow [Semantic Versioning](https://semver.org/).
   If setup ends without using a bucket it created, it says so. Setup does
   not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
+- **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
+  bucket for me** at the storage question, then paste one Cloudflare API token
+  (Workers R2 Storage Write and Account API Tokens Write, or set
+  `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
+  no public access by default) and a key that can read and write only that
+  bucket, checks it, and keeps the key in the Keychain. The token you pasted
+  is used during setup and then dropped, never saved, and setup revokes the
+  new key's token if it fails its check or can't be stored. It also reads
+  whether the bucket's public `r2.dev` URL or a custom domain is on, and if so
+  stops and asks: check again, choose other storage (the default, which
+  revokes the new key), or continue anyway. Not available with
+  `setup --yes`. It has not yet been run against every kind of Cloudflare
+  account, which is why it is behind the switch. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window

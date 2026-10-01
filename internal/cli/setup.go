@@ -280,6 +280,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	// However setup ended, a bucket it created and did not keep is not left
 	// without a word.
 	noteUnusedCreatedBuckets(p, home)
+	noteUnusedCreatedR2(p, home)
 	return err
 }
 
@@ -474,37 +475,49 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		// The storage questions asked for a failed region again.
 		draft.FailedRegion = ""
 		if saveSecret {
-			keychain, e := env.credentialStore()
-			if e != nil {
-				return false, openCredentialStoreError(credentialOS, e)
+			if e = stageStorageSecret(draft, save, env, &cfg, secret); e != nil {
+				return false, p.rollbackGuidedCreation(e)
 			}
-			id, e := local.ID()
-			if e != nil {
-				return false, e
-			}
-			cfg.R2CredentialRef = "setup-" + id
-			draft.CredentialRef = cfg.R2CredentialRef
-			draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
-			// Journal the opaque reference before storing, so cancellation/crash is recoverable.
-			draft.Config.Storage = cfg
-			if e = save(); e != nil {
-				return false, e
-			}
-			if e = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); e != nil {
-				return false, fmt.Errorf("save staged credential: %w", e)
-			}
-
 		}
 		draft.Config.Storage = cfg
 		draft.Step = 2
 		if err = save(); err != nil {
-			return false, err
+			return false, p.rollbackGuidedCreation(err)
 		}
+		// A key guided bucket creation made is staged: its bootstrap token
+		// is no longer needed.
+		p.finishGuidedCreation()
 	}
 	if err = save(); err != nil {
 		return false, err
 	}
 	return verifySetupDraftStorage(p, draft, save, savedPath, userHome, env, known, verifiedStorage, verbose)
+}
+
+// stageStorageSecret stores a key typed in, or made by guided bucket
+// creation, under a new staged reference: the opaque reference is journaled in
+// the draft before the Keychain is written, so a crash between them is
+// recoverable. cfg gets the reference.
+func stageStorageSecret(draft *setupDraft, save func() error, env Env, cfg *credentials.Config, secret credentials.R2Credentials) error {
+	keychain, err := env.credentialStore()
+	if err != nil {
+		return openCredentialStoreError(credentialOS, err)
+	}
+	id, err := local.ID()
+	if err != nil {
+		return err
+	}
+	cfg.R2CredentialRef = "setup-" + id
+	draft.CredentialRef = cfg.R2CredentialRef
+	draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
+	draft.Config.Storage = *cfg
+	if err = save(); err != nil {
+		return err
+	}
+	if err = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); err != nil {
+		return fmt.Errorf("save staged credential: %w", err)
+	}
+	return nil
 }
 
 func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
@@ -546,6 +559,7 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 
 func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, checkErr error, verbose bool) (bool, error) {
 	d := printStorageFailure(p, draft.Config.Storage, checkErr, verbose, "agent-archive setup --verbose")
+	printGuidedLeftovers(p, draft.Config.Storage)
 	// Saved to ask the storage questions again, so that
 	// "Continue where you left off" never repeats a check that just failed.
 	if err := local.Write(savedPath, reopenStorage(*draft, d)); err != nil {
@@ -830,6 +844,12 @@ func setupExitCode(err error) int {
 	var interrupted *storageCheckInterruptedError
 	if errors.As(err, &interrupted) {
 		if s, ok := interrupted.sig.(syscall.Signal); ok {
+			return 128 + int(s)
+		}
+	}
+	var guided *guidedInterruptedError
+	if errors.As(err, &guided) {
+		if s, ok := guided.sig.(syscall.Signal); ok {
 			return 128 + int(s)
 		}
 	}
@@ -1247,7 +1267,7 @@ func guidedStorageOptions() []option {
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
-	providers := storageMenuOptions()
+	providers := storageMenuFor(env)
 	// A saved provider wins, so discovery runs only when there is none.
 	defaultProvider := existing.Provider
 	if defaultProvider == "" {
@@ -1262,6 +1282,13 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	if choice == guidedR2Choice {
+		cfg, secret, saved, e := createR2Bucket(p, env)
+		if !errors.Is(e, errChooseStorageAgain) {
+			return cfg, secret, saved, e
+		}
+		return promptStorage(p, existing, env, failedRegion)
 	}
 	createS3 := choice == storageChoiceS3New
 	if createS3 {
