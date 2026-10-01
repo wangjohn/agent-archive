@@ -788,7 +788,10 @@ stripping, credential redaction, and a 64 KB cap. In short:
   `"api_key": …`, `--token …`), known token shapes (AWS, GitHub, Slack,
   Stripe, Google, OpenAI, Anthropic, and more), private keys, JWTs,
   passwords in URLs and on command lines, `.netrc` and `.pgpass` entries,
-  and wallet seed phrases.
+  and wallet seed phrases. Filter 15 also redacts `aa-pair1:` machine pairing
+  bundles, including short or truncated payloads, in every retained string.
+  An ordinary-word pairing code has no reliable recognizable shape; avoid
+  pasting it into a transcript.
 - **JSON inside strings** is decoded and filtered as JSON.
 
 Each redaction or omission is recorded as a capture gap, so a session says

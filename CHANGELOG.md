@@ -21,6 +21,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Changed
 
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
+
 - Listings default to the current project when available and return at most 50
   sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
   return all matches.

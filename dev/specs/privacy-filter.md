@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 14). The user-facing summary is
+> **Status: implemented** (filter 15). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -227,6 +227,17 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   secret` line), XML elements and attributes (`<password>…</password>`,
   `<add key="ApiKey" value="…"/>`), and URL query parameters whose names are
   not credential words (`?key=`, `&sig=`, `X-Amz-Signature=`) (filter 11).
+- Machine pairing bundles (filter 15): a word-boundary `aa-pair1:` prefix,
+  case-insensitive, followed by one or more ASCII letters, digits, `_`, `-`,
+  `+`, `/`, or `=`. The prefix and entire contiguous payload are replaced,
+  even when short, truncated, padded, or standard base64 instead of base64url;
+  there is no decoding or cryptographic validation. Quotes, backslashes,
+  whitespace, and other punctuation stop the match. A bare prefix, a prefix
+  inside an ASCII word (`xaa-pair1:abc`, `_aa-pair1:abc`), other versions
+  (`aa-pair2:abc`), and an unprefixed ordinary-word pairing code are kept.
+  A payload split by whitespace or punctuation is recognized only through
+  its first contiguous run; text after that boundary is not inferred to be
+  part of the bundle.
 - AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials),
   Anthropic/OpenAI style `sk-` keys, and, since filter 11, the prefixed
   tokens of Stripe (`sk_live_`, `rk_live_`, `whsec_`), GitLab (`glpat-` and

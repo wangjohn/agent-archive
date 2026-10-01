@@ -5,6 +5,19 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 15
+
+Adapter version 0.15.0 goes with it; the parser version is unchanged.
+
+- **Machine pairing bundles.** Every retained string redacts the `aa-pair1:`
+  prefix and its contiguous payload, including short or truncated payloads,
+  padding, and standard-base64 characters. This covers prose, tool arguments,
+  nested JSON text, and displayed files. Each match records a
+  `sensitive_content_redacted` gap. See the [exact boundaries](privacy-filter.md#value-level-redaction).
+  The ordinary-word pairing code has no recognizable credential shape.
+- Existing sessions are re-filtered under version 15 on the next collector
+  scan; older uploaded objects remain subject to the usual purge policy.
+
 ## Source filter version 14
 
 Adapter version 0.14.0 goes with it. Parser 0.18.0 is the first to read what
