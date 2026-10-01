@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -825,7 +826,7 @@ func TestGuidedR2DiscardsTheTokenWhenTheFlowEnds(t *testing.T) {
 func TestGuidedR2IsInTheStorageMenu(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	input := strings.Join(append([]string{"", "3"}, append(append([]string{}, askToken...), acceptedRest...)...), "\n") + "\n"
+	input := strings.Join(append([]string{"", r2MenuNumber(t, guidedR2Choice)}, append(append([]string{}, askToken...), acceptedRest...)...), "\n") + "\n"
 	out := g.run(t, input, 0)
 	if !strings.Contains(out, "Cloudflare R2: create a new bucket for me") {
 		t.Fatalf("menu:\n%s", out)
@@ -951,6 +952,166 @@ func TestStorageMenuGateForGuidedR2(t *testing.T) {
 	}
 }
 
+// A bucket and key setup made and did not commit are reported when setup ends
+// however it ends: here the review is cancelled, which keeps the draft.
+// A setup that commits them says nothing.
+func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
+	t.Parallel()
+	t.Run("review cancelled, draft uses them", func(t *testing.T) {
+		t.Parallel()
+		g := newGuidedR2Fixture(t)
+		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "no")...), 0)
+		tokens := g.cf.Tokens()
+		if len(tokens) != 1 || len(g.cf.Live()) != 1 {
+			t.Fatalf("tokens %+v\n%s", tokens, out)
+		}
+		bucket := ""
+		for name := range g.cf.Buckets {
+			bucket = name
+		}
+		want := "Setup created the bucket " + bucket + ` (it is empty) and an API token named "` + tokens[0].Name + `" for it. Your saved setup draft uses them, so running setup again will resume with them.`
+		if !strings.Contains(out, want) || strings.Count(out, "Setup created the bucket") != 1 {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+		g.notSaved(t)
+	})
+	t.Run("committed", func(t *testing.T) {
+		t.Parallel()
+		g := newGuidedR2Fixture(t)
+		out := g.run(t, g.happy(), 0)
+		if strings.Contains(out, "Setup created the bucket") {
+			t.Fatalf("reports a bucket that is in use:\n%s", out)
+		}
+		g.savedConfig(t)
+	})
+}
+
+// A failure to reach Cloudflare is never reported as a problem with the token:
+// no "didn't accept", no missing permission.
+func TestGuidedR2NetworkFailuresAreNotBlamedOnTheToken(t *testing.T) {
+	t.Parallel()
+	down := &cloudflare.Error{Op: "any", Err: errors.New("dial tcp: connection refused")}
+	refuse := func(t *testing.T, out string) {
+		t.Helper()
+		if strings.Count(out, "Couldn't reach Cloudflare") == 0 {
+			t.Errorf("no network message:\n%s", out)
+		}
+		for _, bad := range []string{"didn't accept the API token", "isn't allowed", "The token needs", "doesn't have the permission"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("blames the token (%q):\n%s", bad, out)
+			}
+		}
+	}
+	t.Run("listing accounts", func(t *testing.T) {
+		t.Parallel()
+		g := newGuidedR2Fixture(t)
+		g.env.Cloudflare = func(token string) cloudflare.API {
+			return &networkDownAPI{API: cloudflare.New(token, cloudflare.Options{BaseURL: g.cf.URL + "/client/v4"}), accounts: down}
+		}
+		input := guidedAnswers(append(append([]string{}, askToken...), append([]string{cloudflaretest.AccountID}, acceptedRest...)...)...)
+		out := g.run(t, input, 0)
+		refuse(t, out)
+		if !strings.Contains(out, "setup needs the account ID") {
+			t.Errorf("does not ask for the account ID:\n%s", out)
+		}
+	})
+	t.Run("permission group", func(t *testing.T) {
+		t.Parallel()
+		g := newGuidedR2Fixture(t)
+		g.env.Cloudflare = func(token string) cloudflare.API {
+			return &networkDownAPI{API: cloudflare.New(token, cloudflare.Options{BaseURL: g.cf.URL + "/client/v4"}), groups: down}
+		}
+		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+		refuse(t, out)
+	})
+	t.Run("public access reads", func(t *testing.T) {
+		t.Parallel()
+		g := newGuidedR2Fixture(t)
+		g.env.Cloudflare = func(token string) cloudflare.API {
+			return &networkDownAPI{API: cloudflare.New(token, cloudflare.Options{BaseURL: g.cf.URL + "/client/v4"}), domains: down}
+		}
+		out := g.run(t, g.happy(), 0)
+		refuse(t, out)
+		if strings.Contains(out, "(checked at setup)") {
+			t.Errorf("claims a check that did not happen:\n%s", out)
+		}
+	})
+}
+
+// networkDownAPI fails the calls it is given an error for.
+type networkDownAPI struct {
+	cloudflare.API
+	accounts, groups, domains error
+}
+
+func (a *networkDownAPI) Accounts(ctx context.Context) ([]cloudflare.Account, error) {
+	if a.accounts != nil {
+		return nil, a.accounts
+	}
+	return a.API.Accounts(ctx)
+}
+
+func (a *networkDownAPI) PermissionGroups(ctx context.Context, account, name string) ([]cloudflare.PermissionGroup, error) {
+	if a.groups != nil {
+		return nil, a.groups
+	}
+	return a.API.PermissionGroups(ctx, account, name)
+}
+
+func (a *networkDownAPI) ManagedDomain(ctx context.Context, account string, bucket cloudflare.BucketRef) (cloudflare.ManagedDomain, error) {
+	if a.domains != nil {
+		return cloudflare.ManagedDomain{}, a.domains
+	}
+	return a.API.ManagedDomain(ctx, account, bucket)
+}
+
+func (a *networkDownAPI) CustomDomains(ctx context.Context, account string, bucket cloudflare.BucketRef) ([]cloudflare.CustomDomain, error) {
+	if a.domains != nil {
+		return nil, a.domains
+	}
+	return a.API.CustomDomains(ctx, account, bucket)
+}
+
+// A successful answer with nothing in it is not "off" or "none": setup says it
+// could not read the answer and claims no check.
+func TestGuidedR2EmptyPublicAccessAnswersAreNotReportedAsOff(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RouteManagedDomain, cloudflaretest.Failure{Status: http.StatusOK, RawBody: `{"success":true,"result":{}}`})
+	g.cf.Fail(cloudflaretest.RouteCustomDomains, cloudflaretest.Failure{Status: http.StatusOK, RawBody: `{"success":true}`})
+	out := g.run(t, g.happy(), 0)
+	if strings.Count(out, "setup couldn't read the answer") != 2 || strings.Contains(out, "(checked at setup)") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// Names Cloudflare sends are made printable: a terminal escape or a line
+// break in an account name never reaches the screen.
+func TestGuidedR2PrintsCloudflareNamesSafely(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Accounts = []cloudflaretest.Account{{ID: cloudflaretest.AccountID, Name: "Evil\x1b[2J\nname"}}
+	g.cf.ManagedEnabled = true
+	g.cf.CustomDomains = []string{"a.example.com\x1b[31m"}
+	out := g.run(t, g.happy(), 0)
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, "Evil [2J name") || !strings.Contains(out, "a.example.com [31m") {
+		t.Fatalf("output:\n%q", out)
+	}
+}
+
+// r2MenuNumber is the number of the entry key in the menu setup shows when
+// the experimental R2 switch is on, as a person types it.
+func r2MenuNumber(t *testing.T, key string) string {
+	t.Helper()
+	for i, o := range storageMenuFor(withR2CreateSwitch("1", true)) {
+		if o.Key == key {
+			return fmt.Sprint(i + 1)
+		}
+	}
+	t.Fatalf("the storage menu has no entry %q", key)
+	return ""
+}
+
 // The pasted token is dropped and its "not saved" line printed only once the
 // key is staged, which is after the key passed its check and before the
 // ordinary storage check.
@@ -1063,6 +1224,10 @@ func TestGuidedR2StorageCheckFailureNamesTheBucketAndToken(t *testing.T) {
 	}
 	if strings.Index(out, "not saved anywhere") > strings.Index(out, "Setup created the bucket") {
 		t.Errorf("the token was reported dropped after the failure text:\n%s", out)
+	}
+	// Said once: the note at the end of setup does not repeat it.
+	if n := strings.Count(out, "Setup created the bucket"); n != 1 {
+		t.Errorf("the leftovers were reported %d times:\n%s", n, out)
 	}
 	g.assertNothingHolds(t, out, bootstrapCanary)
 }
@@ -1207,7 +1372,7 @@ func TestGuidedR2IsHiddenWithoutTheSwitch(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	g.env.LookupEnv = func(string) (string, bool) { return "", false }
 	out := g.run(t, strings.Join([]string{"", guidedR2Choice, "s3", "work", "2", ""}, "\n")+"\n", 0)
-	if strings.Contains(out, "create a new bucket for me") || !strings.Contains(out, "Enter a number from 1 to 3.") {
+	if strings.Contains(out, storageLabelR2New) || !strings.Contains(out, fmt.Sprintf("Enter a number from 1 to %d.", len(storageMenuOptions()))) {
 		t.Fatalf("output:\n%s", out)
 	}
 	if len(g.cf.Requests()) != 0 || len(g.apis) != 0 {
@@ -1215,13 +1380,14 @@ func TestGuidedR2IsHiddenWithoutTheSwitch(t *testing.T) {
 	}
 }
 
-// The guided choice is number 3 with the switch on, after the two providers
-// and before the instructions.
+// With the switch on the guided choice follows the guided S3 one, right
+// before the instructions.
 func TestGuidedR2SitsBeforeTheInstructions(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
-	if !strings.Contains(out, "  3) Cloudflare R2: create a new bucket for me\n  4) Show setup instructions\n") {
+	n, help := r2MenuNumber(t, guidedR2Choice), r2MenuNumber(t, "help")
+	if !strings.Contains(out, "  "+n+") "+storageLabelR2New+"\n  "+help+") Show setup instructions\n") || help != fmt.Sprint(len(storageMenuFor(withR2CreateSwitch("1", true)))) {
 		t.Fatalf("menu:\n%s", out)
 	}
 }

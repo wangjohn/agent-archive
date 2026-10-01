@@ -559,3 +559,47 @@ func TestClientAnswersItCannotReadSayWhy(t *testing.T) {
 		t.Fatalf("error %+v", apiErr)
 	}
 }
+
+// A success that carries nothing to read is unreadable, not a negative: no
+// accounts, no permission groups, "r2.dev off", or "no custom domains" may be
+// concluded from it.
+func TestClientEmptySuccessfulAnswersAreUnreadableNotNegative(t *testing.T) {
+	t.Parallel()
+	bodies := map[string]string{
+		"no result":   `{"success":true}`,
+		"null result": `{"success":true,"result":null}`,
+		"empty":       `{"success":true,"result":{}}`,
+	}
+	account, bucket := cloudflaretest.AccountID, cloudflare.BucketRef{Name: "my-bucket"}
+	calls := map[string]func(*cloudflare.Client) error{
+		"accounts": func(c *cloudflare.Client) error { _, err := c.Accounts(context.Background()); return err },
+		"permission groups": func(c *cloudflare.Client) error {
+			_, err := c.PermissionGroups(context.Background(), account, "x")
+			return err
+		},
+		"managed domain": func(c *cloudflare.Client) error {
+			_, err := c.ManagedDomain(context.Background(), account, bucket)
+			return err
+		},
+		"custom domains": func(c *cloudflare.Client) error {
+			_, err := c.CustomDomains(context.Background(), account, bucket)
+			return err
+		},
+	}
+	for bodyName, body := range bodies {
+		for callName, call := range calls {
+			t.Run(bodyName+"/"+callName, func(t *testing.T) {
+				t.Parallel()
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(body))
+				}))
+				defer srv.Close()
+				client := cloudflare.New("tok", cloudflare.Options{BaseURL: srv.URL})
+				apiErr := apiError(t, call(client))
+				if apiErr.Err == nil || apiErr.Status/100 != 2 && apiErr.Status != http.StatusBadGateway {
+					t.Fatalf("error %+v is not an unreadable answer", apiErr)
+				}
+			})
+		}
+	}
+}

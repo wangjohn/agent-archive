@@ -280,6 +280,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	// However setup ended, a bucket it created and did not keep is not left
 	// without a word.
 	noteUnusedCreatedBuckets(p, home)
+	noteUnusedCreatedR2(p, home)
 	return err
 }
 

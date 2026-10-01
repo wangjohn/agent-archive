@@ -296,7 +296,12 @@ func (c *Client) once(ctx context.Context, cl call, payload []byte, out any) (en
 	if decodeErr != nil {
 		return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer could not be read as JSON")}
 	}
-	if out != nil && len(env.Result) > 0 {
+	if out != nil {
+		// An answer that says success but carries no result is not an empty
+		// result: nothing can be concluded from it, so it is unreadable.
+		if len(env.Result) == 0 || bytes.Equal(bytes.TrimSpace(env.Result), []byte("null")) {
+			return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer had no result")}
+		}
 		if err := json.Unmarshal(env.Result, out); err != nil {
 			return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer did not have the expected fields")}
 		}

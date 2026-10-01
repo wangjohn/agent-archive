@@ -263,11 +263,12 @@ func (s *Server) work(w http.ResponseWriter, r *http.Request, name Route, parts 
 	}
 	switch name {
 	case RouteAccounts:
-		writeResult(w, s.Accounts, len(s.Accounts))
+		accounts := append([]Account{}, s.Accounts...)
+		writeResult(w, accounts, len(accounts))
 	case RouteCreateBucket:
 		s.createBucket(w, r, body)
 	case RoutePermissionGroups:
-		var out []Group
+		out := []Group{}
 		for _, g := range s.Groups {
 			if want := r.URL.Query().Get("name"); want == "" || g.Name == want {
 				out = append(out, g)

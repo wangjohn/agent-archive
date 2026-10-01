@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
@@ -143,6 +144,9 @@ type r2Handoff struct{ c *r2Creator }
 type r2Created struct {
 	bucket    string
 	tokenName string
+	// reported is set once setup has said they are still there, so the note
+	// at the end of setup does not say it again.
+	reported bool
 }
 
 // createR2Bucket runs guided creation and returns the storage settings and
@@ -223,9 +227,36 @@ func printGuidedLeftovers(p *prompter, cfg credentials.Config) {
 	if p.created == nil || cfg.Bucket != p.created.bucket {
 		return
 	}
+	p.created.reported = true
 	terminal.Println(p.out, "Setup created the bucket "+p.created.bucket+" and an API token named \""+p.created.tokenName+"\" for it; both are still in your Cloudflare account.")
 	terminal.Println(p.out, "If you stop or use other storage, delete the bucket and revoke that token in the dashboard (Manage account > Account API tokens).")
 	terminal.Println(p.out, "")
+}
+
+// noteUnusedCreatedR2 says, once setup is over, what guided creation left in
+// the person's Cloudflare account when the saved configuration does not use
+// it, however setup ended (the storage check was interrupted, the review was
+// cancelled, an error). Nothing is said when the bucket is in use, or when a
+// failed storage check already said it. A saved setup draft that uses the
+// bucket is named, since running setup again resumes with it.
+func noteUnusedCreatedR2(p *prompter, home string) {
+	c := p.created
+	if c == nil || c.reported {
+		return
+	}
+	uses := func(cfg credentials.Config) bool {
+		return cfg.Provider == credentials.ProviderR2 && cfg.Bucket == c.bucket
+	}
+	if cfg, found, err := config.Load(home); err == nil && found && uses(cfg.Storage) {
+		return
+	}
+	c.reported = true
+	what := "Setup created the bucket " + c.bucket + " (it is empty) and an API token named \"" + c.tokenName + "\" for it."
+	if draft, found, problem, err := readDraft(home); err == nil && found && problem == "" && uses(draft.Config.Storage) {
+		terminal.Println(p.out, what+" Your saved setup draft uses them, so running setup again will resume with them. To not use them, choose other storage there, then delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
+		return
+	}
+	terminal.Println(p.out, what+" Neither is used by your saved setup. To not keep them, delete the bucket and revoke the token in the Cloudflare dashboard (Manage account > Account API tokens).")
 }
 
 // storageConfig is what a pasted account ID or bucket URL would have made:
@@ -295,14 +326,14 @@ func (c *r2Creator) chooseAccount() error {
 		terminal.Println(c.p.out, "Couldn't list your Cloudflare accounts, so setup needs the account ID. "+explainCloudflare(err, "The token isn't allowed to list accounts."))
 	case len(accounts) == 1:
 		if account, e := parseR2AccountID(accounts[0].ID); e == nil {
-			terminal.Printf(c.p.out, "Cloudflare account: %s (%s)\n", accounts[0].Name, account)
+			terminal.Printf(c.p.out, "Cloudflare account: %s (%s)\n", printableText(accounts[0].Name), account)
 			c.account = account
 			return nil
 		}
 	case len(accounts) > 1:
 		terminal.Println(c.p.out, "The token can see more than one Cloudflare account:")
 		for _, a := range accounts {
-			terminal.Printf(c.p.out, "  %s  %s\n", a.ID, a.Name)
+			terminal.Printf(c.p.out, "  %s  %s\n", printableText(a.ID), printableText(a.Name))
 		}
 	}
 	terminal.Println(c.p.out, "Find the Account ID in the Cloudflare dashboard > Storage & databases > R2 > Overview.")
@@ -756,7 +787,7 @@ func (c *r2Creator) reportPublicAccess() {
 	var enabled []string
 	for _, d := range custom {
 		if d.Enabled {
-			enabled = append(enabled, d.Domain)
+			enabled = append(enabled, printableText(d.Domain))
 		}
 	}
 	switch {
@@ -784,12 +815,27 @@ func (c *r2Creator) reportPublicAccess() {
 const maxMessageRunes = 200
 
 // cutMessage shortens text to maxMessageRunes characters without splitting
-// one.
+// one, after making it safe to print.
 func cutMessage(text string) string {
+	text = printableText(text)
 	if utf8.RuneCountInString(text) <= maxMessageRunes {
 		return text
 	}
 	return string([]rune(text)[:maxMessageRunes]) + "…"
+}
+
+// printableText is text from Cloudflare (an account or domain name, a
+// message) made safe to print: a character that is not printable, such as a
+// terminal escape or a line break, becomes a space, so what Cloudflare sends
+// can never move the cursor or restyle setup's own lines. What the person
+// typed is validated instead (bucket names, account IDs).
+func printableText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return ' '
+	}, text)
 }
 
 // explainCloudflare says, in one or two sentences, what a failed Cloudflare

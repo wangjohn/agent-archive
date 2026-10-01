@@ -174,7 +174,7 @@ func (c *Client) CreateToken(ctx context.Context, account string, spec TokenSpec
 		return Token{}, err
 	}
 	if result.ID == "" || result.Value == "" {
-		return Token{ID: result.ID}, &Error{Op: op, Status: http.StatusBadGateway, Err: errors.New("the answer had no token ID and value")}
+		return Token{ID: result.ID}, &Error{Op: op, Status: http.StatusOK, Err: errors.New("the answer had no token ID and value")}
 	}
 	return Token{ID: result.ID, Value: result.Value}, nil
 }
@@ -185,18 +185,35 @@ func (c *Client) DeleteToken(ctx context.Context, account, id string) error {
 	return err
 }
 
-// ManagedDomain reads whether the r2.dev public URL is on.
+// ManagedDomain reads whether the r2.dev public URL is on. An answer that does
+// not say is an error, never "off".
 func (c *Client) ManagedDomain(ctx context.Context, account string, bucket BucketRef) (ManagedDomain, error) {
-	var domain ManagedDomain
-	_, err := c.do(ctx, call{op: "read r2.dev public access", method: http.MethodGet, path: bucketPath(account, bucket.Name) + "/domains/managed", header: jurisdictionHeader(bucket.Jurisdiction)}, &domain)
-	return domain, err
+	const op = "read r2.dev public access"
+	var result struct {
+		Domain  string `json:"domain"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if _, err := c.do(ctx, call{op: op, method: http.MethodGet, path: bucketPath(account, bucket.Name) + "/domains/managed", header: jurisdictionHeader(bucket.Jurisdiction)}, &result); err != nil {
+		return ManagedDomain{}, err
+	}
+	if result.Enabled == nil {
+		return ManagedDomain{}, &Error{Op: op, Status: http.StatusOK, Err: errors.New("the answer did not say whether it is on")}
+	}
+	return ManagedDomain{Domain: result.Domain, Enabled: *result.Enabled}, nil
 }
 
-// CustomDomains lists the bucket's custom domains.
+// CustomDomains lists the bucket's custom domains. An answer without the
+// list is an error, never "none".
 func (c *Client) CustomDomains(ctx context.Context, account string, bucket BucketRef) ([]CustomDomain, error) {
+	const op = "list custom domains"
 	var result struct {
-		Domains []CustomDomain `json:"domains"`
+		Domains *[]CustomDomain `json:"domains"`
 	}
-	_, err := c.do(ctx, call{op: "list custom domains", method: http.MethodGet, path: bucketPath(account, bucket.Name) + "/domains/custom", header: jurisdictionHeader(bucket.Jurisdiction)}, &result)
-	return result.Domains, err
+	if _, err := c.do(ctx, call{op: op, method: http.MethodGet, path: bucketPath(account, bucket.Name) + "/domains/custom", header: jurisdictionHeader(bucket.Jurisdiction)}, &result); err != nil {
+		return nil, err
+	}
+	if result.Domains == nil {
+		return nil, &Error{Op: op, Status: http.StatusOK, Err: errors.New("the answer had no list of domains")}
+	}
+	return *result.Domains, nil
 }
