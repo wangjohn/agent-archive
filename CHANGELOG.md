@@ -25,7 +25,6 @@ Planned for v0.2.0. This release has not been tagged or published.
   statistics with estimated costs.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
-- Setup can match portable repository keys with `--project-repo`, using bounded header-only history discovery and preserving local exclusions. Printed transfer commands use repository keys when available.
 
 ### Changed
 
@@ -86,6 +85,10 @@ the release behavior.
   sessions whose source is unavailable keep their existing preview.
 
 #### Added
+
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches

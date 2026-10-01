@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 func TestProjectMatcherDeduplicatesAndDoesNotExpandExclusions(t *testing.T) {
@@ -127,7 +130,7 @@ func TestSetupYesRepoSelectionAndExplicitPathsAreIndependent(t *testing.T) {
 					<-ctx.Done()
 					return ""
 				}
-				if root == a || root == b {
+				if root == local.CanonicalPath(a) || root == local.CanonicalPath(b) {
 					return key
 				}
 				return ""
@@ -138,7 +141,7 @@ func TestSetupYesRepoSelectionAndExplicitPathsAreIndependent(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project-repo", key, "--project", explicit, "--apps", "claude")
+			output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--region", "us-east-1", "--project-repo", key, "--project", explicit, "--apps", "claude")
 			cfg, _, err := config.Load(home)
 			if err != nil {
 				t.Fatal(err)
@@ -149,12 +152,67 @@ func TestSetupYesRepoSelectionAndExplicitPathsAreIndependent(t *testing.T) {
 					included[p.Root] = true
 				}
 			}
-			if !included[explicit] || included[a] != (mode == "unique") {
+			if !included[local.CanonicalPath(explicit)] || included[local.CanonicalPath(a)] != (mode == "unique") {
 				t.Fatalf("mode %s cfg %+v output %s", mode, cfg, output)
 			}
 			if mode != "unique" && !strings.Contains(output, "Skipped repository") {
 				t.Fatalf("missing diagnostic: %s", output)
 			}
 		})
+	}
+}
+
+func TestProjectMatcherCapsCandidatesAndPreservesPartialMatches(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	key := archive.RepoKey("git@example.test:repo.git")
+	cfg := config.Config{}
+	for i := range 129 {
+		root := filepath.Join(home, fmt.Sprint(i))
+		if err := os.Mkdir(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: root, Included: true})
+	}
+	var calls atomic.Int32
+	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { calls.Add(1); return key }}
+	got := matchProjects(context.Background(), env, home, cfg, []projectMatchRequest{{RepoKey: key}})
+	if !got.Capped || !got.Incomplete || len(got.Roots[0]) != 128 || calls.Load() != 128 {
+		t.Fatalf("got %+v calls %d", got, calls.Load())
+	}
+}
+
+func TestProjectMatcherFindsRelocatedRepositoryInHistory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "relocated")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(home, ".claude", "projects", "synthetic")
+	if err := os.MkdirAll(history, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]string{"cwd": root})
+	if err := os.WriteFile(filepath.Join(history, "synthetic.jsonl"), append(data, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	key := archive.RepoKey("https://user:synthetic-secret@example.test/acme/repo.git")
+	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return key }}
+	got := matchProjects(context.Background(), env, home, config.Config{}, []projectMatchRequest{{RepoKey: key}})
+	if got.Incomplete || len(got.Roots[0]) != 1 || got.Roots[0][0] != local.CanonicalPath(root) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestSetupYesExplainsRepoSkipsWhenNoProjectIsIncluded(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env = withEnvironment(env, map[string]string{})
+	key := archive.RepoKey("git@example.test:missing.git")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--region", "us-east-1", "--apps", "claude", "--project-repo", key)
+	if !strings.Contains(output, "Skipped repository "+key+": not found") {
+		t.Fatalf("missing skip reason: %s", output)
 	}
 }

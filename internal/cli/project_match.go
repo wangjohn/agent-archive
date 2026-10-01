@@ -27,6 +27,9 @@ type projectMatchResult struct {
 }
 
 func (e Env) projectRepoKey(ctx context.Context, root string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	var key string
 	if e.repoKeyContext != nil {
 		key = e.repoKeyContext(ctx, root)
@@ -48,15 +51,24 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	defer cancel()
 	result := projectMatchResult{Roots: make([][]string, len(requests))}
 	bf := env.backfillEnvironment(userHome, cfg)
+	canonicalPaths := map[string]string{}
 	canonical := func(path string) string {
-		if p, err := filepath.EvalSymlinks(path); err == nil {
-			return filepath.Clean(p)
+		if root, ok := canonicalPaths[path]; ok {
+			return root
 		}
-		return filepath.Clean(path)
+		if ctx.Err() != nil {
+			return filepath.Clean(path)
+		}
+		root := local.CanonicalPath(path)
+		canonicalPaths[path] = root
+		return root
 	}
 	var candidates []string
 	var excluded []string
 	for _, project := range cfg.Archive.Projects {
+		if ctx.Err() != nil {
+			break
+		}
 		if !project.Included {
 			excluded = append(excluded, canonical(project.Root))
 		}
@@ -74,11 +86,7 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
 			return
 		}
-		root := path
-		if canonical, err := filepath.EvalSymlinks(path); err == nil {
-			root = canonical
-		}
-		root = filepath.Clean(root)
+		root := canonical(path)
 		if seen[root] {
 			return
 		}

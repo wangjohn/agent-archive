@@ -31,11 +31,25 @@ func (r KnownProjectsResult) Incomplete() bool { return r.TimedOut || r.Capped |
 // The full backfill discovery API keeps its existing behavior.
 func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Config, maxRoots int) KnownProjectsResult {
 	var result KnownProjectsResult
+	if ctx.Err() != nil {
+		result.TimedOut = true
+		return result
+	}
+	// Resolution also reads filesystem metadata. Stop subsequent operations
+	// after cancellation, including those within the existing resolver.
+	original := env
+	env.Stat = projectOperation(ctx, original.stat)
+	env.Lstat = projectOperation(ctx, original.lstat)
+	env.ReadDir = projectOperation(ctx, original.readDir)
+	env.ReadFile = projectOperation(ctx, original.readFile)
+	env.Open = projectOperation(ctx, original.open)
+	env.EvalSymlinks = projectOperation(ctx, original.evalSymlinks)
 	if maxRoots <= 0 {
 		maxRoots = 128
 	}
 	seen := map[string]bool{}
 	files := 0
+	entriesExamined := 0
 	r := newResolver(env, cfg, Filters{})
 	stopped := func() bool {
 		if ctx.Err() != nil {
@@ -59,6 +73,11 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 		}
 		for _, entry := range entries {
 			if stopped() {
+				return
+			}
+			entriesExamined++
+			if entriesExamined > 8192 {
+				result.Capped = true
 				return
 			}
 			path := filepath.Join(dir, entry.name)
@@ -127,6 +146,16 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 		walk(filepath.Join(dir, "archived_sessions"), true, 0)
 	}
 	return result
+}
+
+func projectOperation[T any](ctx context.Context, operation func(string) (T, error)) func(string) (T, error) {
+	return func(path string) (T, error) {
+		if err := ctx.Err(); err != nil {
+			var zero T
+			return zero, err
+		}
+		return operation(path)
+	}
 }
 
 func firstProjectRecord(ctx context.Context, env Environment, path string, codex bool) (string, error) {

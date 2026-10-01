@@ -182,11 +182,13 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	var matches projectMatchResult
 	opts.projectMatches = &matches
 	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
+	// A key-only command may leave no project included. Explain its skips
+	// before returning that validation error; invalid keys are never echoed.
+	if len(opts.projectRepos) > 0 && len(matches.Roots) == len(opts.projectRepos) {
+		printProjectMatches(p, opts.projectRepos, matches)
+	}
 	if err != nil {
 		return err
-	}
-	if len(opts.projectRepos) > 0 {
-		printProjectMatches(p, opts.projectRepos, matches)
 	}
 	if secret.SecretAccessKey, err = scriptR2Secret(secret, p, stdin, env); err != nil {
 		return err
