@@ -116,10 +116,7 @@ func TestSecretInputEndsWithItsInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mode := range []string{"close", "eof"} {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		out, err := exec.CommandContext(ctx, python, "-c", secretEndScript, binary, mode).CombinedOutput()
-		cancel()
-		if err != nil {
+		if out, err := runPTYScript(t, python, secretEndScript, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
 	}
