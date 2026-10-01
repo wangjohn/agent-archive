@@ -195,10 +195,14 @@ type FilesystemProbe struct {
 func resolveAndMount(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
-		_, _ = os.Stat(strings.TrimSuffix(resolved, string(filepath.Separator)) + string(filepath.Separator))
+		_, _ = statInside(strings.TrimSuffix(resolved, string(filepath.Separator)) + string(filepath.Separator))
 	}
 	return resolved, err
 }
+
+// statInside is the stat resolveAndMount looks inside a directory with; a
+// test replaces it to see the path it is given.
+var statInside = os.Stat
 
 // Where reports what filesystem path is on, or ok=false when that cannot be
 // told: the mount table cannot be read (a system without /proc, or one whose

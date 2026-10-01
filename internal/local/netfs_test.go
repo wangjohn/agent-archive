@@ -314,3 +314,50 @@ func TestFilesystemProbeReadsTheMountTableAfterResolving(t *testing.T) {
 		t.Errorf("an automounted home: %+v, %v", got, ok)
 	}
 }
+
+// The default resolver looks inside the directory the walk ends on, through a
+// trailing slash (what mounts an autofs point that a plain stat leaves
+// alone), and only at a path that exists: a file's "not a directory" is
+// ignored, and a missing path or a dangling link is never looked inside. It
+// replaces statInside, so it is not parallel.
+func TestFilesystemProbeLooksInsideThePathItEndsOn(t *testing.T) {
+	var looked []string
+	t.Cleanup(func() { statInside = os.Stat })
+	statInside = func(path string) (fs.FileInfo, error) {
+		looked = append(looked, path)
+		return os.Stat(path)
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "gone"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	table := []byte("1 0 8:1 / / rw - ext4 /dev/sda rw\n")
+	probe := FilesystemProbe{MountTable: func() ([]byte, error) { return table, nil }}
+	for _, tc := range []struct {
+		path   string
+		probed string
+		looked string
+	}{
+		{root, root, root + "/"},
+		{filepath.Join(root, "missing", "agent-archive"), filepath.Join(root, "missing", "agent-archive"), root + "/"},
+		{file, file, file + "/"},
+		{filepath.Join(root, "dangling"), filepath.Join(root, "dangling"), root + "/"},
+		{"/", "/", "/"},
+	} {
+		looked = nil
+		got, ok := probe.Where(tc.path)
+		if !ok || got.Probed != tc.probed || got.Type != "ext4" {
+			t.Errorf("%s: %+v, %v", tc.path, got, ok)
+		}
+		if len(looked) != 1 || looked[0] != tc.looked {
+			t.Errorf("%s: looked inside %q, want only %q", tc.path, looked, tc.looked)
+		}
+	}
+}
