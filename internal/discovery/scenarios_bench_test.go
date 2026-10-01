@@ -46,7 +46,7 @@ func BenchmarkCodexCoverageAndWarmBurst(b *testing.B) {
 			coverageWall := time.Since(started)
 			var after syscall.Rusage
 			_ = syscall.Getrusage(syscall.RUSAGE_SELF, &after)
-			cpu := time.Duration((after.Utime.Sec-before.Utime.Sec)*1e9 + (after.Utime.Usec-before.Utime.Usec)*1e3)
+			cpu := time.Duration((after.Utime.Sec-before.Utime.Sec)*1e9 + int64(after.Utime.Usec-before.Utime.Usec)*1e3)
 			// An incomplete file and one fresh task appear after completed coverage.
 			incompleteID := writeRollout(b, root, project, at.Add(time.Minute), count+1, "archived_sessions")
 			incomplete := filepath.Join(root, "archived_sessions", "rollout-2026-10-01T12-00-00-"+incompleteID+".jsonl")
