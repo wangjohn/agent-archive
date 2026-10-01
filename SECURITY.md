@@ -1,9 +1,10 @@
 # Security policy
 
 agent-archive handles coding-agent transcripts, which can contain source
-code, credentials, and personal data; it stores storage credentials in the
-Keychain, edits your apps' settings files, and runs from launchd every 60
-seconds. Security reports are welcome and taken seriously.
+code, credentials, and personal data; it stores storage credentials (in the
+Keychain on macOS, in a private file on Linux), edits your apps' settings
+files, and runs every 60 seconds from launchd on macOS or a systemd user timer
+on Linux. Security reports are welcome and taken seriously.
 
 ## Reporting a vulnerability
 
@@ -55,8 +56,9 @@ release.
 - **Object-key traversal:** writing, reading, or deleting objects outside the
   configured prefix, or another session's objects.
 - **Local state:** files created with permissions other users can read, or
-  symlink tricks against the data directory, the LaunchAgent, or setup's
-  rollback.
+  symlink tricks against the data directory, the credentials folder, the
+  background job's definition (the LaunchAgent, or the systemd units and their
+  enable link), the Cursor snapshot folder, or setup's rollback.
 - **Supply chain:** the release workflow, install script, or dependencies.
 
 ## Not vulnerabilities
@@ -69,4 +71,11 @@ release.
   client-side encryption by design; protect the bucket.
 - **R2 privacy can't be verified.** R2's object credentials can't inspect
   public-bucket settings, so status reports `not_verified`.
-- Problems that require an attacker who already controls your macOS account.
+- **The Linux credentials file is not encrypted.** It is mode 0600 in a mode
+  0700 folder and refused when open to others, so it protects an R2 key from
+  other accounts only; root and anything running as you can read it. This is
+  documented in [privacy](docs/security/privacy.md#where-credentials-are-kept),
+  with the advice to use an S3 profile on Linux. A way around those checks is
+  in scope; the absence of encryption is not.
+- Problems that require an attacker who already controls your macOS or Linux
+  account.

@@ -9,8 +9,7 @@ Files are private to your account and written atomically (temporary file,
 fsync, rename, directory fsync).
 
 On macOS, R2 credentials are not here: they are in the Keychain under the
-service `agent-archive`. In a build for another platform (Linux), which has
-no Keychain, they are in `credentials/<reference>.json` in this directory,
+service `agent-archive`. On Linux, which has no Keychain, they are in `credentials/<reference>.json` in this directory,
 each file mode 0600 in a folder mode 0700 that agent-archive refuses to read
 if it is open to other users (see
 [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
@@ -113,12 +112,22 @@ list in step with `state.OwnedEntries()`.
 
 ## Outside the data directory
 
-- `~/Library/LaunchAgents/com.agent-archive.collector.plist` (or
+- On macOS, `~/Library/LaunchAgents/com.agent-archive.collector.plist` (or
   `com.agent-archive.collector.<hash>.plist` for a non-default data
   directory).
+- On Linux, `~/.config/systemd/user/agent-archive-collector.service` and
+  `agent-archive-collector.timer` (or `agent-archive-collector-<hash>.*` for
+  a non-default data directory), each mode 0600, and the link that enables
+  the timer, `~/.config/systemd/user/timers.target.wants/agent-archive-collector.timer`.
+  The collector's logs stay in the data directory (`collector.log` and
+  `collector-error.log`).
 - The hook entries in each app's hook file, recorded in `hook_files` in
   `config.json`.
 - A Cursor database copy, only while a read of it is in progress with Cursor
-  running: `agent-archive-cursor-<uid>/cursor-snapshot-*` in your per-user
-  temporary folder (`getconf DARWIN_USER_TEMP_DIR`), removed when the read
-  ends. An abandoned copy is swept by the next read.
+  running. On macOS: `agent-archive-cursor-<uid>/cursor-snapshot-*` in your
+  per-user temporary folder (`getconf DARWIN_USER_TEMP_DIR`). On Linux:
+  `cursor-snapshots/` (mode 0700) in `agent-archive/` under `$XDG_CACHE_HOME`
+  (else `~/.cache`, the account's home), beside a `CACHEDIR.TAG` that tells
+  backup tools to skip it; never `/tmp` and never the data directory, which
+  may be backed up or synced. The copy is removed when the read ends, and an
+  abandoned one is swept by the next read.

@@ -35,7 +35,7 @@ find none say so without creating the data directory.
   session records the link as unavailable, with a
   `subagent_transcript_never_written` capture gap. `status --verbose` shows
   how many are waiting, and how many of each type (as Claude Code reported
-  it; the type stays on this Mac) were dropped this way in the last 7
+  it; the type stays on this machine) were dropped this way in the last 7
   days. A subagent lost for another reason (its transcript exists but
   can't be read, or doesn't match its parent session) is a failed session:
   `sync` names it and exits 1, once.
@@ -69,7 +69,7 @@ agent-archive status --verbose
 agent-archive status --json
 ```
 
-Status uses local evidence and a read-only launchd check; it never downloads
+Status uses local evidence and a read-only check of the scheduler (launchd, or on Linux the systemd user manager); it never downloads
 conversations. It leads with the overall state and, unless that is Ready,
 the one thing to fix, with each command to run on its own line:
 
@@ -114,7 +114,7 @@ app runs them only once you approve them, and no session has shown that it
 does yet. **Storage** has a row each for the
 destination with the last upload (! when the last pass failed on storage),
 the background collector, bucket privacy (with the provider's guidance
-when this Mac can't inspect the bucket),
+when this machine can't inspect the bucket),
 and any error of the last sync that the line at the top doesn't already
 state. ✓ is fine, ! needs you, ✗ is blocked, and · is information. Times are
 relative to now and paths under your home folder start with `~`. The screen
@@ -168,21 +168,23 @@ stays the same length however many projects you include.
   a failure at all, and shows those problems on · **Last pass:** rows
   instead of ✗ **Last error:** rows.
 - **Background collector on** (`--json`: background `loaded`, or `running`
-  while a pass is executing) means launchd knows the scheduled job. When it
-  **belongs to another installation** (`another_installation`), launchd runs
-  this installation's label from a different plist. That job belongs to another
-  installation and is left alone: set `AGENT_ARCHIVE_HOME` to a data
+  while a pass is executing) means the scheduler (launchd, or the systemd
+  user manager on Linux) knows the scheduled job. When it
+  **belongs to another installation** (`another_installation`), the scheduler
+  runs this installation's job from a different plist or unit file. That job
+  belongs to another installation and is left alone: set `AGENT_ARCHIVE_HOME` to a data
   directory of this installation's own, or uninstall the other one.
 - **agent-archive can't run from where setup installed it** means the hooks
   or background collector run an `agent-archive` executable that has since
   been moved, deleted, or made non-executable. Run
   `agent-archive setup --refresh` from the binary's new location: it points
-  the hooks, the collector's plist, and the skills at it, asks nothing, and
+  the hooks, the collector's job definition, and the skills at it, asks nothing, and
   changes no other setting. (A hooks row that says `hooks missing` is
   repaired the same way.)
 - **The background collector can't load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
-  LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
+  job definition (LaunchAgent or systemd service), and one of them no longer
+  works: an `AWS_CONFIG_FILE` that
   moved, or a `credential_process` helper that is no longer on that `PATH`
   (a LaunchAgent from an earlier build has only launchd's
   `/usr/bin:/bin:/usr/sbin:/sbin`). `agent-archive sync` from your shell
@@ -293,9 +295,89 @@ Code, Codex, or Cursor pull in a past session when you ask.
    their own approvals; the skill deliberately does not pre-approve them
    ([permissions](agent-skills.md#permissions)). Where nothing can ask, as in
    `claude -p`, the agent is refused instead and should say so; allow the command in that agent's settings, or run it yourself.
-5. **A sandbox may block it.** If the agent says the network or the Keychain
-   was blocked, a session on this Mac is still found by its title; allow the
+5. **A sandbox may block it.** If the agent says the network or the credential
+   store (the Keychain, or on Linux the credentials file) was blocked, a session on this machine is still found by its title; allow the
    command, or run it yourself in a terminal.
+
+## Linux and systemd
+
+On Linux the background collector is a systemd user timer. These are the
+things that go wrong there that do not on macOS; [what was tested, and what
+was not](../getting-started/install.md#platforms). To look at the job
+yourself (the unit is `agent-archive-collector` for the default
+installation, and `agent-archive-collector-<hash>` for one with its own
+`AGENT_ARCHIVE_HOME`):
+
+```sh
+systemctl --user status agent-archive-collector.timer
+systemctl --user list-timers
+```
+
+The collector writes `collector.log` and `collector-error.log` in the data
+directory, not to the journal.
+
+- **"The systemd user manager cannot be reached (this session has no user
+  bus)."** Setup and `status` say this over SSH without `pam_systemd`, in a
+  container, after `su`, and wherever nothing runs a user manager. `status`
+  shows the collector as *state unknown* (`--json`: background `unknown`) and
+  "systemctl couldn't say". Run the command from a login session that has
+  the bus, or run `loginctl enable-linger` once (as yourself, or with `sudo
+  loginctl enable-linger "$USER"` where your system asks for it) so the user
+  manager runs without a login; a shell that was already open may also need
+  `export XDG_RUNTIME_DIR=/run/user/$(id -u)`. Check that `systemctl --user
+  status` answers, then run `agent-archive setup` again. "This system was not
+  booted with systemd" means systemd is not the init system (many containers,
+  WSL without systemd enabled): there is no user manager to reach, and
+  agent-archive has no cron or other fallback, so setup cannot install the
+  background job there.
+- **Lingering is off.** `status` has a note under Notes, and `status --json`
+  has it in `background_warnings`: the collector runs while you are logged
+  in and stops when you log out. Hooks still record sessions and the next
+  pass after you log in uploads them. Run `loginctl enable-linger` to keep it
+  running.
+- **Setup fails with "Unit file agent-archive-collector.timer does not
+  exist".** The units are always written to `~/.config/systemd/user`. The
+  user manager searches `$XDG_CONFIG_HOME/systemd/user` instead when its own
+  environment (not your shell's) sets `XDG_CONFIG_HOME`, as `pam_env` or a
+  `user@.service` drop-in can. Setup rolls back and the error names the
+  directory it wrote to and says to run `systemctl --user show
+  --property=UnitPath`, which lists the directories the manager reads. Unset
+  the variable for the manager, log in again, and run setup again.
+- **A warning that the shell's `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` differs
+  from the collector's.** The collector uses what setup recorded, so a
+  backfill from this shell and the scheduled pass would look for Cursor's
+  database, or keep its temporary copies, in different places. If this
+  shell's value is the right one, run `agent-archive setup` again from here.
+  **Known limit:** a user manager can get either variable from outside your
+  shell (an `environment.d` file, a desktop session's `import-environment`).
+  Setup records only what its shell has, so when the shell had neither, the
+  job uses the manager's value, and `status`, which compares only the
+  shell's values with the recorded ones and cannot see the manager's, says
+  nothing about a difference. If a Cursor database is not found by the collector while it is by
+  a backfill from your shell, export the same values in the shell as the
+  manager has and run setup again.
+- **systemd older than 240.** Setup refuses (`status` says "this is systemd
+  237, older than 240"): the collector's logs need `StandardOutput=append:`.
+  Upgrade systemd; on RHEL 8 or a rebuild of it, update to 8.3 or later.
+- **A masked unit or a drop-in.** A masked timer or service is reported with
+  the command that unmasks it (`systemctl --user unmask ...`). A drop-in that
+  overrides the unit is a note under Notes: its settings differ from the unit
+  file's, which is what setup and `setup --refresh` read.
+- **"This data directory was set up on a different machine."** `status` and
+  `setup` say it when the data directory's recorded host ID is not this
+  machine's, which means it was copied (a cloned VM or container image).
+  What to do about it, and why a shared home directory is not supported, is
+  in [multiple machines](multiple-machines.md#cloned-machines-on-linux).
+- **Uninstalling without a user bus.** `agent-archive uninstall` refuses and
+  prints the command that stops the job; `agent-archive uninstall
+  --skip-scheduler` removes the units, hooks and skills anyway and prints
+  that command to run from a session that has the bus ([uninstall](../getting-started/uninstall.md#when-the-background-scheduler-cannot-be-reached)).
+- **Cursor captures nothing.** Cursor on Linux is unverified. A report on
+  Cursor's forum says `cursor-agent` hooks on Linux may fail silently, so
+  check `agent-archive status --verbose` for the hook state and diagnostics,
+  that `~/.cursor/hooks.json` has the archive hooks, and start a new Agent
+  chat. Setup cannot detect Cursor's version on Linux. Please report what
+  you see, with `agent-archive --version` and the Cursor version.
 
 ## An interrupted setup
 
@@ -355,9 +437,9 @@ A storage change is blocked while known work is pending; sync the current
 destination first. A session that never received a transcript (a Cursor chat
 with transcripts turned off) has nothing to publish, so it does not block the
 change. Switching starts a new capture boundary: old sessions stay published
-at their old destination, which this Mac stops collecting into or cleaning
+at their old destination, which this machine stops collecting into or cleaning
 up. Their local evidence is kept until it ages past the retention period,
-then removed from this Mac only; nothing is deleted from either bucket on its
+then removed from this machine only; nothing is deleted from either bucket on its
 behalf.
 
 ## Upgrading from an earlier build

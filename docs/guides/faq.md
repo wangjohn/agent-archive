@@ -17,7 +17,7 @@ encryption. See [privacy](../security/privacy.md#what-is-uploaded).
 Yes, with [`agent-archive backfill`](backfill.md). Setup alone captures only
 new sessions in explicitly included projects. If setup offers to import past sessions, you can decline and run `backfill` later.
 
-**Does it capture every project on my Mac?**
+**Does it capture every project on my machine?**
 No. Only projects you include in setup (or that a backfill adds, which it
 tells you first). Sessions run from your home directory or a temporary
 directory are skipped by default.
@@ -41,11 +41,12 @@ restarts.
 
 **How do I delete everything?**
 `agent-archive uninstall --delete-local-data` removes the hooks, the
-LaunchAgent, agent-archive's local files, and stored R2 credentials; then
-remove the binary. It never touches the bucket, and no Mac deletes another
-Mac's sessions: see
+background job (the LaunchAgent on macOS, the systemd units on Linux),
+agent-archive's local files, and stored R2 credentials; then
+remove the binary. It never touches the bucket, and no machine deletes another
+machine's sessions: see
 [delete the archive](../getting-started/uninstall.md#delete-the-archive-in-the-bucket)
-for the commands, and for a lifecycle rule that cleans up after a Mac you
+for the commands, and for a lifecycle rule that cleans up after a machine you
 retire.
 
 **How long are sessions kept?**
@@ -55,18 +56,33 @@ from the day of the import. After a
 [filter upgrade](../security/privacy.md#after-a-filter-upgrade), older
 copies can stay until the session expires.
 
-**Can I use it on several Macs?**
-Yes; see [multiple Macs](multiple-macs.md). If you move to a new Mac with
-Migration Assistant, or restore from Time Machine, read
-[that section](multiple-macs.md#migration-assistant-and-time-machine)
-first: the copy keeps the old Mac's identity.
+**Can I use it on several machines?**
+Yes, macOS and Linux in any mix; see [multiple machines](multiple-machines.md).
+If you move to a new Mac with Migration Assistant, or restore from Time
+Machine, read [that section](multiple-machines.md#migration-assistant-and-time-machine-macos)
+first; on Linux, read [the one on clones](multiple-machines.md#cloned-machines-on-linux):
+a copy keeps the old machine's identity.
 
 **Can my coding agent see my archive?**
 Through the `agent-archive` skill setup installs (`agent-archive setup --no-skills` turns it off), it reads what `handoff`, `list`, and `show` print: the same filtered content you would see running them, cut to a size bound. That is what the skill tells it to run, not a barrier: an agent with a shell runs as you, and can run `agent-archive` or read your files directly. The agent treats it as data, not instructions, and Claude Code asks before it first uses the skill and before it runs the commands. See [agent skills](agent-skills.md) and [privacy](../security/privacy.md#what-an-agent-can-read-through-the-skill).
 
-**Does it run on Linux or Windows?**
-No. Capture runs on macOS only: it relies on launchd and the Keychain.
-Linux builds exist so the tests run in CI; they cannot capture.
+**Does it run on Linux?**
+Yes, for persistent capture on a machine with a systemd user manager (systemd
+240 or newer; RHEL 8 and its rebuilds from 8.3). The background collector is a
+systemd user timer, so a headless machine or an SSH session needs `loginctl
+enable-linger`; there is no cron fallback. An R2 key is kept in a private file
+(not encrypted), so use an S3 profile where you can. Release binaries are
+unsigned (the installer checks them against `SHA256SUMS`, and `gh attestation
+verify` confirms where they came from). What is **not** verified on Linux:
+the real Cursor app and `cursor-agent` hooks (a Cursor forum report says
+they may fail silently there, so Cursor capture is best effort),
+distributions other than Ubuntu 24.04 live, an amd64 live run, and WSL. A
+home directory shared by several Linux machines (NFS, say) is not supported.
+See [platforms](../getting-started/install.md#platforms), [setup on
+Linux](../getting-started/setup.md#setup-on-linux) and [troubleshooting](troubleshooting.md#linux-and-systemd).
+
+**Does it run on Windows?**
+No.
 
 **What happens when an app changes its transcript format?**
 Nothing is guessed. A field the filter doesn't know is dropped and named in
@@ -75,7 +91,7 @@ the parser can't read gets parser status `failed` rather than wrong counts.
 `status` reports a new app version as `unverified` until one of its sessions
 is published and read back. If sessions from a new version look wrong, file
 a capture gap issue; a fix comes as a new adapter or filter version, and
-sessions whose transcripts are still on your Mac are refiltered then.
+sessions whose transcripts are still on your machine are refiltered then.
 
 **Which app versions work?**
 See the [tested app versions](../reference/capture-capabilities.md#tested-app-versions). A version

@@ -1,25 +1,27 @@
 #!/bin/sh
-# Installs the latest agent-archive release for this Mac.
+# Installs the latest agent-archive release for this machine (macOS or Linux).
 #
 #   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
 #
-# Downloads the signed, notarized binary for this Mac's architecture from
-# GitHub Releases, checks it against the release's SHA256SUMS (which catches
-# a damaged download, not a tampered release, since both come from the same
-# place), checks that it is signed with this project's Developer ID (which
-# does catch a binary someone else built), and installs it as
-# `agent-archive`. It never runs setup and never needs sudo. On a Mac that
-# is already set up (a config.json in the data directory) it then runs
+# Downloads the binary for this machine's operating system and architecture
+# from GitHub Releases, checks it against the release's SHA256SUMS (which
+# catches a damaged download, not a tampered release, since both come from
+# the same place), and installs it as `agent-archive`. On macOS the binary is
+# signed and notarized, and the script also checks that it is signed with
+# this project's Developer ID (which does catch a binary someone else built).
+# It never runs setup and never needs sudo. On a machine that is already set
+# up (a config.json in the data directory) it then runs
 # `agent-archive setup --refresh`, which asks nothing and changes only the
-# hooks, the background collector's plist, and the skill files, so they name
-# the new binary; if that fails, or this runs as root, the install still
-# succeeds.
+# hooks, the background job's definition (the LaunchAgent's plist, or the
+# systemd unit files), and the skill files, so they name the new binary; if
+# that fails, or this runs as root, the install still succeeds.
 #
-# The script also recognises Linux release assets (linux-amd64, linux-arm64).
-# Linux is not yet a supported platform. Those binaries are not signed, so
-# the Developer ID check does not apply to them. On every OS the SHA256SUMS
-# check is mandatory: the install stops before anything is installed if
-# there is no SHA-256 tool, no single well-formed entry, or a mismatch.
+# Linux release assets (linux-amd64, linux-arm64) are static and not signed,
+# so the Developer ID check does not apply to them; the script prints the
+# `gh attestation verify` command that confirms where one came from. On every
+# OS the SHA256SUMS check is mandatory: the install stops before anything is
+# installed if there is no SHA-256 tool, no single well-formed entry, or a
+# mismatch. Releases up to v0.1.1 have no Linux asset.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -147,7 +149,7 @@ main() {
     say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
   fi
 
-  # An upgrade of a set-up Mac: the app hooks, the background collector, and
+  # An upgrade of a set-up machine: the app hooks, the background collector, and
   # the skills name this binary, so bring them up to date. A fresh install
   # runs nothing.
   configured=0
@@ -187,7 +189,7 @@ main() {
   fi
 }
 
-# existing_installation succeeds when this Mac already has a completed
+# existing_installation succeeds when this machine already has a completed
 # setup: a settings file in the data directory, AGENT_ARCHIVE_HOME or the
 # default one.
 existing_installation() {

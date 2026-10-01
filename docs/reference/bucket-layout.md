@@ -15,12 +15,12 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   .setup-test/clock-<random>.json    a clock check before retention deletes anything, deleted at once
   listing/
     v1-ready                       written after a complete index rebuild
-    v1-needs-rebuild               older bucket detected by an uploading Mac
+    v1-needs-rebuild               older bucket detected by an uploading machine
     v1/<reverse-time>/<app>/<id>/<hash>.json  immutable listing hint
     by-session/<app>/<id>/<hash>    cleanup pointer for a listing hint
 ```
 
-- **Archive session ID.** 32 lowercase hex characters, assigned on the Mac
+- **Archive session ID.** 32 lowercase hex characters, assigned on the machine
   that captured the session. It is not the app's own session ID, which is
   kept inside the metadata (`native_session_id`).
 - **`metadata.json`** is small JSON (schema:
@@ -35,7 +35,7 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   can be stale after republish or deletion. `list --rebuild-index` scans an
   older bucket's sidecars and writes the `v1-ready` marker last. Until then,
   limited listing uses the full sidecar scan. Retention and undo remove a
-  session's hints using the `by-session` pointers. Upgrade every uploading Mac
+  session's hints using the `by-session` pointers. Upgrade every uploading machine
   before rebuilding: an older writer cannot create hints for its new uploads.
   If a hint is damaged, listing falls back to a full sidecar scan; rerun
   `list --rebuild-index` to repair the index.
@@ -56,7 +56,7 @@ old bytes requires reviewing those copies as well as the live pointer.
 `agent-archive purge plan` lists unreferenced source keys and reports current
 older-filter sessions separately. Its private plan and report are local; they
 are not new bucket objects. [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)
-explains how to apply a plan with every uploading Mac paused.
+explains how to apply a plan with every uploading machine paused.
 
 ## How objects change
 
@@ -73,15 +73,15 @@ explains how to apply a plan with every uploading Mac paused.
   older ones for a 24-hour grace period). When a filter-version change
   republishes a session, its old-filter predecessor is marked for cleanup
   after the new publication passes read-back verification and 24 hours have
-  elapsed. A failed delete is retried by that Mac's retention sweep.
+  elapsed. A failed delete is retried by that machine's retention sweep.
 - When a session expires (retention, 90 days by default) or `backfill undo`
   removes it, its metadata is deleted before its sources, so an interruption
   leaves at worst unreferenced source objects for the next pass, never a
   pointer to missing data.
-- Both deletions go by age, measured by the Mac's clock, so before either
-  the Mac checks its clock against the storage service's (the modification
+- Both deletions go by age, measured by the machine's clock, so before either
+  the machine checks its clock against the storage service's (the modification
   time of a `.setup-test/clock-*` object it writes and deletes). While the
-  Mac's clock is more than an hour ahead, or the service's clock can't be
+  machine's clock is more than an hour ahead, or the service's clock can't be
   read, nothing is deleted by age and `status` says why; a clock that jumped
   more than a day since the previous pass waits one pass. The check runs only
   when something is due for deletion, and its reading is reused for up to an
