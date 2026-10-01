@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -337,6 +338,10 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 	// status checks them against it rather than against whatever path status
 	// was later started through. It is written with the same transaction.
 	next.InstalledExecutable = executable
+	// The scheduler this setup defines the job under, so status, uninstall,
+	// refresh and recovery address the job through the adapter that made it
+	// (launchd is left out: see host.Recorded).
+	next.BackgroundBackend = host.Recorded(env.scheduler().Name())
 	return nil
 }
 
@@ -406,7 +411,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job.State == scheduler.Unknown {
-		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.sched().Words().Tool)
+		return setupjournal.Journal{}, errors.New(unknownJobMessage(in.sched().Words(), problemOf(job)))
 	}
 	if job.State == scheduler.AnotherInstallation {
 		problem, words := problemOf(job), in.sched().Words()

@@ -8,6 +8,28 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `agent-archive stats --json --all` lists every project, skill and MCP
+  server instead of the top five of each (`--all` is an error without
+  `--json`: the web page keeps its top lists). The document is otherwise the
+  same, in the same order, and `schema_version` stays 1. The hints under the
+  skills and MCP servers now say `+ N more (all in --json --all)`, and the
+  one under the projects screen `--json --all` too. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -276,6 +298,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Privacy filter 13: a session's name and linked pull request are now
+  archived.** Claude Code's session name (the one in its sidebar, set from
+  your prompt or by `/rename`) and the pull request a session linked (its
+  `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
+  only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
+  that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
+  `last-prompt` records are still dropped. `list`, `show`, and `handoff` do
+  not show the new fields yet. The next sync re-reads and republishes each
+  session whose transcript is still on the Mac, so it can carry them. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
@@ -286,9 +322,10 @@ follow [Semantic Versioning](https://semver.org/).
   pipes are plain; bars have no shaded track). The rest moved behind
   `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
   the tool error rate, the token breakdown, the agents table and the notes on
-  what the numbers rest on. `--view projects`, `models` and `agents` list every
-  project, model family and agent. `--by project` is now `--view projects`, and
-  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  what the numbers rest on. `--view projects`, `models` and `agents` list the
+  projects and model families (up to 500 each, then `+ N more`) and every
+  agent. `--by project` is now `--view projects`, and `--by day`, `week` and
+  `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
 - **`stats --json` and `--html` rank projects by spend, not tokens.** The
@@ -380,6 +417,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The `handoff` picker no longer offers archived subagent sessions. They
+  filled the first screen under their orchestrator (one had 45 of them) and
+  were counted in "Showing 50 of 659", though only top-level sessions can be
+  handed off. The picker now lists top-level sessions only and counts only
+  those; `list` and `show` are unchanged.
 - A hook that fires while a retention sweep is expiring its session no
   longer fails with "another collector or setup is running" on a busy Mac,
   leaving the session to expire without that turn. Retention wrote the
@@ -389,15 +431,30 @@ follow [Semantic Versioning](https://semver.org/).
 - **`agent-archive stats` no longer says `--json` has every row of a list it
   cut.** Under a cut list the screens said `(--json has them all)`, but plain
   `--json` keeps only the top five projects. The projects screen now says `+ N
-  more (all in --json --by project)` (the by-project rows are never cut),
-  the models screen `(all in --json)` (`models` is never cut), and the
-  detail screen's day, week and month tables `N earlier rows not shown (all in
-  --json --by day)`; the interactive screen, which takes no command, says to
-  quit first and names the window on show (`+ N more (quit, then run
-  agent-archive stats --days 90 --json --by project)`). The skills and MCP
-  servers were never claimed to be in `--json`, which keeps only the top five
-  of each; `stats --help` and the guide now say the detail screen lists up to
-  40 of them.
+  more (all in --json --all)` (plain `--json` keeps the top five; `--all`
+  lists every project), the models screen `(all in --json)` (`models` is never
+  cut), and the detail screen's day, week and month tables `N earlier rows not
+  shown (all in --json --by day)`; the interactive screen, which takes no
+  command, says to quit first and names the window on show (`+ N more (quit,
+  then run agent-archive stats --days 90 --json --all)`). The skills and MCP
+  servers say `+ N more (all in --json --all)` too; `stats --help` and the
+  guide say the detail screen lists up to 40 of them and the projects and
+  models screens up to 500 rows, not "every one".
+- **A `kill -QUIT` no longer leaves the terminal raw.** The interactive
+  screens (`list`, `show` and `stats`) turn Ctrl-\ off while they read keys,
+  but a SIGQUIT sent from outside dumped goroutines and left the terminal on
+  the alternate screen without echo. SIGQUIT is now handled like SIGTERM and
+  SIGHUP by every command that stops on a signal (those screens, the pager,
+  `backfill`, the storage check in `setup`, `stats` while it reads, and
+  `setup --refresh`, which absorbs it while it changes files): the terminal is
+  restored and the exit status is 131. The collector and the hooks are
+  unchanged.
+- **`stats` keeps a command and a name with its count together.** A hint such
+  as `(all in --json --by project)` was broken after `--by` on a 40-column
+  terminal, and a skill or MCP server could be separated from its count; each
+  now stays on one line whenever it fits. And the path of a page saved with
+  `h` is printed after a signal ends the interactive screen too, as it is
+  after a quit.
 - A hook no longer fails with "another collector or setup is running", and
   loses that turn's evidence, when the collector, an import, or
   `agent-archive feedback` writes to the same session at the same moment on a

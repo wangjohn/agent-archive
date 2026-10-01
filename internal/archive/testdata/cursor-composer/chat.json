@@ -5,7 +5,7 @@
     "createdAt": 1790000000000,
     "lastUpdatedAt": 1790000600000,
     "isDraft": false,
-    "name": "SYNTHETIC-CHAT-TITLE",
+    "name": "Fix the widget test password=hunter2",
     "blobEncryptionKey": "SYNTHETIC-ENCRYPTION-KEY",
     "workspaceIdentifier": {"uri": "file:///Users/synthetic/private-project"},
     "subagentComposerIds": ["c0ffee00-0000-4000-8000-0000000000aa"],

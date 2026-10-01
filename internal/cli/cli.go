@@ -130,9 +130,12 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
-	WorkingDir func() (string, error)
-	Home       func() (string, error)
-	Now        func() time.Time
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
+	WorkingDir       func() (string, error)
+	Home             func() (string, error)
+	Now              func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -163,11 +166,16 @@ type Env struct {
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
 	// Scheduler is the background job manager: it reports the collector's job
-	// state, loads the LaunchAgent setup wrote so scheduled collection
-	// starts without a login/logout cycle, and stops it again (rolling setup
-	// back, or during uninstall). Defaults to this system's own, through
-	// newScheduler (launchd on macOS, through launchctl).
+	// state, loads the job setup defined so scheduled collection starts
+	// without a login/logout cycle, and stops it again (rolling setup back,
+	// or during uninstall). Defaults to the backend the installation's
+	// configuration records, through newScheduler: launchd on macOS (through
+	// launchctl) and systemd on Linux (through systemctl --user); setup uses
+	// this system's own and records it.
 	Scheduler scheduler.Scheduler
+	// choosesBackend is set for a command that picks the scheduler rather than
+	// addressing the installation's recorded one (see choosingBackend).
+	choosesBackend bool
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the
@@ -229,9 +237,11 @@ type Env struct {
 	OpenTerminal func(termlaunch.Spec) (string, error)
 	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
 	Clipboard func([]byte) error
-	// Interrupts delivers the signals that stop backfill while it plans,
-	// registers, and uploads, and stop ends the delivery. Defaults to
-	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
+	// Interrupts delivers the signals that stop a command while it runs
+	// (backfill while it plans, registers, and uploads, the full-screen
+	// views until they restore the terminal, setup's storage check), and
+	// stop ends the delivery. Defaults to os/signal for os.Interrupt,
+	// SIGTERM, SIGHUP, and SIGQUIT.
 	Interrupts func() (signals <-chan os.Signal, stop func())
 	// RefreshCollectorWait is how long setup --refresh waits for a running
 	// collector pass to finish before it refuses. Defaults to
@@ -253,12 +263,19 @@ func (e Env) isTerminal(stream any) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
+// interrupts is the signal set of the commands a person runs. SIGQUIT is in
+// it so that a kill -QUIT from outside (Ctrl-\ is turned off while a screen
+// reads keys) is answered like the others: the terminal is restored and the
+// process exits with the shell's status for it, 131. Go's default for SIGQUIT
+// is a goroutine dump, which would leave the terminal raw on the alternate
+// screen. The collector and the hooks never register these, so their SIGQUIT
+// keeps the default.
 func (e Env) interrupts() (<-chan os.Signal, func()) {
 	if e.Interrupts != nil {
 		return e.Interrupts()
 	}
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	return signals, func() { signal.Stop(signals) }
 }
 

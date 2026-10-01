@@ -173,7 +173,7 @@ func TestDefinitionReadsWhatItCan(t *testing.T) {
 func TestSchedulerNamesItselfLaunchd(t *testing.T) {
 	t.Parallel()
 	s := Scheduler{}
-	if s.Name() != "launchd" || s.Words() != (scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl"}) || s.DefaultPATH() != "/usr/bin:/bin:/usr/sbin:/sbin" {
+	if s.Name() != "launchd" || s.Words() != (scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl", Name: "label"}) || s.DefaultPATH() != "/usr/bin:/bin:/usr/sbin:/sbin" {
 		t.Errorf("Name %q, Words %+v, DefaultPATH %q", s.Name(), s.Words(), s.DefaultPATH())
 	}
 }

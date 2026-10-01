@@ -240,11 +240,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). Every project is in `groups.rows` with `--by project`, which
-  is never cut; the terminal's "all in --json --by project" points at it.
-  The JSON has no more than five skills or MCP servers (the terminal's detail
-  screen lists up to 40). `models` lists every model family (the terminal's
-  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  (see below). `--all` (only with `--json`) lifts the cut: `projects`,
+  `skills`, `display_skills` and `mcp.servers` then list every row, in the
+  same order (the top five are its first five), and the `total_*` fields say
+  the same as before; the document is otherwise the same, so it is additive
+  and `schema_version` stays 1. The terminal's "all in --json --all" points
+  at it, under the projects screen and under the skills and MCP servers of
+  the overview and detail screens. Every project is also in `groups.rows`
+  with `--by project`, which is never cut, with `--all` or without it.
+  `models` lists every model family (the terminal's "all in --json"), with
+  or without `--all`. `display_skills` is `skills` for showing to a person: a
   plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
   only the first `:` counts) and skills that then share a name are one row,
   counted in the sessions that used any of them (a session that used both
@@ -287,7 +292,7 @@ at the top level. Read the rules below before using a number:
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
-  `projects` keeps only the top few of `total_projects`.
+  `projects` keeps only the top few of `total_projects`, unless `--all`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server
@@ -317,7 +322,8 @@ Treat an absent field and `null` the same way.
 | `storage_access_confirmed_at`, `storage_access_confirmed_by` | The latest confirmation that the destination is reachable with the configured credentials, and by whom: `setup`, or `collector` (its access probe, or a pass that uploaded). Use this to tell whether capture can still reach the bucket. |
 | `authentication` | The last storage health check: state (`verified`, `stale_configuration`, …), time, and whether it came from a manual `sync` or the background collector. |
 | `privacy`, `privacy_evidence` | Bucket privacy: `verified_private`, `public_or_risky`, or `not_verified`, with the reason, scope, and check time. |
-| `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background` | The background job (the launchd job on macOS, the user's systemd timer on Linux): `loaded`, `running`, `missing`, `another_installation` (the scheduler runs this installation's job from a different definition, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background_warnings` | What the background job does, but not robustly, one sentence each: on Linux, that lingering is off (the collector stops when you log out) or that a systemd drop-in overrides its unit. The state is not changed by them. Absent when there is nothing to say, which is always the case on macOS. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |

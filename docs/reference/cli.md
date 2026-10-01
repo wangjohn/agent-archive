@@ -64,7 +64,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 | 0 | Success, and help. |
 | 1 | An operational failure. What a command was asked for goes to stdout; why it did not do it, or not all of it, goes to stderr. A `sync` that is paused, finds another command running, or fails for some sessions exits 1; its summary line, if it ran, stays on stdout. |
 | 2 | A usage error: an unknown command or flag, a bad flag value, or an unexpected argument. It is reported in one line on stderr before the command does anything. |
-| 128 + signal | `backfill` stopped at once by a second Ctrl-C (130), SIGHUP (129), or SIGTERM (143). |
+| 128 + signal | A command stopped by a signal exits with the shell's status for it: Ctrl-C (130), SIGHUP (129), SIGQUIT (131), or SIGTERM (143). `backfill` stops at once on a second Ctrl-C; `list`, `show` and `stats` restore the terminal first. |
 
 ## agent-archive setup
 
@@ -403,6 +403,10 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --all                          With --json, list every project, skill and
+                                 MCP server, not the top five of each (models
+                                 are always all). Only with --json: the --html
+                                 page keeps its top lists
   --html                         Write one self-contained web page (inline
                                  styles and SVG; no script, no requests, works
                                  in light and dark and prints) to stdout, or
@@ -423,6 +427,7 @@ Example: agent-archive stats --html --output stats.html
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all` | no value | — |
 | `--by` | a value | — |
 | `--days` | a value | `30` |
 | `--detail` | no value | — |
@@ -648,13 +653,18 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 Guide: [Uninstall](../getting-started/uninstall.md).
 
 ```text
-Usage: agent-archive uninstall [--delete-local-data] [--yes]
+Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
@@ -663,6 +673,7 @@ Example: agent-archive uninstall
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
+| `--skip-scheduler` | no value | — |
 | `--yes` | no value | — |
 
 ## agent-archive purge
