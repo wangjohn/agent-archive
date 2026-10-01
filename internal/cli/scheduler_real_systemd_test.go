@@ -112,6 +112,11 @@ func newRealSystemdInstall(t *testing.T) *realSystemdInstall {
 			t.Errorf("%s: %v %v, want a private unit file", unit, info, err)
 		}
 	}
+	// Enabling the timer made the link uninstall --skip-scheduler must not
+	// leave dangling.
+	if target, err := os.Readlink(r.enableLink()); err != nil || target != filepath.Join(r.unitDir, r.ref+".timer") {
+		t.Errorf("the enable link is %q (%v), want a link to the timer's file", target, err)
+	}
 	if got := scheduler.JobState(backgroundState(t, r.env)); !got.Active() {
 		t.Fatalf("status says the background job is %q after setup, want it loaded", got)
 	}
@@ -126,13 +131,22 @@ func (r *realSystemdInstall) uninstall(args ...string) (int, string) {
 	return code, out.String() + errOut.String()
 }
 
-// unitsGone says what uninstall left of the job's unit files.
+// enableLink is the link `systemctl --user enable` made for the timer.
+func (r *realSystemdInstall) enableLink() string {
+	return filepath.Join(r.unitDir, "timers.target.wants", r.ref+".timer")
+}
+
+// unitsGone says what uninstall left of the job's unit files and of the link
+// that enabling the timer made, which would dangle once they are gone.
 func (r *realSystemdInstall) unitsGone(t *testing.T) {
 	t.Helper()
 	for _, unit := range []string{r.ref + ".service", r.ref + ".timer"} {
 		if _, err := os.Stat(filepath.Join(r.unitDir, unit)); !os.IsNotExist(err) {
 			t.Errorf("uninstall left %s (%v)", unit, err)
 		}
+	}
+	if _, err := os.Lstat(r.enableLink()); !os.IsNotExist(err) {
+		t.Errorf("uninstall left the enable link %s (%v)", r.enableLink(), err)
 	}
 }
 

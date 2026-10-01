@@ -60,8 +60,9 @@ func (p plistScheduler) Inspect(_ context.Context, site scheduler.Site, _ schedu
 	return scheduler.Status{State: scheduler.JobState(p.l.JobState(site.UserHome))}
 }
 
+// Definition is a job with no definition on disk, which lists no paths.
 func (plistScheduler) Definition(scheduler.Site, scheduler.Ref) scheduler.Status {
-	panic("unused")
+	return scheduler.Status{}
 }
 
 func (plistScheduler) Installed(context.Context, scheduler.Site, scheduler.Installation) ([]scheduler.Job, error) {

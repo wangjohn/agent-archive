@@ -3,6 +3,7 @@ package setupjournal
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
@@ -105,6 +106,28 @@ func (t target) unload() error {
 		return t.err
 	}
 	return t.sched.Unload(context.Background(), t.site, t.ref)
+}
+
+// removeStranded removes what a job that is no longer defined left of its
+// definition: the scheduler's Paths for it, after a rollback deleted its
+// files. systemd's enable link is one (it dangles once the unit files are
+// gone, and only a `disable` the rollback may not have had to make removes
+// it); the scheduler lists only files that are the job's own. A job whose
+// definition is back, as the rollback found it, is left as it is.
+//
+// It is for a target that resolved: Restore refuses a journal whose
+// collector does not before it changes anything.
+func (t target) removeStranded() error {
+	status := t.sched.Definition(t.site, t.ref)
+	if status.Defined {
+		return nil
+	}
+	for _, path := range status.Paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // tool is the command that drives the job's scheduler, for messages.

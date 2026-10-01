@@ -157,6 +157,12 @@ type Env struct {
 	// it is the default installation, with the default launchd label.
 	// Defaults to os/user.Current's HomeDir.
 	AccountHome func() (string, error)
+	// HostFingerprint identifies the machine the command runs on, as
+	// local.HostFingerprint does (Linux only; "": cannot say). Setup records
+	// it beside the machine ID and status compares it, to notice a data
+	// directory copied from another machine. Defaults to
+	// local.HostFingerprint; it is read only on Linux.
+	HostFingerprint func() string
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
