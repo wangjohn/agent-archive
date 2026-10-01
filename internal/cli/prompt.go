@@ -19,9 +19,10 @@ import (
 
 // prompter handles terminal and redirected input without echoing secrets.
 type prompter struct {
-	in     *bufio.Reader
-	out    io.Writer
-	source io.Reader
+	tokenCommand []string
+	in           *bufio.Reader
+	out          io.Writer
+	source       io.Reader
 	// handBack, when set, takes the input that a key-reading browser read
 	// but did not use (what was typed ahead of the prompts after it), so
 	// that in reads it first.

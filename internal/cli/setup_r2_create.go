@@ -333,22 +333,11 @@ func printR2BootstrapInstructions(p *prompter) {
 // or a profile's credential_process, does not inherit it. An empty answer goes
 // back to the storage menu.
 func askBootstrapToken(p *prompter, env Env) (token string, fromEnv, removed bool, err error) {
-	if value, ok := env.lookupEnv("CLOUDFLARE_API_TOKEN"); ok && strings.TrimSpace(value) != "" {
+	token, fromEnv, removed, err = readManagementToken(context.Background(), p, env, p.tokenCommand, len(p.tokenCommand) == 0 || env.interactive(p.source))
+	if fromEnv && err == nil {
 		terminal.Println(p.out, "Using the API token in CLOUDFLARE_API_TOKEN.")
-		unsetErr := env.unsetEnv("CLOUDFLARE_API_TOKEN")
-		if unsetErr != nil {
-			p.warn("Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment, so programs setup starts can still see it: " + unsetErr.Error() + ".")
-		}
-		return strings.TrimSpace(value), true, unsetErr == nil, nil
 	}
-	token, err = p.secret("Cloudflare API token (hidden; Enter to choose another option): ")
-	if err != nil {
-		return "", false, false, err
-	}
-	if token == "" {
-		return "", false, false, errChooseStorageAgain
-	}
-	return token, false, false, nil
+	return token, fromEnv, removed, err
 }
 
 // chooseAccount settles which Cloudflare account owns the bucket: the one

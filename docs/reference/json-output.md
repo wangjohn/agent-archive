@@ -417,3 +417,16 @@ activity; credential kinds do not establish provider-verified ownership.
 secret-free local pending, uncertain-delivery or expired pairing descriptions.
 These warnings require no conversation scan or provider-management credential.
 An observed matching bucket claim does not prove machine ownership or revocation.
+
+`machines --verify --json` adds a `verification` object: `checked_at`,
+`pagination_complete`, `account_inventory_complete` (currently always false),
+`visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
+`observations` and optional `claim_not_observed` token IDs. Observations contain
+`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+is true only when pagination and all observed checks complete without partial
+results; it never asserts ownership, account completeness or revocation.
+States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
+`scope_unknown_or_mismatch`, `provider_key_not_active`,
+`issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
+`local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
+`local_committed_binding`. Failures return available observations and exit 1.

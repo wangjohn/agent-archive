@@ -143,6 +143,8 @@ type Env struct {
 	// Cloudflare makes the client guided R2 creation uses for the pasted
 	// bootstrap API token. Defaults to the real Cloudflare API.
 	Cloudflare func(token string) cloudflare.API
+	// RunTokenCommand replaces the bounded explicit management-token subprocess.
+	RunTokenCommand func(context.Context, []string, []string) (string, error)
 	// Pause waits between guided R2 creation's checks of a key Cloudflare
 	// has only just made. Defaults to sleeping; tests skip the wait.
 	Pause      func(time.Duration)

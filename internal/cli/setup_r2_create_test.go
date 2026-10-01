@@ -387,19 +387,14 @@ func TestGuidedR2RemovesTheTokenVariableFromSetupsEnvironment(t *testing.T) {
 	}
 }
 
-func TestGuidedR2SaysSoWhenTheTokenVariableCannotBeRemoved(t *testing.T) {
+func TestGuidedR2RefusesWhenTheTokenVariableCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary})
-	g.env.UnsetEnv = func(string) error { return errors.New("denied") }
-	out := g.run(t, guidedAnswers(acceptedRest...), 0)
-	for _, want := range []string{"Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment", "has dropped it.\n"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "removed the variable") {
-		t.Fatalf("claims a removal that failed:\n%s", out)
+	g.env.UnsetEnv = func(string) error { return errors.New("denied " + bootstrapCanary) }
+	out := g.run(t, guidedAnswers(acceptedRest...), 1)
+	if !strings.Contains(out, "could not remove CLOUDFLARE_API_TOKEN") || strings.Contains(out, bootstrapCanary) || len(g.cf.Requests()) != 0 {
+		t.Fatalf("management operation after failed token removal: %s", out)
 	}
 }
 

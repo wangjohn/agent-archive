@@ -361,7 +361,7 @@ func runMachinesWithInput(args []string, stdin io.Reader, out, errOut io.Writer,
 	if len(args) > 0 && args[0] == "add" {
 		return runPairingAdd(args[1:], stdin, out, errOut, env)
 	}
-	return runMachinesCommand(args, out, errOut, env)
+	return runMachinesCommand(args, stdin, out, errOut, env)
 }
 
 func preparePairingSource(name string, share bool, env Env) (config.Config, string, string, error) {

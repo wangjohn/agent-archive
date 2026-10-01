@@ -272,9 +272,12 @@ func (c *Client) once(ctx context.Context, cl call, payload []byte, out any) (en
 		return envelope{}, &Error{Op: cl.op, Err: c.scrubbed(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return envelope{}, &Error{Op: cl.op, Status: resp.StatusCode, Err: c.scrubbed(err)}
+	}
+	if len(raw) > maxResponseBytes {
+		return envelope{}, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer exceeded its size limit")}
 	}
 	var env envelope
 	decodeErr := json.Unmarshal(raw, &env)
