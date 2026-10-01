@@ -130,20 +130,23 @@ type ListOptions struct {
 
 // ListMetadataWithOptions reads only metadata sidecars and applies filters
 // without downloading transcript bundles, with an optional local cache. A
-// harness filter narrows the listing to that harness's own prefix, keys which
-// are not sidecars are skipped before any download, and sidecars are read with
-// bounded concurrency. Results are ordered newest capture first.
+// harness filter narrows the listing to that harness's own prefix, a listing
+// large enough to split is listed as key ranges in parallel (listObjects),
+// keys which are not sidecars are skipped before any download, and sidecars
+// are read with bounded concurrency. Results are ordered newest capture first.
 //
 // Another Mac's retention or undo can delete a session at any time, so a
 // sidecar that is listed and then not found is left out: it no longer
 // exists. One that does not decode or validate (damaged, or written by a
 // newer version) is left out and reported through options.Skipped, so one
-// bad sidecar does not hide the rest of the archive. Any other read error
-// (network, credentials) fails the listing: the first in key order, as a
-// sequential read would.
+// bad sidecar does not hide the rest of the archive. Any other sidecar read
+// error (network, credentials) fails the listing: the first in key order, as
+// a sequential read would. A listing split into ranges fails with the error
+// of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
 	listPrefix := listPrefixFor(prefix, filter.Harness)
-	objects, err := store.List(ctx, listPrefix)
+	known := options.Cache.keys(listPrefix)
+	objects, err := listObjects(ctx, store, listPrefix, known)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +161,7 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 		return nil, err
 	}
 	if options.Cache != nil {
-		options.Cache.evictUnlisted(listPrefix, sidecars)
+		options.Cache.evictUnlisted(known, sidecars)
 	}
 	if options.Skipped != nil {
 		for _, s := range skipped {
