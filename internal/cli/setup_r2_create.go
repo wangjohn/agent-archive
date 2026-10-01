@@ -197,6 +197,7 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	return c.storageConfig(), key, true, nil
 }
 
+// r2ConnectChoice is the recovery action after a bootstrap permission failure.
 type r2ConnectChoice string
 
 const (
