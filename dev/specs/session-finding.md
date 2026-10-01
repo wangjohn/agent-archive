@@ -797,12 +797,12 @@ guide. Live check on the owner's Mac:
   as it would from a `custom-title` line; both are the person's own file and
   pass the prompt rules.
 - PR 7: the plan put a subagent's `name` in parser 0.17.0's field table. It is
-  in parser 0.18.0 (`DefaultParserVersion` 0.17.0 to 0.18.0), because 0.17.0
-  shipped without it: `deriveSessionName` also reads `subagent-meta`. The
-  record is first, so a `custom-title` (which a subagent transcript does not
-  normally hold) comes later and wins, as the last name always does. A
-  subagent's own prompts are sidechain records, which are not the person's, so
-  its `title` is empty and `name` is its only label.
+  in parser 0.18.0 (`DefaultParserVersion` 0.17.1 to 0.18.0), because 0.17.0
+  and 0.17.1 shipped without it: `deriveSessionName` also reads
+  `subagent-meta`. The record is first, so a `custom-title` (which a subagent
+  transcript does not normally hold) comes later and wins, as the last name
+  always does. A subagent's own prompts are sidechain records, which are not
+  the person's, so its `title` is empty and `name` is its only label.
 - PR 7: backfill needs no code. `claudeSubagents` only lists the
   `agent-<id>.jsonl` files (and already ignores the `.meta.json` beside them);
   the plan's filter call there (`FilterTranscriptFile`, which has no
