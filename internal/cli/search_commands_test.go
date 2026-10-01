@@ -472,7 +472,7 @@ func TestHandoffSubagentIsTheLastTier(t *testing.T) {
 	}
 }
 
-// handoff words match across fields, a PR number among them, in this Mac's
+// handoff words match across fields, a PR number among them, in this machine's
 // sessions first.
 func TestHandoffWordsMatchAcrossFieldsAndPRs(t *testing.T) {
 	t.Parallel()

@@ -28,6 +28,7 @@ func (s *countedPublications) Put(ctx context.Context, key string, data []byte) 
 }
 
 func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
 	reg := registration(t, path)
@@ -76,6 +77,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 }
 
 func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	if err := local.SaveRegistration(reg); err != nil {
@@ -123,6 +125,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 }
 
 func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	now := reg.RegisteredAt.Add(time.Hour)
@@ -205,6 +208,7 @@ func putMetadata(t *testing.T, remote storage.ObjectStore, reg archive.SessionRe
 }
 
 func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata){
 		"missing remote metadata": func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
 			t.Helper()
@@ -226,6 +230,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 	}
 	for name, corrupt := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			dir := t.TempDir()
 			reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
@@ -259,6 +264,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 }
 
 func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
@@ -299,6 +305,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 }
 
 func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
@@ -394,6 +401,7 @@ func TestParserUpgradeOverAnUnchangedTranscriptDoesNotReadIt(t *testing.T) {
 }
 
 func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
@@ -447,6 +455,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 }
 
 func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	if err := local.SaveRegistration(reg); err != nil {

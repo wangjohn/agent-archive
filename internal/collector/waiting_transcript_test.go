@@ -14,6 +14,7 @@ import (
 // waiting: no failure, no LastError, any queued request kept, and it is
 // retried (and published) once the path exists.
 func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, "")
 	reg.Harness.Name = "cursor"
@@ -58,6 +59,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 // same waiting state, one step later: no failure, no LastError, the queued
 // request kept, and publication on the first pass after content arrives.
 func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	transcript := writeTranscript(t, t.TempDir(), "native-1.jsonl", "")
 	reg := registration(t, transcript)

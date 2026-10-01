@@ -163,15 +163,18 @@ candidates on stderr and exits 1, exactly as when piped.
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
-it). A session whose metadata can't be read, for example because a newer
-version wrote it, is left out with a warning on stderr; the rest are listed.
+it). Once the cache knows a few hundred sessions, it also splits a full
+listing into key ranges that are listed in parallel, so a large archive is
+listed in a fraction of the time. A session whose metadata can't be read,
+for example because a newer version wrote it, is left out with a warning on
+stderr; the rest are listed.
 
 `list` shows each session's `name` when metadata has one: the name your agent
 gave the session (the one in Claude Code's sidebar, which `/rename` sets, or a
 Cursor chat's name). Otherwise it shows the `title`, a short preview of the
 first filtered human prompt, derived at publish time. Older sidecars without
 either fall back to the short SESSION_ID in that column. `project_name`
-in metadata labels the project when present; otherwise `list` uses this Mac's
+in metadata labels the project when present; otherwise `list` uses this machine's
 configured project basename. The ID column is a short prefix you can pass to
 `show`; if multiple archived IDs share that prefix, use a longer ID from
 `list --verbose` or add `--harness`. Projects with the same basename stay in
@@ -201,7 +204,7 @@ rows; a session with no name keeps the first prompt as its heading. `PRs`
 lists the pull requests the agent linked to the session, where `Git` counts
 the ones its own commands opened or merged. A session published before the
 name was kept (privacy filter 13) gets one the next time the collector
-re-reads its transcript, if the transcript is still on the Mac.
+re-reads its transcript, if the transcript is still on the machine.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
@@ -364,7 +367,7 @@ custom parser version) are never counted as observed non-use.
 ## Feedback
 
 Write your assessment to a private UTF-8 text file, then attach it to a
-session owned by this Mac:
+session owned by this machine:
 
 ```sh
 agent-archive feedback SESSION_ID --file /private/path/feedback.txt

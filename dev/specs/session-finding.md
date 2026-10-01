@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 4 merged, PR 5 (one matcher) in review, the rest not started. Where this
-plan and the code differ once packages merge, the code is the reference and
-differences go under Deviations.
+PRs 1 to 4 merged, PR 5 (one matcher) in review, the rest not started. Where
+this plan and the code differ once packages merge, the code is the reference
+and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -231,7 +231,7 @@ directory:
 
 1. The repository key of the directory (`gitremote.Resolver.Key`, the same
    hash hooks record). A session is in scope when its `RepoKey` equals it.
-   This spans checkouts, worktrees, and Macs.
+   This spans checkouts, worktrees, and machines.
 2. With no key on either side (no origin remote, or an older session), a
    local session is in scope when `sameProject(reg.ProjectRoot, dir)`, and an
    archived one when its `ProjectID` is in `projectIDs(dir)`, as `--latest`
@@ -262,7 +262,7 @@ all projects, and the heading says `Nothing in agent-archive ·
 showing all projects`.
 
 Title search, in `handoff "<words>"` and `list "<words>"`, looks in scope
-first, then everywhere, as `handoff` already looks on this Mac before the
+first, then everywhere, as `handoff` already looks on this machine before the
 archive. The tiers, each tried only when the one before has no match:
 
 1. an exact session ID (unchanged)
@@ -372,7 +372,7 @@ Everything else is the same code for every caller:
 - paging, scrolling, and fitting to the window (#149)
 
 Rows keep their own sources: `list` and `show` read the archive, and
-`handoff` also offers this Mac's sessions that are not uploaded yet. Making
+`handoff` also offers this machine's sessions that are not uploaded yet. Making
 `list` and `show` offer local sessions is out of scope. `list`'s ID column
 is a column rule (§7), not a browser difference.
 
@@ -691,10 +691,10 @@ guide. Live check on the owner's Mac:
   `findBrowseSessions`; it has no `--all-projects` or `--project` flag yet.
   `show "<words>"` is unchanged (PR 5 replaces its matcher).
 - PR 4: title search keeps today's matcher (`matchSessionsByQuery`) and only
-  gains the scope-first order: this Mac's in-scope sessions, then the
-  archive's in-scope, then everywhere (this Mac's, then the archive's). The
+  gains the scope-first order: this machine's in-scope sessions, then the
+  archive's in-scope, then everywhere (this machine's, then the archive's). The
   subagent tier is PR 5's. The "N more in other projects" count covers what
-  was searched: a title answered on this Mac does not read the archive, which
+  was searched: a title answered on this machine does not read the archive, which
   needs the network, so its other matches are not counted.
 - PR 4: a scope is applied before `--limit`, so a `list` that can narrow (a
   scope, or a terminal that can switch to one) reads the whole archive
@@ -778,14 +778,14 @@ guide. Live check on the owner's Mac:
   ID of an out-of-scope session or a subagent outranks an in-scope title that
   mentions it, so a candidate table's `Next:` command takes the row it names.
   In `handoff` the exact full-ID reads (registered, then the archive) still
-  come first, unchanged; then an exact short ID among this Mac's sessions, and
-  then, for a word of 8 hex characters only, the archive's (subagents too), so
-  other words still need no network when this Mac answers them.
+  come first, unchanged; then an exact short ID among this machine's sessions,
+  and then, for a word of 8 hex characters only, the archive's (subagents
+  too), so other words still need no network when this machine answers them.
 - PR 5: `--harness`, `--since` and the other filters are applied when the
   archive is listed, before the tiers, rather than after them, so a filter can
   never empty a tier and hide a lower one. `--limit` applies last, as planned.
 - PR 5: the tiers' shared code is `searchSessions` (archived metadata: `list`,
-  `show`) and `matchPool` (`handoff`'s rows, which read this Mac's sessions
+  `show`) and `matchPool` (`handoff`'s rows, which read this machine's sessions
   before the archive). Local subagent registrations are never searched (the
   picker never listed them; one is still handed off by its full ID), so
   `handoff`'s subagent tier is the archive's.

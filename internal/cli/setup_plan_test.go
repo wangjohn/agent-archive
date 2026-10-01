@@ -9,6 +9,7 @@ import (
 )
 
 func TestSetupPreflightScopeKeepsDraftAppsDuringRecovery(t *testing.T) {
+	t.Parallel()
 	existing := config.Config{
 		Harnesses:         []string{"codex"},
 		DeclinedHarnesses: []string{"cursor"},
@@ -35,6 +36,7 @@ func TestSetupPreflightScopeKeepsDraftAppsDuringRecovery(t *testing.T) {
 }
 
 func TestRetiredStagedRefsPreservesActiveAndOriginal(t *testing.T) {
+	t.Parallel()
 	original := []string{"old"}
 	got := retiredStagedRefs(original, []string{"staged", "active", "staged", "old"}, "active")
 	if !reflect.DeepEqual(got, []string{"old", "staged"}) {
@@ -46,6 +48,7 @@ func TestRetiredStagedRefsPreservesActiveAndOriginal(t *testing.T) {
 }
 
 func TestReviewedSetupConfigUsesCommittedImportsWithoutChangingDraft(t *testing.T) {
+	t.Parallel()
 	existing := config.Config{ImportedHarnesses: []string{"claude", "cursor"}}
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}, StopImported: []string{"cursor"}}
 	got := reviewedSetupConfig(existing, draft)

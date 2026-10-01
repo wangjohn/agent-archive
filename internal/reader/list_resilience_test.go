@@ -10,7 +10,7 @@ import (
 )
 
 // deleteAfterList deletes one sidecar right after the listing, as another
-// Mac's retention or undo can at any time.
+// machine's retention or undo can at any time.
 type deleteAfterList struct {
 	*countingStore
 	key string

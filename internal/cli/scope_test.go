@@ -83,7 +83,7 @@ func TestScopeOfTwoWorktreesOfOneRepositoryIsOneScope(t *testing.T) {
 		if scope.contains(elsewhere, nil) {
 			t.Errorf("%s: a session of another repository is in scope", dir)
 		}
-		// A registration on this Mac carries the key too.
+		// A registration on this machine carries the key too.
 		reg := archive.SessionRegistration{ProjectRoot: worktree, RepoKey: scopeKey}
 		if !scope.contains(archive.Metadata{}, &reg) {
 			t.Errorf("%s: a registered session of the repository is out of scope", dir)
@@ -215,7 +215,7 @@ func TestScopeProjectArgumentIsADirectoryOrAName(t *testing.T) {
 			t.Errorf("--project %q: the configured project Billing in scope = %v, want %v", name, got, want)
 		}
 	}
-	// A registration on this Mac names its project by its root.
+	// A registration on this machine names its project by its root.
 	reg := archive.SessionRegistration{ProjectRoot: billing}
 	if !byName.contains(archive.Metadata{}, &reg) {
 		t.Error("a registered session of project Billing is out of scope")

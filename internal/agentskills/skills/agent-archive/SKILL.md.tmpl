@@ -1,6 +1,6 @@
 ---
 name: agent-archive
-description: Find, look at, or pull in a past coding session (also called a chat or conversation) from any agent (Claude Code, Codex, or Cursor), whether it is in the agent-archive archive or only on this Mac. Use it when the person refers to an earlier session or to work done in another agent, for example to pull in, continue, or review a session by its topic, or to ask what they did in Cursor yesterday. It is not for the conversation you are in, or for reading files.
+description: Find, look at, or pull in a past coding session (also called a chat or conversation) from any agent (Claude Code, Codex, or Cursor), whether it is in the agent-archive archive or only on this machine. Use it when the person refers to an earlier session or to work done in another agent, for example to pull in, continue, or review a session by its topic, or to ask what they did in Cursor yesterday. It is not for the conversation you are in, or for reading files.
 {{- if .Claude}}
 {{- if .AllowCommand}}
 allowed-tools: Bash({{.Command}} status)
@@ -10,7 +10,7 @@ allowed-tools: Bash({{.Command}} status)
 {{.Marker}}
 
 The person is pointing at a past coding session, from this or any other agent
-(Claude Code, Codex, Cursor), on this Mac or in their agent-archive archive.
+(Claude Code, Codex, Cursor), on this machine or in their agent-archive archive.
 Get it by running the commands below, exactly as written, with real words in
 place of anything in <angle brackets>. Do not read agent transcript or session
 files yourself.
@@ -97,7 +97,7 @@ If it fails because of the network, credentials, the Keychain, or your
 sandbox, tell the person what failed and ask them to allow it or to run it
 themselves in a terminal. Do not retry with other flags or variants. If a
 command seems to wait for input, stop it and say so. A "no session matches"
-that adds "the archive could not be read" only searched this Mac: say so, and
+that adds "the archive could not be read" only searched this machine: say so, and
 ask before trying again.
 
 To check that agent-archive is healthy, run `{{.Command}} status` and tell the

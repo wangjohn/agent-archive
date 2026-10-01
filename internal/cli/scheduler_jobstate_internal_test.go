@@ -54,7 +54,8 @@ func TestParseJobStateOverRecordedOutput(t *testing.T) {
 // launchdAnswering is env asking launchd the way the program does, through
 // launchctl, with run answering for launchctl: the Env's scheduler stand-in
 // (which setupTestEnv sets) is cleared, so status reaches the code that runs
-// launchctl print and reads its output.
+// launchctl print and reads its output. It replaces launchctl (stubLaunchctl),
+// so a test that calls it must not be parallel.
 func launchdAnswering(t *testing.T, env Env, run func(args ...string) ([]byte, error)) Env {
 	t.Helper()
 	env.Scheduler = nil

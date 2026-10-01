@@ -5,7 +5,7 @@ agent about your other sessions instead of typing commands:
 
 | Skill | Who runs it | What it does |
 | --- | --- | --- |
-| `agent-archive` | The agent, when you refer to a past session | Finds a session, on this Mac or in the archive, and pulls it in as context. |
+| `agent-archive` | The agent, when you refer to a past session | Finds a session, on this machine or in the archive, and pulls it in as context. |
 | `handoff` | You, as `/handoff codex` | Continues the session you are in, in another agent ([handoff](handoff.md#from-inside-an-agent-handoff)). |
 
 A skill is a text file the agent reads: it names the commands to run and when.
@@ -32,7 +32,7 @@ to the receiving agent. It then does what you asked with it.
   session's name, title (its first prompt), branch, project name, or app, or
   start its short session ID, and `#212` or `212` also matches a pull request
   number, so the words may be a topic, a PR number, a branch, or a project
-  name. It looks in this Mac's sessions first (no network), then the
+  name. It looks in this machine's sessions first (no network), then the
   archive's, so a session from an hour ago needs no bucket access. The agent
   searches for one or two distinctive words. With no
   topic ("where my other agent left off") it takes the most recent session for
@@ -117,12 +117,13 @@ The agent's own permission settings still apply.
 - **A sandbox.** In Claude Code's sandbox (off until you turn it on), in
   Codex's default one, and in Cursor's, the network is blocked unless
   approved (Claude Code asks about each new domain; where nothing can ask, as
-  in `claude -p`, it is refused). A session on this Mac is still found by
+  in `claude -p`, it is refused). A session on this machine is still found by
   its title (no network), but the archive fails with `operation not
   permitted`. The skill tells you what failed and asks you to allow it, or to
   run the command yourself, rather than retrying variations. None of the three
   documents whether a sandboxed command can read the macOS Keychain, which an
-  R2 archive needs, so expect to allow or run those reads yourself.
+  R2 archive needs on a Mac (on Linux it is a credentials file the sandbox may
+  also block), so expect to allow or run those reads yourself.
 
 ## Where the files are
 
@@ -141,9 +142,9 @@ edited copy, and a file already at that path without it is left alone.
 when one was written by an earlier release. Upgrading with the installer
 refreshes both skills for you ([install](../getting-started/install.md)); so does
 `agent-archive setup --refresh`, which also brings the app hooks and the
-collector's plist up to date, and changes nothing else.
+background job's definition up to date, and changes nothing else.
 
-Cursor also reads `~/.claude/skills` (and `~/.codex/skills`), so on a Mac set up
+Cursor also reads `~/.claude/skills` (and `~/.codex/skills`), so on a machine set up
 for both Claude Code and Cursor it can find the skill in two places. The two
 files carry the same instructions; Cursor's documentation does not say whether
 it lists a duplicate once. Codex reads `~/.agents/skills`; setup writes nothing
@@ -151,7 +152,7 @@ under `$CODEX_HOME`.
 
 Claude Code and Codex notice a new or refreshed skill in a running session
 (restart the app if it does not show up). Claude Code does not watch a skills
-directory that did not exist when the session started, as on a Mac that never
+directory that did not exist when the session started, as on a machine that never
 had `~/.claude/skills`: run `/reload-skills` there, or start a new session.
 Cursor's documentation does not say, so start a new chat there.
 

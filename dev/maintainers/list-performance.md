@@ -44,3 +44,17 @@ These are local measurements, not a network latency guarantee. The indexed
 test asserts one listing page and 51 live sidecar reads
 for 300 sessions; the same early-stop rule applies to the 10,000-session
 benchmark fixture.
+
+## Full scans
+
+Every command that needs the whole archive runs the full scan: `list --limit 0`,
+`stats`, bare `show`, the handoff picker, `handoff "<query>"`, and `list` on an
+archive whose index isn't ready. On R2 a listing page of 1,000 keys takes
+0.5–0.9 s, and one listing's pages are strictly sequential. So since the
+[listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
+split into contiguous key ranges listed concurrently: at most 16 in flight,
+each about 200 of the sidecars the metadata cache knows (one page). The
+ranges cover every key whatever the boundaries, so the cache only decides
+how evenly the work is spread. With under 400 cached sidecars under the
+listed prefix (a `--harness` listing counts only that harness's), or with
+`--no-cache`, the scan is the single sequential listing.

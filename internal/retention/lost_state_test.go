@@ -35,6 +35,7 @@ func sessionObjects(t *testing.T, store storage.ObjectStore, id string) int {
 // to forget it locally without a bucket call, leaving its objects forever.
 // It now deletes them like a published session's.
 func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -68,6 +69,7 @@ func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing
 // and on this machine. The session's remaining state marks it as an orphan,
 // which is aged from its capture and deleted the same way.
 func TestSessionWhoseRegistrationWasLostIsStillExpired(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -102,6 +104,7 @@ func TestSessionWhoseRegistrationWasLostIsStillExpired(t *testing.T) {
 // An orphan is expired by age like any other session, so a clock ahead of
 // the storage service's deletes nothing of it either.
 func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -128,6 +131,7 @@ func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
 // problem, not corruption) still owns its session: the session is not an
 // orphan, and nothing of it is deleted however old it is.
 func TestUnreadableRegistrationIsNotAnOrphan(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file whatever its mode")
 	}
@@ -155,6 +159,7 @@ func TestUnreadableRegistrationIsNotAnOrphan(t *testing.T) {
 // An orphan is not forgotten if its registration reappears before the sweep
 // gets to it: a hook registering the native session again reuses its ID.
 func TestOrphanRegisteredAgainIsKept(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -169,6 +174,7 @@ func TestOrphanRegisteredAgainIsKept(t *testing.T) {
 
 // A sweep with nothing to delete reads each session's summary, not its
 // source bundles: it runs after every collector pass, over every session.
+// Not parallel: it reads a process-wide counter.
 func TestSweepWithNothingToDeleteDecodesNoPublishedState(t *testing.T) {
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()

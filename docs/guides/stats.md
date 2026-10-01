@@ -524,7 +524,7 @@ spend it has, marked `+`), and says how many more there are;
 - **Subagents.** A subagent's tokens and cost count with its parent session,
   which is one session; the share they used is shown separately.
 - **Scope.** This archive only: every session in your bucket, including
-  those from other Macs that share it, and nothing that was never captured.
+  those from other machines that share it, and nothing that was never captured.
 - **MCP.** Claude Code and Cursor only; Codex MCP calls are not recorded.
 - **Month rank** compares this month so far with the five months before it,
   so early in a month it reads low.

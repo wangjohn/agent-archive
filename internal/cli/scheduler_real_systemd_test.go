@@ -167,6 +167,8 @@ func (r *realSystemdInstall) staysStill(t *testing.T) {
 // the manager with nothing. Storage, the keychain and the apps are the usual
 // stand-ins; the scheduler is what is real.
 func TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt(t *testing.T) {
+	// Not parallel: each installs the collector's units in the one real user
+	// manager, and newRealSystemdInstall refuses a manager that already has some.
 	r := newRealSystemdInstall(t)
 
 	// The manager starts the timer's first run by itself: a minute after the
@@ -201,6 +203,8 @@ func TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt(t *testing.T) {
 // command it prints for stopping the job by hand, run from a session that can
 // reach the manager, stops it with the files already gone.
 func TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob(t *testing.T) {
+	// Not parallel: each installs the collector's units in the one real user
+	// manager, and newRealSystemdInstall refuses a manager that already has some.
 	r := newRealSystemdInstall(t)
 	timer := r.ref + ".timer"
 
