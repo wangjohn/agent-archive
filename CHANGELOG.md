@@ -6,7 +6,50 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Planned for v0.2.0. This release has not been tagged or published.
+
+### Added
+
+- Linux support with user systemd scheduling and private file credentials,
+  alongside macOS support. Release builds cover amd64 and arm64 on both systems.
+- Interactive session browsing and search, project-aware listings, richer
+  session metadata, and bounded JSON listings.
+- Terminal and worktree handoff, installed agent skills, and anonymized HTML
+  statistics with estimated costs.
+- Guided storage setup and archive indexing. Guided R2 bucket creation remains
+  experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
+
 ### Changed
+
+- Listings default to the current project when available and return at most 50
+  sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
+  return all matches.
+- Scripts written against earlier builds must consume `list --json` schema 4,
+  replacing schema 1 and the old `unavailable` field. Check
+  `total_matched_known` before treating `total_matched` as exact. For a complete
+  whole-archive result, use `agent-archive list --json --all-projects --limit 0`.
+- Indexed listing requires every writer to publish index hints before metadata.
+  Stop metadata-only development collectors before rebuilding an index. There
+  is no legacy collector migration protocol in this launch release.
+- Refresh setup and installed `/handoff` skills when adopting this build. Handoff
+  offers the current terminal, a new window, or a worktree where supported.
+
+### Fixed
+
+- HTML statistics exports preserve concurrently created destination files when
+  `--force` is absent, including when the filesystem cannot create hard links.
+- Clipboard handoff uses `pbcopy` on macOS and installed `wl-copy`, `xclip`, or
+  `xsel` providers on Linux. Headless Linux sessions omit copy and offer writing
+  the handoff to a file.
+
+<details>
+<summary>Detailed development history since v0.1.1</summary>
+
+The entries below record development in sequence; later entries may supersede
+intermediate parser versions and interaction details. The summary above describes
+the release behavior.
+
+#### Changed
 
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a
@@ -22,7 +65,7 @@ follow [Semantic Versioning](https://semver.org/).
   existing metadata from retained source bundles on the next collector scan;
   sessions whose source is unavailable keep their existing preview.
 
-### Added
+#### Added
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches
@@ -419,7 +462,7 @@ follow [Semantic Versioning](https://semver.org/).
   them as data. The agent skill says so, and that the words may be a topic, a
   PR number, a branch, or a project name.
 
-### Changed
+#### Changed
 
 - **Privacy filter 14: a subagent's task description is now archived.**
   When Claude Code starts a subagent, its parent gives the task a short
@@ -637,7 +680,7 @@ follow [Semantic Versioning](https://semver.org/).
   once with the usual explanation. The full write, read, and delete check
   still decides that storage works.
 
-### Fixed
+#### Fixed
 
 - Pager startup failure preserves the complete direct-output fallback, even
   when the pager consumed its input; regression coverage checks partial and
@@ -771,7 +814,7 @@ follow [Semantic Versioning](https://semver.org/).
   the read did. A read's lock file now appears already locked, so the
   sweep sees it in use and leaves it alone.
 
-### Changed
+#### Changed
 
 - `status` is shorter, and stays the same length however many projects you
   include. Each app has one line with its sessions (subagents counted
@@ -810,13 +853,13 @@ follow [Semantic Versioning](https://semver.org/).
   credential, storage availability, retention failures, and subagents that
   could not be captured (`subagent_not_captured`).
 
-## [0.2.0] - 2026-09-29
+#### Earlier development changes (previously labeled v0.2.0)
 
 The archive browser now has bounded, readable listings and terminal pickers for
 `list`, `show`, and `handoff`. Scripts should update consumers of `list --json`
 to schema version 4, which reports whether the total match count is known.
 
-### Added
+#### Added
 - `list --limit N` caps how many sessions are shown (default 50, newest
   first; `0` for all). A truncated text listing reports
   `Showing N or more session(s)` when the count is unknown, or
@@ -849,14 +892,14 @@ to schema version 4, which reports whether the total match count is known.
   recorded, one per entry. `collector.last_error` is unchanged (the same
   problems joined with `; `).
 
-### Changed
+#### Changed
 
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output
   stay plain.
 
-### Fixed
+#### Fixed
 
 - `status` shows each problem the last pass recorded on its own ✗ row, and
   a storage provider's error message containing `; ` is no longer split in
@@ -867,6 +910,8 @@ to schema version 4, which reports whether the total match count is known.
   held by the clock) instead of replacing them.
 - `status --verbose` prints each of the last pass's problems on its own
   `Last error:` line.
+
+</details>
 
 ## [0.1.1] - 2026-09-28
 
@@ -1004,7 +1049,6 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
