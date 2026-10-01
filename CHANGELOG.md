@@ -52,7 +52,7 @@ follow [Semantic Versioning](https://semver.org/).
     Codex apps, distributions and systemd versions other than Ubuntu 24.04
     with systemd 255 (exercised live on arm64), an amd64 live run, real R2
     and S3 from Linux (the live run used MinIO), a real logout with lingering
-    off, and WSL. See [platforms](docs/getting-started/install.md#platforms).
+    off, a desktop login, and WSL. See [platforms](docs/getting-started/install.md#platforms).
   - **Handoff** opens the new agent in a tmux window on Linux; outside tmux
     it prints the command to run instead.
 - The multiple-Macs guide is now [multiple machines](docs/guides/multiple-machines.md)

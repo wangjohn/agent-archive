@@ -46,7 +46,8 @@ the injected `Env` and in-memory store the existing tests use. By hand, use
 explains why the stub matters even with a sandboxed `HOME`. On Linux a stub
 `systemctl` is not enough: use a disposable container with systemd as PID 1,
 never your own login's user manager (the real-systemd tests run in CI and in
-such a container).
+such a container, and `scripts/acceptance/linux/host.sh` makes one and runs
+the product live in it).
 
 ## Privacy-sensitive changes
 
@@ -88,5 +89,7 @@ packages. Supporting a new coding agent is described in
 [adding an adapter](dev/contributing/adding-an-adapter.md). The hidden
 `_hook` and `_collect` commands are what app hooks and the background job
 (a LaunchAgent or a systemd timer) run;
-`scripts/measure-hook.py` measures hook latency. Maintainers: see
+`scripts/measure-hook.py` measures hook latency, and
+`scripts/acceptance/linux/host.sh` runs the product live on Linux in a
+disposable container (see [testing](dev/contributing/testing.md#the-linux-live-acceptance-run)). Maintainers: see
 [releasing](dev/maintainers/releasing.md).
