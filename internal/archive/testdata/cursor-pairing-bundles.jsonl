@@ -1,0 +1,3 @@
+{"role": "user", "content": "Paste aa-pair1:syntheticProse now."}
+{"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "shell", "input": {"command": "echo aa-pair1:syntheticTool", "nested": "{\"result\": \"{\\\"note\\\": \\\"aa-pair1:syntheticNested\\\"}\"}"}}]}
+{"role": "tool", "content": "  12\u2192aa-pair1:syntheticDisplayed\n  13\u2192ordinary line"}
