@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -310,7 +311,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := kept.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := kept.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || forgotten {
+	if forgotten, err := kept.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err != nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 	if _, found, err := kept.Removal("codex", reg.NativeSessionID); err != nil || found {
@@ -325,7 +326,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := failing.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := failing.EnsureArchiveSessionID(reg.NativeSessionID); err != nil {
+	if _, _, err := failing.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); err != nil {
 		t.Fatal(err)
 	}
 	// A file where the records directory belongs makes every write fail.
@@ -333,19 +334,19 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err == nil || forgotten {
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err == nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v, want a failure", forgotten, err)
 	}
 	if _, registered, _ := failing.LoadRegistration(reg.ArchiveSessionID); !registered {
 		t.Fatal("the session was forgotten without its removal record")
 	}
-	if _, indexed, _ := failing.ArchiveSessionID(reg.NativeSessionID); !indexed {
+	if _, indexed, _ := failing.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); !indexed {
 		t.Fatal("the native index entry was removed without a removal record")
 	}
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err != nil || !forgotten {
 		t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
 	}
 	if record, found, err := failing.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != state.RemovalReasonUndo || !record.At.Equal(at) {

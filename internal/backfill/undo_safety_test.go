@@ -3,6 +3,7 @@ package backfill
 import (
 	"bytes"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,7 +46,7 @@ func (f *undoFixture) include(root string) string {
 // not "", admitted at admitted.
 func (f *undoFixture) register(native, root, batch string, admitted time.Time) archive.SessionRegistration {
 	f.t.Helper()
-	reg, err := f.store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
+	reg, err := f.store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native}, func(id string) archive.SessionRegistration {
 		origin, destination := archive.SessionOriginHook, ""
 		if batch != "" {
 			origin, destination = archive.SessionOriginImport, "dest"
@@ -190,7 +191,7 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 	cfg := f.cfg
 	plan.ApplyToConfig(&cfg)
 	for _, s := range plan.Sessions {
-		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, s.Registration.NativeSessionID, false, &state.RemovalRecord{Harness: "claude", Reason: state.RemovalReasonUndo, At: fixedNow}); err != nil {
+		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(s.Registration.Harness.Name)), NativeID: s.Registration.NativeSessionID}, false, &state.RemovalRecord{Harness: "claude", Reason: state.RemovalReasonUndo, At: fixedNow}); err != nil {
 			t.Fatal(err)
 		}
 	}

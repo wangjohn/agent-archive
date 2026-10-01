@@ -1,4 +1,4 @@
-package hooks
+package hookconfig
 
 import (
 	"bytes"
@@ -197,7 +197,9 @@ type edit struct {
 	text  string
 }
 
-var errInvalidConfiguration = errors.New("invalid existing hook configuration")
+// ErrInvalidConfiguration identifies a refused JSON document.
+var ErrInvalidConfiguration = errors.New("invalid existing hook configuration")
+var errInvalidConfiguration = ErrInvalidConfiguration
 
 // configError is errInvalidConfiguration for one file. Its message is what
 // setup shows; it also keeps apart the parts that message runs together,

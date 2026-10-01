@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -63,6 +64,10 @@ type Store struct {
 	// afterRemovalRecord, when set by a test, runs once ForgetIdleSession
 	// has written the removal record and before it takes the request lock.
 	afterRemovalRecord func()
+	// onIndexStep injects interruption at durable identity conversion boundaries.
+	onIndexStep func(string) error
+	// onIndexSync tests index staging without changing registration sync seams.
+	onIndexSync func()
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -90,7 +95,7 @@ func Open(home string) (*Store, error) {
 func (s *Store) Home() string { return s.home }
 
 // storeDirs are the directories Open creates under home.
-var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"}
+var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "pending-scans", "scan-signatures", "subagent-candidates"}
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
@@ -103,12 +108,12 @@ var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile)
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile)
 }
 
 func safeFileComponent(value string) bool {
 	//lint:ignore LV1001 value is an arbitrary file name component; these are the reserved names it must not be
-	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\") {
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\\x00") {
 		return false
 	}
 	return true
@@ -123,7 +128,39 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	return local.Write(s.registrationPath(reg.ArchiveSessionID), reg)
+	key, err := registrationKey(reg)
+	if err != nil {
+		return err
+	}
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil {
+		return err
+	}
+	if found && entry.ArchiveSessionID != reg.ArchiveSessionID {
+		return ErrSessionIdentityConflict
+	}
+	if !found {
+		owner, err := local.ID()
+		if err != nil {
+			return err
+		}
+		next := indexEntry(key, reg.ArchiveSessionID)
+		next.Reservation = owner
+		err = s.writeIndexUnderRequestLock(reg.ArchiveSessionID, qualifiedSessionIndexPath(s.home, key), nil, func(current fileSnapshot) (any, bool, error) {
+			if current.found {
+				return nil, false, errIndexMoved
+			}
+			return next, true, nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	_, saved, err := s.registerUnderLock(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg })
+	if err == nil && !saved {
+		return ErrSessionNotRegistered
+	}
+	return err
 }
 
 // UpdateRegistration changes an existing registration atomically with respect
@@ -155,12 +192,20 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalKey, err := registrationKey(reg)
+		if err != nil {
+			return nil, false, err
+		}
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
 		}
 		if reg.ArchiveSessionID != archiveSessionID {
 			return nil, false, errors.New("a registration update cannot change its archive session ID")
+		}
+		updatedKey, err := registrationKey(reg)
+		if err != nil || updatedKey != originalKey {
+			return nil, false, ErrSessionIdentityConflict
 		}
 		if err := reg.Validate(); err != nil {
 			return nil, false, err
@@ -181,13 +226,16 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 // just before retention removed it. Reusing that ID would leave the new
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
-func (s *Store) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+func (s *Store) RegisterNewSession(key agentmeta.SessionKey, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
 	for range 3 {
-		id, _, err := s.EnsureArchiveSessionID(nativeSessionID)
+		id, _, err := s.EnsureArchiveSessionID(key)
+		if errors.Is(err, errIndexMoved) {
+			continue
+		}
 		if err != nil {
 			return archive.SessionRegistration{}, err
 		}
-		reg, saved, err := s.registerUnderLock(nativeSessionID, id, build)
+		reg, saved, err := s.registerUnderLock(key, id, build)
 		if err != nil || saved {
 			return reg, err
 		}
@@ -195,15 +243,29 @@ func (s *Store) RegisterNewSession(nativeSessionID string, build func(archiveSes
 	return archive.SessionRegistration{}, errors.New("session index kept changing while registering; this start was not recorded")
 }
 
+// RegisterReservedSession commits an import's already linked reservation. If
+// ownership moved between its short hooks-lock holds, it refuses stale links
+// rather than assigning a different parent archive ID.
+func (s *Store) RegisterReservedSession(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	if err := key.Validate(); err != nil {
+		return archive.SessionRegistration{}, err
+	}
+	reg, saved, err := s.registerUnderLock(key, id, build)
+	if err == nil && !saved {
+		return archive.SessionRegistration{}, errIndexMoved
+	}
+	return reg, err
+}
+
 // registerUnderLock saves build's registration for id, atomically with
 // respect to the request lock (see writeUnderRequestLock), if the index
 // still maps nativeSessionID to id there; saved is false when it does not.
-func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
 	if !safeFileComponent(id) {
 		return archive.SessionRegistration{}, false, errors.New("archive session ID is not a safe file name component")
 	}
 	reg := build(id)
-	if reg.ArchiveSessionID != id || reg.NativeSessionID != nativeSessionID {
+	if reg.ArchiveSessionID != id || reg.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), reg.Harness.Name) != string(key.Agent) {
 		return archive.SessionRegistration{}, false, errors.New("registration does not match the session index")
 	}
 	if err := reg.Validate(); err != nil {
@@ -215,11 +277,21 @@ func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string)
 		lock: func() (func(), error) { return s.lockRequest(id) },
 		path: s.registrationPath(id),
 		check: func() error {
-			current, found, err := s.ArchiveSessionID(nativeSessionID)
-			if err == nil && (!found || current != id) {
+			current, found, err := s.readQualifiedIndex(key)
+			if err == nil && (!found || current.ArchiveSessionID != id) {
 				return errIndexMoved
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			registered, err := s.matchingRegistration(key, id)
+			if err != nil {
+				return err
+			}
+			if !registered && current.Reservation == "" {
+				return errIndexMoved
+			}
+			return nil
 		},
 		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
 		blind:  true,
@@ -228,6 +300,12 @@ func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string)
 		return archive.SessionRegistration{}, false, nil
 	}
 	if err != nil {
+		return archive.SessionRegistration{}, false, err
+	}
+	if err := s.indexStep("registration"); err != nil {
+		return archive.SessionRegistration{}, false, err
+	}
+	if err := s.finishSessionIndex(key, id); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
 	return reg, true, nil

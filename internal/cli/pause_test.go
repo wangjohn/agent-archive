@@ -81,7 +81,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "queued-before-pause", "cwd": project}
-	if err := capture.HandleEvent(home, "claude", payload, at); err != nil {
+	if err := capture.HandleEvent(home, "claude", payload, at, capture.WithDecoders(productionAgents)); err != nil {
 		release()
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 	if code := runPauseCommand(&out, &errOut, env, false); code != 0 {
 		t.Fatalf("resume: code=%d stderr=%s", code, errOut.String())
 	}
-	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute)); err != nil {
+	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute), productionAgents); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()

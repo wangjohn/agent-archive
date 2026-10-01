@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
@@ -13,8 +13,8 @@ import (
 // collector an earlier release installed under another label. Change holds
 // its plist as setup found it.
 type LegacyJob struct {
-	Change    hooks.Change `json:"change"`
-	WasLoaded bool         `json:"was_loaded"`
+	Change    fileapply.Change `json:"change"`
+	WasLoaded bool             `json:"was_loaded"`
 	// Backend and JobRef say which scheduler runs the job and what it calls
 	// it, as Journal's do for the collector; both are optional, and absent
 	// means DefaultBackend and the job Change.Path names.
@@ -36,7 +36,7 @@ func RetireeJobs(retirees []scheduler.Retiree) (legacy *LegacyJob, relabeled []*
 		if !ok {
 			return nil, nil, fmt.Errorf("cannot record the %s job %s: %s is not a file", r.Backend, r.Ref, r.Artifacts[0].ID)
 		}
-		job := &LegacyJob{Change: hooks.Change{Path: path, Before: r.Artifacts[0].After, Existed: true, Mode: r.Artifacts[0].Mode}, WasLoaded: r.WasLoaded, Backend: r.Backend, JobRef: string(r.Ref)}
+		job := &LegacyJob{Change: fileapply.Change{Path: path, Before: r.Artifacts[0].After, Existed: true, Mode: r.Artifacts[0].Mode}, WasLoaded: r.WasLoaded, Backend: r.Backend, JobRef: string(r.Ref)}
 		if r.Alias == scheduler.Prototype && legacy == nil {
 			legacy = job
 			continue
@@ -77,7 +77,7 @@ func restoreLegacyJob(home string, job *LegacyJob, name string, backends Backend
 		return err
 	}
 	if _, err := os.Stat(job.Change.Path); os.IsNotExist(err) {
-		if err := hooks.Apply([]hooks.Change{{Path: job.Change.Path, After: job.Change.Before, Mode: job.Change.Mode}}); err != nil {
+		if err := fileapply.Apply([]fileapply.Change{{Path: job.Change.Path, After: job.Change.Before, Mode: job.Change.Mode}}); err != nil {
 			return err
 		}
 	}

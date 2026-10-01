@@ -27,7 +27,7 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := capture.HandleEvent(home, "claude", start, now); err != nil {
+	if err := capture.HandleEvent(home, "claude", start, now, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -66,7 +66,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000aaaa", project, nil), at); err != nil {
+	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000aaaa", project, nil), at, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	env := testEnv(t, home, at.Add(time.Second))
@@ -91,7 +91,7 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 	env := testEnv(t, home, at)
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
 	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
-	if err := capture.HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at); err != nil {
+	if err := capture.HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder

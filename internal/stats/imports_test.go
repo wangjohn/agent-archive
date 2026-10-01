@@ -17,12 +17,14 @@ const (
 	statsImportPath = "github.com/wangjohn/agent-archive/internal/stats"
 	modulePrefix    = "github.com/wangjohn/agent-archive/internal/"
 	archivePath     = "github.com/wangjohn/agent-archive/internal/archive"
+	identityPath    = "github.com/wangjohn/agent-archive/internal/agentmeta"
 )
 
 // The engine is pure: it takes session metadata and options and returns
 // numbers. So its production code imports only the archive's types (and the
-// standard library), never the command line, the bucket, the disk, or the
-// network, and reads no clock. The command wires the outside world to it;
+// standard library), reaching pure agent identities through archive, never
+// the command line, the bucket, the disk, or the network, and reads no clock.
+// The command wires the outside world to it;
 // depguard's rule in .golangci.yml says the same on macOS.
 func TestStatsImportBoundary(t *testing.T) {
 	t.Parallel()
@@ -30,10 +32,11 @@ func TestStatsImportBoundary(t *testing.T) {
 	importgraph.Forbid(t, "internal/stats", direct,
 		"os", "os/exec", "os/signal", "io/ioutil", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2",
 		"golang.org/x/term",
+		identityPath,
 	)
 	for _, path := range all {
-		if strings.HasPrefix(path, modulePrefix) && path != archivePath {
-			t.Errorf("internal/stats reaches %s; only internal/archive's types are allowed", path)
+		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath {
+			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta dependency are allowed", path)
 		}
 	}
 	importgraph.Forbid(t, "internal/stats (transitively)", all, "net/http", "os/exec")
