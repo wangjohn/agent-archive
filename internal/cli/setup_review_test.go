@@ -302,14 +302,19 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 		"y",     // refused: starting is not a choice
 		"check", // the file is fixed just before this answer
 		"y"}
-	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() { must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600)) }}
+	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() {
+		if _, found, err := config.Load(home); err != nil || found {
+			t.Fatalf("setup committed before the invalid hook file was fixed: found=%v err=%v", found, err)
+		}
+		must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600))
+	}}
 	var out bytes.Buffer
 	if code := Run([]string{"setup"}, in, &out, &out, env); code != 0 {
 		t.Fatalf("setup exit %d\n%s", code, &out)
 	}
 	output := out.String()
 	blocked := strings.Index(output, "✗ Codex hook file is invalid")
-	refused := strings.Index(output, "Enter a number from 1 to 3.")
+	refused := strings.Index(output, "Enter a number from 1 to 4.")
 	if blocked < 0 || refused < blocked || !strings.Contains(output, "Fix what is marked ✗ above first.\n  1) Check again") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}
