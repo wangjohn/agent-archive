@@ -1,4 +1,4 @@
-// Package isolation keeps a package's tests away from this Mac's real home,
+// Package isolation keeps a package's tests away from this machine's real home,
 // app configuration, and temporary folder. A package whose production code
 // cannot reach launchctl or the Keychain at all (its imports forbid them)
 // calls Process from its TestMain and Check from a test; internal/cli, which

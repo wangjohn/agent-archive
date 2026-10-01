@@ -24,7 +24,8 @@ type passCost struct {
 }
 
 // measurePass runs one pass and counts its decodes of published state and
-// the files it wrote under the data directory.
+// the files it wrote under the data directory. The decodes are counted for the
+// whole process, so a test that checks them must not be parallel.
 func measurePass(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options) (Result, passCost) {
 	t.Helper()
 	before := snapshotMtimes(t, local.Home())
@@ -70,6 +71,9 @@ func snapshotMtimes(t *testing.T, root string) map[string]time.Time {
 // seconds a pass, against 17 ms settled. A missing transcript is now a gap
 // recorded at the transcript's absence and skipped on a stat while it lasts,
 // and a returning transcript is read at once.
+//
+// Not parallel, like every test that reads measurePass's cost: the count of
+// published-state loads is process-wide.
 func TestMissingTranscriptsCostNothingPerPass(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -122,7 +126,7 @@ func TestMissingTranscriptsCostNothingPerPass(t *testing.T) {
 // whole bundle to look for its link: 400 unchanged subagents took 25 seconds
 // a pass. A subagent is now skipped on a stat like any session once its
 // parent links it, the check reading only summaries (the parent's once a
-// pass).
+// pass). Not parallel: measurePass's count of loads is process-wide.
 func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 	home := t.TempDir()
 	local, err := state.Open(home)
@@ -174,7 +178,8 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 // A size-limit gap, and a rewritten transcript's gap, are skipped on a stat
 // while the transcript sits untouched (they used to be read in full every
 // pass to reach the same gap), are never signed as settled, and are read
-// again as soon as it changes.
+// again as soon as it changes. Not parallel: measurePass's count of loads is
+// process-wide.
 func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -213,7 +218,7 @@ func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 
 // A size-limit gap stands only while the limits it was reached under do: a
 // raised limit reads the transcript again, and status names the gap while
-// it lasts.
+// it lasts. Not parallel: measurePass's count of loads is process-wide.
 func TestSizeLimitGapIsSkippedUntilTheLimitChanges(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()

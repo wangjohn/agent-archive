@@ -34,6 +34,7 @@ func (s *readStoreStub) openStore(cfg config.Config) (storage.ObjectStore, error
 }
 
 func TestReadOnlyStoreBoundary(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	stub := &readStoreStub{home: home, store: storagetest.NewMemoryStore()}
 	_, _, found, err := openReadOnlyStore(stub)
@@ -69,6 +70,7 @@ func (s *pagerStub) runPager(_ context.Context, _ string, _ []string, _ io.Reade
 }
 
 func TestPagerBoundaryFallsBackToDirectOutput(t *testing.T) {
+	t.Parallel()
 	deps := &pagerStub{}
 	var out, errOut bytes.Buffer
 	err := withPager(context.Background(), &out, &errOut, deps, false, func(w io.Writer) error {
@@ -90,6 +92,7 @@ func (sessionStub) lookupEnv(key string) (string, bool) {
 }
 
 func TestCurrentSessionBoundaryTrimsIdentifier(t *testing.T) {
+	t.Parallel()
 	ids := currentSessions(sessionStub{})
 	if len(ids) != 1 || !ids["current-session"] {
 		t.Fatalf("ids=%v", ids)
@@ -113,6 +116,7 @@ func (*resolverStub) now() time.Time { return time.Unix(1, 0) }
 func (*resolverStub) cursorDatabase() string { return "" }
 
 func TestHandoffResolverUsesReadStoreBoundary(t *testing.T) {
+	t.Parallel()
 	_, mem, id := publishedFixture(t)
 	deps := &resolverStub{store: mem}
 	target, err := (handoffResolver{ctx: context.Background(), env: deps, source: "archive"}).byID(id)

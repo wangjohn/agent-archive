@@ -52,6 +52,7 @@ func TestAWSProfileDiscoveryReadsSettingsWithoutRunningCredentials(t *testing.T)
 }
 
 func TestAWSProfileDiscoveryMarksProfilesThatCannotSupplyCredentials(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config")
 	data := "[profile base]\nregion = us-east-1\n" +

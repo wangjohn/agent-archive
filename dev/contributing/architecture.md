@@ -54,7 +54,7 @@ flowchart LR
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection, and `Diagnose`, which names a storage failure's cause in plain words. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
 | `cloudflare` | Cloudflare's management API, only what guided R2 setup needs: list accounts, create a bucket, create and revoke a bucket-scoped API token, read public-access settings. Used at setup time with a pasted bootstrap token that is never stored; `cloudflare/cloudflaretest` is the fake tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
-| `config` | `config.json`: the one record of how this Mac is set up. |
+| `config` | `config.json`: the one record of how this machine is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
 | `platform` | The one place that knows the operating system: `platform.OS` (`Darwin`, `Linux`, and an `Unknown` that fails closed), `platform.Current` (the only non-test reader of `runtime.GOOS`, `TestOnlyPlatformReadsRuntimeGOOS`), and `Locations`, where the OS keeps Cursor's data, the desktop apps' folders, temporary directories, privacy-protected folders and the Cursor snapshot root. Pure: it runs no program and opens no file (the two inputs that need the system come in as `LocationDeps`), and imports no `credentials` or `hooks` (depguard and `TestPlatformImportBoundary`). |
 | `hooks` | Checking, planning, installing, and removing the hook entries in the apps' hook files. |
@@ -102,7 +102,7 @@ flowchart TD
 
 ## Invariants worth knowing before you change anything
 
-- Nothing leaves the Mac except what an adapter's filter kept. Unknown keys
+- Nothing leaves the machine except what an adapter's filter kept. Unknown keys
   are dropped and named, never passed through. See
   [privacy](../../docs/security/privacy.md) and [versions](../maintainers/versions.md).
 - The bucket's `metadata.json` is the live pointer. A source is uploaded

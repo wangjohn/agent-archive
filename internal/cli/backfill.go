@@ -100,7 +100,7 @@ func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg 
 }
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
-// sessions already on this Mac, shows the plan, and after confirmation
+// sessions already on this machine, shows the plan, and after confirmation
 // imports them (see dev/specs/backfill.md). `--dry-run [--json]` prints
 // the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -385,7 +385,7 @@ func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home
 }
 
 // offerSetupImport follows a committed interactive setup: when the chosen
-// projects have sessions on this Mac that are not in the archive, it asks
+// projects have sessions on this machine that are not in the archive, it asks
 // whether to import them, and imports them as agent-archive backfill
 // --project would, with the same plan, safety checks and import record, so
 // backfill undo removes them again. setup already holds setup.lock and has

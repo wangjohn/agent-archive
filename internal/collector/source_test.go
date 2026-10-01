@@ -30,12 +30,15 @@ type cursorDB struct {
 	held *sql.DB
 }
 
+// newCursorDB makes a Cursor database, running (holding its connection) or
+// not, and gives the test a snapshot folder of its own (ownSnapshotFolder),
+// so a test that uses it is not parallel. The folder cannot be shared with
+// parallel tests: every pass sweeps it, and a sweep's probe of a copy's lock
+// file, landing between a new read creating that file and locking it, fails
+// the read ("lock a Cursor database snapshot directory").
 func newCursorDB(t *testing.T, running bool) *cursorDB {
 	t.Helper()
-	// Snapshots go to the system temporary directory; give the test its own.
-	previous := cursorstore.SnapshotTempDirForTesting
-	cursorstore.SnapshotTempDirForTesting = t.TempDir()
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
+	ownSnapshotFolder(t)
 	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
 	if running {
 		d.held = d.open()
@@ -49,6 +52,17 @@ func newCursorDB(t *testing.T, running bool) *cursorDB {
 		})
 	}
 	return d
+}
+
+// ownSnapshotFolder gives the test a snapshot folder of its own, for a test
+// that reads Cursor's database, checks what is in the folder, or checks what
+// a sweep of it did. It assigns cursorstore.SnapshotTempDirForTesting, so the
+// test must not be parallel.
+func ownSnapshotFolder(t *testing.T) {
+	t.Helper()
+	previous := cursorstore.SnapshotTempDirForTesting
+	cursorstore.SnapshotTempDirForTesting = t.TempDir()
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
 }
 
 func (d *cursorDB) open() *sql.DB {
@@ -295,7 +309,8 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 }
 
 // TestCursorSQLiteOneSnapshotPerPass: however many chats changed, a pass
-// copies the database once, and removes the copy when it ends.
+// copies the database once, and removes the copy when it ends. Not parallel:
+// it checks the snapshot folder is empty after the pass.
 func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
@@ -377,7 +392,8 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 }
 
 // TestCursorSQLitePassSweepsStaleSnapshots: a pass with a Cursor session
-// removes snapshots a killed pass left, even when it reads no chat.
+// removes snapshots a killed pass left, even when it reads no chat. Not
+// parallel: it checks what a sweep of the snapshot folder did.
 func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, false)
@@ -410,6 +426,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 }
 
 func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
+	t.Parallel()
 	file := sourceState{file: transcriptFileInfo{Size: 3, Mtime: 4}}
 	if !file.matches(state.ScanSignature{TranscriptSize: 3, TranscriptMtime: 4}) {
 		t.Fatal("a file signature did not match its own state")

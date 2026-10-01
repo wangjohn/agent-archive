@@ -16,6 +16,7 @@ import (
 // and the fixtures (testdata/scheduler/journals, written by that release) are
 // recovered by this one (TestInterruptedSetupJournalsReplay).
 func TestInterruptedSetupJournalNamesItsBackendAndJobsAndChangesNothingElse(t *testing.T) {
+	// Not parallel: newSchedRun replaces launchctl.
 	for name, interrupt := range map[string]func(r *schedRun){
 		// Both interrupt a setup without agent skills, whose files are not what
 		// is read here; the journal's fields are the same.
@@ -105,7 +106,8 @@ func checkRetiredJob(t *testing.T, raw json.RawMessage) int {
 // The refresh's journal names the job the same way, so a refresh interrupted
 // is recovered through the scheduler that made the collector.
 func TestRefreshJournalNamesItsBackendAndJob(t *testing.T) {
-	t.Parallel()
+	// Not parallel: newRefreshInstall replaces launchctl, which parallel
+	// tests (TestIsolationFailsClosed) read.
 	r := newRefreshInstall(t, false, true, modeLoaded)
 	plan, err := planSetupRefresh(r.home, r.userHome, r.newExe, mustLoadConfig(t, r.home), r.env)
 	must(t, err)
@@ -119,6 +121,7 @@ func TestRefreshJournalNamesItsBackendAndJob(t *testing.T) {
 // recovery before anything changes: no launchctl call, every file as the crash
 // left it, the record kept, and the message says why and the way out.
 func TestRecoveryOfAJournalThisSystemCannotDriveChangesNothing(t *testing.T) {
+	// Not parallel: newSchedRun replaces launchctl.
 	for name, tc := range map[string]struct {
 		edit func(journal map[string]any)
 		says string

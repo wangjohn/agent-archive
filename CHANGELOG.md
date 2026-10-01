@@ -8,6 +8,57 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Linux is supported for persistent capture** (x86-64 and arm64), on a
+  machine with systemd 240 or newer and a user manager (RHEL 8 and its
+  rebuilds from 8.3). macOS behavior, its plist, Keychain items and
+  `config.json` are unchanged. What you can see on Linux:
+  - **Install.** Releases after v0.1.1 carry unsigned static
+    `agent-archive-linux-amd64` and `-arm64` binaries, in `SHA256SUMS` and
+    attested; `install.sh` installs them, requires the checksum to match, and
+    prints the `gh attestation verify` command. v0.1.1 has no Linux binary.
+  - **Background collector.** `setup` installs a systemd user timer and
+    service (`agent-archive-collector`, every 60 seconds, logs in the data
+    directory) in `~/.config/systemd/user`, and records `"background_backend":
+    "systemd"` in `config.json`. With no user bus (SSH without
+    `pam_systemd`, a container) setup stops before changing anything and says
+    to log in properly or run `loginctl enable-linger`; there is no cron
+    fallback. `status` and `status --json` (`background_warnings`) note when
+    lingering is off or a drop-in overrides the unit; systemd older than 240
+    is refused. `setup --refresh` and `uninstall` handle the units and the
+    link that enables the timer.
+  - **`uninstall --skip-scheduler`** goes on when the scheduler cannot say
+    whether the job is loaded: it removes the definition, hooks and skills,
+    prints the command that stops the job by hand, and says the collector
+    was not verified stopped. Without it, uninstall refuses in that case on
+    either system.
+  - **Credentials.** There is no Keychain: an R2 key is kept in a 0600 file
+    in a 0700 folder of the data directory (not encrypted; an S3 profile is
+    recommended on Linux), with the `AGENT_ARCHIVE_R2_*` variables as a
+    read-only fallback for containers.
+  - **Environment.** `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are recorded in
+    the job when set to an absolute path, `status` warns when your shell's
+    differ, and Cursor database copies live under
+    `~/.cache/agent-archive/cursor-snapshots` (or `$XDG_CACHE_HOME`), never
+    `/tmp`. A user manager can have its own values from outside your shell,
+    which `status` cannot see (see [setup on Linux](docs/getting-started/setup.md#setup-on-linux)).
+  - **Cloned machines.** `config.json` records `host_id`, a digest of the
+    machine ID, on Linux; `status` and `setup` warn when the data directory
+    was set up on a different machine (a cloned VM or image). It is best
+    effort; see [multiple machines](docs/guides/multiple-machines.md#cloned-machines-on-linux).
+    A home directory shared by several machines is not supported.
+  - **Not verified on Linux:** the real Cursor app and `cursor-agent` hooks
+    (a Cursor forum report says they may fail silently, so Cursor capture is
+    best effort and its version is not detected), the real Claude Code and
+    Codex apps, distributions and systemd versions other than Ubuntu 24.04
+    with systemd 255 (exercised live on arm64), an amd64 live run, real R2
+    and S3 from Linux (the live run used MinIO), a real logout with lingering
+    off, a desktop login, and WSL. See [platforms](docs/getting-started/install.md#platforms).
+  - **Handoff** opens the new agent in a tmux window on Linux; outside tmux
+    it prints the command to run instead.
+- The multiple-Macs guide is now [multiple machines](docs/guides/multiple-machines.md)
+  (`docs/guides/multiple-macs.md` is gone; update any link to it), with a
+  section on cloning Linux machines next to the Migration Assistant and Time
+  Machine guidance.
 - `agent-archive stats --json --all` lists every project, skill and MCP
   server instead of the top five of each (`--all` is an error without
   `--json`: the web page keeps its top lists). The document is otherwise the
@@ -92,13 +143,13 @@ follow [Semantic Versioning](https://semver.org/).
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
 - `agent-archive setup --refresh` brings the app hooks, the background
-  collector's plist, and the skill files up to date for the saved settings and
+  job's definition, and the skill files up to date for the saved settings and
   the binary you run it from, and changes nothing else. It asks nothing and
   needs no terminal, prints `nothing to refresh` or what it refreshed, and
   refuses (exit 1) before setup has finished, while a setup needs recovery,
   after uninstall, or when another installation's hooks are in the way. It
   also repairs hooks left pointing at a binary that moved. `install.sh` runs it
-  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  when it finds a set-up machine, so upgrading the binary upgrades the hooks and
   skills; if it fails, or the installer runs as root (which would leave
   root-owned files in your home directory), the install still succeeds and
   says how to run it. It waits up to ten seconds for a running collection
@@ -117,7 +168,7 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/agent-archive/SKILL.md`), so you can ask an agent to
   "pull in the auth session from Codex". The agent runs
   `agent-archive handoff "auth" --harness codex` (a bounded, filtered handoff
-  prompt, found by title on this Mac first, then in the archive), asks you
+  prompt, found by title on this machine first, then in the archive), asks you
   which when several sessions match, and can browse with `list`, `show`,
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
@@ -303,8 +354,7 @@ follow [Semantic Versioning](https://semver.org/).
   stages the new binary with `mktemp` and removes it on failure; it prints
   `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
   reports a missing `curl` ("curl is required") and a failed temporary
-  file or directory creation with their own messages. Linux is not yet a
-  supported platform.
+  file or directory creation with their own messages.
 
 - `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
   terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
@@ -313,6 +363,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **"Mac" became "machine" wherever the text is not about macOS**, now that
+  Linux is supported: in `agent-archive help` and the [CLI
+  reference](docs/reference/cli.md) ("sessions already on this machine"), in
+  `setup`'s review ("What leaves your machine:") and its next-steps line
+  ("To set up another machine with this storage"), in `backfill`, `purge`,
+  `uninstall`, `status` and `handoff` messages and in retention's clock
+  messages. What is specific to macOS (the Keychain, Time Machine, Migration
+  Assistant, macOS's privacy prompts, launchd) keeps its wording, and scripts
+  that match these messages should match the new words.
 - **Privacy filter 13: a session's name and linked pull request are now
   archived.** Claude Code's session name (the one in its sidebar, set from
   your prompt or by `/rename`) and the pull request a session linked (its
@@ -424,7 +483,6 @@ follow [Semantic Versioning](https://semver.org/).
   `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
   backfill inputs (Claude and Codex desktop app folders, the privacy-protected
   folders, the `/Applications` probes) are skipped. On macOS nothing changes.
-  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or

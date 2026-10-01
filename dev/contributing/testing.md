@@ -4,7 +4,7 @@ What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
 ```sh
-go test -race ./...
+go test -race -timeout 20m ./...                         # internal/cli alone takes 4.5 to 7 minutes in CI
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
@@ -25,7 +25,7 @@ first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
 line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
 runs the Linux scheduler against a real systemd user manager on Ubuntu (see
-[below](#never-test-against-your-real-mac)); it is its own check, not a
+[below](#never-test-against-your-real-machine)); it is its own check, not a
 required one. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
@@ -82,12 +82,13 @@ a `//lint:ignore nilerr` directive never works (restructure the code
 instead), and terminal output goes through `internal/terminal` rather than
 `_, _ = fmt.Fprintf`.
 
-## Never test against your real Mac
+## Never test against your real machine
 
 Tests and hand-run experiments must not touch your real home directory, your
-apps' real hook files, the real LaunchAgent, your Keychain, Cursor's real
-database, or a real bucket. The live collector on your Mac is
-`com.agent-archive.collector`.
+apps' real hook files, the real LaunchAgent or systemd user units, your
+Keychain, Cursor's real database, or a real bucket. The live collector on your
+machine is `com.agent-archive.collector` (launchd) or
+`agent-archive-collector.timer` (systemd).
 
 In Go tests, everything goes through injection:
 
@@ -169,7 +170,7 @@ In Go tests, everything goes through injection:
   waits up to two and a half minutes for the timer's first run). That job is
   its own check and is not among the branch's required ones, so a change to the
   runner image does not stop unrelated pull requests; a failure in it is a real
-  finding about the adapter. To run it yourself, never on your own Mac or
+  finding about the adapter. To run it yourself, never on your own machine or
   login, use a disposable Linux container with systemd as PID 1 (Docker on
   macOS runs it in a Linux VM) and a non-root user (or run
   `scripts/acceptance/linux/host.sh`, which does all of this and more; see
@@ -295,6 +296,14 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE X
   run `agent-archive sync`. Never register a real transcript path.
 - `scripts/measure-hook.py BINARY` measures hook latency in its own temporary
   directory; it installs nothing.
+- **On Linux a stub `systemctl` is not enough.** `setup` asks `systemctl
+  --version` and `systemctl --user show ...` and refuses to go on when it
+  cannot get a real answer, and a sandboxed `HOME` does not stop it from
+  enabling a timer in your real user manager. Run the binary by hand only in a
+  disposable Linux container with systemd as PID 1 (the recipe under the
+  real-systemd bullet above, or [the Linux live acceptance
+  run](#the-linux-live-acceptance-run), which builds one and drives the whole
+  product in it), never in your own login.
 
 The hidden commands `_hook` (what app hooks run) and `_collect` (what the
 LaunchAgent runs) are not part of the user interface and may change.
@@ -439,7 +448,7 @@ README says how to get a shell as the user whose manager is running.
   ```
 
   A new screen is one more entry in `screens`: its answers, its exit code,
-  and an `arrange` function that prepares the Mac through the fixture.
+  and an `arrange` function that prepares the machine through the fixture.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
 
@@ -586,6 +595,28 @@ open-source acceptance record.
       files, LaunchAgent plist, `setup-draft.json`) for the bootstrap token;
       it appears nowhere. The automated search
       (`TestGuidedR2NeverPersistsTheBootstrapToken`) covers the fake only.
+
+## Terminal tests
+
+What a real terminal does (echo, key mode, Ctrl-C, Ctrl-Z, a resize, a
+hangup) is tested under a pseudo-terminal: a Python script (`python3`, or
+the test skips) opens one, starts this test binary as a child in it, types,
+and checks the terminal's modes and the output. Run such a script with
+`runPTYScript` (`internal/cli/pty_harness_test.go`):
+
+- The script owns its deadlines (60 seconds overall, 30 for each step) and
+  says what it was waiting for when one passes; match what it waits for to
+  offsets in the output, never to sleeps.
+- `runPTYScript` is the backstop, 90 seconds and never later than 30 seconds
+  before the test binary's own `-timeout`, so a stuck harness fails its test
+  with a message instead of ending the package in a timeout panic. It stops
+  the script with SIGTERM, which raises an exception in the script so its
+  `finally` stops the child, and kills it only after ten seconds more. A
+  script killed outright leaves its child running with nobody to stop it.
+- Budget for a slow start. On macOS, `/usr/bin/python3` is Xcode's, and with
+  the fresh `HOME` that `TestMain` gives each run it compiles its library
+  into `~/Library/Caches` first: a few seconds before the script's first
+  line, more on a loaded machine.
 
 ## Fuzzing
 

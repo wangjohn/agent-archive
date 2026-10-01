@@ -410,7 +410,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(chosen) == 0 {
-			return []error{errors.New("no apps were found on this Mac; pass --apps (codex, claude, cursor)")}
+			return []error{errors.New("no apps were found on this machine; pass --apps (codex, claude, cursor)")}
 		}
 	}
 	if installed {
@@ -421,7 +421,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(dropped) > 0 {
-			return []error{fmt.Errorf("--apps leaves out %s, which this Mac captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))}
+			return []error{fmt.Errorf("--apps leaves out %s, which this machine captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))}
 		}
 	}
 	var ordered, declined []string

@@ -182,7 +182,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 // be checked again under the locks. Declining is not an error: confirmed is
 // false and nothing was changed.
 func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, previewFound bool, stdin io.Reader, out io.Writer) (previewPending int, confirmed bool, err error) {
-	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
+	terminal.Println(out, "Remove the archive's hooks and background collector from this machine. Remote archives are kept.")
 	if purge {
 		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {

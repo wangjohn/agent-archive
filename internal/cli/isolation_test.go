@@ -122,9 +122,10 @@ func isolateProcessForTesting() func() {
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that
-// reaches this Mac itself stops the test, and the process's own home is a
+// reaches this machine itself stops the test, and the process's own home is a
 // temporary one.
 func TestIsolationFailsClosed(t *testing.T) {
+	t.Parallel()
 	panics := func(name string, f func()) {
 		t.Helper()
 		defer func() {
@@ -192,7 +193,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 			t.Errorf("%s=%s leaks into the tests", name, value)
 		}
 	}
-	// testEnv's side-effecting fields fail rather than reach the Mac.
+	// testEnv's side-effecting fields fail rather than reach the machine.
 	env := testEnv(t, t.TempDir(), time.Now())
 	if _, err := env.credentialStore(); err == nil {
 		t.Error("testEnv's credential store must fail unless a test sets one")

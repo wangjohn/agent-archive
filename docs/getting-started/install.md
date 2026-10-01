@@ -1,9 +1,78 @@
 # Install agent-archive
 
-`agent-archive` is a single, self-contained macOS binary with no runtime
-dependencies. It runs on Intel and Apple Silicon Macs.
+`agent-archive` is a single, self-contained binary with no runtime
+dependencies. It runs on macOS (Intel and Apple Silicon) and on Linux (x86-64
+and arm64).
 
 After installing, continue with [setup](setup.md).
+
+## Platforms
+
+**macOS** is the platform the project was built on. Releases are signed with
+a Developer ID and notarized, the background collector is a LaunchAgent, and
+an R2 key is kept in the login Keychain.
+
+**Linux** is supported for persistent capture: hooks, the scheduled
+collector, credentials, and Cursor paths. What it needs:
+
+- **systemd 240 or newer, with a user manager you can reach.** The background
+  collector is a systemd user timer (`agent-archive-collector.timer`, every
+  60 seconds), because that is the only background scheduler agent-archive
+  has on Linux. The logs use `StandardOutput=append:`, which came in with
+  systemd 240, so Ubuntu 18.04 (237) and CentOS 7 (219) are out. RHEL 8 and
+  its rebuilds (Rocky, Alma, Oracle Linux, CentOS Stream 8) ship 239 and
+  work from 8.3 (package `239-32`), where Red Hat backported the option;
+  Debian 10 and later and Ubuntu 20.04 and later are fine. Older systemd is
+  refused with a message that says to upgrade.
+- **A systemd user session bus**, which a desktop or console login has and
+  `ssh` has when `pam_systemd` is in use. On a headless machine, a container
+  or an SSH session without one, run `loginctl enable-linger` once so the
+  user manager runs without a login. Without a user manager `setup` stops
+  before it changes anything and says so. See [setup on
+  Linux](setup.md#setup-on-linux) and
+  [troubleshooting](../guides/troubleshooting.md#linux-and-systemd).
+- **No Keychain, so an R2 key is kept in a file** (mode 0600 in a folder of
+  mode 0700 under the data directory), which is not encrypted. An S3 profile
+  stores no secret of agent-archive's own and is the better choice on Linux
+  ([where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
+
+What was tested on Linux, so you can judge how far to trust it:
+
+- A live acceptance run of the real `setup`, hook, timer-driven collector,
+  `status`, `setup --refresh` and `uninstall` on Ubuntu 24.04 with systemd
+  255 on arm64 ([`scripts/acceptance/linux`](../../scripts/acceptance/linux/README.md)),
+  over synthetic sessions and a throwaway S3-compatible bucket (MinIO): 89
+  checks, all passed. What it covers and what it does not is in
+  [testing](../../dev/contributing/testing.md#the-linux-live-acceptance-run).
+- The systemd adapter against a real user manager in CI on an x86-64 Ubuntu
+  runner, and against recorded output of systemd 239 (Rocky 8), 245 (Ubuntu
+  20.04), 252 (Debian 12) and 255 (Ubuntu 24.04).
+
+What is **not** verified on Linux:
+
+- **Cursor.** The real Cursor app and `cursor-agent` have not been run
+  against agent-archive on Linux. Where Cursor keeps its chat database
+  there (`~/.config/Cursor`, or `$XDG_CONFIG_HOME/Cursor`) is the VS Code
+  convention, not something seen on a real install, and a report on Cursor's
+  forum says `cursor-agent` hooks on Linux may fail silently. Treat Cursor
+  capture on Linux as best effort: `status` shows whether a session was
+  captured, and setup cannot tell which Cursor version is installed
+  ("version not detected").
+- **Claude Code and Codex on Linux.** Neither real app has been run against
+  agent-archive on Linux. The live run fed the installed hook command
+  hand-written Claude Code payloads; both apps use the same hook files, paths
+  and transcript formats as on macOS, so they are expected to work, but that
+  is an expectation, not a result.
+- **Distributions and systemd versions other than those above**, and an
+  amd64 live run (the acceptance run above was arm64; amd64 is covered by the
+  unit tests and the CI job, not by that run).
+- **Real R2 and Amazon S3 from Linux.** The live run uploaded to a MinIO
+  bucket; the storage code is the same as on macOS.
+- **A real logout with lingering off** (the no-user-bus case is simulated),
+  **a desktop login** (the live run was a headless container), **WSL**, and **a home directory shared across several machines**, which is
+  [not supported](../guides/multiple-machines.md#a-home-directory-shared-across-machines-is-not-supported).
+
+Windows is not supported.
 
 ## Install with the script
 
@@ -12,24 +81,49 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install
 ```
 
 [`install.sh`](../../install.sh) is short; read it first if you prefer. It
-downloads the release binary for your Mac's architecture, checks it against
-the release's `SHA256SUMS` (which catches a damaged download; both files
-come from the same release), checks that it carries a valid Developer ID
-signature from the team the script names (which catches a binary someone
-else built), and installs it as `agent-archive`, without `sudo`.
+downloads the release binary for your operating system and architecture
+(`agent-archive-darwin-arm64`, `-darwin-amd64`, `-linux-arm64` or
+`-linux-amd64`), checks it against the release's `SHA256SUMS` (which catches
+a damaged download; both files come from the same release), and installs it
+as `agent-archive`, without `sudo`. On macOS it also checks that the binary
+carries a valid Developer ID signature from the team the script names (which
+catches a binary someone else built). The checksum check is mandatory on
+every system: the install stops before it installs anything when there is no
+SHA-256 tool (`sha256sum` or `shasum`), no single well-formed entry for the
+binary, or a mismatch.
 If `agent-archive` is already on your `PATH`, it replaces that copy,
 so the hooks and background collector keep pointing at it. Otherwise it uses
 `/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
 the line to add to your shell profile when the directory isn't on your
-`PATH` (`~/.bash_profile` for Bash or `~/.zshrc` for zsh). Open a new terminal
-after adding it. It never runs setup.
+`PATH` (`~/.bash_profile` for Bash on macOS, `~/.bashrc` for Bash on Linux, or
+`~/.zshrc` for zsh). Open a new terminal after adding it. It never runs
+setup. On Linux, setup refuses a program path that systemd cannot take in a
+unit file (one with a quote, a backslash, `$`, `*`, `?`, `[` or a control
+character, such as a home directory named `/home/o'brien`); install the
+binary elsewhere with `AGENT_ARCHIVE_INSTALL_DIR`.
 
-Run the same command again to upgrade. On a Mac that is already set up (a
+**On Linux** the binary is not signed, so the checksum only guards against a
+damaged download. The installer says so and prints the command that confirms
+the binary came from this repository's release workflow, which needs the
+[GitHub CLI](https://cli.github.com/):
+
+```sh
+gh attestation verify "$(command -v agent-archive)" --repo wangjohn/agent-archive
+```
+
+Linux binaries are attached to releases after v0.1.1; v0.1.1 and earlier have
+none, so on a Linux machine whose latest release is v0.1.1 the installer
+stops with `download failed: ...agent-archive-linux-...`. Build from source
+until a release has them. An architecture other than x86-64 and arm64 is
+refused.
+
+Run the same command again to upgrade. On a machine that is already set up (a
 `config.json` in `~/.local/share/agent-archive`, or in `AGENT_ARCHIVE_HOME`
 when that is set), the installer then runs the new binary's
 `agent-archive setup --refresh` and prints its one-line result. That brings
-the app hooks, the background collector's plist, and the
-[skill files](setup.md#what-setup-changes-on-your-mac) up to date for the
+the app hooks, the background job's definition (the LaunchAgent's plist, or
+the systemd unit files), and the
+[skill files](setup.md#what-setup-changes-on-your-machine) up to date for the
 new binary, and changes nothing else: it asks nothing, needs no terminal, and
 leaves your storage, credentials, projects, and retention alone. If it
 cannot (for example, an interrupted setup needs recovery), the installer
@@ -46,15 +140,21 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/insta
 ## Build from source
 
 You need Go 1.27.1 (go.mod pins `toolchain go1.27.1`; any `go` command
-from Go 1.21 on downloads it automatically) and Xcode's command line tools
-(`xcode-select --install`), which the Keychain code needs through cgo.
+from Go 1.21 on downloads it automatically). On macOS you also need Xcode's
+command line tools (`xcode-select --install`), which the Keychain code needs
+through cgo. On Linux no C toolchain is needed: the binary is built with
+`CGO_ENABLED=0`.
 
 ```sh
 git clone https://github.com/wangjohn/agent-archive.git
 cd agent-archive
 VERSION=dev ./scripts/build-release.sh
-./dist/agent-archive-darwin-$(uname -m | sed 's/x86_64/amd64/') --version
+./dist/agent-archive-darwin-$(uname -m | sed 's/x86_64/amd64/') --version   # macOS
 ```
+
+On Linux, `VERSION=dev ./scripts/build-release.sh linux` builds
+`dist/agent-archive-linux-amd64` and `dist/agent-archive-linux-arm64`, and
+`go build ./cmd/agent-archive` builds for the machine you are on.
 
 `scripts/build-release.sh` is the script the release workflow uses, so a
 local build has the release's build flags. Plain `go build
@@ -80,7 +180,7 @@ setup from the development binary only when you intend to point hooks and the
 collector at it. Source builds do not test the release download, signature,
 or notarization.
 
-A source build is signed ad hoc, which macOS treats as a new program after
+On macOS, a source build is signed ad hoc, which macOS treats as a new program after
 every rebuild, so it asks again for Keychain access to the R2 key each time,
 even after "Always Allow". To keep that approval across rebuilds, set
 `AGENT_ARCHIVE_SIGN_IDENTITY` (for example in your shell profile) and
@@ -102,43 +202,48 @@ mv ./dist/agent-archive-darwin-arm64 /opt/homebrew/bin/agent-archive   # Apple S
 # or: sudo mv ./dist/agent-archive-darwin-amd64 /usr/local/bin/agent-archive
 ```
 
-A build runs on the Mac that built it. If you copy it to another Mac (AirDrop,
-a browser download), macOS may quarantine the unsigned binary; right-click it
-in Finder and choose **Open** once, or run `xattr -d com.apple.quarantine` on
-it.
+A build runs on the machine that built it. If you copy a macOS build to
+another Mac (AirDrop, a browser download), macOS may quarantine the unsigned
+binary; right-click it in Finder and choose **Open** once, or run
+`xattr -d com.apple.quarantine` on it.
 
 To upgrade, move or remove the old binary before putting the new one in
 place. Overwriting it in place with `cp` can leave macOS killing it at launch
 until the file is recreated. Setup records the binary's path in the hooks and
-the LaunchAgent; if you move it, run `agent-archive setup --refresh` from the
+the background job; if you move it, run `agent-archive setup --refresh` from the
 new location (`status` reports hooks and background as `broken` until you
 do). It points them at the binary you run it from, and refuses a temporary
 build such as `go run`'s.
 
 ## Install a release build by hand
 
-1. Download the binary for your Mac from the
+1. Download the binary for your machine from the
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest)
    (`agent-archive-darwin-arm64` for Apple Silicon, `agent-archive-darwin-amd64`
-   for Intel), and `SHA256SUMS` from the same release.
-2. Select the binary for this Mac and verify its checksum. Run these commands
+   for Intel, `agent-archive-linux-arm64` or `agent-archive-linux-amd64` on
+   Linux), and `SHA256SUMS` from the same release.
+2. Select the binary for this machine and verify its checksum. Run these commands
    in the directory containing the downloads, in the same shell as the steps
    below:
 
    ```sh
-   case "$(uname -m)" in
-     arm64) asset=agent-archive-darwin-arm64 ;;
-     x86_64) asset=agent-archive-darwin-amd64 ;;
-     *) echo "Unsupported Mac architecture" >&2; exit 1 ;;
+   case "$(uname -s)-$(uname -m)" in
+     Darwin-arm64) asset=agent-archive-darwin-arm64 ;;
+     Darwin-x86_64) asset=agent-archive-darwin-amd64 ;;
+     Linux-aarch64|Linux-arm64) asset=agent-archive-linux-arm64 ;;
+     Linux-x86_64) asset=agent-archive-linux-amd64 ;;
+     *) echo "Unsupported system or architecture" >&2; exit 1 ;;
    esac
    test -f "$asset" || { echo "Missing $asset" >&2; exit 1; }
    expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)
    test -n "$expected" || { echo "No checksum for $asset" >&2; exit 1; }
-   actual=$(shasum -a 256 "$asset" | awk '{ print $1 }')
+   actual=$(sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset")
+   actual=${actual%% *}
    test "$actual" = "$expected" || { echo "Checksum mismatch for $asset" >&2; exit 1; }
    ```
 
-3. Check the selected binary's signature:
+3. On macOS, check the selected binary's signature (Linux binaries are not
+   signed; use the attestation check below instead):
 
    ```sh
    codesign --verify --strict --verbose=2 "$asset"
@@ -146,7 +251,8 @@ build such as `go run`'s.
    ```
 
    Compare the reported `TeamIdentifier` with `team_id` in
-   [`install.sh`](../../install.sh). If you have the GitHub CLI, also run
+   [`install.sh`](../../install.sh). On either system, if you have the GitHub
+   CLI, also run
    `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
    that this release asset was built by the repository's release workflow.
 
@@ -158,22 +264,22 @@ build such as `go run`'s.
    mv "$asset" "$HOME/.local/bin/agent-archive"
    ```
 
-   Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (zsh) or
-   `~/.bash_profile` (Bash) if that directory is not already on your `PATH`,
+   Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (zsh),
+   `~/.bash_profile` (Bash on macOS) or `~/.bashrc` (Bash on Linux) if that directory is not already on your `PATH`,
    then open a new terminal. If you already installed `agent-archive`
    elsewhere, move or remove that older copy so your shell uses this one. If
    its path changed, run `agent-archive setup --refresh` to update the hooks
-   and background collector.
+   and background job.
 
 5. Confirm it runs: `agent-archive --version`.
 
-Release binaries are signed with a Developer ID and notarized by Apple.
-Gatekeeper may need network access to check the notarization ticket on first
-launch.
+macOS release binaries are signed with a Developer ID and notarized by
+Apple. Gatekeeper may need network access to check the notarization ticket on
+first launch. Linux release binaries are static and unsigned.
 
 ## Next
 
 - [Set up capture](setup.md): choose apps and projects, connect a bucket,
   start the background collector.
-- [Import sessions already on this Mac](../guides/backfill.md).
+- [Import sessions already on this machine](../guides/backfill.md).
 - [Uninstall](uninstall.md).

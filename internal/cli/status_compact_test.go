@@ -354,13 +354,13 @@ func TestStatusCompactShowsReadBackFailures(t *testing.T) {
 		t.Fatalf("routine read-back shown:\n%s", renderStatus(view, false))
 	}
 	view.Apps[0].readBackFailure = verificationEvidence{Outcome: verificationOutcomeMismatch, Attempts: 2, NextRetryAt: renderNow.Add(-time.Minute)}
-	if text := renderStatus(view, false); !strings.Contains(text, "  ! Claude Code 2.1.283") || !strings.Contains(text, "    ! Read-back doesn't match what this Mac uploaded (retrying on the next pass, 2 attempts so far)\n") {
+	if text := renderStatus(view, false); !strings.Contains(text, "  ! Claude Code 2.1.283") || !strings.Contains(text, "    ! Read-back doesn't match what this machine uploaded (retrying on the next pass, 2 attempts so far)\n") {
 		t.Fatalf("read-back failure:\n%s", text)
 	}
 }
 
 // status APP takes an app's name in any case, refuses one it doesn't know
-// or --json beside it, and says so for an app this Mac doesn't capture.
+// or --json beside it, and says so for an app this machine doesn't capture.
 func TestStatusAppArgument(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)

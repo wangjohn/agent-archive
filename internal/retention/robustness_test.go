@@ -119,6 +119,7 @@ func registered(t *testing.T, local *state.Store) int {
 // pending publication, the request, and its hook evidence before any of it was
 // archived. The sweep waits, and expiry proceeds normally once the work lands.
 func TestExpiryWaitsForPendingPublicationThenProceeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := &flakyStore{ObjectStore: storagetest.NewMemoryStore()}
@@ -173,6 +174,7 @@ func TestExpiryWaitsForPendingPublicationThenProceeds(t *testing.T) {
 }
 
 func TestExpiryWaitsForPendingRequestThenProceeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -206,6 +208,7 @@ func TestExpiryWaitsForPendingRequestThenProceeds(t *testing.T) {
 // longer publishes (an excluded project, a deselected app) will never clear
 // its request, so waiting on it would keep the session forever.
 func TestUnpublishableSessionExpiresDespiteOutstandingWork(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -233,6 +236,7 @@ func TestUnpublishableSessionExpiresDespiteOutstandingWork(t *testing.T) {
 // record that the session's objects exist, whatever the collector thinks of
 // publishing it now.
 func TestSweepExpiresEveryRegistrationThisMachineOwns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -255,6 +259,7 @@ func TestSweepExpiresEveryRegistrationThisMachineOwns(t *testing.T) {
 // bucket. Once it ages out its local state is pruned, and the current bucket
 // sees no request of any kind on its behalf.
 func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	previous := storagetest.NewMemoryStore()
@@ -303,6 +308,7 @@ func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *te
 // ages from the session's own start, and since nothing of it was ever
 // uploaded it is forgotten locally without a single call to the bucket.
 func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	// Scanned once with its transcript already gone: blocked before any capture.
@@ -345,6 +351,7 @@ func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *tes
 // Outstanding work defers a never-published registration's expiry exactly as
 // it defers a published one's, and only when the collector will do the work.
 func TestNeverPublishedRegistrationWaitsForPublishableWork(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	if err := local.SaveRegistration(registration("s1", filepath.Join(t.TempDir(), "missing.jsonl"))); err != nil {
@@ -373,6 +380,7 @@ func TestNeverPublishedRegistrationWaitsForPublishableWork(t *testing.T) {
 // sweep goes on for the rest, and a request it could not read still defers
 // its session's expiry, since it may hold evidence not yet archived.
 func TestSweepIsolatesUnreadableStateFiles(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
