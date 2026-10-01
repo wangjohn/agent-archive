@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -351,13 +352,18 @@ const uploadBusyGiveUp = 2 * time.Minute
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
 func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch, activity *activityStop) int {
-	sizes := map[string]int64{}
+	sizes := map[agentmeta.SessionKey]int64{}
 	for _, c := range plan.Candidates {
 		size := c.Bytes
 		for _, sub := range c.Subagents {
 			size += sub.Bytes
 		}
-		sizes[c.Harness+"\x00"+c.NativeSessionID] = size
+		key, err := agentmeta.NewSessionKey(c.Harness, c.NativeSessionID)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
+			return 1
+		}
+		sizes[key] = size
 	}
 	u := &upload{env: env, home: home, batch: batchID, sizes: sizes, terminal: env.isTerminal(underlyingWriter(stdout)), out: stdout}
 	if activity != nil {
@@ -446,7 +452,7 @@ type upload struct {
 	env      Env
 	home     string
 	batch    string
-	sizes    map[string]int64
+	sizes    map[agentmeta.SessionKey]int64
 	terminal bool
 	out      io.Writer
 	drawn    bool
@@ -497,7 +503,7 @@ func (u *upload) refresh() error {
 }
 
 func (u *upload) size(reg archive.SessionRegistration) int64 {
-	if size, ok := u.sizes[reg.Harness.Name+"\x00"+reg.NativeSessionID]; ok {
+	if size, ok := u.sizes[agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}]; ok {
 		return size
 	}
 	if !reg.ReadsTranscriptFile() {

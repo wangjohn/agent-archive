@@ -31,6 +31,8 @@ const (
 	// DiagnosticHookBusy records that the hook could not acquire hooks.lock
 	// before its deadline. No event identifiers or payload are retained.
 	DiagnosticHookBusy DiagnosticCode = "hook_busy"
+	// DiagnosticSessionIndexRecovery records bounded identity lookup damage.
+	DiagnosticSessionIndexRecovery DiagnosticCode = "session_index_recovery_required"
 )
 
 // Diagnostic is deliberately content-free. It records only the
@@ -328,6 +330,8 @@ func DiagnosticMessage(code DiagnosticCode) string {
 		return "setup was still in progress, so the session was not registered; start a new session"
 	case DiagnosticHookFailed:
 		return "a hook stopped on an internal error, so its event was not recorded; please report it"
+	case DiagnosticSessionIndexRecovery:
+		return "local session identity bookkeeping needs collector recovery; eligible deferred starts remain queued"
 	case DiagnosticHookBusy:
 		return "a hook could not acquire the capture lock before its deadline; a first-start intent may be recovered on the next collector pass; check status and start a new session if capture did not resume"
 	default:

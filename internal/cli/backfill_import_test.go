@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -603,7 +604,7 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates %+v, %v", candidates, err)
 	}
-	parentID, _, _ := store.ArchiveSessionID("c-aa-2")
+	parentID, _, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-aa-2"})
 	for _, c := range candidates {
 		if c.Origin != archive.SessionOriginImport || !c.ObservedAt.Equal(backfillNow.UTC()) || c.ParentArchiveSessionID != parentID || c.NativeSessionID != "c-aa-2:subagent:"+c.AgentID {
 			t.Errorf("candidate %+v", c)

@@ -301,12 +301,13 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	if status.PendingCount != 1 {
 		t.Fatalf("pending = %d, want the unreadable registration counted", status.PendingCount)
 	}
-	// Quarantined once: the next pass is clean, and hooks can write again.
+	// Valid sessions keep scanning; unresolved identity evidence from the
+	// quarantined registration leaves explicit recovery incomplete.
 	if err := local.SaveRequest("session-2", "stop", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("second pass: %#v %v", result, err)
 	}
 }

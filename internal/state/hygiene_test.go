@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func TestForgetSessionRemovesSubagentCandidateLock(t *testing.T) {
 	if _, err := os.Stat(lock); err != nil {
 		t.Fatalf("candidate lock was not created: %v", err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {

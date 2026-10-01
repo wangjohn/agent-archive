@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"strings"
 	"testing"
@@ -191,7 +192,7 @@ func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	admitted := now.Add(time.Minute)
-	reg, err := store.RegisterNewSession("db-chat", func(id string) archive.SessionRegistration {
+	reg, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: "db-chat"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "db-chat", ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "db-chat",
 			SessionStartedAt: now.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceCursorComposer,

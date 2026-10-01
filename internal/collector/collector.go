@@ -192,6 +192,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
+	var recoveryErr error
+	if ctx.Err() == nil {
+		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	}
+	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+		recoveryErr = nil
+	}
 	replayErr := capture.ReplayAdmissionIntents(local.Home(), now)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
@@ -210,6 +217,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		now:              now,
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
+	}
+	if recoveryErr != nil {
+		p.result.Errors["session-index"] = recoveryErr
 	}
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr

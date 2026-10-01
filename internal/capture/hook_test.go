@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -380,7 +381,7 @@ func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	store, _ := state.Open(home)
-	archiveID, _, err := store.EnsureArchiveSessionID("native-1")
+	archiveID, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: "native-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -872,11 +873,11 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
-		t.Fatal("cross-harness identity accepted")
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
-		t.Fatal("cross-harness stop accepted")
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()

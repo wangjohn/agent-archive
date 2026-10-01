@@ -2,6 +2,8 @@ package capture
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -23,7 +25,7 @@ func assertIndexConsistent(t *testing.T, home string) {
 	}
 	seen := map[string]string{}
 	for _, reg := range regs {
-		id, found, err := store.ArchiveSessionID(reg.NativeSessionID)
+		id, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +60,7 @@ func TestResumeDuringExpiryIsTreatedAsNeverSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archiveID, found, err := store.ArchiveSessionID("native-1")
+	archiveID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"})
 	if err != nil || !found {
 		t.Fatalf("setup: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestResumeDuringExpiryIsTreatedAsNeverSeen(t *testing.T) {
 		resumed <- HandleEvent(home, "claude", claudeStart(project, "native-1", "resume", transcript), at.Add(90*24*time.Hour))
 	}()
 	time.Sleep(100 * time.Millisecond) // the resume is now waiting for the lock
-	if err := store.ForgetSession(archiveID, "native-1"); err != nil {
+	if err := store.ForgetSession(archiveID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -101,7 +103,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	oldID, _, _ := store.ArchiveSessionID("native-1")
+	oldID, _, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"})
 	release, err := local.NamedLock(home, filepath.Join("request-locks", oldID+".lock"))
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +113,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 		started <- HandleEvent(home, "claude", claudeStart(project, "native-1", "clear", writeTestTranscript(t, "t2.jsonl", "")), at.Add(90*24*time.Hour))
 	}()
 	time.Sleep(100 * time.Millisecond)
-	if err := store.ForgetSession(oldID, "native-1"); err != nil {
+	if err := store.ForgetSession(oldID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -140,7 +142,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 			t.Fatal(err)
 		}
 		store, _ := state.Open(home)
-		archiveID, _, _ := store.ArchiveSessionID(native)
+		archiveID, _, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native})
 		source := "resume"
 		if round%2 == 1 {
 			source = "clear"
@@ -152,7 +154,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, forgetErr = store.ForgetIdleSession(archiveID, native, false, nil)
+			_, forgetErr = store.ForgetIdleSession(archiveID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native}, false, nil)
 		}()
 		go func() {
 			defer wg.Done()

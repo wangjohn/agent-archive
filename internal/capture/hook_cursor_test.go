@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -247,7 +248,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		if err != nil || len(regs) != 1 {
 			t.Fatalf("iteration %d: registrations = %#v err=%v", i, regs, err)
 		}
-		id, found, err := store.ArchiveSessionID(conversation)
+		id, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: conversation})
 		if err != nil || !found || id != regs[0].ArchiveSessionID || !regs[0].SessionStartedAt.Equal(at) {
 			t.Fatalf("iteration %d: index=%q found=%v err=%v registration=%#v", i, id, found, err, regs[0])
 		}
@@ -379,7 +380,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 	if reqs, _ := store.LoadRequests(); len(reqs) != 0 {
 		t.Fatalf("an excluded workspace queued requests: %#v", reqs)
 	}
-	if _, found, _ := store.ArchiveSessionID(excluded); found {
+	if _, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: excluded}); found {
 		t.Fatal("an excluded workspace was given an archive ID")
 	}
 	sub := filepath.Join(parent, "pkg")
@@ -449,7 +450,7 @@ func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RegisterNewSession(conversation, func(id string) archive.SessionRegistration {
+	if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: conversation}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: conversation,
 			ProjectID: archive.ProjectID(project), ProjectRoot: project,

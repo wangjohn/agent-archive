@@ -3,6 +3,7 @@ package capture
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"sort"
@@ -372,7 +373,7 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 	if (!start && !followup) || intent.NativeSessionID == "" {
 		return nil, removeAdmissionIntent(path)
 	}
-	registered, err := HasRegistration(store, intent.NativeSessionID)
+	registered, err := HasRegistration(store, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(intent.Harness)), NativeID: intent.NativeSessionID})
 	if err != nil {
 		return nil, fmt.Errorf("look up admission intent: %w", err)
 	}
@@ -438,7 +439,7 @@ func replayAdmissionAction(home string, store *state.Store, cfg config.Config, i
 }
 
 func adoptQueuedCursorPath(store *state.Store, intent admissionIntent, payload map[string]any) error {
-	archiveID, _, err := store.ArchiveSessionID(intent.NativeSessionID)
+	archiveID, _, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(intent.Harness)), NativeID: intent.NativeSessionID})
 	if err != nil {
 		return err
 	}
@@ -456,7 +457,7 @@ func adoptQueuedCursorPath(store *state.Store, intent admissionIntent, payload m
 }
 
 func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup) error {
-	registered, err := HasRegistration(store, followup.intent.NativeSessionID)
+	registered, err := HasRegistration(store, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(followup.intent.Harness)), NativeID: followup.intent.NativeSessionID})
 	if err != nil {
 		return fmt.Errorf("look up deferred Cursor follow-up: %w", err)
 	}
@@ -485,7 +486,7 @@ func removeAdmissionIntent(path string) error {
 }
 
 func replayRegistrationMatches(store *state.Store, cfg config.Config, intent admissionIntent) (bool, error) {
-	archiveID, found, err := store.ArchiveSessionID(intent.NativeSessionID)
+	archiveID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(intent.Harness)), NativeID: intent.NativeSessionID})
 	if err != nil || !found {
 		return false, err
 	}

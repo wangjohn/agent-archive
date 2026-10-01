@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -60,6 +61,12 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
+	if _, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID); err != nil {
+		return err
+	}
+	if _, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.ParentNativeSessionID); err != nil {
+		return err
+	}
 	// The write syncs outside the candidate's lock, which a hook waits only
 	// a second for (see writeUnderLock).
 	return s.writeUnderLock(lockedWrite{
@@ -74,7 +81,7 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 			if err := json.Unmarshal(current.data, &prior); err != nil {
 				return nil, false, fmt.Errorf("read subagent candidate: %w", err)
 			}
-			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || !strings.EqualFold(prior.Harness.Name, merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
+			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || archive.CanonicalHarness(prior.Harness.Name) != archive.CanonicalHarness(merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
 				return nil, false, ErrSubagentCandidateConflict
 			}
 			if prior.ObservedAt.After(merged.ObservedAt) {
