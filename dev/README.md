@@ -40,6 +40,7 @@ implemented design records live in `proposals/implemented/`.
 | [Git activity in metadata](proposals/implemented/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](proposals/implemented/list-browse-ux.md) | Implemented design record; see the current list and show documentation. |
 | [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
+| [Adding a machine: pairing, per-machine keys, and revocation](proposals/machine-pairing.md) | Proposed; not implemented. |
 
 ## Maintainers
 

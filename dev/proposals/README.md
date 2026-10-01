@@ -14,6 +14,7 @@ moving a proposal.
 | --- | --- |
 | [Cloud capture](cloud-capture.md) | Proposed; not implemented or scheduled. |
 | [Archive listing at scale](listing-at-scale.md) | Phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
+| [Adding a machine: pairing, per-machine keys, and revocation](machine-pairing.md) | Proposed; not implemented. |
 
 ## Implemented
 
