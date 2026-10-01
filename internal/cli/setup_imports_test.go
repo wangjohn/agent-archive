@@ -132,8 +132,10 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 // working afterwards: only a project the setup newly includes must exist.
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
+//
+//lint:ignore tparallel the test is parallel, but its subtests share one fixture, in order
 func TestSetupAfterImportWithMissingFolders(t *testing.T) {
-	// Not parallel: its subtests share one fixture, in order.
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("import: %s", errOut)

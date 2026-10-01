@@ -117,6 +117,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 }
 
 func TestSetupYesSkillEvidenceReconfiguration(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
