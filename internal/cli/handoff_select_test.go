@@ -519,3 +519,34 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
+
+// A session's row shows the name its agent gave it, the same before it is
+// uploaded (built from the local transcript) and after (from its metadata).
+func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	id := f.addSession(t, "claude", "claude-named", "  a first   prompt\nof a named session", f.env.now().Add(3*time.Hour))
+	transcript := filepath.Join(f.project, "claude-named.jsonl")
+	file, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = file.WriteString(`{"type":"custom-title","customTitle":"Old name","sessionId":"claude-named"}` + "\n" +
+		`{"type":"custom-title","customTitle":"Name the picker shows","sessionId":"claude-named"}` + "\n" +
+		`{"type":"pr-link","sessionId":"claude-named","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}` + "\n")
+	must(t, errors.Join(err, file.Close()))
+	must(t, os.Chtimes(transcript, f.env.now().Add(3*time.Hour), f.env.now().Add(3*time.Hour)))
+
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	local := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(local, "Name the picker shows") || strings.Contains(local, "Old name") || strings.Contains(local, "first prompt") {
+		t.Fatalf("local row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.sync(t)
+	f.unregister(t, id)
+	out, errOut, code = runPicker(t, f.env, "q\n")
+	published := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
+		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}

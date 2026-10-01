@@ -25,8 +25,14 @@ func summaryFixture() sessionView {
 	endedAt := time.Date(2026, 9, 29, 10, 58, 0, 0, time.UTC)
 	return sessionView{
 		Metadata: archive.Metadata{
-			SessionID:     "03e60c25f1a04b7c9d2e8f6a1b3c5d7e",
-			Title:         "Fix flaky OAuth callback tests",
+			SessionID: "03e60c25f1a04b7c9d2e8f6a1b3c5d7e",
+			Name:      "Stabilize the OAuth tests",
+			Title:     "Fix flaky OAuth callback tests",
+			Branch:    "fix-oauth",
+			PullRequests: []archive.PullRequestLink{
+				{Repository: "wangjohn/agent-archive", Number: 155, URL: "https://github.com/wangjohn/agent-archive/pull/155"},
+				{Repository: "wangjohn/agent-archive", Number: 160},
+			},
 			ProjectName:   "agent-archive",
 			StartedAt:     time.Date(2026, 9, 29, 10, 14, 0, 0, time.UTC),
 			CapturedAt:    time.Date(2026, 9, 29, 11, 2, 0, 0, time.UTC),
@@ -501,6 +507,39 @@ func TestRoutineGapsAreKnownCodes(t *testing.T) {
 	for _, gap := range routineGaps {
 		if !known[gap.code] {
 			t.Errorf("routineGaps names %q, which is not in archive.CaptureGapCodes", gap.code)
+		}
+	}
+}
+
+// The heading is the name the session's agent gave it, else the first prompt.
+// With a name, the prompt is a row of its own, and the branch and the linked
+// pull requests are rows; a session with none of them has no such rows.
+func TestSessionSummaryShowsNameBranchAndLinkedPullRequests(t *testing.T) {
+	t.Parallel()
+	opts := summaryOptions{Now: summaryNow, Location: time.UTC}
+	lines := strings.Split(renderSummaryText(summaryFixture(), opts), "\n")
+	if lines[0] != "Stabilize the OAuth tests" {
+		t.Fatalf("heading = %q, want the name", lines[0])
+	}
+	text := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"  Prompt    Fix flaky OAuth callback tests\n",
+		"  Branch    fix-oauth\n",
+		"  PRs       wangjohn/agent-archive#155 · wangjohn/agent-archive#160\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("summary lacks %q:\n%s", want, text)
+		}
+	}
+	m := summaryFixture().Metadata
+	m.Name, m.Branch, m.PullRequests = "", "", nil
+	text = renderSummaryText(sessionView{Metadata: m}, opts)
+	if first, _, _ := strings.Cut(text, "\n"); first != "Fix flaky OAuth callback tests" {
+		t.Errorf("heading without a name = %q, want the first prompt", first)
+	}
+	for _, label := range []string{"Prompt ", "Branch ", "PRs "} {
+		if strings.Contains(text, "  "+label) {
+			t.Errorf("a session with no %s has that row:\n%s", label, text)
 		}
 	}
 }
