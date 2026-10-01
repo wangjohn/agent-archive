@@ -8,7 +8,7 @@ status line below.
 | Phase | What | Status |
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
-| 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented |
+| 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
 | 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
 | 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |
 
