@@ -77,7 +77,7 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 const testLessVersion = 668
 
 // noInterrupts is Env.Interrupts for tests that do not send signals. The
-// default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while
+// default installs real handlers for Ctrl-C, SIGTERM, SIGHUP, and SIGQUIT, and while
 // any parallel backfill test held them, a signal sent to the test run would
 // end it through exitOnSignal with a bare exit status instead of the
 // signal's name.

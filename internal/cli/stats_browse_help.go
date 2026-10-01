@@ -40,8 +40,8 @@ func (b *statsBrowser) helpLines(width int) []string {
 	heading("Views")
 	entry("o", "overview: the headline numbers, and where they went")
 	entry("d", "detail: streaks, busiest day, token types, coverage and notes")
-	entry("p", "projects: every project, with its share")
-	entry("m", "models: every model family, priced or not")
+	entry("p", "projects: up to 500 projects, by spend, with each one's share")
+	entry("m", "models: up to 500 model families, priced or not")
 	entry("a", "agents: each agent side by side")
 	heading("Window")
 	entry("w", "cycle the window: "+strings.Join(windows, ", ")+" (the bar shows the next one). The numbers are counted again from what was already read, so it is instant.")
@@ -158,7 +158,7 @@ func (b *statsBrowser) saveHTML(name string) string {
 	if err := writeStatsHTMLFile(path, page, false); err != nil {
 		return "Not saved: " + noForce(err, path, name)
 	}
-	b.saved = append(b.saved, path)
+	b.addSaved(path)
 	return b.savedMessage(path)
 }
 

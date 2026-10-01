@@ -29,7 +29,7 @@ import (
 //
 // While the pager runs, Ctrl-C belongs to it (less uses it to cancel a
 // search), so agent-archive neither exits nor leaves the pager behind on
-// the terminal; SIGTERM or SIGHUP stops the pager, then exits as the signal
+// the terminal; SIGTERM, SIGHUP or SIGQUIT stops the pager, then exits as the signal
 // would have.
 func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
 	var buf bytes.Buffer

@@ -50,7 +50,7 @@ func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"quit", "interrupt", "suspend", "pager"} {
+	for _, mode := range []string{"quit", "interrupt", "sigquit", "suspend", "pager"} {
 		if out, err := runKeysPTYScript(python, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
@@ -159,6 +159,12 @@ try:
     elif mode == 'interrupt':
         os.write(master, b'\x03')
         finish(130)
+    elif mode == 'sigquit':
+        # From outside (Ctrl-\ is off in key mode): handled like Ctrl-C, no
+        # goroutine dump, the terminal given back, the shell's status.
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
     elif mode == 'pager':
         os.write(master, b'1\r')
         wait_for(b't transcript')
