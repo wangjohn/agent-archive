@@ -23,7 +23,7 @@ func takeArchiveOffline(env *Env) *int {
 	return opens
 }
 
-// A title finds a session on this Mac, which needs no network and no upload.
+// A title finds a session on this machine, which needs no network and no upload.
 func TestHandoffTitleFindsALocalSessionWithoutTheArchive(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -35,7 +35,7 @@ func TestHandoffTitleFindsALocalSessionWithoutTheArchive(t *testing.T) {
 		}
 	}
 	if *opens != 0 {
-		t.Fatalf("opened the archive %d times for a session on this Mac", *opens)
+		t.Fatalf("opened the archive %d times for a session on this machine", *opens)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestHandoffSessionIDBeatsATitleMatch(t *testing.T) {
 	}
 }
 
-// A full archive ID that no session on this Mac has, but that a local title
+// A full archive ID that no session on this machine has, but that a local title
 // mentions, still names the archived session.
 func TestHandoffArchiveSessionIDBeatsALocalTitleMatch(t *testing.T) {
 	t.Parallel()
@@ -194,7 +194,7 @@ func TestHandoffTitleWithNoMatchNamesList(t *testing.T) {
 		}
 	}
 	_, errOut, _ := runHandoff(t, f.env, "no such title", "--source", "local")
-	if !strings.Contains(errOut, "on this Mac (") {
+	if !strings.Contains(errOut, "on this machine (") {
 		t.Errorf("--source local: %s", errOut)
 	}
 	_, errOut, _ = runHandoff(t, f.env, "no such title", "--source", "archive")
@@ -296,7 +296,7 @@ func TestHandoffTitleSourceAndHarnessLimitTheSearch(t *testing.T) {
 
 // --source and --harness bound an ID as they bound a title: a registered ID
 // is not taken from the archive side, nor by the wrong app, and a full ID
-// is not read from the archive when only this Mac is wanted.
+// is not read from the archive when only this machine is wanted.
 func TestHandoffFullIDRespectsSourceAndHarness(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -425,7 +425,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	}
 }
 
-// The ID of a session this Mac has registered names it even before it has a
+// The ID of a session this machine has registered names it even before it has a
 // prompt to title it by, as handoff always allowed.
 func TestHandoffExactIDNeedsNoTitle(t *testing.T) {
 	t.Parallel()

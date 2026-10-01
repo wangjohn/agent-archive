@@ -196,7 +196,7 @@ func Load(home string) (cfg Config, found bool, err error) {
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this Mac's machine ID) and running agent-archive setup configures this Mac again", ErrUnreadable, path(home), err)
+		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)

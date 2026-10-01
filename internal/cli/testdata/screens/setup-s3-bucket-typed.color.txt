@@ -59,7 +59,7 @@ Checking your storage connection…
   \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mStart archiving?\e[0m
   1) Yes, start archiving

@@ -32,7 +32,7 @@ task, and nothing else that was dropped.
     is never cut in half and left behind. It is kept when it is a string with
     something in it.
   - Nothing else of the file is kept, and none of it is reported: the file
-    is not part of the transcript. `worktreePath` (a path on this Mac) and
+    is not part of the transcript. `worktreePath` (a path on this machine) and
     `agentType` (local-only state) are never read.
   - The file is optional. One that is missing, unreadable, a symbolic link
     (never followed, so no file elsewhere is read in its place) or otherwise

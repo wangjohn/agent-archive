@@ -150,6 +150,7 @@ func (r *schedRun) crashingSetup(extra ...string) {
 // (rewritePaths). The fixtures are the format releases of today write and
 // read: do not regenerate them to make a change pass; add new ones beside them.
 func TestWriteInterruptedSetupFixtures(t *testing.T) {
+	// Not parallel: newSchedRun replaces launchctl.
 	if os.Getenv("AGENT_ARCHIVE_WRITE_JOURNAL_FIXTURES") == "" {
 		t.Skip("writes testdata/scheduler/journals; run it only to make new fixtures")
 	}

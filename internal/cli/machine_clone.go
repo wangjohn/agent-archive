@@ -10,7 +10,7 @@ import (
 
 // hostFingerprint is this machine's fingerprint for the copied-data check:
 // the Linux machine ID's digest, and "" on any other system (macOS, whose
-// copied data directory the Migration Assistant section of the multiple-Macs
+// copied data directory the Migration Assistant section of the multiple-machines
 // guide covers, records nothing) or when the system has no machine ID to
 // read.
 func (e Env) hostFingerprint() string {

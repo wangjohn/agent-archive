@@ -9,7 +9,7 @@ start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 | Doc | For |
 | --- | --- |
 | [Architecture](contributing/architecture.md) | How the pieces fit, and the package map. |
-| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real Mac. |
+| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real machine. |
 | [Adding an adapter](contributing/adding-an-adapter.md) | Supporting another coding agent. |
 | [Session admission](contributing/session-admission.md) | How a registration's start and admission times drive each boundary check, and the guard tests. |
 
@@ -30,6 +30,7 @@ differ, the code and the user documentation describe current behavior.
 | [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Proposed. Parts 1 and 2 in progress; Part 3 (Linux) planned. |
 | [Git activity in metadata](proposals/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
+| [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phase 1 (parallel range listing) of 4. |
 
 ## Maintainers
 

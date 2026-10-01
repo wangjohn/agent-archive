@@ -299,6 +299,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	if err != nil {
 		return fmt.Errorf("open local store: %w", err)
 	}
+	store = store.ForHook()
 	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
 	if nativeSessionID == "" {
 		return fmt.Errorf("hook payload for %s has no session identifier", eventName)

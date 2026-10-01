@@ -64,7 +64,8 @@ type argvLaunchd struct {
 	hang map[string]bool
 }
 
-// stubArgvLaunchd replaces launchctl with an argvLaunchd for the test.
+// stubArgvLaunchd replaces launchctl with an argvLaunchd for the test, which
+// must therefore not be parallel.
 func stubArgvLaunchd(t *testing.T, plist string, mode launchdMode) *argvLaunchd {
 	t.Helper()
 	l := &argvLaunchd{mode: mode, label: launchd.Label(plist), plist: plist, remaining: map[string]time.Duration{}}
@@ -171,7 +172,8 @@ type refreshInstall struct {
 // newRefreshInstall runs setup (Claude Code and Codex, every skill) for the
 // account's default installation or for a data directory elsewhere, then
 // leaves launchd to the argvLaunchd stand-in. With upgrade, the running
-// executable is then another one.
+// executable is then another one. It replaces launchctl (stubArgvLaunchd), so
+// a test that calls it must not be parallel.
 func newRefreshInstall(t *testing.T, defaultInstall, upgrade bool, mode launchdMode) *refreshInstall {
 	t.Helper()
 	home, userHome := t.TempDir(), t.TempDir()

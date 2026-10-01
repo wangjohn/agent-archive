@@ -12,7 +12,7 @@ import (
 
 // storageClockFollows makes the retention sweep's storage clock read now()
 // and drops its check against the previous pass, for a test that moves time
-// forward by changing Env.Now. Without it the sweep sees only this Mac's
+// forward by changing Env.Now. Without it the sweep sees only this machine's
 // clock jump ahead of a MemoryStore's real one and, rightly, deletes nothing.
 func storageClockFollows(t *testing.T, env *Env, now func() time.Time) {
 	t.Helper()

@@ -42,7 +42,7 @@ func TestStatusBeforeSetupIsPlain(t *testing.T) {
 }
 
 // Collection is called stuck only when the lock's holder took it long ago:
-// a pass that started a moment ago (after the Mac woke, with the last scan
+// a pass that started a moment ago (after the machine woke, with the last scan
 // hours old) is not, and neither is a record whose holder died, since
 // nothing holds the lock then.
 func TestStatusReportsAStuckCollectorLock(t *testing.T) {

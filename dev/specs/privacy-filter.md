@@ -64,7 +64,7 @@ transcript's own (filter 14):
 ```
 
 - Only `description` is read, and only when it is a string with something in
-  it. Every other key of the file (`worktreePath`, a path on this Mac;
+  it. Every other key of the file (`worktreePath`, a path on this machine;
   `agentType`; anything else) is never read, never kept, and not reported.
 - The text passes the value rules like a prompt, applied to the whole text,
   and is then cut to 512 bytes on a character boundary (a `content_truncated`

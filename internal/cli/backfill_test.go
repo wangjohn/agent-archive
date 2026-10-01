@@ -239,8 +239,9 @@ func checkGolden(t *testing.T, name string, got []byte) {
 	golden.Check(t, filepath.Join("testdata", "backfill", name), got)
 }
 
+//lint:ignore tparallel the test is parallel, but its subtests share one fixture, in order
 func TestBackfillGolden(t *testing.T) {
-	// Not parallel: its subtests share one fixture, in order.
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cases := []struct {
 		name string

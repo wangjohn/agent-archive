@@ -129,14 +129,15 @@ backstop](../getting-started/uninstall.md#a-lifecycle-rule-as-a-backstop).
 
 Create an R2 API token with **Object Read & Write** permission, scoped to the
 one bucket, and give setup its access key ID and secret access key (stored in
-the macOS Keychain under the service `agent-archive`, never in files; on a build
-without a Keychain, in a private credentials file in the data directory). R2's
+the macOS Keychain under the service `agent-archive`, never in files; on Linux,
+which has no Keychain, in a private credentials file in the data directory that
+is not encrypted, so prefer an S3 profile there). R2's
 S3-compatible credentials can't read the bucket's public-access settings, so
 R2 privacy is always `not_verified`: check in the Cloudflare dashboard that
 the bucket has no public `r2.dev` URL or custom domain.
 
-## One key per Mac
+## One key per machine
 
-Use separate credentials on each Mac where you can, so revoking one Mac
-doesn't affect the others. Macs can share a prefix; see
-[multiple Macs](../guides/multiple-macs.md).
+Use separate credentials on each machine where you can, so revoking one machine
+doesn't affect the others. Machines can share a prefix; see
+[multiple machines](../guides/multiple-machines.md).

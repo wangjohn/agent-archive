@@ -17,7 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// handoffTitleScanLimit is how many of this Mac's sessions, newest activity
+// handoffTitleScanLimit is how many of this machine's sessions, newest activity
 // first, a title search reads. A local session's title is its first prompt,
 // which takes reading its transcript, so the search is bounded as the picker
 // is; a session past it that was uploaded is found in the archive instead.
@@ -70,14 +70,14 @@ const handoffCandidateLimit = 20
 // matches as show does (a title substring, a short ID or an ID prefix, an
 // exact ID winning) over titles and metadata, never transcript content:
 //
-//  1. a session ID registered on this Mac (a subagent's too, as handoff
+//  1. a session ID registered on this machine (a subagent's too, as handoff
 //     always took), then, for a full ID, the archive (one read), which a
 //     title match may not shadow;
-//  2. this Mac's sessions, which need no network;
+//  2. this machine's sessions, which need no network;
 //  3. only when none of those match, the archive's.
 //
 // Inside a repository (or with --project), a title looks at that scope's
-// sessions first: this Mac's, then the archive's, and only when none match
+// sessions first: this machine's, then the archive's, and only when none match
 // there, everywhere. A note on stderr says how many more match outside the
 // scope.
 //
@@ -143,7 +143,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	if opts.source != "archive" {
 		var err error
 		if regs, err = state.OpenReadOnly(r.home).LoadRegistrations(); err != nil {
-			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this Mac's sessions, searching the archive only: %v\n", err)
+			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
 		for _, reg := range regs {
 			if reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
@@ -192,7 +192,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	return 1, true
 }
 
-// inScope settles on the matches in the scope, this Mac's before the
+// inScope settles on the matches in the scope, this machine's before the
 // archive's, and says how many more match outside it. found is false when
 // nothing in the scope matches, and the search goes on everywhere; otherwise
 // code and done are choose's.
@@ -207,7 +207,7 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 	if len(matches) == 0 {
 		return 0, false, false
 	}
-	// The count covers what was searched. A title answered on this Mac did not
+	// The count covers what was searched. A title answered on this machine did not
 	// ask the archive, which needs the network, so its other matches are not in it.
 	seen := map[string]bool{}
 	outside := 0
@@ -386,19 +386,19 @@ func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, forma
 }
 
 func (r *handoffQueryResolver) noMatchMessage(scanLimited bool) string {
-	where, ok := map[string]string{"local": "on this Mac", "archive": "in the archive"}[r.opts.source]
+	where, ok := map[string]string{"local": "on this machine", "archive": "in the archive"}[r.opts.source]
 	if !ok {
-		where = "on this Mac or in the archive"
+		where = "on this machine or in the archive"
 	}
 	message := fmt.Sprintf("agent-archive: handoff: no session matches %q %s (see `agent-archive list`)", queryLabel(r.query), where)
 	if r.opts.harness != "" {
 		message += " for " + r.opts.harness
 	}
 	if scanLimited {
-		message += fmt.Sprintf("; only this Mac's %d most recently active sessions were searched", handoffTitleScanLimit)
+		message += fmt.Sprintf("; only this machine's %d most recently active sessions were searched", handoffTitleScanLimit)
 	}
 	if r.archiveErr != nil {
-		message += fmt.Sprintf("\nagent-archive: handoff: note: the archive could not be read, so only this Mac's sessions were searched: %v", r.archiveErr)
+		message += fmt.Sprintf("\nagent-archive: handoff: note: the archive could not be read, so only this machine's sessions were searched: %v", r.archiveErr)
 	}
 	return message
 }

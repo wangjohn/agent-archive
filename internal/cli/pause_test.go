@@ -72,6 +72,7 @@ func TestPauseBlocksSyncAndResumeUnblocksIt(t *testing.T) {
 }
 
 func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))

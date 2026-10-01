@@ -179,7 +179,7 @@ func TestSlug(t *testing.T) {
 		"Phase 2: Cursor database chats": "phase-2-cursor-database-chats",
 		"Destination ID (B1b)":           "destination-id-b1b",
 		"`status --json` fields":         "status---json-fields",
-		"What leaves your Mac":           "what-leaves-your-mac",
+		"What leaves your machine":       "what-leaves-your-machine",
 		"Source filter version 9":        "source-filter-version-9",
 		"[Link](x.md) text":              "link-text",
 		"Scope and non-goals":            "scope-and-non-goals",

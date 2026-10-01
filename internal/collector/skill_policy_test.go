@@ -16,8 +16,10 @@ import (
 )
 
 func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []config.SkillEvidence{config.SkillEvidenceNone, config.SkillEvidenceMetadata} {
 		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			project := t.TempDir()
 			skill := filepath.Join(project, ".agents", "skills", "secret", "SKILL.md")
 			if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
@@ -76,6 +78,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 }
 
 func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
@@ -131,6 +134,7 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 }
 
 func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {

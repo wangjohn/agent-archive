@@ -188,7 +188,7 @@ destination, Cursor may not load files beside it, and a skill this short does
 not need one.
 
 - **Description** (what triggers it): find, look at, or pull in a past coding
-  session, in any agent, from the archive or this Mac. It names the three
+  session, in any agent, from the archive or this machine. It names the three
   agents, both places, and the phrasings people use ("pull in", "continue",
   "review", "what did we do in Cursor yesterday"); a test pins those words,
   and the plain-scalar and length limits (the agentskills.io format allows
@@ -321,7 +321,7 @@ environment switch overrides it, decided in one place:
 | # | Risk | Mitigation |
 | --- | --- | --- |
 | R1 | Cursor reads both `~/.agents/skills` and `~/.claude/skills`, so one skill may appear twice. | Cursor's documentation is silent on duplicate names and this was not run (no Cursor CLI here), so it stays open. The two files differ only in Claude-only frontmatter, so a duplicate is the same instructions twice; if it proves harmful, install one shared copy for Cursor-only setups. |
-| R2 | Agent sandboxes (Codex default, Claude Code sandbox) may block the network and Keychain that `list` and archive reads need. | Confirmed for the network in Claude Code's sandbox and Codex's (`codex sandbox`): a title found on this Mac still works, an archive read fails with `operation not permitted`, and the skill reported it and asked. Keychain access under a sandbox is not documented by any of the three and was not conclusive (see [Live check](#live-check-2026-09-30)). |
+| R2 | Agent sandboxes (Codex default, Claude Code sandbox) may block the network and Keychain that `list` and archive reads need. | Confirmed for the network in Claude Code's sandbox and Codex's (`codex sandbox`): a title found on this machine still works, an archive read fails with `operation not permitted`, and the skill reported it and asked. Keychain access under a sandbox is not documented by any of the three and was not conclusive (see [Live check](#live-check-2026-09-30)). |
 | R3 | Skill text drifts from the CLI. | Golden test of each rendered file; a doc-command test (extending `doc_commands_test.go`) that every command and flag a skill names exists. |
 | R4 | A person has their own `agent-archive` skill. | Foreign-file rule: never overwritten; setup and status say so. |
 | R5 | The skill invites agents to read large or hostile content. | Bounded output everywhere, injection warning, no `--max-bytes 0`. |
@@ -532,7 +532,7 @@ it renames the package.
 ### PR 7 — Docs and live check (docs + a run log)
 
 - Guide `docs/guides/agent-skills.md`; README and setup guide mention;
-  `setup.md` "what setup changes on your Mac" lists the skill files;
+  `setup.md` "what setup changes on your machine" lists the skill files;
   uninstall guide; troubleshooting ("agent doesn't use the skill"). PR 5
   wrote most of the guide; PR 7 read every user document as a new reader
   would, tightened what the live check contradicted, and added what an agent
