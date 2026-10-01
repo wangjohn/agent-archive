@@ -370,7 +370,7 @@ commit, systemd, architecture, result):
 - 2026-09-30, the tree of the pull request that added the run (on top of 5c's
   enable-link and clone-warning change), Ubuntu 24.04.5 LTS, systemd 255
   (255.4-1ubuntu8.17), linux/arm64 (Docker in a colima VM on an Apple silicon
-  Mac): **88 passed, 0 failed**, 157 seconds. The run found nothing wrong with
+  Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
   the product. amd64 has not been run (the script builds for Docker's
   architecture; on an amd64 host it would run as is).
 

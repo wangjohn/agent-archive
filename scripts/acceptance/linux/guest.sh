@@ -288,10 +288,22 @@ wait_for "no collector pass is running (one holds the lock uninstall waits for)"
 # sudo without XDG_RUNTIME_DIR or the bus address, as an ssh session that has no
 # pam_systemd (or su from root) is: systemctl --user cannot reach the manager.
 NOBUS=(sudo -u ada -H env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS PATH=/home/ada/.local/bin:/usr/bin:/bin)
-out=$("${NOBUS[@]}" agent-archive uninstall --yes 2>&1)
+# The timer's own collector pass may start just before uninstall looks (it holds
+# a lock uninstall refuses to run under), so a refusal for that is retried.
+nobus_uninstall() {
+  local o i
+  o=$("${NOBUS[@]}" agent-archive uninstall --yes "$@" 2>&1)
+  for i in 1 2 3 4 5 6; do
+    grep -q 'holds the collector lock' <<<"$o" || break
+    sleep 5
+    o=$("${NOBUS[@]}" agent-archive uninstall --yes "$@" 2>&1)
+  done
+  printf '%s\n' "$o"
+}
+out=$(nobus_uninstall)
 if grep -q 'skip-scheduler' <<<"$out" && grep -q 'systemctl --user stop' <<<"$out"; then ok "uninstall refuses with no user bus, and names the flag and the manual stop command"; else bad "uninstall without a bus: $out"; fi
 check "the refusal changed nothing (unit still there)" test -f $UNITS/$REF.service
-out=$("${NOBUS[@]}" agent-archive uninstall --yes --skip-scheduler 2>&1)
+out=$(nobus_uninstall --skip-scheduler)
 if grep -q 'Not verified stopped' <<<"$out"; then ok "--skip-scheduler says the job was not verified stopped"; else bad "--skip-scheduler: $out"; fi
 check "--skip-scheduler removed the unit files" test ! -e $UNITS/$REF.service -a ! -e $UNITS/$REF.timer
 check "--skip-scheduler left no dangling enable link" test ! -L $UNITS/timers.target.wants/$REF.timer
