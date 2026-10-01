@@ -182,10 +182,13 @@ configured project basename. The ID column is a short prefix you can pass to
 separate groups, labeled with their project ID prefixes.
 
 Codex currently uses the first-prompt preview because its sidebar title is
-stored separately from the transcript. Claude Code subagents usually show
-the first prompt because their assigned descriptions are not yet included in
-metadata. New and refreshed previews keep up to 128 characters from parser
-`0.17.1`; older metadata keeps its shorter saved preview.
+stored separately from the transcript. The table leaves subagent sessions
+out: the footer says how many, and a parent carries a `· N subagents` hint.
+Words find one, as for `list "<words>"`, and its row reads `· subagent of`
+its parent's short ID; a Claude Code subagent's name is the description its
+parent gave the task (see below). New and refreshed previews keep up to 128
+characters from parser `0.17.1`; older metadata keeps its shorter saved
+preview.
 
 Metadata also says what a session did without downloading its transcript:
 when it ended (`ended_at`), its most-called tools (`tools_used`), and how
