@@ -313,7 +313,8 @@ archive holds other matches, so name an ID when in doubt.
   projects), age, pull request (when a row has one), and title. The first line
   names the scope when the scope answered. `Next:` is the exact command for the
   first row; edit the ID for another. The second line is the `list` command that
-  prints the same sessions as data (it repeats `--harness`, `--project`, and
+  prints the archive's matches for the same words as data (a session not
+  uploaded yet is only in this table; it repeats `--harness`, `--project`, and
   `--all-projects` when you gave them, and is left out when the words were cut
   to fit or hold control characters). At most the 20 newest are listed, with a
   count of the rest; add words, a PR number, or `--harness` to narrow.
@@ -363,6 +364,7 @@ Hand off · agent-archive · 5 sessions · claude · a all projects
 3    Add a status line for paused collection · 1 subagent           #212  38 minutes ago  76941c69
 4    Investigate slow listings on a large archive                         5 hours ago     5b0c1e22
 5    Rename the export flag and update the docs · not yet uploaded  #204  2 days ago      9f3a64d0
+5 session(s).
 All · / filter · type a number and Enter · q quit
 
 Enter number (or unique short SESSION_ID) to hand off, or q to quit:

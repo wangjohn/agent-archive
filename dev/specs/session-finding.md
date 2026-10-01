@@ -666,11 +666,11 @@ width, and file it before merging PR 8.
   ./scripts/install-from-source.sh --replace-current
   agent-archive --version             # dev-<commit>, the commit you just pulled
   agent-archive setup --refresh
+  agent-archive status
   ```
 
   Expect: `setup --refresh` prints a one-line result (or `nothing to refresh`),
-  and `status --verbose` lists the skill files without a warning that they came
-  from an earlier release. A source build is signed ad hoc on macOS, so the
+  and `status` shows no warning that a skill "is out of date". A source build is signed ad hoc on macOS, so the
   first command that reads the archive may ask again for Keychain access to the
   R2 key; allow it.
 - [ ] **Let the collector re-read old sessions.** Filter 13 and 14 changed what
@@ -728,9 +728,10 @@ width, and file it before merging PR 8.
   agent-archive show "flaky"
   ```
 
-  Expect: the same browser, heading `"flaky" matches 3 · claude · Esc clear`
-  (the count is however many sessions match; the heading names no repository
-  and offers no `a`, because the matches are already chosen), `/flaky` on the
+  Expect: the same browser, heading `"flaky" matches 3 · agent-archive · claude ·
+  Esc clear` (the count is however many sessions match; `agent-archive` and
+  `claude` are there because every match shares them, as in step 1, and there
+  is no `a`, because the matches are already chosen), `/flaky` on the
   bottom line, and `▸` on the first match. Press Enter to see its summary, `b`
   to return, Esc to clear the words and list the matches, then `q`.
 - [ ] **`handoff "flaky"`:**
@@ -740,7 +741,7 @@ width, and file it before merging PR 8.
   ```
 
   Expect: the same screen with the heading `Hand off · "flaky" matches 3 ·
-  claude · Esc clear`. Press `q` to leave without handing anything off.
+  agent-archive · claude · Esc clear`. Press `q` to leave without handing anything off.
 - [ ] **Without a terminal it prints candidates and a `Next:` line.**
 
   ```sh
@@ -777,7 +778,9 @@ width, and file it before merging PR 8.
   type `linux`. Repeat in `agent-archive list` and `agent-archive handoff`.
 
   Expect: in each, the session named like `Implement Linux support for
-  agent-archive` (PR `#212`) is listed and marked `▸`. Press Esc to clear. Press
+  agent-archive` (PR `#212`) is listed. `▸` is on the first match, newest
+  first, so if another session mentions Linux it starts there and ↓ reaches
+  this one. Press Esc to clear. Press
   `q` to leave (in `handoff`, do not press Enter on it, unless you want to
   start a handoff).
 - [ ] **The same words from the command line:**
@@ -801,12 +804,19 @@ width, and file it before merging PR 8.
 
   Expect: the parent (`Implement Linux support for agent-archive`, `#212`) and,
   indented under it, `↳ Review and fix PR #208 (5b-1b)`, with `▸` on the
-  reviewer. The parent is shown although `208` is not in its name. ↑ moves the
-  mark to the parent. Esc, then `q`.
+  reviewer (or on an earlier match, if a newer session also mentions 208). The
+  parent is shown although `208` is not in its name. ↑ moves the mark to the
+  parent. Esc, then `q`.
 
-  If the subagent shows no description, its `.meta.json` was not there when the
-  collector read it (filter 14 reads it beside the transcript): run `agent-archive
-  sync` once more, and note whether the transcript still exists on this Mac.
+  If the reviewer is missing, or its row shows a short ID instead of a
+  description, its `.meta.json` was not there when the collector read it
+  (filter 14 reads it beside the transcript). Running `sync` again does not
+  help: a `.meta.json` that appears beside an unchanged transcript is not
+  noticed (PR 7 under Deviations). Note whether the transcript and an
+  `agent-<id>.meta.json` beside it are still on this Mac (in
+  `~/.claude/projects/*/<native ID>/subagents/`, where `<native ID>` is the
+  parent's `native_session_id` from `agent-archive show <parent ID> --json`),
+  and file it.
 
 ### 6. From Claude Code, the words resolve without asking
 
@@ -853,14 +863,17 @@ the answer goes into the guide.
 
   Expect: either a count of `0` (the CLI wrote no name), or a count above `0` and
   a last line holding `"customTitle":"…"`. Do not `/rename` in this session.
-  Then resume it, send three or four more prompts, exit, and run the two `grep`
-  commands again, since a name may arrive only after several turns.
-- [ ] **Record what you saw in the guide.** In
+  Then resume it with `claude --continue` (still in `/tmp/name-check`), send
+  three or four more prompts, `/exit`, and run the two `grep` commands again, since a name may arrive only after several turns.
+- [ ] **Record what you saw in the guide, on PR 8's branch.** The placeholder
+  is not on `main`, so check out the branch first (`git checkout
+  claude/session-finding-pr8-docs && git pull`). In
   `docs/guides/list-and-show.md`, find the comment `OWNER, live check` under the
   paragraph about names, replace the sentence above it with what you saw
   (for example: "The Claude Code CLI wrote a `custom-title` after the second
   prompt, with no `/rename`" or "The CLI wrote none until `/rename`, so its
-  sessions are listed by their first prompt"), and delete the comment.
+  sessions are listed by their first prompt"), delete the comment, then commit
+  and push to that branch.
 
 ### 8. What only a real terminal can show
 
@@ -897,8 +910,9 @@ the answer goes into the guide.
 ### When you are done
 
 - [ ] Every box above is ticked, or each miss is filed. The `OWNER` placeholder
-  in `docs/guides/list-and-show.md` is replaced. Change the Status line at the top of
-  this plan to "PRs 1 to 8 merged and live-checked", then merge PR 8.
+  in `docs/guides/list-and-show.md` is replaced. On the same branch, change the
+  Status line at the top of this plan to "PRs 1 to 8 merged and live-checked",
+  push, then merge PR 8.
 
 ## Later
 

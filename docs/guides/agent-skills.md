@@ -51,7 +51,8 @@ to the receiving agent. It then does what you asked with it.
   picks for you. Once you choose, it runs the command again with that short ID
   in place of the words, and `--harness` set to that row's agent. To see the
   candidates as data instead, it can run `list "<words>" --json`, which prints
-  the same sessions.
+  the archive's matches for the same words (a session not uploaded yet is only
+  in `handoff`'s table).
 - **When nothing matches**, it tries different words, or looks at the last 30
   days with `list --since 30d` and shows you the titles.
 - **It can browse:** `list` for what exists (a short table of top-level

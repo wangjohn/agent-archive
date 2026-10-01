@@ -165,7 +165,8 @@ a terminal, `list "<words>"` opens the [browser](#browsing-on-a-terminal) with
 the words already in its filter, to edit.
 
 **Scripts.** The `--json` document gains an optional `scope` object when `list`
-looked at a project first: `{"label": "agent-archive", "all_projects": false,
+runs inside a project or with `--project` (with `--all-projects` too, which it
+records): `{"label": "agent-archive", "all_projects": false,
 "fell_back": false, "outside_matches": 3}`. Because a `list` or `list --json`
 run inside a project now returns only its sessions, a script that reads every
 session passes `--all-projects`. See [JSON output](../reference/json-output.md).
@@ -204,8 +205,9 @@ session's summary replace each other instead of piling up:
   parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
   when it does not match (the mark starts on the subagent, not the parent);
   a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
-  open the browser with the words already in the filter, and the rest of the
-  archive is one Esc away.
+  open the browser with the words already in the filter. Esc clears them and
+  shows the plain list: for `list`, the sessions it lists without words; for a
+  `show` query, the sessions it matched.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
