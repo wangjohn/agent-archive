@@ -62,3 +62,29 @@ func BenchmarkWalk(b *testing.B) {
 		})
 	}
 }
+
+// Once the cap is reached, even empty sibling folders must stay unread.
+func TestWalkFileCapStopsBeforeLaterDirectories(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "session.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	files := &countingDirectories{}
+	coverage, err := Walk(context.Background(), files, StoreRoot{Harness: "claude", Path: root}, 1, func(Ref) (bool, error) { return true, nil })
+	if err != nil || coverage.Complete || coverage.Enumerated != 1 || files.reads != 2 {
+		t.Fatalf("coverage=%+v directory reads=%d err=%v", coverage, files.reads, err)
+	}
+}
+
+type countingDirectories struct{ reads int }
+
+func (d *countingDirectories) ReadDir(path string) ([]os.DirEntry, error) {
+	d.reads++
+	return os.ReadDir(path)
+}

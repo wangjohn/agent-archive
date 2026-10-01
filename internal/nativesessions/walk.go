@@ -61,6 +61,12 @@ func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles i
 				c.Complete = false
 				return false, err
 			}
+			// Stop before inspecting another entry or descending into another
+			// directory. Non-transcript entries still cost traversal work.
+			if maxFiles > 0 && c.Enumerated >= maxFiles {
+				c.Complete = false
+				return false, nil
+			}
 			path := filepath.Join(dir, e.Name())
 			if e.IsDir() {
 				if root.Harness == "claude" && depth == 0 || root.Harness == "codex" && root.Recursive {
@@ -74,10 +80,6 @@ func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles i
 			valid := e.Type().IsRegular() && (root.Harness == "claude" && depth == 1 && strings.HasSuffix(e.Name(), ".jsonl") || root.Harness == "codex" && strings.HasPrefix(e.Name(), "rollout-") && strings.HasSuffix(e.Name(), ".jsonl"))
 			if !valid {
 				continue
-			}
-			if maxFiles > 0 && c.Enumerated >= maxFiles {
-				c.Complete = false
-				return false, nil
 			}
 			c.Enumerated++
 			more, err := visit(Ref{root.Harness, path, root.Path})
