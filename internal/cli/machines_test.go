@@ -227,3 +227,89 @@ func TestMachineRecordsStayOutsideSessionListingAndRetention(t *testing.T) {
 		t.Fatalf("retention removed registry: %+v", got)
 	}
 }
+
+func TestFirstSetupNamesMachineAfterBoundedDuplicateObservation(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	s := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
+	other, err := machines.Build(config.Config{MachineID: strings.Repeat("b", 32), MachineName: "taken", Storage: credentials.Config{Provider: credentials.ProviderS3}}, "linux/amd64", "dev", "", time.Now())
+	must(t, err)
+	must(t, machines.Publish(context.Background(), s, other))
+	input := strings.TrimSuffix(s3SetupInput("b", "us-east-1", "p", true, false, false, project), "y\n") + "machine\nbad name\ntaken\nwork-laptop\ny\n"
+	out := setupRun(t, env, input, 0)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	if cfg.MachineName != "work-laptop" || !strings.Contains(out, "Name is already used") || !strings.Contains(out, "Machine name: work-laptop") {
+		t.Fatalf("name=%q\n%s", cfg.MachineName, out)
+	}
+	got := machines.List(context.Background(), s)
+	if len(got.Records) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	for _, record := range got.Records {
+		if record.MachineID == cfg.MachineID && record.Name != cfg.MachineName {
+			t.Fatalf("published name=%q", record.Name)
+		}
+	}
+}
+
+func TestMachinesTextShowsUnverifiedPairingAndSharedIdentity(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := testEnv(t, home, time.Now())
+	s := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "source", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}}
+	must(t, config.Save(home, cfg))
+	source, err := machines.Build(cfg, "linux/amd64", "dev", "", time.Now())
+	must(t, err)
+	must(t, machines.Publish(context.Background(), s, source))
+	paired := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	shared := source
+	shared.Name = "recipient"
+	shared.MachineID = strings.Repeat("b", 32)
+	shared.PairedAt = &paired
+	shared.Credential = machines.CredentialBinding{Kind: config.MachineAssignmentR2Shared, AccessKeyID: "synthetic", SharedWith: source.MachineID}
+	must(t, machines.Publish(context.Background(), s, shared))
+	var out bytes.Buffer
+	if code := Run([]string{"machines"}, nil, &out, &out, env); code != 0 {
+		t.Fatalf("exit=%d %s", code, &out)
+	}
+	for _, text := range []string{"Paired 2026-10-01", "Paired unknown", "shared R2 key with source (" + source.MachineID + ")", "cannot revoke independently", "untrusted claims", "Heartbeat"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("missing %q\n%s", text, &out)
+		}
+	}
+	must(t, s.Delete(context.Background(), "machines/"+source.MachineID+".json"))
+	out.Reset()
+	if code := Run([]string{"machines"}, nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "shared R2 key with "+source.MachineID+" (claim") {
+		t.Fatalf("missing source identity fallback: %d %s", code, &out)
+	}
+}
+
+type unavailableMachineNames struct{ *storagetest.MemoryStore }
+
+func (s unavailableMachineNames) ListPage(context.Context, string, string, int32) (storage.ObjectPage, error) {
+	return storage.ObjectPage{}, errors.New("synthetic unavailable listing")
+}
+
+func TestFirstSetupNameKeepsDefaultWithoutIOAndRefusesPartialObservation(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	cfg := config.Config{MachineName: "earlier-choice"}
+	var out bytes.Buffer
+	must(t, chooseSetupMachineName(newPrompter(strings.NewReader("\n"), &out), &cfg, env))
+	if cfg.MachineName != "" {
+		t.Fatal("blank did not restore neutral default")
+	}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return unavailableMachineNames{storagetest.NewMemoryStore()}, nil
+	}
+	cfg.MachineName = "earlier-choice"
+	err := chooseSetupMachineName(newPrompter(strings.NewReader("new-choice\n"), &out), &cfg, env)
+	if err == nil || cfg.MachineName != "earlier-choice" {
+		t.Fatalf("partial observation changed label: %q %v", cfg.MachineName, err)
+	}
+}

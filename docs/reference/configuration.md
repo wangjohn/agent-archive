@@ -87,6 +87,7 @@ it does not delete older local copies or bucket objects. See
 `machine_name` is an optional chosen label (1 to 40 lowercase letters, digits,
 or hyphens, starting with a letter or digit). Setup defaults to `unnamed-` plus
 four characters of the immutable local `machine_id`, without reading a hostname.
+Interactive first setup offers an optional name at final review.
 Use `agent-archive machines rename NEW_NAME` to change it safely.
 
 `machine_assignment` is optional nonsecret locally committed provenance for

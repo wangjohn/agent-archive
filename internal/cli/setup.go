@@ -332,9 +332,11 @@ func retiredStagedRefs(retired, staged []string, active string) []string {
 // to applySetup. Draft persistence and installation happen elsewhere.
 func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
 	cfg := draft.Config
-	// Ordinary setup does not edit machine labels. A resumable draft may predate
-	// a rename, so the reviewed configuration keeps the committed label.
-	cfg.MachineName = existing.MachineName
+	// Existing-machine setup keeps the committed label: a resumed draft may
+	// predate a rename. First setup retains its optional chosen draft label.
+	if existing.MachineID != "" || existing.MachineName != "" {
+		cfg.MachineName = existing.MachineName
+	}
 	// Ordinary setup cannot introduce credential provenance. Preserve the current
 	// binding only while its destination and credential reference stay the same.
 	cfg.MachineAssignment = nil
@@ -638,6 +640,9 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 	var err error
 	// Review what will be committed, not what a draft may have saved.
 	draft.Config = reviewedSetupConfig(existing, *draft)
+	if err = draft.Config.ValidateMachine(); err != nil {
+		return false, err
+	}
 	hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
 	blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
 	if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
@@ -649,9 +654,18 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 	reviewHookFiles(p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
 	warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
 	printReviewNotes(p)
-	action, e := reviewAction(p, installed, blocked)
+	if existing.MachineID == "" {
+		p.note("Machine name: " + firstNonEmpty(draft.Config.MachineName, "unnamed (random ID suffix after save)") + ". Choose Name this machine to set a label; no hostname is read.")
+	}
+	action, e := reviewAction(p, installed, blocked, existing.MachineID == "")
 	if e != nil {
 		return false, e
+	}
+	if action == "machine" {
+		if err = chooseSetupMachineName(p, &draft.Config, env); err != nil {
+			return false, err
+		}
+		return false, save()
 	}
 	if action == "check" {
 		// The storage check runs again. S3 privacy is read again; guided R2
