@@ -57,7 +57,8 @@ holds the filtered transcript, skill evidence, and hook observations, and
 the metadata sidecar. The sidecar's optional `title` is a short, truncated
 preview of the first filtered human prompt, and its optional `name` the
 session's name as the filtered transcript holds it (the last Claude Code
-session name, or Cursor's chat name), cut the same way (for `list`); both
+session name, Cursor's chat name, or, for a Claude Code subagent, the
+description its parent gave the task), cut the same way (for `list`); both
 are filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
@@ -69,10 +70,15 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   the names the app gave the session, which pass the same redaction as
   your prompts: every Claude Code session name the transcript records (set
   automatically from your prompt or by `/rename`; renaming adds a name and
-  does not remove the earlier ones) and Cursor's current chat name; the
-  pull requests a Claude Code session linked (their `owner/repo`, number,
-  and GitHub link, and nothing of the pull requests' text); and final
-  messages hooks reported.
+  does not remove the earlier ones) and Cursor's current chat name; for a
+  Claude Code subagent, the description its parent gave the task ("find the
+  retention tests"), read from the `agent-<id>.meta.json` file Claude Code
+  writes beside the subagent's transcript, passed through the same
+  redaction as your prompts and cut to 512 bytes (nothing else in that
+  file, such as the path of a worktree, is uploaded); the pull requests a
+  Claude Code session linked (their `owner/repo`, number, and GitHub link,
+  and nothing of the pull requests' text); and final messages hooks
+  reported.
 - **Skill evidence**: fresh setup defaults to `metadata`: names and SHA-256
   hashes of filtered `SKILL.md` text, with no body. Choose `none` for no
   filesystem skill inventory or snapshots, or `body` to include up to 16 KB

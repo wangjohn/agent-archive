@@ -48,7 +48,7 @@
       "minLength": 1
     },
     "name": {
-      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name. Absent when the session has none.",
+      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name; from parser 0.18.0 a Claude Code subagent's name is the description its parent gave the task. Absent when the session has none.",
       "type": "string",
       "minLength": 1
     },

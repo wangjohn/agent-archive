@@ -298,6 +298,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Privacy filter 14: a subagent's task description is now archived.**
+  When Claude Code starts a subagent, its parent gives the task a short
+  description ("find the retention tests"), which Claude Code keeps in a
+  `agent-<id>.meta.json` file beside the subagent's transcript. That
+  description is now kept, with the subagent's session, and is its name in
+  `list`, `show`, and the handoff picker. It passes the same redaction as your
+  prompts and is cut to 512 bytes. Nothing else in that file is kept (the
+  path of a worktree, for one), and a subagent with no such file, or one that
+  cannot be read, is archived as before. The next sync re-reads and
+  republishes each subagent whose transcript is still on the Mac, so it can
+  carry its description; a file that appears later is picked up when the
+  subagent's transcript next changes. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - **Privacy filter 13: a session's name and linked pull request are now
   archived.** Claude Code's session name (the one in its sidebar, set from
   your prompt or by `/rename`) and the pull request a session linked (its

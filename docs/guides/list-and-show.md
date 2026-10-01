@@ -74,7 +74,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.17.0 (partial) · filter 13
+     origin hook · parser 0.18.0 (partial) · filter 14
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -198,7 +198,9 @@ rows; a session with no name keeps the first prompt as its heading. `PRs`
 lists the pull requests the agent linked to the session, where `Git` counts
 the ones its own commands opened or merged. A session published before the
 name was kept (privacy filter 13) gets one the next time the collector
-re-reads its transcript, if the transcript is still on the Mac.
+re-reads its transcript, if the transcript is still on the Mac. A Claude Code
+subagent's name is the description its parent gave the task (filter 14 and
+parser `0.18.0`), so a subagent archived before that gets one the same way.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
