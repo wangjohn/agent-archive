@@ -24,6 +24,8 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
    ```
 
+   v0.1.1 has no Linux binary, so that command is for macOS. On Linux, drop the two pins (`install.sh | sh`) once the latest release has Linux binaries, or [build from source](docs/getting-started/install.md#build-from-source).
+
 2. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
 
 3. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
