@@ -703,7 +703,7 @@ func (c *r2Creator) attemptWith(ctx context.Context) (key credentials.R2Credenti
 		c.releaseIssued = release
 		cfg := config.Config{MachineID: c.slot.IssuerID, Storage: c.storageConfig()}
 		issuer := keyIssuer{home: c.home, cfg: cfg, env: c.env, p: c.p, api: c.api, account: c.account, bucket: c.bucket.BucketRef}
-		issuer.cleanup(c.slot)
+		issuer.cleanupWithContext(ctx, c.slot)
 		c.releaseIssuance()
 		if c.slot.State != issuance.Deleted {
 			return key, errors.New("prior key creation remains unresolved; cleanup must be confirmed before retrying")

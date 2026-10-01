@@ -135,6 +135,11 @@ func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string,
 // cleanup is used only for keys whose ledger proves no delivery was attempted.
 // A lost reply is matched by the whole immutable name and exact resource policy.
 func (i *keyIssuer) cleanup(s *issuance.Slot) {
+	i.cleanupWithContext(context.Background(), s)
+}
+
+// cleanupWithContext detaches cancellation only for bounded orphan cleanup.
+func (i *keyIssuer) cleanupWithContext(ctx context.Context, s *issuance.Slot) {
 	if s.State == issuance.Deleted || s.State == issuance.DeliveryIntent || s.State == issuance.Delivered || s.State == issuance.Own || s.State == issuance.OwnIntent {
 		return
 	}
@@ -142,7 +147,7 @@ func (i *keyIssuer) cleanup(s *issuance.Slot) {
 	if issuance.Save(i.home, *s) != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cloudflare.InventoryTimeout)
 	defer cancel()
 	reader, ok := i.api.(cloudflare.InventoryAPI)
 	if !ok {

@@ -954,6 +954,7 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RoutePermissionGroups),
 		string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RouteCreateToken),
 		string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
+		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteCreateToken),
 	}
 	if got := routes(g.cf.Requests()); !slices.Equal(got, want) {
 		t.Fatalf("calls %v, want %v", got, want)
@@ -963,7 +964,10 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 	if failed < 0 || confirm < failed || strings.Count(out, "Create the bucket and its key now?") != 1 || strings.Contains(out, "Try again with the same bucket") {
 		t.Fatalf("lookup retry did not precede creation confirmation:\n%s", out)
 	}
-	g.savedConfig(t)
+	cfg := g.savedConfig(t)
+	if len(cfg.SpareCredentialRefs) != 2 {
+		t.Fatal("guided retry did not retain two spare references")
+	}
 }
 
 // A retry after a failed token step reuses the bucket, and the permission

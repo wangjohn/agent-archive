@@ -52,7 +52,7 @@ func TestGuidedDedicatedRetryWithUnresolvedCreationNeverDuplicates(t *testing.T)
 		return cloudflare.Token{}, errors.New("synthetic lost reply")
 	}}
 	defer tracked.Discard()
-	c := r2Creator{home: home, env: env, p: newPrompter(strings.NewReader(""), &bytes.Buffer{}), api: tracked, account: cloudflaretest.AccountID, bucket: cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: "synthetic"}}, bucketCreated: true, groupID: "aaaa0000000000000000000000000002"}
+	c := r2Creator{home: home, env: env, p: newPrompter(strings.NewReader(""), &bytes.Buffer{}), api: tracked, account: cloudflaretest.AccountID, bucket: cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: "synthetic"}}, bucketCreated: true, creationConfirmed: true, groupID: "aaaa0000000000000000000000000002"}
 	_, err := c.attemptWith(context.Background())
 	if err == nil {
 		t.Fatal("lost reply accepted")
@@ -125,5 +125,54 @@ func TestGuidedDedicatedDiscardTracksProviderCleanup(t *testing.T) {
 	}
 	if len(g.cf.Live()) != 3 {
 		t.Fatal("discard implicitly touched provider")
+	}
+}
+
+// A replacement management client must remain available for the spare refill.
+// Regression: current-main010e integration with ISSUE-R1-01.
+func TestGuidedDedicatedReplacementTokenRefillsWithNewClient(t *testing.T) {
+	g := newGuidedR2Fixture(t)
+	const rejected = "CANARY-rejected-env-token"
+	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": rejected})
+	out := g.run(t, guidedAnswers(append([]string{"token", bootstrapCanary}, acceptedRest...)...), 0)
+	cfg := g.savedConfig(t)
+	if len(g.cf.Live()) != 3 || len(cfg.SpareCredentialRefs) != 2 || len(g.apis) != 2 || !g.apis[0].discarded || !g.apis[1].discarded {
+		t.Fatal("replacement client lost before refill")
+	}
+	g.assertNothingHolds(t, out, rejected, bootstrapCanary)
+}
+
+// A postcommit crash can leave the advisory slot state awaiting promotion.
+// Regression: ISSUE-R1-01.
+func TestGuidedDedicatedCommitRecoveryRequiresExactCredentialReference(t *testing.T) {
+	g := newGuidedR2Fixture(t)
+	g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "no")...), 0)
+	draft, have, problem, err := readDraft(g.home)
+	must(t, err)
+	if !have || problem != "" {
+		t.Fatal("missing draft")
+	}
+	cfg := draft.Config
+	ref := cfg.Storage.R2CredentialRef
+	cfg.Storage.R2CredentialRef = "unrelated"
+	must(t, config.Save(g.home, cfg))
+	must(t, reconcileCommittedGuidedSlot(g.home))
+	slots, err := issuance.List(g.home)
+	must(t, err)
+	for _, slot := range slots {
+		if slot.Origin == issuance.Guided && slot.State != issuance.OwnIntent {
+			t.Fatal("mismatched commit claimed slot")
+		}
+	}
+	cfg.Storage.R2CredentialRef = ref
+	must(t, config.Save(g.home, cfg))
+	must(t, reconcileCommittedGuidedSlot(g.home))
+	must(t, reconcileCommittedGuidedSlot(g.home))
+	slots, err = issuance.List(g.home)
+	must(t, err)
+	for _, slot := range slots {
+		if slot.Origin == issuance.Guided && slot.State != issuance.Own {
+			t.Fatal("matching committed slot not recovered")
+		}
 	}
 }
