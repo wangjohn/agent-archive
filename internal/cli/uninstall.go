@@ -172,8 +172,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
 		return nil
 	}
-	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
-	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
+	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.\nBucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	return nil
 }
 
