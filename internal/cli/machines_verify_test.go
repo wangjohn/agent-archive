@@ -51,13 +51,9 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 		return cloudflare.New(token, cloudflare.Options{BaseURL: server.URL + "/client/v4"})
 	}
 	env.LookupEnv = func(k string) (string, bool) {
-		switch k {
-		case "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY":
-			return "1", true
-		case "CLOUDFLARE_API_TOKEN":
-			return "MANAGEMENT-CANARY", true
-		}
-		return "", false
+		values := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": "1", "CLOUDFLARE_API_TOKEN": "MANAGEMENT-CANARY"}
+		value, ok := values[k]
+		return value, ok
 	}
 	env.UnsetEnv = func(string) error { removed = true; return nil }
 	env.RunTokenCommand = func(context.Context, []string, []string) (string, error) {
@@ -112,7 +108,7 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 		t.Fatal("missing or not-visible was treated as verified")
 	}
 	must(t, json.Unmarshal(output.Bytes(), &got))
-	if got.ProviderVerified || !got.Verification.Partial || got.Verification.Observations[0].State != "missing_or_not_visible" {
+	if got.ProviderVerified || !got.Verification.Partial || got.Verification.Observations[0].State != observationMissing {
 		t.Fatalf("missing evidence %#v", got)
 	}
 }
@@ -141,26 +137,26 @@ func TestProviderBindingStatesDoNotInferIdentityFromNameAlone(t *testing.T) {
 	bucket := cloudflare.BucketRef{Name: "test-bucket"}
 	resource, err := cloudflare.BucketResource(cloudflaretest.AccountID, bucket)
 	must(t, err)
-	token := cloudflare.TokenMetadata{Name: "agent-archive r=" + recipient + " i=" + issuer + " k=" + slot, Status: "active", Policies: []cloudflare.MetadataPolicy{{Effect: "allow", PermissionGroups: []cloudflare.MetadataPermissionGroup{{ID: "verified-group"}}, Resources: map[string]string{resource: "*"}}}}
+	token := cloudflare.TokenMetadata{Name: "agent-archive r=" + recipient + " i=" + issuer + " k=" + slot, Status: cloudflare.TokenStatusActive, Policies: []cloudflare.MetadataPolicy{{Effect: "allow", PermissionGroups: []cloudflare.MetadataPermissionGroup{{ID: "verified-group"}}, Resources: map[string]string{resource: "*"}}}}
 	state, complete := providerBindingState(token, true, binding, cloudflaretest.AccountID, bucket, "verified-group", now)
-	if state != "provider_metadata_matches_claim" || !complete {
+	if state != observationMatches || !complete {
 		t.Fatal("exact issuance evidence rejected")
 	}
 	state, complete = providerBindingState(token, true, binding, cloudflaretest.AccountID, cloudflare.BucketRef{Name: "other"}, "verified-group", now)
-	if state != "scope_unknown_or_mismatch" || complete {
+	if state != observationScope || complete {
 		t.Fatal("name bypassed destination policy")
 	}
 	binding.RecipientID = issuer
 	state, complete = providerBindingState(token, true, binding, cloudflaretest.AccountID, bucket, "verified-group", now)
-	if state != "issuance_unknown_or_mismatch" || complete {
+	if state != observationIssuance || complete {
 		t.Fatal("forged recipient passed")
 	}
-	token.Status = "disabled"
+	token.Status = cloudflare.TokenStatusDisabled
 	state, complete = providerBindingState(token, true, binding, cloudflaretest.AccountID, bucket, "verified-group", now)
-	if state != "provider_key_not_active" || complete {
+	if state != observationInactive || complete {
 		t.Fatal("disabled key active")
 	}
-	token.Status = "active"
+	token.Status = cloudflare.TokenStatusActive
 	token.ExpiresOn = now.Add(-time.Second).Format(time.RFC3339)
 	if providerTokenActive(token, now) {
 		t.Fatal("expired key active")

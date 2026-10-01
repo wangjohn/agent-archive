@@ -16,11 +16,23 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
+type providerObservationState string
+
+const (
+	observationLegacy        providerObservationState = "legacy_or_unknown_binding"
+	observationMissing       providerObservationState = "missing_or_not_visible"
+	observationScope         providerObservationState = "scope_unknown_or_mismatch"
+	observationInactive      providerObservationState = "provider_key_not_active"
+	observationIssuance      providerObservationState = "issuance_unknown_or_mismatch"
+	observationMatches       providerObservationState = "provider_metadata_matches_claim"
+	observationLocalMismatch providerObservationState = "local_binding_mismatch"
+)
+
 type machineProviderObservation struct {
-	MachineID   string `json:"machine_id"`
-	AccessKeyID string `json:"access_key_id,omitempty"`
-	State       string `json:"state"`
-	Binding     string `json:"binding"`
+	MachineID   string                   `json:"machine_id"`
+	AccessKeyID string                   `json:"access_key_id,omitempty"`
+	State       providerObservationState `json:"state"`
+	Binding     string                   `json:"binding"`
 }
 
 type providerVerification struct {
@@ -100,8 +112,8 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 	ctx, cancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
 	defer cancel()
 	report := verifyProvider(ctx, cfg, listing, api, inventoryAPI, account, bucket, env.now())
+	listing.ProviderVerified = !report.Partial && report.PaginationComplete
 	result := verifiedMachinesResult{ListResult: listing, Verification: report}
-	result.ProviderVerified = !report.Partial && report.PaginationComplete
 	if asJSON {
 		if err := json.NewEncoder(out).Encode(result); err != nil {
 			return machineCommandError(errOut, err)
@@ -127,9 +139,8 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 }
 
 func verifyProvider(ctx context.Context, cfg config.Config, listing machines.ListResult, api cloudflare.API, reader cloudflare.InventoryAPI, account string, bucket cloudflare.BucketRef, now time.Time) providerVerification {
-	report := providerVerification{CheckedAt: now.UTC(), Visibility: "unknown_may_be_creator_only", Observations: []machineProviderObservation{}}
 	inventory, err := reader.TokenInventory(ctx, account)
-	report.PaginationComplete = inventory.PaginationComplete
+	report := providerVerification{CheckedAt: now.UTC(), Visibility: "unknown_may_be_creator_only", Observations: []machineProviderObservation{}, PaginationComplete: inventory.PaginationComplete}
 	if err != nil {
 		report.Partial = true
 		report.Diagnostic = "token_listing_failed_or_incomplete"
@@ -151,11 +162,9 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 	details := 0
 	for _, record := range listing.Records {
 		binding := record.Credential
-		observation := machineProviderObservation{MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: "legacy_or_unknown_binding", Binding: "untrusted_bucket_claim"}
 		claimed[binding.AccessKeyID] = true
 		if !config.ValidMachineID(binding.AccessKeyID) {
-			observation.AccessKeyID = ""
-			report.Observations = append(report.Observations, observation)
+			report.Observations = append(report.Observations, machineProviderObservation{MachineID: record.MachineID, State: observationLegacy, Binding: "untrusted_bucket_claim"})
 			continue
 		}
 		token, found := tokens[binding.AccessKeyID]
@@ -168,8 +177,9 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 				tokens[token.ID] = token
 			}
 		}
-		observation.State, found = providerBindingState(token, found, binding, account, bucket, permissionID, now)
-		if !found {
+		state, complete := providerBindingState(token, found, binding, account, bucket, permissionID, now)
+		observation := machineProviderObservation{MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: state, Binding: "untrusted_bucket_claim"}
+		if !complete {
 			report.Partial = true
 		}
 
@@ -178,7 +188,7 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 			if local.AccessKeyID == binding.AccessKeyID && local.RecipientID == binding.RecipientID && local.IssuerID == binding.IssuerID && local.SlotID == binding.SlotID && local.Kind == binding.Kind {
 				observation.Binding = "local_committed_binding"
 			} else {
-				observation.State = "local_binding_mismatch"
+				observation.State = observationLocalMismatch
 				report.Partial = true
 			}
 		}
@@ -196,24 +206,24 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 	return report
 }
 
-func providerBindingState(token cloudflare.TokenMetadata, found bool, binding machines.CredentialBinding, account string, bucket cloudflare.BucketRef, permissionID string, now time.Time) (string, bool) {
+func providerBindingState(token cloudflare.TokenMetadata, found bool, binding machines.CredentialBinding, account string, bucket cloudflare.BucketRef, permissionID string, now time.Time) (providerObservationState, bool) {
 	if !found {
-		return "missing_or_not_visible", false
+		return observationMissing, false
 	}
 	if !cloudflare.ExactBucketPolicy(token, account, bucket, permissionID) {
-		return "scope_unknown_or_mismatch", false
+		return observationScope, false
 	}
 	if !providerTokenActive(token, now) {
-		return "provider_key_not_active", false
+		return observationInactive, false
 	}
 	if binding.Kind != "r2_own" {
-		return "legacy_or_unknown_binding", true
+		return observationLegacy, true
 	}
 	id, known := cloudflare.ParseProviderName(token.Name)
 	if !known || id.RecipientID != binding.RecipientID || id.IssuerID != binding.IssuerID || id.SlotID != binding.SlotID {
-		return "issuance_unknown_or_mismatch", false
+		return observationIssuance, false
 	}
-	return "provider_metadata_matches_claim", true
+	return observationMatches, true
 }
 
 func providerTokenActive(token cloudflare.TokenMetadata, now time.Time) bool {
