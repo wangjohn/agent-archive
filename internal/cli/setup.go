@@ -328,6 +328,15 @@ func retiredStagedRefs(retired, staged []string, active string) []string {
 // to applySetup. Draft persistence and installation happen elsewhere.
 func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
 	cfg := draft.Config
+	// Ordinary setup does not edit machine labels. A resumable draft may predate
+	// a rename, so the reviewed configuration keeps the committed label.
+	cfg.MachineName = existing.MachineName
+	// Ordinary setup cannot introduce credential provenance. Preserve the current
+	// binding only while its destination and credential reference stay the same.
+	cfg.MachineAssignment = nil
+	if cfg.DestinationID() == existing.DestinationID() && cfg.Storage.R2CredentialRef == existing.Storage.R2CredentialRef {
+		cfg.MachineAssignment = existing.MachineAssignment
+	}
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = defaultRetentionDays
 	}

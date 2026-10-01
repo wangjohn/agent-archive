@@ -27,14 +27,16 @@ const MaxRecordBytes = 16 << 10
 // Timeout is the shared listing or publication budget.
 const Timeout = 5 * time.Second
 
+const maxContinuationBytes = 16 << 10
+
 // CredentialBinding records claimed provenance without a credential secret.
 type CredentialBinding struct {
-	Kind        string `json:"kind"`
-	AccessKeyID string `json:"access_key_id,omitempty"`
-	RecipientID string `json:"recipient_id,omitempty"`
-	IssuerID    string `json:"issuer_id,omitempty"`
-	SlotID      string `json:"slot_id,omitempty"`
-	SharedWith  string `json:"shared_with,omitempty"`
+	Kind        config.MachineAssignmentKind `json:"kind"`
+	AccessKeyID string                       `json:"access_key_id,omitempty"`
+	RecipientID string                       `json:"recipient_id,omitempty"`
+	IssuerID    string                       `json:"issuer_id,omitempty"`
+	SlotID      string                       `json:"slot_id,omitempty"`
+	SharedWith  string                       `json:"shared_with,omitempty"`
 }
 
 // Record describes one machine, without paths or session content.
@@ -58,19 +60,22 @@ func Build(cfg config.Config, platform, version, accessKeyID string, now time.Ti
 	if r.Name == "" && config.ValidMachineID(cfg.MachineID) {
 		r.Name = "unnamed-" + cfg.MachineID[:4]
 	}
-	switch cfg.Storage.Provider {
-	case credentials.ProviderS3:
-		r.Credential.Kind = "aws_profile"
-	case credentials.ProviderR2:
-		r.Credential = CredentialBinding{Kind: "r2_unknown", AccessKeyID: accessKeyID}
-	default:
+	r.Credential.Kind = map[string]config.MachineAssignmentKind{
+		credentials.ProviderS3: config.MachineAssignmentAWSProfile,
+		credentials.ProviderR2: config.MachineAssignmentR2Unknown,
+	}[cfg.Storage.Provider]
+	if r.Credential.Kind == "" {
 		return r, errors.New("storage provider is not configured")
 	}
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		r.Credential.AccessKeyID = accessKeyID
+	}
+
 	if a := cfg.MachineAssignment; a != nil && a.DestinationID == cfg.DestinationID() {
 		if err := cfg.ValidateMachine(); err != nil {
 			return r, err
 		}
-		if (cfg.Storage.Provider == credentials.ProviderS3) != (a.Kind == "aws_profile") {
+		if (cfg.Storage.Provider == credentials.ProviderS3) != (a.Kind == config.MachineAssignmentAWSProfile) {
 			return r, errors.New("credential assignment does not match storage provider")
 		}
 		r.Credential = CredentialBinding{Kind: a.Kind, AccessKeyID: a.AccessKeyID, RecipientID: a.RecipientID, IssuerID: a.IssuerID, SlotID: a.SlotID, SharedWith: a.SharedWith}
@@ -147,16 +152,14 @@ func diagnostic(key, reason string) Unreadable {
 }
 
 // List reads only machine records, with one five-second deadline, at most
-// 1000 examined keys and four concurrent allocation-bounded fetches. Stores
+// 1000 pages or examined keys and four concurrent allocation-bounded fetches. Stores
 // lacking the required extensions are refused rather than read unboundedly.
 func List(ctx context.Context, store storage.ObjectStore) ListResult {
 	result := ListResult{SchemaVersion: SchemaVersion, Records: []Record{}}
 	pages, ok := store.(storage.PageLister)
 	getter, limited := store.(storage.LimitedGetter)
 	if !ok || !limited {
-		result.Partial = true
-		result.Unreadable = append(result.Unreadable, diagnostic("machines/", "store does not support bounded listing and reads"))
-		return result
+		return ListResult{SchemaVersion: SchemaVersion, Records: []Record{}, Partial: true, Unreadable: []Unreadable{diagnostic("machines/", "store does not support bounded listing and reads")}}
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
@@ -164,7 +167,12 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 	seen := map[string]bool{}
 	examined := 0
 	seenKeys := map[string]bool{}
-	for {
+	for pageCount := 0; ; pageCount++ {
+		if pageCount >= 1000 {
+			result.Partial = true
+			result.Unreadable = append(result.Unreadable, diagnostic("machines/", "listing page cap reached"))
+			break
+		}
 		page, err := pages.ListPage(ctx, "machines/", token, int32(min(100, 1000-examined)))
 		if err != nil {
 			result.Partial = true
@@ -185,18 +193,23 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 		slots := make(chan struct{}, 4)
 		for i, obj := range objects {
 			examined++
+			if len(obj.Key) != len("machines/")+32+len(".json") || !strings.HasPrefix(obj.Key, "machines/") || !strings.HasSuffix(obj.Key, ".json") {
+				d := diagnostic(obj.Key, "invalid record path")
+				got[i].problem = &d
+				continue
+			}
+			name := obj.Key[len("machines/") : len(obj.Key)-len(".json")]
+			if !config.ValidMachineID(name) {
+				d := diagnostic(obj.Key, "invalid record path")
+				got[i].problem = &d
+				continue
+			}
 			if seenKeys[obj.Key] {
 				d := diagnostic(obj.Key, "duplicate listed key")
 				got[i].problem = &d
 				continue
 			}
 			seenKeys[obj.Key] = true
-			name := strings.TrimSuffix(strings.TrimPrefix(obj.Key, "machines/"), ".json")
-			if obj.Key != "machines/"+name+".json" || !config.ValidMachineID(name) {
-				d := diagnostic(obj.Key, "invalid record path")
-				got[i].problem = &d
-				continue
-			}
 			if obj.Size > MaxRecordBytes {
 				d := diagnostic(obj.Key, "record exceeds 16 KiB")
 				got[i].problem = &d
@@ -241,12 +254,18 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 		if page.Next == "" {
 			break
 		}
-		if examined >= 1000 || seen[page.Next] {
+		if len(page.Next) > maxContinuationBytes {
+			result.Partial = true
+			result.Unreadable = append(result.Unreadable, diagnostic("machines/", "continuation token exceeds 16 KiB"))
+			break
+		}
+		nextFingerprint := storage.SHA256Hex([]byte(page.Next))
+		if examined >= 1000 || seen[nextFingerprint] {
 			result.Partial = true
 			result.Unreadable = append(result.Unreadable, diagnostic("machines/", "listing cap reached or continuation repeated"))
 			break
 		}
-		seen[page.Next] = true
+		seen[nextFingerprint] = true
 		token = page.Next
 	}
 	if len(result.Unreadable) > 0 {

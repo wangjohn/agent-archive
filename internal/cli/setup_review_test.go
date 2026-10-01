@@ -168,15 +168,24 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
 			env.WorkingDir = func() (string, error) { return project, nil }
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "personal", Region: "us-west-2"}}, nil }
-			probes := 0
-			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
+			probes, publications := 0, 0
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				if _, committed, err := config.Load(home); err != nil {
+					t.Fatal(err)
+				} else if committed {
+					publications++
+				} else {
+					probes++
+				}
+				return storagetest.NewMemoryStore(), nil
+			}
 			out := setupRun(t, env, "\ns3\n\ntest-bucket\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)
 			}
-			if probes != tc.probes || cfg.RetentionDays != tc.days || cfg.Storage.Prefix != tc.prefix {
-				t.Fatalf("probes=%d config=%+v", probes, cfg)
+			if probes != tc.probes || publications != 1 || cfg.RetentionDays != tc.days || cfg.Storage.Prefix != tc.prefix {
+				t.Fatalf("verification probes=%d postcommit publications=%d config=%+v", probes, publications, cfg)
 			}
 			if cfg.Storage.Region != "us-west-2" || cfg.Storage.AWSProfile != "personal" || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != project {
 				t.Fatalf("unexpected config: %+v", cfg)

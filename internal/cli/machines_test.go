@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -38,8 +39,7 @@ func TestMachinePublicationRetriesAndRepairsDailyWithoutBlockingCapture(t *testi
 	home := t.TempDir()
 	now := time.Now()
 	env := testEnv(t, home, now)
-	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "laptop", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}}
-	cfg.Archive.Enabled = true
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "laptop", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}, Archive: archive.Config{Enabled: true}}
 	s := &registrationStore{MemoryStore: storagetest.NewMemoryStore(), fail: true}
 	if e := config.Save(home, cfg); e != nil {
 		t.Fatal(e)
@@ -104,8 +104,7 @@ func TestMachinesRenameKeepsIdentityAndRejectsDuplicateNames(t *testing.T) {
 	env := testEnv(t, home, time.Now())
 	s := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
-	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "old", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}}
-	cfg.Archive.Enabled = true
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "old", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}, Archive: archive.Config{Enabled: true}}
 	must(t, config.Save(home, cfg))
 	r, e := machines.Build(cfg, "linux/amd64", "dev", "", time.Now())
 	must(t, e)
@@ -191,9 +190,8 @@ func TestRenamePreservesCommittedCredentialAssignment(t *testing.T) {
 	env := testEnv(t, home, time.Now())
 	s := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
-	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "before", Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}}
-	cfg.Archive.Enabled = true
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: "r2_shared", AccessKeyID: "synthetic-key", RecipientID: strings.Repeat("b", 32), IssuerID: strings.Repeat("c", 32), SharedWith: strings.Repeat("c", 32)}
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "before", Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}, Archive: archive.Config{Enabled: true}}
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: "synthetic-key", RecipientID: strings.Repeat("b", 32), IssuerID: strings.Repeat("c", 32), SharedWith: strings.Repeat("c", 32)}
 	must(t, config.Save(home, cfg))
 	record, e := machines.Build(cfg, "linux/amd64", "dev", "", time.Now())
 	must(t, e)
