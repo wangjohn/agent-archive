@@ -321,6 +321,11 @@ func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bare, "worktrees", "feature"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A bare repository kept as .bare in the folder its worktrees share.
+	shared := filepath.Join(root, "shared")
+	if err := os.MkdirAll(filepath.Join(shared, ".bare", "worktrees", "trunk"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// A link of another name to the main checkout, as its worktrees never
 	// name it.
 	alias := filepath.Join(root, "alias")
@@ -342,6 +347,8 @@ func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 		{"a worktree", gitWorktree(t, main, filepath.Join(root, "app-pr7")), "app", true},
 		{"a worktree linked by a relative path", write(filepath.Join(root, "rel"), "gitdir: ../app/.git/worktrees/rel\n"), "app", true},
 		{"a worktree of a bare repository", write(filepath.Join(root, "feature"), "gitdir: "+filepath.Join(bare, "worktrees", "feature")), "service", true},
+		{"a worktree of a hidden bare repository", write(filepath.Join(shared, "trunk"), "gitdir: "+filepath.Join(shared, ".bare", "worktrees", "trunk")), "shared", true},
+		{"the folder of a hidden bare repository", write(shared, "gitdir: ./.bare\n"), "shared", true},
 		{"a submodule", write(filepath.Join(main, "vendor", "lib"), "gitdir: ../../.git/modules/lib\n"), "lib", true},
 		{"an unreadable link", write(filepath.Join(root, "odd"), "not a link"), "odd", true},
 		{"no checkout", root, "", false},

@@ -531,3 +531,27 @@ func TestListProjectDirectoryInNoProjectFallsBack(t *testing.T) {
 		t.Fatalf("heading %q", heading)
 	}
 }
+
+// Opened on all projects with --all-projects, a when the scope holds nothing
+// stays on all projects and says so, instead of leaving the browser.
+func TestKeyBrowserToggleToAnEmptyScopeFallsBack(t *testing.T) {
+	t.Parallel()
+	a := newScopedArchive(t)
+	a.standard(t)
+	empty := filepath.Join(t.TempDir(), "empty-project")
+	a.addProject(t, empty)
+	a.env.WorkingDir = func() (string, error) { return empty, nil }
+	var headings []string
+	for _, screen := range a.browserRun(t, []string{"a", "q"}, "list", "--all-projects") {
+		if strings.Contains(screen, "type a number") {
+			headings = append(headings, headingOf(screen))
+		}
+	}
+	want := []string{
+		"All projects · 4 sessions · codex · a empty-project",
+		"Nothing in empty-project · showing all projects · 4 sessions · codex",
+	}
+	if strings.Join(headings, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("headings\n%s\nwant\n%s", strings.Join(headings, "\n"), strings.Join(want, "\n"))
+	}
+}

@@ -26,6 +26,9 @@ type scopeChoice struct {
 	scopeView
 	format  listFormatOptions
 	heading string
+	// constants are the values of the columns left out, which the heading
+	// names.
+	constants []string
 }
 
 // scopeChoices is what a browser shows of the archive: the working
@@ -74,11 +77,20 @@ func (c *scopeChoices) shown() *scopeChoice { return c.choice(c.current) }
 // canToggle reports whether `a` has another choice to show.
 func (c *scopeChoices) canToggle() bool { return c.scope.Label != "" && !c.fellBack }
 
-// toggle shows the other choice.
+// toggle shows the other choice. A scope that holds nothing (all projects
+// were shown first, with --all-projects) is not shown empty: all projects
+// stay, and the heading says so, as when the browser opens on such a scope.
 func (c *scopeChoices) toggle() {
-	if c.canToggle() {
-		c.current = 1 - c.current
+	if !c.canToggle() {
+		return
 	}
+	if c.current == viewAll && len(c.choice(viewScope).rows) == 0 {
+		c.fellBack = true
+		all := c.choice(viewAll)
+		all.heading = c.heading(viewAll, all.scopeView, all.constants)
+		return
+	}
+	c.current = 1 - c.current
 }
 
 // choice builds choice i once.
@@ -92,7 +104,7 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 	}
 	view := c.rowsFor(scope)
 	format, constants := c.format.withColumns(view.rows)
-	c.built[i] = &scopeChoice{scopeView: view, format: format, heading: c.heading(i, view, constants)}
+	c.built[i] = &scopeChoice{scopeView: view, format: format, heading: c.heading(i, view, constants), constants: constants}
 	return c.built[i]
 }
 

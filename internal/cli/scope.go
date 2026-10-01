@@ -144,8 +144,9 @@ func repositoryName(dir string) (string, bool) {
 
 // linkedCheckoutName names the checkout at root, whose .git is a file: a
 // worktree's "gitdir: <main>/.git/worktrees/<name>" names it after <main>
-// (or after a bare <main>.git); any other link (a submodule, a separate git
-// directory) is its own repository, named after root.
+// (or after a bare <main>.git, or the <main> holding a bare <main>/.bare);
+// any other link (a submodule, a separate git directory) is its own
+// repository, named after root.
 func linkedCheckoutName(root, dotGit string) string {
 	data, err := os.ReadFile(dotGit)
 	if err != nil {
@@ -165,7 +166,9 @@ func linkedCheckoutName(root, dotGit string) string {
 		return filepath.Base(root)
 	}
 	common := filepath.Dir(filepath.Dir(gitDir))
-	if filepath.Base(common) == ".git" {
+	// A hidden git directory (.git, or the .bare of a bare repository kept
+	// beside its worktrees) is named after the folder holding it.
+	if strings.HasPrefix(filepath.Base(common), ".") {
 		return filepath.Base(filepath.Dir(common))
 	}
 	if name := strings.TrimSuffix(filepath.Base(common), ".git"); name != "" {
