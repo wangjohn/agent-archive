@@ -14,7 +14,7 @@ import (
 
 func TestUnusedHeaderReservationsPermitInitialPreviews(t *testing.T) {
 	f := newNativeFixture(t)
-	padding := []byte(strings.Repeat("{}\n", int(nativeWindowBytes/3)+1))
+	padding := []byte(strings.Repeat("{}\n", 16) + strings.Repeat("x", int(nativeWindowBytes)))
 	for i := range 257 {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
 		path := f.add(t, "codex", id, "Known local conversation", 0)
