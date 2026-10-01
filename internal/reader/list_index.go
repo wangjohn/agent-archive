@@ -22,6 +22,9 @@ type RecentResult struct {
 
 // ListRecent uses a completed immutable index when the store supports pages.
 // Old buckets and stores without paging use the authoritative full scan.
+// Every writer to an indexed destination must publish a hint before its
+// metadata, as the collector does. The ready marker records a completed
+// rebuild, not compatibility with writers that do not maintain the index.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
 	pager, canPage := store.(storage.PageLister)
 	if !canPage || limit == 0 {
