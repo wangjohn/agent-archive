@@ -110,6 +110,8 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// repoKeyContext replaces bounded setup lookups in tests.
+	repoKeyContext func(context.Context, string) string
 	// currentBranch, set only by tests, replaces the git lookup of the
 	// branch checked out in a directory (see gitBranch).
 	currentBranch func(dir string) string
