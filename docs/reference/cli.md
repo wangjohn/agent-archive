@@ -117,6 +117,8 @@ An interrupted setup is recovered on the next run.
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repository by repo key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
@@ -152,6 +154,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--bucket` | a value | — |
 | `--no-skills` | no value | — |
 | `--project` | a value | — |
+| `--project-repo` | a value | — |
 | `--provider` | a value | — |
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |

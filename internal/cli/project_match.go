@@ -48,7 +48,19 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	defer cancel()
 	result := projectMatchResult{Roots: make([][]string, len(requests))}
 	bf := env.backfillEnvironment(userHome, cfg)
+	canonical := func(path string) string {
+		if p, err := filepath.EvalSymlinks(path); err == nil {
+			return filepath.Clean(p)
+		}
+		return filepath.Clean(path)
+	}
 	var candidates []string
+	var excluded []string
+	for _, project := range cfg.Archive.Projects {
+		if !project.Included {
+			excluded = append(excluded, canonical(project.Root))
+		}
+	}
 	seen := map[string]bool{}
 	add := func(path string) {
 		if ctx.Err() != nil {
@@ -124,15 +136,15 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	result.Incomplete = result.Incomplete || ctx.Err() != nil
 	for i, request := range requests {
 		for j, root := range candidates {
-			if request.RepoKey != "" && keys[j] != request.RepoKey && !(keys[j] == "" && request.Path != "" && filepath.Clean(request.Path) == root) {
+			if request.RepoKey != "" && keys[j] != request.RepoKey && !(keys[j] == "" && request.Path != "" && canonical(request.Path) == root) {
 				continue
 			}
-			if request.RepoKey == "" && filepath.Clean(request.Path) != root {
+			if request.RepoKey == "" && canonical(request.Path) != root {
 				continue
 			}
 			blocked := false
-			for _, project := range cfg.Archive.Projects {
-				if !project.Included && (local.PathWithin(root, project.Root) || local.PathWithin(project.Root, root)) {
+			for _, exclusion := range excluded {
+				if local.PathWithin(root, exclusion) || local.PathWithin(exclusion, root) {
 					blocked = true
 				}
 			}
