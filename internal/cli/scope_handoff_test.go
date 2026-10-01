@@ -253,7 +253,7 @@ func TestHandoffTitleNoteCountsSeveralMatches(t *testing.T) {
 
 // A title answered on this machine does not ask the archive for a count: this
 // machine's sessions come first, with no network.
-func TestHandoffTitleInScopeOnThisMacNeverOpensTheArchive(t *testing.T) {
+func TestHandoffTitleInScopeOnThisMachineNeverOpensTheArchive(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	opens := takeArchiveOffline(&f.env)

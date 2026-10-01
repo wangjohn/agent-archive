@@ -187,7 +187,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 			t.Errorf("%s=%s leaks into the tests", name, value)
 		}
 	}
-	// testEnv's side-effecting fields fail rather than reach the Mac.
+	// testEnv's side-effecting fields fail rather than reach the machine.
 	env := testEnv(t, t.TempDir(), time.Now())
 	if _, err := env.credentialStore(); err == nil {
 		t.Error("testEnv's credential store must fail unless a test sets one")

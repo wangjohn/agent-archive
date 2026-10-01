@@ -672,7 +672,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printAnotherMac(p, cfg, finish.userHome)
+	printAnotherMachine(p, cfg, finish.userHome)
 	return nil
 }
 
@@ -944,9 +944,9 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	}
 }
 
-// printAnotherMac ends a committed setup with the command that sets up
+// printAnotherMachine ends a committed setup with the command that sets up
 // another machine with the same storage.
-func printAnotherMac(p *prompter, cfg config.Config, userHome string) {
+func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {

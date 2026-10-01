@@ -171,7 +171,7 @@ func TestSetupYesPointsAtBackfill(t *testing.T) {
 
 // The line for another machine names the R2 key only by its environment
 // variables, never by value, whether setup asked for it or read it.
-func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
+func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 	t.Parallel()
 	const secret, keyID = "private-secret-value", "PRIVATEKEYID"
 	check := func(t *testing.T, out string) {
@@ -205,7 +205,7 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 
 // The command for another machine writes projects in the home folder from ~, and
 // quotes what the shell would split.
-func TestAnotherMacCommand(t *testing.T) {
+func TestAnotherMachineCommand(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{
 		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "team-archive", AWSProfile: "work", Region: "us-east-1"},
@@ -226,7 +226,7 @@ func TestAnotherMacCommand(t *testing.T) {
 
 // A project in the home folder is written from ~ even when the home folder's
 // path runs through a symlink, as project roots are saved resolved.
-func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
+func TestAnotherMachineCommandResolvesTheHomeFolder(t *testing.T) {
 	t.Parallel()
 	target := t.TempDir()
 	link := filepath.Join(t.TempDir(), "home")
@@ -306,7 +306,7 @@ func TestSetupImportUploadFailureNamesNoRetry(t *testing.T) {
 // The command for another machine names an R2 bucket on a custom endpoint by
 // that endpoint, and says how to set a folder inside the bucket, which
 // setup --yes cannot.
-func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
+func TestAnotherMachineCommandCustomEndpointAndFolder(t *testing.T) {
 	t.Parallel()
 	endpoint := "https://" + testR2Account + ".eu.r2.cloudflarestorage.com"
 	cfg := config.Config{
@@ -318,7 +318,7 @@ func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: "/Users/alex/src/app", Included: true}}},
 	}
 	var out bytes.Buffer
-	printAnotherMac(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
+	printAnotherMachine(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
 	got := out.String()
 	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --project ~/src/app\nThen run agent-archive setup there and set the folder inside the bucket to team/.\n"
 	if !strings.HasSuffix(got, want) || strings.Contains(got, "ref-123") {
