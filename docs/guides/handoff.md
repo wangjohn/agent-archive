@@ -42,11 +42,20 @@ filter with Esc first. Redrawing, scrolling and filtering inspect no additional
 transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
-preview read budget per invocation. Exhaustion disables older loading.
+preview read budget per invocation. After header inspection finishes, unused
+header reservations become available for previews. If the budget is exhausted,
+the picker keeps remaining verified native IDs selectable, marks their labels
+uninspected, and disables older preview loading. Searching these rows can match
+IDs and checkout facts, but cannot match uninspected conversation text.
 
 Local `--latest` uses transcript file modification time. Copying or restoring
 files can change that ordering. It requires complete identity/checkout discovery
-and skips the exactly identified calling session. `--to` without a selector
+and skips the exactly identified calling session. When discovery is incomplete,
+it refuses automatic selection and offers the terminal picker for an explicit
+choice. Scripts receive up to 20 known candidates with copyable, harness-qualified
+local handoff commands. These candidates are not a claim about the newest
+session; even `--latest --to` requires an explicit choice after refusal.
+`--to` without a selector
 uses an exact available native identity, offers the terminal picker when one
 cannot be identified, or requires explicit selection inside an agent; it never
 substitutes latest. Automatic current identity depends on the app exposing a
