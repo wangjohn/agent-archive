@@ -19,6 +19,7 @@ func TestNetworkFilesystemClassification(t *testing.T) {
 		"nfs", "nfs4", "cifs", "smb3", "smbfs", "ceph", "fuse.ceph-fuse",
 		"glusterfs", "fuse.glusterfs", "afs", "lustre", "gpfs", "beegfs",
 		"gfs2", "ocfs2", "fuse.sshfs", "fuse.rclone", "fuse.s3fs", "fuse.gcsfuse",
+		"pvfs2", "fuse.mfs", "fuse.juicefs",
 	} {
 		if !NetworkFilesystem(fstype) {
 			t.Errorf("%s is shared between machines and is not classed as a network filesystem", fstype)
@@ -33,6 +34,8 @@ func TestNetworkFilesystemClassification(t *testing.T) {
 		"fuse", "fuse.gocryptfs", "fuse.encfs", "ecryptfs", "fuse.mergerfs", "fuse.portal",
 		// The kernel's NFS plumbing, not a share.
 		"nfsd", "rpc_pipefs",
+		// An automount point not mounted yet (the probe mounts it first).
+		"autofs",
 		// Nothing known.
 		"", "unknown",
 	} {
@@ -90,8 +93,16 @@ func TestParseMountTableSkipsWhatItCannotRead(t *testing.T) {
 			t.Errorf("%s: parsed %v", name, mounts)
 		}
 	}
+	// Fields are split at spaces only: a no-break space (white space to
+	// Unicode, a byte sequence like any other to the kernel) stays in the
+	// path, and an empty source (two spaces) does not lose the line.
+	got := ParseMountTable([]byte("35 26 0:30 / /mnt/no\u00a0break rw - nfs4 s:/e rw\n" +
+		"36 26 0:31 / /mnt/no-source rw - nfs  rw\n"))
+	if want := []Mount{{"/mnt/no\u00a0break", "nfs4"}, {"/mnt/no-source", "nfs"}}; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("parsed %q, want %q", got, want)
+	}
 	// A backslash that does not start three octal digits stays a backslash.
-	got := ParseMountTable([]byte(`35 26 0:30 / /mnt/a\9b\04 rw - ext4 /dev/x rw` + "\n"))
+	got = ParseMountTable([]byte(`35 26 0:30 / /mnt/a\9b\04 rw - ext4 /dev/x rw` + "\n"))
 	if len(got) != 1 || got[0].Point != `/mnt/a\9b\04` {
 		t.Errorf("a malformed escape gives %v", got)
 	}
@@ -240,5 +251,66 @@ func TestNearestExistingStopsAtThePartThatExists(t *testing.T) {
 	}
 	if _, ok := nearestExisting(resolve, "/b/c"); ok {
 		t.Error("a path with nothing that exists was resolved")
+	}
+}
+
+// A link whose target is missing is not there: the answer is the link's
+// parent's (making a directory through such a link fails, so nothing lands
+// where it points), and a relative link is resolved from its own directory.
+func TestFilesystemProbeFollowsRelativeLinksAndNotDanglingOnes(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, nfs := filepath.Join(root, "home"), filepath.Join(root, "nfs")
+	for _, dir := range []string{home, nfs} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("..", "nfs"), filepath.Join(home, "relative")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(nfs, "gone"), filepath.Join(home, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	table := []byte("1 0 8:1 / / rw - ext4 /dev/sda rw\n2 1 0:9 / " + nfs + " rw - nfs4 s:/e rw\n")
+	probe := FilesystemProbe{MountTable: func() ([]byte, error) { return table, nil }}
+	if got, ok := probe.Where(filepath.Join(home, "relative", "agent-archive")); !ok || !got.Network() || got.Probed != filepath.Join(nfs, "agent-archive") {
+		t.Errorf("a relative link to the share: %+v, %v", got, ok)
+	}
+	if got, ok := probe.Where(filepath.Join(home, "dangling", "agent-archive")); !ok || got.Network() || got.Probed != filepath.Join(home, "dangling", "agent-archive") {
+		t.Errorf("a dangling link: %+v, %v", got, ok)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "dangling", "agent-archive"), 0o700); err == nil {
+		t.Error("a directory was made through a dangling link")
+	}
+	if _, err := os.Stat(filepath.Join(nfs, "gone")); !os.IsNotExist(err) {
+		t.Errorf("making a directory through a dangling link reached its target (%v)", err)
+	}
+}
+
+// Resolving the path is what mounts an automount point on the way, so the
+// mount table is read after it: read before, an autofs home not mounted yet
+// would show as autofs, not as the NFS mounted there a moment later.
+func TestFilesystemProbeReadsTheMountTableAfterResolving(t *testing.T) {
+	t.Parallel()
+	mounted := false
+	probe := FilesystemProbe{
+		MountTable: func() ([]byte, error) {
+			table := "1 0 8:1 / / rw - ext4 /dev/sda rw\n2 1 0:30 / /home rw - autofs auto.home rw\n"
+			if mounted {
+				table += "3 2 0:31 / /home/me rw - nfs4 server:/export/me rw\n"
+			}
+			return []byte(table), nil
+		},
+		EvalSymlinks: func(path string) (string, error) {
+			mounted = true
+			return path, nil
+		},
+	}
+	if got, ok := probe.Where("/home/me/.local/share/agent-archive"); !ok || !got.Network() || got.Mount != "/home/me" {
+		t.Errorf("an automounted home: %+v, %v", got, ok)
 	}
 }

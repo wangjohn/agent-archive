@@ -57,11 +57,12 @@ An interrupted setup is recovered on the next run.
                         needs recovery, after uninstall, when another
                         installation's hooks are in the way, when this
                         executable is a temporary build, or (Linux) when the
-                        data directory is on a network filesystem that
-                        --allow-network-home never allowed. It points the hooks
-                        at the executable now running, which repairs hooks
-                        left pointing at one that moved or was deleted. Takes
-                        no other flag than --verbose (which lists the files)
+                        data directory or the systemd unit directory is on a
+                        network filesystem that --allow-network-home never
+                        allowed. It points the hooks at the executable now
+                        running, which repairs hooks left pointing at one
+                        that moved or was deleted. Takes no other flag than
+                        --verbose (which lists the files)
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again

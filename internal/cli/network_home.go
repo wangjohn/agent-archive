@@ -139,7 +139,9 @@ func (e Env) networkHomeChecks(home, userHome string, allowed bool) preflightChe
 // refusals before its first question are, and reports the exit code with
 // refused true.
 func refuseNetworkHome(opts setupOptions, stdout, stderr io.Writer, env Env) (code int, refused bool) {
-	home, err := env.home()
+	// readHome, not home, which makes the data directory: the one place a
+	// refusal must not leave it.
+	home, err := env.readHome()
 	if err != nil {
 		return 0, false
 	}

@@ -34,13 +34,17 @@ type Mount struct {
 // mount point, the mount options, then optional fields up to a lone "-", and
 // after it the filesystem type, the source and the super-block options. The
 // kernel writes a space, a tab, a newline and a backslash in a path as a
-// backslash and three octal digits ("\040"); they are decoded here. A line
-// that is not in this format is skipped.
+// backslash and three octal digits ("\040"); they are decoded here. The
+// fields are split at spaces only, which is all the kernel puts between them:
+// a path may hold other bytes that are white space to Unicode (a no-break
+// space, say), and the source may be empty. A line that is not in this format
+// is skipped.
 func ParseMountTable(data []byte) []Mount {
 	var mounts []Mount
 	for line := range strings.SplitSeq(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 10 {
+		fields := strings.FieldsFunc(line, func(r rune) bool { return r == ' ' })
+		// The six fields before the optional ones, the separator and the type.
+		if len(fields) < 8 {
 			continue
 		}
 		// The optional fields come first and end at the separator, so the
@@ -127,19 +131,24 @@ func MountOf(mounts []Mount, path string) (mount Mount, ok bool) {
 //     the machine; and fuseblk is a local block device (ntfs-3g).
 //   - nfsd and rpc_pipefs are the kernel's own NFS server and client
 //     plumbing, not a mounted share.
+//   - autofs is an automount point that is not mounted yet; FilesystemProbe
+//     mounts it before it reads the mount table, which then shows what is
+//     mounted there.
 //
 // The network FUSE filesystems are listed by the type they mount as
-// (fuse.<subtype>), which is what the mount table shows for them. gfs2 and
-// ocfs2 are cluster filesystems on storage several machines attach to: the
-// same shared home by another route.
+// (fuse.<subtype>), which is what the mount table shows for them; MooseFS's
+// mfsmount is fuse.mfs. OrangeFS's kernel client is pvfs2. gfs2 and ocfs2 are
+// cluster filesystems on storage several machines attach to: the same shared
+// home by another route.
 var networkFilesystems = map[string]bool{
 	"nfs": true, "nfs4": true,
 	"cifs": true, "smb3": true, "smbfs": true,
 	"ceph": true, "fuse.ceph-fuse": true,
 	"glusterfs": true, "fuse.glusterfs": true,
-	"afs": true, "lustre": true, "gpfs": true, "beegfs": true,
+	"afs": true, "lustre": true, "gpfs": true, "beegfs": true, "pvfs2": true,
 	"gfs2": true, "ocfs2": true,
 	"fuse.sshfs": true, "fuse.rclone": true, "fuse.s3fs": true, "fuse.gcsfuse": true,
+	"fuse.mfs": true, "fuse.juicefs": true,
 }
 
 // NetworkFilesystem reports whether fstype, a filesystem type as the mount
@@ -171,8 +180,24 @@ type FilesystemProbe struct {
 	// /proc/self/mountinfo.
 	MountTable func() ([]byte, error)
 	// EvalSymlinks resolves path's symbolic links. Nil is
-	// filepath.EvalSymlinks.
+	// filepath.EvalSymlinks, then a look inside the directory it names, which
+	// mounts it if it is an automount point (autofs) not mounted yet.
 	EvalSymlinks func(path string) (string, error)
+}
+
+// resolveAndMount is filepath.EvalSymlinks, and then a stat of what it named
+// through a trailing slash. Resolving a path mounts every automount point
+// (autofs, the usual way NFS homes are mounted) that the path passes through,
+// but not the last one, which a stat leaves as it is; a trailing slash makes
+// the kernel look inside the directory, which mounts it as making a directory
+// in it would. Its error is ignored: the resolved path is the answer either
+// way.
+func resolveAndMount(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		_, _ = os.Stat(strings.TrimSuffix(resolved, string(filepath.Separator)) + string(filepath.Separator))
+	}
+	return resolved, err
 }
 
 // Where reports what filesystem path is on, or ok=false when that cannot be
@@ -184,7 +209,15 @@ type FilesystemProbe struct {
 // The path need not exist: the nearest ancestor that does is used, so the
 // answer for a directory not made yet is its parent's, which is where it
 // will be made. Symbolic links in that ancestor are resolved first, so a data
-// directory that is a link to a mounted share is found on the share.
+// directory that is a link to a mounted share is found on the share. A link
+// whose target does not exist counts as not there, so the answer is its
+// parent's: making a directory through it fails, so nothing is written
+// where it points.
+//
+// The path is resolved before the mount table is read, since resolving it is
+// what mounts an automount point on the way (an autofs home not mounted
+// yet): read first, the table would show the automount point's own type,
+// autofs, which is not a network filesystem.
 func (f FilesystemProbe) Where(path string) (Placement, bool) {
 	if !filepath.IsAbs(path) {
 		return Placement{}, false
@@ -194,14 +227,14 @@ func (f FilesystemProbe) Where(path string) (Placement, bool) {
 		read = ReadMountTable
 	}
 	if resolve == nil {
-		resolve = filepath.EvalSymlinks
-	}
-	data, err := read()
-	if err != nil {
-		return Placement{}, false
+		resolve = resolveAndMount
 	}
 	probed, ok := nearestExisting(resolve, filepath.Clean(path))
 	if !ok {
+		return Placement{}, false
+	}
+	data, err := read()
+	if err != nil {
 		return Placement{}, false
 	}
 	mount, ok := MountOf(ParseMountTable(data), probed)

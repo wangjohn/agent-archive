@@ -117,15 +117,19 @@ directory is on a network filesystem. It looks at the filesystem type the
 kernel reports (`/proc/self/mountinfo`) for each directory, or for the
 nearest directory above it that exists, since setup has not made them yet. The
 types it treats as network are `nfs`, `nfs4`, `cifs`, `smb3`, `smbfs`, `ceph`,
-`glusterfs`, `afs`, `lustre`, `gpfs`, `beegfs`, the cluster filesystems `gfs2`
-and `ocfs2`, and the FUSE ones that name a remote (`fuse.sshfs`,
-`fuse.rclone`, `fuse.s3fs`, `fuse.gcsfuse`, `fuse.glusterfs`,
-`fuse.ceph-fuse`). It does not treat as network a local disk, `tmpfs`, an
-`overlay`, an encrypted view of local files (`ecryptfs`, `fuse.gocryptfs`), a
-plain `fuse`, or `virtiofs` and `9p`, which share a host's folders with one
-virtual machine and are what WSL mounts Windows drives with. It is a guard,
-not proof: a network filesystem under another name, or a system whose
-`/proc/self/mountinfo` cannot be read, is not noticed. macOS is never checked.
+`glusterfs`, `afs`, `lustre`, `gpfs`, `beegfs`, `pvfs2` (OrangeFS), the
+cluster filesystems `gfs2` and `ocfs2`, and the FUSE ones that name a remote
+(`fuse.sshfs`, `fuse.rclone`, `fuse.s3fs`, `fuse.gcsfuse`, `fuse.glusterfs`,
+`fuse.ceph-fuse`, `fuse.mfs` (MooseFS), `fuse.juicefs`). It does not treat as
+network a local disk, `tmpfs`, an `overlay`, an encrypted view of local files
+(`ecryptfs`, `fuse.gocryptfs`), a plain `fuse`, or `virtiofs` and `9p`, which
+share a host's folders with one virtual machine and are what WSL mounts
+Windows drives with. A home that autofs mounts on demand is looked at once it
+is mounted (the check mounts it, as setup would). It is a guard, not proof: a
+network filesystem under another name, or a system whose
+`/proc/self/mountinfo` cannot be read, is not noticed. macOS is never checked,
+and there `--allow-network-home` is accepted and does nothing, so one setup
+command can serve both systems.
 
 The refusal names the directory, the filesystem and why it matters, and gives
 two ways out:

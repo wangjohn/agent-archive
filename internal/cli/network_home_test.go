@@ -294,6 +294,48 @@ func TestLinuxRefreshRefusesAnInstallationOnANetworkFilesystemThatWasNeverAllowe
 	}
 }
 
+// Uninstall is the way off a network home, so it is never refused there,
+// allowed or not: the units, hooks and job go as anywhere else.
+func TestLinuxUninstallIsNotRefusedOnANetworkFilesystem(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.setup()
+	l.env.MountTable = mountTableWith(t, map[string]string{l.home: "nfs4", l.userHome: "nfs4"})
+	code, output := l.uninstall()
+	if code != 0 || strings.Contains(output, "network filesystem") {
+		t.Fatalf("uninstall on a network home: exit %d\n%s", code, output)
+	}
+	timer, service := l.units()
+	for _, path := range []string{timer, service} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("uninstall left %s (%v)", path, err)
+		}
+	}
+	if l.hooksInstalled() {
+		t.Error("uninstall left the hooks")
+	}
+}
+
+// The data directory as setup really finds it (AGENT_ARCHIVE_HOME, through
+// the resolution that makes the directory for every other command): a
+// refusal is decided without making it, so a refused setup leaves nothing on
+// the share. It sets the environment, so it is not parallel.
+func TestLinuxSetupRefusalDoesNotMakeTheRealDataDirectory(t *testing.T) {
+	l := newLinuxInstall(t)
+	share := t.TempDir()
+	data := filepath.Join(share, "agent-archive")
+	t.Setenv("AGENT_ARCHIVE_HOME", data)
+	l.env.Home = nil // the real resolution, from AGENT_ARCHIVE_HOME
+	l.env.MountTable = mountTableWith(t, map[string]string{share: "nfs"})
+	output := setupYes(t, l.env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "claude")
+	if !strings.Contains(flat(output), "is on a network filesystem (nfs") {
+		t.Errorf("setup --yes did not refuse:\n%s", output)
+	}
+	if _, err := os.Stat(data); !os.IsNotExist(err) {
+		t.Errorf("a refused setup made the data directory %s (%v)", data, err)
+	}
+}
+
 // rawFiles is the installation's files, for telling that nothing changed.
 func rawFiles(t *testing.T, l *linuxInstall) string {
 	t.Helper()
