@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
+
+const unsupportedAssignmentKind config.MachineAssignmentKind = "future"
 
 func sample(t *testing.T, id string) Record {
 	t.Helper()
@@ -35,7 +38,7 @@ func TestListRejectsUntrustedRecordsWithoutLosingValidOnes(t *testing.T) {
 	if e := Publish(ctx, store, valid); e != nil {
 		t.Fatal(e)
 	}
-	for i, change := range []func(*Record){func(r *Record) { r.SchemaVersion = 2 }, func(r *Record) { r.MachineID = id }, func(r *Record) { r.Platform = "darwin\x1b[2J" }, func(r *Record) { r.Name = "bad\nname" }, func(r *Record) { r.Credential.Kind = "future" }, func(r *Record) { r.Credential.Kind = "r2_own" }} {
+	for i, change := range []func(*Record){func(r *Record) { r.SchemaVersion = 2 }, func(r *Record) { r.MachineID = id }, func(r *Record) { r.Platform = "darwin\x1b[2J" }, func(r *Record) { r.Name = "bad\nname" }, func(r *Record) { r.Credential.Kind = unsupportedAssignmentKind }, func(r *Record) { r.Credential.Kind = config.MachineAssignmentR2Own }} {
 		bad := sample(t, fmt.Sprintf("%032x", i+1))
 		change(&bad)
 		b, _ := json.Marshal(bad)
@@ -58,10 +61,11 @@ func TestListRejectsUntrustedRecordsWithoutLosingValidOnes(t *testing.T) {
 
 type boundedStore struct {
 	*storagetest.MemoryStore
-	active, maximum atomic.Int32
-	reads           atomic.Int32
-	repeat          bool
-	deadline        atomic.Bool
+	active   atomic.Int32
+	maximum  atomic.Int32
+	reads    atomic.Int32
+	repeat   bool
+	deadline atomic.Bool
 }
 
 func (s *boundedStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
@@ -79,6 +83,7 @@ func (s *boundedStore) GetLimited(ctx context.Context, key string, limit int64) 
 	}
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func (s *boundedStore) ListPage(ctx context.Context, prefix, token string, limit int32) (storage.ObjectPage, error) {
 	if prefix != "machines/" {
 		return storage.ObjectPage{}, errors.New("session scan")
@@ -114,17 +119,17 @@ func TestBuildPreservesLocalProvenanceOnlyAtMatchingDestination(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{MachineID: strings.Repeat("a", 32), Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}}
 	r, e := Build(cfg, "linux/amd64", "dev", "KEY", time.Now())
-	if e != nil || r.Credential.Kind != "r2_unknown" {
+	if e != nil || r.Credential.Kind != config.MachineAssignmentR2Unknown {
 		t.Fatalf("%+v %v", r, e)
 	}
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: "r2_shared", AccessKeyID: "KEY", SharedWith: strings.Repeat("b", 32), RecipientID: strings.Repeat("c", 32)}
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: "KEY", SharedWith: strings.Repeat("b", 32), RecipientID: strings.Repeat("c", 32)}
 	r, e = Build(cfg, "linux/amd64", "dev", "KEY", time.Now())
-	if e != nil || r.Credential.Kind != "r2_shared" {
+	if e != nil || r.Credential.Kind != config.MachineAssignmentR2Shared {
 		t.Fatalf("%+v %v", r, e)
 	}
 	cfg.Storage.Bucket = "other"
 	r, e = Build(cfg, "linux/amd64", "dev", "NEW", time.Now())
-	if e != nil || r.Credential.Kind != "r2_unknown" || r.Credential.AccessKeyID != "NEW" {
+	if e != nil || r.Credential.Kind != config.MachineAssignmentR2Unknown || r.Credential.AccessKeyID != "NEW" {
 		t.Fatalf("%+v %v", r, e)
 	}
 }
@@ -170,5 +175,47 @@ func TestListKeepsEarlierRecordsAfterLaterPageFails(t *testing.T) {
 	got = List(ctx, s)
 	if !got.Partial || time.Since(start) > time.Second {
 		t.Fatal("cancelled listing did not stop")
+	}
+}
+
+type emptyPageStore struct {
+	*storagetest.MemoryStore
+	pages int
+}
+
+func (s *emptyPageStore) ListPage(ctx context.Context, _, _ string, _ int32) (storage.ObjectPage, error) {
+	if err := ctx.Err(); err != nil {
+		return storage.ObjectPage{}, err
+	}
+	s.pages++
+	return storage.ObjectPage{Next: strconv.Itoa(s.pages)}, nil
+}
+
+func TestListBoundsEmptyPagesWithUniqueContinuationTokens(t *testing.T) {
+	t.Parallel()
+	s := &emptyPageStore{MemoryStore: storagetest.NewMemoryStore()}
+	result := List(context.Background(), s)
+	if !result.Partial || s.pages > 1000 || len(result.Unreadable) == 0 {
+		t.Fatalf("partial=%v pages=%d diagnostics=%d", result.Partial, s.pages, len(result.Unreadable))
+	}
+}
+
+type oversizedContinuationStore struct{ *storagetest.MemoryStore }
+
+func (s oversizedContinuationStore) ListPage(ctx context.Context, prefix, token string, limit int32) (storage.ObjectPage, error) {
+	page, err := s.MemoryStore.ListPage(ctx, prefix, token, limit)
+	page.Next = strings.Repeat("x", maxContinuationBytes+1)
+	return page, err
+}
+
+func TestListKeepsRecordsBeforeRejectingOversizedContinuation(t *testing.T) {
+	t.Parallel()
+	s := oversizedContinuationStore{storagetest.NewMemoryStore()}
+	if err := Publish(context.Background(), s, sample(t, strings.Repeat("a", 32))); err != nil {
+		t.Fatal(err)
+	}
+	got := List(context.Background(), s)
+	if !got.Partial || len(got.Records) != 1 || len(got.Unreadable) != 1 {
+		t.Fatalf("%+v", got)
 	}
 }

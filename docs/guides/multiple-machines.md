@@ -213,9 +213,10 @@ never machine or credential identity. A failed upload keeps the local name
 and reports registration pending; the collector retries.
 
 `agent-archive machines --json` reports records, omitted objects and whether
-results are partial. Listing reads only machine records, at most 1000 objects
+results are partial. Listing reads only machine records, at most 1000 pages or objects
 and 16 KiB per record, with four concurrent reads and a shared five-second
-budget. Unsupported schemas, malformed records and read failures are reported
+budget. Oversized continuation tokens also stop listing. Unsupported schemas,
+malformed records and read failures are reported
 as omitted objects; incomplete results exit with code 1.
 
 Every bucket credential can forge these records. They are not provider-verified,

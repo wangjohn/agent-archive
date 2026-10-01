@@ -100,3 +100,7 @@ Older configurations without these fields remain readable. The local
 `machine-registration.json` acknowledgement binds successful publication to
 its destination, stable record fingerprint and last success; failed publication
 stays pending and is retried by the collector without another setup.
+
+Resuming an ordinary setup draft keeps the latest committed machine name and
+credential provenance for unchanged credentials. Changing the destination or
+credential reference clears old provenance; a draft cannot restore it.
