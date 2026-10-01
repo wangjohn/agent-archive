@@ -40,9 +40,9 @@ to the receiving agent. It then does what you asked with it.
   running in when the agent names it to commands it runs, as Claude Code does;
   Cursor does not, so there a title or `--latest` can match the current chat.
 - **It never guesses.** When several sessions match, the agent shows you the
-  candidates (short ID, agent, when, pull request, title) and asks which. It
-  never picks for you. It can also read them as data with
-  `list "<words>" --json`.
+  candidates (short ID, agent, project when they span several, when, pull
+  request, title) and asks which. It never picks for you. It can also read
+  them as data with `list "<words>" --json`.
 - **When nothing matches**, it tries different words, or looks at the last 30
   days with `list --since 30d` and shows you the titles.
 - **It can browse:** `list` for what exists (a short table; `--json` for the

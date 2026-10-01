@@ -267,7 +267,9 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 	if r.opts.source == "local" || len(word) != minShortSessionID || strings.Trim(word, "0123456789abcdef") != "" {
 		return nil
 	}
-	return exact(append(slices.Clone(r.archiveRows()), r.subagents...))
+	// archiveRows reads r.subagents too, so it runs before they are read.
+	top := r.archiveRows()
+	return exact(append(slices.Clone(top), r.subagents...))
 }
 
 // within keeps the rows in the scope.
