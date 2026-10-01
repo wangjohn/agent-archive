@@ -5,6 +5,8 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
 
 ```text
 <prefix>/
+  machines/
+    <machine_id>.json               informational machine name, platform, credential claim, daily heartbeat
   sessions/
     <harness>/                       claude, codex, or cursor
       <archive-session-id>/
@@ -96,3 +98,14 @@ explains how to apply a plan with every uploading machine paused.
 Object keys are built only from the app name and the archive session ID,
 both checked to be safe key components; no path or native ID from a
 transcript ever becomes part of a key.
+
+## Machine records
+
+`machines/` stores informational records under canonical machine IDs. The
+[machine record schema](../../schemas/machine.schema.json) describes the format.
+They contain chosen names, OS/architecture, application version, nonsecret
+credential provenance and pairing details when locally committed, plus a daily
+heartbeat. They contain no project paths or session content. Any bucket writer
+can modify them, so they are not an authorization source. Session listing,
+retention and privacy purge ignore this folder. Records remain after uninstall;
+include `machines/` when deleting the entire archive.

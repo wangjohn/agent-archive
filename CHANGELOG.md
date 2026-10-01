@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Informational `machines` records, bounded listing and local rename. Setup
+  publishes after commit; the collector independently retries registration and
+  refreshes heartbeats at most daily. Records are untrusted bucket claims.
+
 ### Changed
 
 - The handoff picker, `show --json` with no ID, and the pickers for an

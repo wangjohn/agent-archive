@@ -81,3 +81,22 @@ within the selected skill root. Change the policy with interactive setup's
 The change applies to future publications, including rebuilt pending work;
 it does not delete older local copies or bucket objects. See
 [privacy](../security/privacy.md) for cleanup guidance.
+
+## Machine labels and credential provenance
+
+`machine_name` is an optional chosen label (1 to 40 lowercase letters, digits,
+or hyphens, starting with a letter or digit). Setup defaults to `unnamed-` plus
+four characters of the immutable local `machine_id`, without reading a hostname.
+Use `agent-archive machines rename NEW_NAME` to change it safely.
+
+`machine_assignment` is optional nonsecret locally committed provenance for
+one `destination_id`. It has `kind` (`aws_profile`, `r2_unknown`, `r2_shared`,
+or `r2_own`), `access_key_id`, `recipient_id`, `issuer_id`, `slot_id`,
+`shared_with`, `pairing_id`, `paired_from`, and `paired_at` when applicable.
+IDs other than the destination digest are canonical 32-character lowercase hex.
+No secret, code or bundle belongs here. A different destination invalidates an
+old assignment; bucket claims cannot populate or replace this local evidence.
+Older configurations without these fields remain readable. The local
+`machine-registration.json` acknowledgement binds successful publication to
+its destination, stable record fingerprint and last success; failed publication
+stays pending and is retried by the collector without another setup.
