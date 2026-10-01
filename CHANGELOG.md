@@ -491,6 +491,14 @@ follow [Semantic Versioning](https://semver.org/).
   now stays on one line whenever it fits. And the path of a page saved with
   `h` is printed after a signal ends the interactive screen too, as it is
   after a quit.
+- A hook no longer fails with "another collector or setup is running", and
+  loses that turn's evidence, when the collector, an import, or
+  `agent-archive feedback` writes to the same session at the same moment on a
+  busy Mac. Those writers held the session's lock, which a hook waits only a
+  second for, through the write's disk syncs, which can take longer; they now
+  sync first and hold the lock only to check and rename the file. Subagent
+  records are written the same way. Forgetting a session also no longer
+  waits, under that lock, for a subagent record another process is writing.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to
