@@ -1,0 +1,108 @@
+package state
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+func TestIdentityJournalRepairsBothDeletedDerivedIndexes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	r, err := s.RegisterOrMerge("native-1", registrationFor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"native-1", "claude\x00native-1"} {
+		if err := os.Remove(nativeSessionIndexPath(s.home, key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+	again, err := s.RegisterOrMerge("native-1", registrationFor)
+	if err != nil || again.ArchiveSessionID != r.ArchiveSessionID {
+		t.Fatal("derived index loss duplicated registration", err)
+	}
+	regs, _ := s.LoadRegistrations()
+	if len(regs) != 1 {
+		t.Fatal("duplicate registration")
+	}
+}
+func TestLegacyMigrationIsBoundedAndGuardsRollbackBeforeIndexes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	c := config.Config{SkillEvidence: config.SkillEvidenceBody}
+	if err := config.Save(s.home, c); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 90; i++ {
+		r := registrationFor(fmt.Sprintf("legacy-%03d", i))
+		r.NativeSessionID = fmt.Sprintf("native-%03d", i)
+		// Synthetic pre-upgrade state has no index, including the damaged-index case.
+		if err := s.SaveRegistration(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	complete, err := s.ReconcileIdentityIndexes(1, nil)
+	if err != nil || complete {
+		t.Fatal("migration unexpectedly completed whole catalog", err)
+	}
+	loaded, _, err := config.Load(s.home)
+	if err != nil || loaded.Discovery == nil || loaded.Discovery.Enabled || loaded.EffectiveSkillEvidence() != config.SkillEvidenceBody {
+		t.Fatal("guard changed policy or consent", err)
+	}
+	if loaded.SkillEvidence == config.SkillEvidenceBody {
+		t.Fatal("old validated-enum writer would accept new state")
+	}
+	if _, _, err := s.EnsureAgentSessionID("claude", "fresh"); !errors.Is(err, ErrIdentityMigrationPending) {
+		t.Fatal("allocation widened incomplete migration", err)
+	}
+	for n := 0; n < 200 && !complete; n++ {
+		complete, err = s.ReconcileIdentityIndexes(1, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !complete {
+		t.Fatal("migration starved")
+	}
+	got, found, err := s.AgentSessionID("claude", "native-089")
+	if err != nil || !found || got != "legacy-089" {
+		t.Fatal("legacy registration identity lost", err)
+	}
+	if _, _, err := s.EnsureAgentSessionID("claude", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(s.home, "config.json"))
+	if len(raw) == 0 {
+		t.Fatal("guard not durable")
+	}
+}
+func TestCorruptJournalNeverAllocatesAReplacementIdentity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	id, _, err := s.EnsureAgentSessionID("codex", "native")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(nativeSessionIndexPath(s.home, "codex\x00native")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.identityRecordPath("codex", "native"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next, _, err := s.EnsureAgentSessionID("codex", "native"); err == nil || next == id {
+		t.Fatal("corruption not refused")
+	}
+	// Corrupt migration state is likewise authoritative and cannot reset eligibility.
+	if err := local.Write(filepath.Join(s.home, "identity-migration.json"), map[string]any{"complete": "wrong-type"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.EnsureAgentSessionID("codex", "fresh"); err == nil {
+		t.Fatal("corrupt migration reset")
+	}
+}

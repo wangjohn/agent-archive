@@ -259,6 +259,11 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	// Asked before hooks.lock is taken, never under it: a slow lookup must not
 	// use up the hook's budget or make concurrent hooks find the lock busy.
 	lookupStarted := time.Now()
+	_, migrationErr := PrepareIdentityIndexes(home, 8)
+	if migrationErr != nil && !errors.Is(migrationErr, local.ErrBusy) {
+		return migrationErr
+	}
+
 	sessionRepoKey := startRepoKey(home, harness, kind, payload, now, repoKey)
 	// Leave room in the harness's two-second timeout for a retry intent and
 	// diagnostic if capture is contended. Those writes are synchronous and
@@ -332,21 +337,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	case hookEventSubagentStop:
 		err = handleSubagentStop(store, cfg, harness, nativeSessionID, payload, now)
 	case hookEventStop, hookEventResponse:
-		// Cursor can deliver a response and stop before its first prompt has
-		// finished registering. Keep only their validated transcript path so
-		// a later proven start can still be published. This never admits a
-		// session on its own.
-		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, lookupErr := HasAgentRegistration(store, harness, nativeSessionID)
-			if lookupErr != nil {
-				return lookupErr
-			}
-			if !registered {
-				_, err = queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
-				break
-			}
-		}
-		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
+		err = handleStopOrDeferred(store, harness, nativeSessionID, eventName, payload, now, observedConfig.PauseGeneration)
 	case hookEventIgnored:
 		// Handled by the early return above, before the lock was taken.
 	}
@@ -354,10 +345,30 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	// and its request write; the store then refuses the write so no orphan
 	// request is left. That is the intended outcome of the race, not a fault
 	// to report on the user's turn.
+	if errors.Is(err, state.ErrIdentityMigrationPending) {
+		_, queueErr := queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
+		return queueErr
+	}
 	if errors.Is(err, state.ErrSessionNotRegistered) {
 		return nil
 	}
 	return err
+}
+
+func handleStopOrDeferred(store *state.Store, harness, native, event string, payload map[string]any, now time.Time, generation string) error {
+	// Cursor's response/stop can overtake its first prompt. A validated path
+	// is followup evidence, never independent new-session admission proof.
+	if archive.CanonicalHarness(harness) == "cursor" {
+		registered, err := HasAgentRegistration(store, harness, native)
+		if err != nil {
+			return err
+		}
+		if !registered {
+			_, err = queueAdmissionIntentInGeneration(store.Home(), harness, classifyHookEvent(harness, event), payload, now, generation)
+			return err
+		}
+	}
+	return handleSessionStop(store, harness, native, event, payload, now)
 }
 
 // loadHookCaptureWindow reads the active capture configuration. When observed

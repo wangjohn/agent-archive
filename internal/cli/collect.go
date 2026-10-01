@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -147,6 +148,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	defer cancel()
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
+	}
+	if _, migrationErr := capture.PrepareIdentityIndexes(home, 256); migrationErr != nil {
+		recordPreflightError(localStore, migrationErr)
 	}
 	if _, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop}); discoveryErr != nil {
 		recordPreflightError(localStore, discoveryErr)

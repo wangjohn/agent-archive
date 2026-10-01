@@ -69,7 +69,9 @@ flowchart LR
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and recording the prototype's job and the collectors installed under earlier labels that setup retires (which jobs those are is the scheduler's to say). A scheduler is reached only through the `Backends` its caller passes (cli's `Env`), which resolve the backend name each journal records, so every job is driven through the backend that made it. Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
-| `backfill` | Discovery, the import plan, registration, and undo. |
+| `backfill` | Import policy, the complete import plan, registration, and undo; Cursor discovery stays here. |
+| `nativesessions` | Shared read-only Claude/Codex store layouts and identity/cwd header facts. No configured archive, collector, network, program, or UI dependencies. |
+| `transcriptio` | Verified regular-file snapshots with private file identity and a fixed read boundary, context-aware reads, and complete JSONL boundaries. Discovered files can require store containment; explicit inputs keep symlink compatibility. No archive policy, network, program, or UI dependencies. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
 | `trace` | `AGENT_ARCHIVE_TRACE`'s recorder: process-wide, so `storage` (each request), `reader`, `state`, `collector` and `config` record spans without a context threaded through every command. Spans carry fixed names, durations and counts only. Standard library only. |
 | `cli` | Every command: flags, prompts, rendering, and the wiring between packages. Terminal output takes its colors, symbols, wrapping, and spinner from `ui.go`, which prints plain text when output is not a terminal, `NO_COLOR` is set, or `TERM` is `dumb`. The `stats` screens are pure page functions (`renderPage` in `stats_render.go`: numbers and a view in, lines out) with one color table (`stats_colors.go`). Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory, through `getconf` on macOS). |
@@ -92,9 +94,9 @@ flowchart TD
   capture --> setupjournal & config & state
   setupjournal --> hooks & state
   agentskills --> hooks
-  backfill --> collector & retention & config & state & storage & cursorstore & terminal
+  backfill --> nativesessions & collector & retention & config & state & storage & cursorstore & terminal
   retention --> reader & state & storage
-  collector --> state & storage & cursorstore
+  collector --> transcriptio & state & storage & cursorstore
   reader --> storage
   config --> credentials & storage
   state --> cursorstore

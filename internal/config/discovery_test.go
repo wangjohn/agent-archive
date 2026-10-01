@@ -151,3 +151,28 @@ func TestDiscoveryClockReversalCannotPartiallyResume(t *testing.T) {
 		t.Fatal("failed resume changed committed permission")
 	}
 }
+
+func TestUnrelatedProjectChangePreservesDiscoveryGeneration(t *testing.T) {
+	previous := Config{Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: "/one", ProjectID: "one", Included: true}, {Root: "/two", ProjectID: "two", Included: true}}}, Discovery: &DiscoveryConfig{Enabled: true, CodexHomes: []string{"/codex"}}}
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	if err := ReconcileDiscovery(&previous, Config{}, at); err != nil {
+		t.Fatal(err)
+	}
+	next := previous
+	next.Archive.Projects = append([]archive.ProjectActivation(nil), previous.Archive.Projects...)
+	next.Archive.Projects[1].Included = false
+	if err := ReconcileDiscovery(&next, previous, at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Discovery.Authorizations) != 1 || next.Discovery.Authorizations[0].Generation != previous.Discovery.Authorizations[0].Generation {
+		t.Fatal("unrelated scope revoked delayed eligible starts")
+	}
+	before := next
+	next.Archive.Projects = append(append([]archive.ProjectActivation(nil), next.Archive.Projects...), archive.ProjectActivation{Root: "/one/excluded", Included: false})
+	if err := ReconcileDiscovery(&next, before, at.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if next.Discovery.Authorizations[0].Generation == before.Discovery.Authorizations[0].Generation {
+		t.Fatal("nested rule change kept broader old scope")
+	}
+}

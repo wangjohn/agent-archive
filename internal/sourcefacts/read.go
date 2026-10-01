@@ -3,6 +3,7 @@ package sourcefacts
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const (
@@ -57,13 +60,17 @@ func OpenRegular(root, path string) (*os.File, error) {
 
 // ReadHeader opens a bounded source safely. Paths and native IDs are never
 // included in its outcome codes or errors.
-func ReadHeader(root, path string) Header {
-	f, err := OpenRegular(root, path)
+func ReadHeader(ctx context.Context, root, path string) Header {
+	snapshot, err := transcriptio.Open(RootOpener{Root: root}, path, transcriptio.OpenPolicy{Root: root, RejectSymlinks: true})
 	if err != nil {
 		return Header{Outcome: "source_unavailable"}
 	}
-	defer func() { _ = f.Close() }()
-	return ReadCodexHeader(f, path)
+	defer func() { _ = snapshot.Close() }()
+	h := ReadCodexHeader(snapshot.Reader(ctx), path)
+	if snapshot.Check() != nil || ctx.Err() != nil {
+		return Header{Outcome: "source_changed", Bytes: h.Bytes}
+	}
+	return h
 }
 
 // ReadCodexHeader inspects metadata and the FIRST task event, stopping before
@@ -124,7 +131,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 			continue
 		}
 		if seen, native := NativeFirstTask(line); seen {
-			if !native || FirstTaskAt(line).Before(h.Started.Add(-time.Second)) {
+			if !native || FirstTaskAt(line).Before(h.Started.Add(-time.Second)) || FirstTaskAt(line).After(h.Started.Add(2*time.Minute)) {
 				h.Outcome = "inherited_history"
 			} else {
 				h.Outcome = "native_format"

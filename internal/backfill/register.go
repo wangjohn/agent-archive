@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -111,6 +112,18 @@ type parentWork struct {
 // Run registers every candidate, in order.
 func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	var result RegistrationResult
+	for {
+		if r.Stop != nil && r.Stop() {
+			return result, ErrStopped
+		}
+		complete, err := capture.PrepareIdentityIndexes(r.Home, 256)
+		if err != nil {
+			return result, err
+		}
+		if complete {
+			break
+		}
+	}
 	works := make([]*parentWork, len(candidates))
 	for i, c := range candidates {
 		works[i] = &parentWork{c: c}

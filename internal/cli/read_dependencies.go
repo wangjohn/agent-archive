@@ -178,4 +178,5 @@ type handoffDestinationDependencies interface {
 	workingDirDependencies
 	userHomeDir() (string, error)
 	clipboard([]byte) error
+	clipboardAvailable() bool
 }

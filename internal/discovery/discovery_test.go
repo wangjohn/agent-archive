@@ -152,7 +152,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	h := sourcefacts.ReadHeader(root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"))
+	h := sourcefacts.ReadHeader(context.Background(), root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"))
 	generation, _ := cfg.DiscoveryGeneration("codex", cfg.Archive.Projects[0].Root, h.Started, at.Add(2*time.Minute))
 	reg, created, err := admit(store, h, root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"), cfg.Archive.Projects[0].Root, generation, at.Add(2*time.Minute))
 	if err != nil || !created {
@@ -188,7 +188,7 @@ func TestAdmissionRevalidatesPauseGenerationAndSkipsContendedHooks(t *testing.T)
 	store, cfg, at, root := fixture(t)
 	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
 	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
-	h := sourcefacts.ReadHeader(root, path)
+	h := sourcefacts.ReadHeader(context.Background(), root, path)
 	g, _ := cfg.DiscoveryGeneration("codex", cfg.Archive.Projects[0].Root, h.Started, at.Add(2*time.Minute))
 	unlock, err := local.NamedLock(store.Home(), "hooks.lock")
 	if err != nil {
@@ -265,5 +265,80 @@ func TestRejectedMetadataPayloadNeverEntersCatalog(t *testing.T) {
 				t.Fatalf("%s retained rejected payload", field)
 			}
 		})
+	}
+}
+
+func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	id := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
+	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 1 {
+		t.Fatal("initial admission", err)
+	}
+	regs, _ := store.LoadRegistrations()
+	before := regs[0]
+	archived := filepath.Join(root, "archived_sessions", filepath.Base(before.TranscriptPath))
+	if err := os.MkdirAll(filepath.Dir(archived), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(before.TranscriptPath, archived); err != nil {
+		t.Fatal(err)
+	}
+	// Change the discovery generation after the original task: continuation is
+	// the existing registration, never a new start-authorized import.
+	previous := cfg
+	d := *cfg.Discovery
+	cfg.Discovery = &d
+	cfg.Discovery.CodexHomes = append(cfg.Discovery.CodexHomes, t.TempDir())
+	if err := config.ReconcileDiscovery(&cfg, previous, at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(store.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for n := 0; n < 3; n++ {
+		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	archiveID, _, _ := store.AgentSessionID("codex", id)
+	after, _, _ := store.LoadRegistration(archiveID)
+	if after.TranscriptPath != archived || after.ArchiveSessionID != before.ArchiveSessionID || !after.AdmittedAt.Equal(before.AdmittedAt) || after.DiscoveryGeneration != before.DiscoveryGeneration {
+		t.Fatal("continuation lost original facts")
+	}
+	// A validated active copy is preferred when both locations exist.
+	writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
+	for n := 0; n < 3; n++ {
+		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, _, _ = store.LoadRegistration(archiveID)
+	if after.TranscriptPath != before.TranscriptPath {
+		t.Fatal("active source not preferred")
+	}
+}
+
+func TestNativeDateHintFindsFreshTaskAheadOfColdHistory(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	for i := 1; i <= 1200; i++ {
+		writeRollout(t, root, project, at.Add(-time.Hour), i, "sessions/2026/09/30")
+	}
+	writeRollout(t, root, project, at.Add(time.Minute), 9000, "sessions/2026/10/01")
+	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 1 || h.Probes > HeaderProbes || !h.Pending {
+		t.Fatalf("priority missed or erased backlog: %#v %v", h, err)
+	}
+	// A date-shaped location cannot authorize an old start or an unknown producer.
+	writeRollout(t, root, project, at.Add(-time.Hour), 9001, "sessions/2026/10/01")
+	h, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(3 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 0 {
+		t.Fatal("date hint became eligibility", err)
 	}
 }

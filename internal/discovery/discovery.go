@@ -52,16 +52,18 @@ type directory struct {
 	Offset int64  `json:"offset"`
 }
 type cached struct {
-	Size    int64              `json:"size"`
-	Mtime   int64              `json:"mtime"`
-	Checked time.Time          `json:"checked"`
-	Header  sourcefacts.Header `json:"header"`
+	Size       int64              `json:"size"`
+	Mtime      int64              `json:"mtime"`
+	Checked    time.Time          `json:"checked"`
+	Header     sourcefacts.Header `json:"header"`
+	ActiveHint bool               `json:"active_hint,omitempty"`
 }
 type catalog struct {
-	Roots  []string          `json:"roots"`
-	Queue  []directory       `json:"queue"`
-	Cache  map[string]cached `json:"cache"`
-	Health Health            `json:"health"`
+	Roots    []string          `json:"roots"`
+	Queue    []directory       `json:"queue"`
+	Cache    map[string]cached `json:"cache"`
+	Health   Health            `json:"health"`
+	Priority map[string]int64  `json:"priority,omitempty"`
 }
 
 // Options contains injectable clocks and stop signals; it never enables an
@@ -94,7 +96,7 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 		h.Errors = append(h.Errors, "catalog_rebuilt")
 	}
 	roots := approvedRoots(cfg.Discovery.CodexHomes)
-	if len(c.Cache) > maxCatalog || len(c.Queue) > maxDirectories || !slices.Equal(c.Roots, roots) {
+	if len(c.Cache) > maxCatalog || len(c.Queue) > maxDirectories || len(c.Priority) > 64 || !slices.Equal(c.Roots, roots) {
 		c = catalog{}
 	}
 	c.Roots = roots
@@ -108,6 +110,9 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 		}
 	}
 	deadline := time.Now().Add(Budget)
+	priority := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, supported: supported, priority: true, ctx: ctx}
+	priority.observeActiveHints(ctx, o, roots, deadline)
+
 	for len(c.Queue) > 0 && h.Probes < HeaderProbes && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(ctx, o) {
 			break
@@ -119,7 +124,7 @@ func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, 
 			h.Errors = appendUnique(h.Errors, "source_root_unavailable")
 			continue
 		}
-		worker := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, supported: supported}
+		worker := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, supported: supported, ctx: ctx}
 		for _, name := range names {
 			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
@@ -269,6 +274,7 @@ func resolveProject(cfg config.Config, cwd string) (string, bool) {
 }
 
 func admit(store *state.Store, header sourcefacts.Header, sourceRoot, locator, project, generation string, now time.Time) (archive.SessionRegistration, bool, error) {
+	previous, replace := continuationLocator(store, header.Meta.ID, sourceRoot, locator)
 	unlock, err := local.NamedLock(store.Home(), "hooks.lock")
 	if err != nil {
 		return archive.SessionRegistration{}, false, err
@@ -281,10 +287,6 @@ func admit(store *state.Store, header sourcefacts.Header, sourceRoot, locator, p
 	if err != nil || !found {
 		return archive.SessionRegistration{}, false, errors.New("configuration unavailable")
 	}
-	current, allowed := cfg.DiscoveryGeneration("codex", project, header.Started, now)
-	if !allowed || current != generation {
-		return archive.SessionRegistration{}, false, errors.New("authorization changed")
-	}
 	id, exists, err := store.AgentSessionID("codex", header.Meta.ID)
 	if err != nil {
 		return archive.SessionRegistration{}, false, err
@@ -293,15 +295,31 @@ func admit(store *state.Store, header sourcefacts.Header, sourceRoot, locator, p
 		if reg, found, e := store.LoadRegistration(id); e != nil {
 			return reg, false, e
 		} else if found {
-			if reg.ProjectRoot != project || reg.DestinationID != cfg.DestinationID() {
+			if reg.ProjectRoot != project || !cfg.AcceptSession(reg) {
 				return reg, false, errors.New("identity conflict")
 			}
-			if reg.TranscriptPath == "" {
-				_, e = store.UpdateRegistration(id, func(r *archive.SessionRegistration) error { r.TranscriptPath = locator; return nil })
+			if reg.Origin == archive.SessionOriginDiscovery && (reg.DiscoveryCwd != header.Meta.Cwd || !reg.SessionStartedAt.Equal(header.Started)) {
+				return reg, false, errors.New("continuation identity conflict")
+			}
+			if reg.TranscriptPath == "" || (replace && reg.TranscriptPath == previous && reg.Origin == archive.SessionOriginDiscovery) {
+				_, e = store.UpdateRegistration(id, func(r *archive.SessionRegistration) error {
+					if r.TranscriptPath == reg.TranscriptPath {
+						r.TranscriptPath = locator
+						if r.Origin == archive.SessionOriginDiscovery {
+							r.DiscoveryRoot = sourceRoot
+						}
+					}
+					reg = *r
+					return nil
+				})
 				return reg, false, e
 			}
 			return reg, false, nil
 		}
+	}
+	current, allowed := cfg.DiscoveryGeneration("codex", project, header.Started, now)
+	if !allowed || current != generation {
+		return archive.SessionRegistration{}, false, errors.New("authorization changed")
 	}
 	reg, err := store.RegisterOrMerge(header.Meta.ID, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
@@ -316,6 +334,26 @@ func admit(store *state.Store, header sourcefacts.Header, sourceRoot, locator, p
 		err = store.SaveRequest(reg.ArchiveSessionID, "discovery", now)
 	}
 	return reg, true, err
+}
+
+// Source existence and active/archive preference are continuation hints only.
+// Read them before hooks.lock; publication revalidates the chosen snapshot.
+func continuationLocator(store *state.Store, native, sourceRoot, locator string) (string, bool) {
+	id, found, err := store.AgentSessionID("codex", native)
+	if err != nil || !found {
+		return "", false
+	}
+	r, found, err := store.LoadRegistration(id)
+	if err != nil || !found || r.Origin != archive.SessionOriginDiscovery || r.TranscriptPath == locator {
+		return "", false
+	}
+	_, err = os.Lstat(r.TranscriptPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return r.TranscriptPath, true
+	}
+	old, _ := filepath.Rel(r.DiscoveryRoot, r.TranscriptPath)
+	next, _ := filepath.Rel(sourceRoot, locator)
+	return r.TranscriptPath, strings.HasPrefix(next, "sessions"+string(filepath.Separator)) && strings.HasPrefix(old, "archived_sessions"+string(filepath.Separator))
 }
 
 // LoadHealth reads scan facts independently of collector/upload status.
@@ -334,6 +372,8 @@ type scan struct {
 	health    *Health
 	now       time.Time
 	supported func(sourcefacts.CodexMeta) bool
+	ctx       context.Context
+	priority  bool
 }
 
 func (s scan) visit(d directory, name string) (retry, stop bool) {
@@ -345,6 +385,9 @@ func (s scan) visit(d directory, name string) (retry, stop bool) {
 		return false, false
 	}
 	if info.IsDir() {
+		if s.priority {
+			return false, false
+		}
 		if len(c.Queue) >= maxDirectories || strings.Count(d.Path, string(filepath.Separator)) >= 16 {
 			h.Errors = appendUnique(h.Errors, "directory_limit")
 			return false, false
@@ -357,17 +400,21 @@ func (s scan) visit(d directory, name string) (retry, stop bool) {
 	}
 	entry, hit := c.Cache[loc]
 	retryDelay := time.Hour
-	if entry.Header.Outcome == "incomplete_metadata" || entry.Header.Outcome == "source_unavailable" {
+	if entry.Header.Outcome == "incomplete_metadata" || entry.Header.Outcome == "source_unavailable" || entry.Header.Outcome == "source_changed" {
 		retryDelay = time.Minute
 	}
 	if !hit || entry.Size != info.Size() || entry.Mtime != info.ModTime().UnixNano() || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
 		if h.Probes >= HeaderProbes {
 			return true, true
 		}
-		header := sourcefacts.ReadHeader(d.Root, loc)
+		header := sourcefacts.ReadHeader(s.ctx, d.Root, loc)
 		h.Probes++
 		h.Bytes += header.Bytes
 		entry = cached{Size: info.Size(), Mtime: info.ModTime().UnixNano(), Checked: now, Header: header}
+		c.Cache[loc] = entry
+	}
+	if s.priority && !entry.ActiveHint {
+		entry.ActiveHint = true
 		c.Cache[loc] = entry
 	}
 	h.Outcomes[entry.Header.Outcome]++
@@ -384,10 +431,13 @@ func (s scan) visit(d directory, name string) (retry, stop bool) {
 		h.Outcomes["project_not_authorized"]++
 		return false, false
 	}
-	generation, ok := cfg.DiscoveryGeneration("codex", root, entry.Header.Started, now)
-	if !ok {
-		h.Outcomes["start_not_authorized"]++
-		return false, false
+	generation, authorized := cfg.DiscoveryGeneration("codex", root, entry.Header.Started, now)
+	if !authorized {
+		_, existing, err := store.AgentSessionID("codex", entry.Header.Meta.ID)
+		if err != nil || !existing {
+			h.Outcomes["start_not_authorized"]++
+			return false, false
+		}
 	}
 	reg, created, e := admit(store, entry.Header, d.Root, loc, root, generation, now)
 	_ = reg
@@ -407,7 +457,15 @@ func pruneCatalog(c *catalog) {
 		for key := range c.Cache {
 			keys = append(keys, key)
 		}
-		slices.SortFunc(keys, func(a, b string) int { return c.Cache[a].Checked.Compare(c.Cache[b].Checked) })
+		slices.SortFunc(keys, func(a, b string) int {
+			if c.Cache[a].ActiveHint != c.Cache[b].ActiveHint {
+				if c.Cache[a].ActiveHint {
+					return 1
+				}
+				return -1
+			}
+			return c.Cache[a].Checked.Compare(c.Cache[b].Checked)
+		})
 		for _, key := range keys[:len(keys)-maxCatalog] {
 			delete(c.Cache, key)
 		}

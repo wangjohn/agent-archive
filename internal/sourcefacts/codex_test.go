@@ -115,3 +115,20 @@ func TestMalformedFirstTaskCannotBeSkippedForANativeResume(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexMalformedPreStartAndInconsistentTaskTimesFailClosed(t *testing.T) {
+	t.Parallel()
+	valid := testRecords(t, nil, nil)
+	meta := strings.SplitN(valid, "\n", 2)[0] + "\n"
+	for _, event := range []string{
+		`{"type":"event_msg","payload":{"type":[],"turn_id":"ignored"}}`,
+		`{"type":"event_msg","payload":null}`,
+		`{"type":{},"payload":{"type":"task_started"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + testID + `","root_turn_id":"` + testID + `","started_at":"2999-10-01T12:00:00Z"}}`,
+	} {
+		h := ReadCodexHeader(strings.NewReader(meta+event+"\n"+strings.SplitN(valid, "\n", 2)[1]), "rollout-"+testID+".jsonl")
+		if h.Outcome == "native_format" {
+			t.Fatal("rejected first event repaired by later native start")
+		}
+	}
+}

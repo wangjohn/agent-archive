@@ -367,6 +367,11 @@ func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCand
 			if local.Read(path, &entry) == nil && entry.ArchiveSessionID == archiveSessionID {
 				paths = append(paths, path)
 			}
+			journalPath := s.identityRecordPath(agent, nativeSessionID)
+			var journal identityRecord
+			if local.Read(journalPath, &journal) == nil && journal.ID == archiveSessionID {
+				paths = append(paths, journalPath)
+			}
 		}
 		var entry sessionIndexEntry
 		legacy := nativeSessionIndexPath(s.home, nativeSessionID)

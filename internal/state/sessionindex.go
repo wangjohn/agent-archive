@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -129,6 +130,9 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", false, errors.New("identity index needs repair")
 	}
+	if id, found, e := s.journalLookup(agent, native); e != nil || found {
+		return id, found, e
+	}
 	var legacy sessionIndexEntry
 	err = local.Read(nativeSessionIndexPath(s.home, native), &legacy)
 	if err == nil && safeFileComponent(legacy.ArchiveSessionID) {
@@ -140,49 +144,28 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 			return legacy.ArchiveSessionID, true, nil
 		}
 	}
-	if err == nil && safeFileComponent(legacy.ArchiveSessionID) {
-		owned, e := s.legacyCandidateOwned(agent, native, legacy.ArchiveSessionID)
-		if e != nil {
-			return "", false, e
-		}
-		if owned {
-			return legacy.ArchiveSessionID, true, nil
-		}
-	}
-	// Both old and new admission durably write an index before registration.
-	// A normal crash can therefore leave an orphan index, never a registration
-	// with no index. Do not enumerate every registration for a fresh identity
-	// while the caller holds hooks.lock. Arbitrary deleted indexes require a
-	// separate reconciliation; present corrupt mappings fail closed below.
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", false, errors.New("legacy identity index needs repair")
 	}
 	return "", false, nil
 }
 
-func (s *Store) legacyCandidateOwned(agent, native, id string) (bool, error) {
-	candidates, err := s.LoadSubagentCandidates()
-	if err != nil {
-		return false, err
-	}
-	for _, candidate := range candidates {
-		if archive.CanonicalHarness(candidate.Harness.Name) != agent {
-			continue
-		}
-		if (candidate.NativeSessionID == native && candidate.ArchiveSessionID == id) || (candidate.ParentNativeSessionID == native && candidate.ParentArchiveSessionID == id) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // EnsureAgentSessionID allocates an identity in an agent namespace.
 func (s *Store) EnsureAgentSessionID(agent, native string) (string, bool, error) {
+	if err := config.ProtectIdentityWriter(s.home); err != nil {
+		return "", false, err
+	}
+	if err := s.ensureIdentityReady(); err != nil {
+		return "", false, err
+	}
 	id, found, err := s.AgentSessionID(agent, native)
 	if err != nil {
 		return id, false, err
 	}
 	if found {
+		if err := s.journalIdentity(agent, native, id); err != nil {
+			return "", false, err
+		}
 		path := nativeSessionIndexPath(s.home, archive.CanonicalHarness(agent)+"\x00"+native)
 		var entry sessionIndexEntry
 		if e := local.Read(path, &entry); errors.Is(e, os.ErrNotExist) {
@@ -194,6 +177,9 @@ func (s *Store) EnsureAgentSessionID(agent, native string) (string, bool, error)
 	}
 	id, err = local.ID()
 	if err != nil {
+		return "", false, err
+	}
+	if err := s.journalIdentity(agent, native, id); err != nil {
 		return "", false, err
 	}
 	err = local.Write(nativeSessionIndexPath(s.home, archive.CanonicalHarness(agent)+"\x00"+native), sessionIndexEntry{ArchiveSessionID: id})

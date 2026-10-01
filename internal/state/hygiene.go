@@ -57,6 +57,9 @@ const (
 	readAsRemoved
 	// replacedByNextPass: status.json, rewritten whole by the next pass.
 	replacedByNextPass
+	// requiresRepair: authoritative identity state; refuse new admission on
+	// corruption rather than reinterpret a lost identity as a new session.
+	requiresRepair
 	// holdsNoContent: lock files, never decoded.
 	holdsNoContent
 )
@@ -64,21 +67,24 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
-	"registrations":          quarantineUnderLock,
-	"requests":               quarantineUnderLock,
-	"subagent-candidates":    quarantineUnderLock,
-	"published":              quarantineInPass,
-	"pending":                quarantineInPass,
-	"superseded":             quarantineInPass,
-	"scan-signatures":        readAsAbsent,
-	refreshSkipDir:           readAsAbsent,
-	"pending-scans":          readAsPending,
-	"sessions":               rebuiltFromRegistrations,
-	"forgotten":              readAsRemoved,
-	"status.json":            replacedByNextPass,
-	"discovery-catalog.json": readAsAbsent,
-	storageClockFile:         readAsAbsent,
-	"request-locks":          holdsNoContent,
+	"registrations":           quarantineUnderLock,
+	"requests":                quarantineUnderLock,
+	"subagent-candidates":     quarantineUnderLock,
+	"published":               quarantineInPass,
+	"pending":                 quarantineInPass,
+	"superseded":              quarantineInPass,
+	"scan-signatures":         readAsAbsent,
+	refreshSkipDir:            readAsAbsent,
+	"pending-scans":           readAsPending,
+	"sessions":                rebuiltFromRegistrations,
+	"forgotten":               readAsRemoved,
+	"status.json":             replacedByNextPass,
+	"discovery-catalog.json":  readAsAbsent,
+	"identity-journal":        requiresRepair,
+	"identity-migration.json": requiresRepair,
+	"identity-migration.lock": holdsNoContent,
+	storageClockFile:          readAsAbsent,
+	"request-locks":           holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.

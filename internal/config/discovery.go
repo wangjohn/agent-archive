@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"reflect"
 	"slices"
@@ -94,7 +95,7 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 				continue
 			}
 			var kept *DiscoveryAuthorization
-			if previous.Discovery != nil && previous.Discovery.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.Archive.Enabled && reflect.DeepEqual(previous.Archive.Projects, next.Archive.Projects) && slices.Equal(previous.Discovery.CodexHomes, d.CodexHomes) {
+			if previous.Discovery != nil && previous.Discovery.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.Archive.Enabled && sameDiscoveryProjectScope(p.Root, previous, *next) && slices.Equal(previous.Discovery.CodexHomes, d.CodexHomes) {
 				for _, a := range previous.Discovery.Authorizations {
 					if a.ProjectRoot == p.Root && a.DestinationID == next.DestinationID() {
 						a.Intervals = slices.Clone(a.Intervals)
@@ -168,4 +169,33 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 		}
 	}
 	return "", false
+}
+
+func sameDiscoveryProjectScope(root string, previous, next Config) bool {
+	within := func(c Config) []archive.ProjectActivation {
+		var relevant []archive.ProjectActivation
+		for _, p := range c.Archive.Projects {
+			if local.PathWithin(p.Root, root) || local.PathWithin(root, p.Root) {
+				relevant = append(relevant, p)
+			}
+		}
+		slices.SortFunc(relevant, func(a, b archive.ProjectActivation) int { return strings.Compare(a.Root, b.Root) })
+		return relevant
+	}
+	return reflect.DeepEqual(within(previous), within(next))
+}
+
+// ProtectIdentityWriter preserves policy while making older writers refuse
+// namespaced state. Callers hold hooks.lock after checking setup's journal.
+// Disablement is explicit: this never grants discovery consent or intervals.
+func ProtectIdentityWriter(home string) error {
+	c, found, err := Load(home)
+	if err != nil || !found {
+		return err
+	}
+	if c.Discovery != nil {
+		return nil
+	}
+	c.Discovery = &DiscoveryConfig{}
+	return Save(home, c)
 }
