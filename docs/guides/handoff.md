@@ -294,8 +294,9 @@ This section describes `handoff` after setup. [Before
 setup](#before-setup-native-local-sessions) there is no archive: words search
 only the loaded previews of Claude Code and Codex sessions in this directory
 and below (the newest 50 at first), match a name, title, branch, project, app,
-or the start of a native ID but not a pull request number, and never widen to
-other projects unless you pass `--all-projects`. Several matches open the picker on a
+or the start of a native ID but not a pull request number, can match a session
+with no prompt yet, and never widen to other projects unless you pass
+`--all-projects`. Several matches open the picker on a
 terminal; without one, each is printed as `local <ID> (<app>): <title>` and the
 command exits 1 with no `Next:` line.
 
@@ -424,7 +425,8 @@ same keys everywhere; only what Enter does differs. Here Enter hands the
 session off, and the heading starts with `Hand off ·`. This section describes
 the picker after setup; [before setup](#before-setup-native-local-sessions) its
 heading starts with `Hand off local ·`, it lists only this machine's Claude
-Code and Codex sessions in this directory and below (no PR column, `●`,
+Code and Codex sessions in this directory and below, including ones with no
+prompt yet (an unnamed one is titled by its native ID; no PR column, `●`,
 `· not yet uploaded`, or `a`), and `o` loads 50 older ones.
 
 ```text
