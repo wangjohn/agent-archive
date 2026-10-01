@@ -50,6 +50,20 @@ type HandoffOptions struct {
 	// from the time the handoff is built.
 	StartedAt      time.Time
 	LastActivityAt time.Time
+	// Checkout is where the receiving agent will work, when the caller
+	// knows. BuildHandoff compares it with what the transcript recorded and
+	// notes a difference in Workspace; it is never read from the bundle.
+	Checkout HandoffCheckout
+}
+
+// HandoffCheckout is the checkout a handoff is for: what the person's
+// current directory is, not what the session recorded.
+type HandoffCheckout struct {
+	// Directories are the checkout's absolute path as written and with
+	// symlinks resolved, so a match under either spelling counts.
+	Directories []string
+	// Branch is the branch checked out, or "" when detached or unknown.
+	Branch string
 }
 
 func (o HandoffOptions) resultLines() int {
@@ -106,10 +120,18 @@ type HandoffSession struct {
 }
 
 // HandoffWorkspace is what the transcript recorded about where the work
-// happened. Directory is a base name only.
+// happened. Directory is a base name only. Elsewhere and CurrentBranch are
+// set only when the caller gave HandoffOptions.Checkout and it differs.
 type HandoffWorkspace struct {
 	Directory string `json:"directory,omitempty"`
 	Branch    string `json:"branch,omitempty"`
+	// Elsewhere is true when the recorded directory is neither the current
+	// checkout nor a directory containing or inside it: the session ran in
+	// another clone or on another machine, so its paths may not exist here.
+	Elsewhere bool `json:"elsewhere,omitempty"`
+	// CurrentBranch is the branch the current checkout is on, set when it
+	// differs from Branch.
+	CurrentBranch string `json:"current_branch,omitempty"`
 }
 
 // HandoffPlanItem is one entry of the agent's latest plan or todo list, with
@@ -231,7 +253,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	h := Handoff{
 		Version:                HandoffVersion,
 		Session:                handoffSession(bundle, view, metadata, opts),
-		Workspace:              recordedWorkspace(bundle),
+		Workspace:              compareWorkspace(recordedWorkspace(bundle), workspaceRoot(bundle), opts.Checkout),
 		ToolResultsUnavailable: toolResultsUnavailable,
 		Exchanges:              exchanges,
 		LeftOff:                leftOff,
@@ -482,6 +504,24 @@ func recordedBranch(bundle SourceBundle) string {
 		}
 	}
 	return ""
+}
+
+// compareWorkspace marks where the recorded workspace differs from the
+// checkout the handoff is for. root is the full recorded directory, compared
+// here and never kept. A recorded directory that contains the checkout, or is
+// inside it, is the same checkout (a session may start in a subdirectory).
+// With no root, or no checkout given, nothing is claimed.
+func compareWorkspace(ws HandoffWorkspace, root string, checkout HandoffCheckout) HandoffWorkspace {
+	if root != "" && len(checkout.Directories) > 0 {
+		ws.Elsewhere = !slices.ContainsFunc(checkout.Directories, func(dir string) bool {
+			dir = path.Clean(dir)
+			return dir == root || strings.HasPrefix(dir, strings.TrimSuffix(root, "/")+"/") || strings.HasPrefix(root, strings.TrimSuffix(dir, "/")+"/")
+		})
+	}
+	if ws.Branch != "" && checkout.Branch != "" && ws.Branch != checkout.Branch {
+		ws.CurrentBranch = checkout.Branch
+	}
+	return ws
 }
 
 // workspaceRoot is the first working directory the transcript recorded: where

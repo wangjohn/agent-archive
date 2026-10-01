@@ -117,6 +117,8 @@ type handoffResolverDependencies interface {
 	openStore(config.Config) (storage.ObjectStore, error)
 	now() time.Time
 	cursorDatabase() string
+	// repoKeyResolver looks up the repository key of a directory.
+	repoKeyResolver() func(root string) string
 }
 
 type handoffFileDependencies interface {
@@ -144,6 +146,7 @@ type workingDirDependencies interface {
 type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
+	handoffCheckoutDependencies
 	scopeDependencies
 	sessionBrowseDependencies
 	handoffLaunchDependencies

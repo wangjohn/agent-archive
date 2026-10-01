@@ -57,16 +57,17 @@ func (c candidateList) print(w io.Writer) {
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, row := range c.rows {
 		// The ID is stored data, like the title, and may hold control
-		// characters; the other cells were cleaned when the row was built.
-		cells := []string{"  " + archive.DisplayLine(row.ShortID), row.Harness}
+		// characters. Nothing is left long or invisible either: an agent
+		// reads this.
+		cells := []string{"  " + cappedLine(row.ShortID, 12), cappedLine(row.Harness, 20)}
 		if showProject {
-			cells = append(cells, row.Project)
+			cells = append(cells, cappedLine(row.Project, 30))
 		}
 		cells = append(cells, row.When)
 		if showPR {
 			cells = append(cells, row.PR)
 		}
-		title := row.Title
+		title := cappedLine(row.Title, matchFieldWidth)
 		if row.Parent != "" {
 			title += subagentHint(row)
 		}
