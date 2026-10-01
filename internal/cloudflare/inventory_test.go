@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestTokenInventoryPreservesPartialDataAndRejectsRepeatedPages(t *testing.T)
 func TestTokenInventoryPermissionFailureAndReflectedSecretRemainUnknown(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusForbidden, http.StatusUnauthorized} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			t.Parallel()
 			client, srv, _ := newClient(t)
 			srv.Fail(cloudflaretest.RouteListTokens, cloudflaretest.Failure{Status: status, Message: canary})
