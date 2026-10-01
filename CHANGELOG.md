@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
+
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a
   terminal, so their list is gone once you choose, as `list`'s is.
