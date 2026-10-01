@@ -45,7 +45,10 @@ type Candidate struct {
 type Outcome string
 
 const (
-	outcomeUsable Outcome = "native_format"
+	outcomeUsable      Outcome = "native_format"
+	outcomeIncomplete  Outcome = "incomplete_metadata"
+	outcomeUnavailable Outcome = "source_unavailable"
+	outcomeChanged     Outcome = "source_changed"
 )
 
 // Observation is one bounded metadata probe and its typed outcome.
@@ -91,6 +94,7 @@ type SourceAdapter interface {
 // The compile-time registry ships only Codex. Producer support stays gated;
 // Claude and Cursor retain their existing hooks and gain no discovery path.
 func registeredAdapters() []SourceAdapter { return []SourceAdapter{codexAdapter{}} }
+
 func findAdapter(adapters []SourceAdapter, agent string) SourceAdapter {
 	for _, a := range adapters {
 		if a.Agent() == agent {
@@ -104,8 +108,10 @@ type codexAdapter struct {
 	supported func(sourcefacts.CodexMeta) bool
 }
 
-func (codexAdapter) Agent() string                { return "codex" }
+func (codexAdapter) Agent() string { return "codex" }
+
 func (codexAdapter) InitialDirectories() []string { return []string{"sessions", "archived_sessions"} }
+
 func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie int64) (SourceBatch, error) {
 	if err := ctx.Err(); err != nil {
 		return SourceBatch{}, err
@@ -123,6 +129,7 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	}
 	return b, nil
 }
+
 func (codexAdapter) Describe(root, path, name string) SourceEntry {
 	loc := filepath.Join(root, path, name)
 	info, err := os.Lstat(loc)
@@ -141,6 +148,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 	}
 	return SourceEntry{Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
 }
+
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
 	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes}
@@ -150,11 +158,13 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 	o.Candidate = candidateFromHeader(h, source)
 	return o
 }
+
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
 	_ = json.Unmarshal(h.Meta.Source, &producerSource)
 	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, Execution: "local"}
 }
+
 func (codexAdapter) PriorityDirectories(now time.Time) []string {
 	var paths []string
 	for _, delta := range []int{0, -1, 1} {

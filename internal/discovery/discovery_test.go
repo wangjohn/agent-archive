@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,41 +22,51 @@ import (
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
-func fixture(t testing.TB) (*state.Store, config.Config, time.Time, string) {
-	t.Helper()
-	home, project, codex := t.TempDir(), t.TempDir(), t.TempDir()
+func fixture(tb testing.TB) (*state.Store, config.Config, time.Time, string) {
+	tb.Helper()
+	canonical := func(path string) string {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		return resolved
+	}
+	home, project, codex := canonical(tb.TempDir()), canonical(tb.TempDir()), canonical(tb.TempDir())
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	store, err := state.Open(home)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	cfg := config.Config{MachineID: "synthetic-machine", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at}}}, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{codex}}}
 	if err := config.ReconcileDiscovery(&cfg, config.Config{}, at); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := config.Save(home, cfg); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return store, cfg, at, codex
 }
-func writeRollout(t testing.TB, codex, project string, at time.Time, n int, folder string) string {
-	t.Helper()
+
+func writeRollout(tb testing.TB, codex, project string, at time.Time, n int, folder string) string {
+	tb.Helper()
 	id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
 	path := filepath.Join(codex, folder, "rollout-2026-10-01T12-00-00-"+id+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	meta, _ := json.Marshal(map[string]any{"type": "session_meta", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": at.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "synthetic", "cli_version": "test"}})
 	task, _ := json.Marshal(map[string]any{"type": "event_msg", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": at.Format(time.RFC3339Nano)}})
 	prompt, _ := json.Marshal(map[string]any{"type": "response_item", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "SYNTHETIC_BODY_ONLY"}}}})
 	if err := os.WriteFile(path, []byte(string(meta)+"\n"+string(task)+"\n"+string(prompt)+"\n"), 0600); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return id
 }
+
 func syntheticSupport(m sourcefacts.CodexMeta) bool {
 	return m.Version == "test" && m.Originator == "synthetic"
 }
+
 func TestProductionScanKeepsUnverifiedNativeProducerUnregistered(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -69,6 +80,7 @@ func TestProductionScanKeepsUnverifiedNativeProducerUnregistered(t *testing.T) {
 		t.Fatal("unverified producer admitted")
 	}
 }
+
 func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -114,6 +126,7 @@ func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *te
 		t.Fatalf("unchanged source repeated work: %#v %v", h, err)
 	}
 }
+
 func TestBoundedScanContinuesFairlyAcrossActiveAndArchivedSources(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -124,7 +137,7 @@ func TestBoundedScanContinuesFairlyAcrossActiveAndArchivedSources(t *testing.T) 
 	writeRollout(t, root, project, at.Add(time.Minute), 9999, "archived_sessions")
 	seen := 0
 	completed := false
-	for pass := 0; pass < 12; pass++ {
+	for range 12 {
 		h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 		if err != nil || h.Probes > HeaderProbes || h.Entries > 2200 {
 			t.Fatalf("unbounded pass %#v %v", h, err)
@@ -148,6 +161,7 @@ func TestBoundedScanContinuesFairlyAcrossActiveAndArchivedSources(t *testing.T) 
 		t.Fatal("catalog unbounded")
 	}
 }
+
 func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -183,6 +197,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 		t.Fatal("tombstone lost")
 	}
 }
+
 func TestAdmissionRevalidatesPauseGenerationAndSkipsContendedHooks(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -208,14 +223,14 @@ func TestAdmissionRevalidatesPauseGenerationAndSkipsContendedHooks(t *testing.T)
 
 func BenchmarkCodexCatalog(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			store, cfg, at, root := fixture(b)
 			for i := 1; i <= count; i++ {
 				writeRollout(b, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), i, "sessions")
 			}
 			b.ResetTimer()
 			probes, bytes, entries := 0, int64(0), 0
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(time.Hour) }})
 				if err != nil {
 					b.Fatal(err)
@@ -231,10 +246,26 @@ func BenchmarkCodexCatalog(b *testing.B) {
 	}
 }
 
+type rejectedFieldCase string
+
+const (
+	rejectedFieldSource                      rejectedFieldCase = "source"
+	rejectedFieldParentThreadId              rejectedFieldCase = "parent_thread_id"
+	rejectedFieldHistoryBase                 rejectedFieldCase = "history_base"
+	rejectedFieldForkedFromId                rejectedFieldCase = "forked_from_id"
+	rejectedFieldSubagentHistoryStartOrdinal rejectedFieldCase = "subagent_history_start_ordinal"
+	rejectedFieldSessionId                   rejectedFieldCase = "session_id"
+	rejectedFieldCwd                         rejectedFieldCase = "cwd"
+	rejectedFieldTimestamp                   rejectedFieldCase = "timestamp"
+	rejectedFieldHistoryMode                 rejectedFieldCase = "history_mode"
+	rejectedFieldOriginator                  rejectedFieldCase = "originator"
+	rejectedFieldCliVersion                  rejectedFieldCase = "cli_version"
+)
+
 func TestRejectedMetadataPayloadNeverEntersCatalog(t *testing.T) {
 	t.Parallel()
-	for _, field := range []string{"source", "parent_thread_id", "history_base", "forked_from_id", "subagent_history_start_ordinal", "session_id", "cwd", "timestamp", "history_mode", "originator", "cli_version"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []rejectedFieldCase{rejectedFieldSource, rejectedFieldParentThreadId, rejectedFieldHistoryBase, rejectedFieldForkedFromId, rejectedFieldSubagentHistoryStartOrdinal, rejectedFieldSessionId, rejectedFieldCwd, rejectedFieldTimestamp, rejectedFieldHistoryMode, rejectedFieldOriginator, rejectedFieldCliVersion} {
+		t.Run(string(field), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
@@ -247,10 +278,10 @@ func TestRejectedMetadataPayloadNeverEntersCatalog(t *testing.T) {
 			}
 			payload := first["payload"].(map[string]any)
 			secret := "PRIVATE_BODY_MUST_NEVER_ENTER_CATALOG"
-			if field == "source" || field == "parent_thread_id" || field == "history_base" || field == "forked_from_id" || field == "subagent_history_start_ordinal" {
-				payload[field] = map[string]any{"prompt": secret}
+			if field == rejectedFieldSource || field == rejectedFieldParentThreadId || field == rejectedFieldHistoryBase || field == rejectedFieldForkedFromId || field == rejectedFieldSubagentHistoryStartOrdinal {
+				payload[string(field)] = map[string]any{"prompt": secret}
 			} else {
-				payload[field] = strings.Repeat(secret, 100)
+				payload[string(field)] = strings.Repeat(secret, 100)
 			}
 			encoded, _ := json.Marshal(first)
 			lines[0] = string(encoded)
@@ -298,7 +329,7 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	if err := config.Save(store.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	for n := 0; n < 3; n++ {
+	for range 3 {
 		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
 		if err != nil {
 			t.Fatal(err)
@@ -311,7 +342,7 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	}
 	// A validated active copy is preferred when both locations exist.
 	writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
-	for n := 0; n < 3; n++ {
+	for range 3 {
 		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
 		if err != nil {
 			t.Fatal(err)

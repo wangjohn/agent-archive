@@ -88,7 +88,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 		}
 	}()
 	r := bufio.NewReaderSize(io.LimitReader(reader, HeaderBytes), 32<<10)
-	for i := 0; i < HeaderRecords; i++ {
+	for i := range HeaderRecords {
 		line, err := r.ReadBytes('\n')
 		h.Bytes += int64(len(line))
 		if len(line) > 64<<10 {
@@ -147,7 +147,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 
 func safeMeta(m CodexMeta) CodexMeta {
 	var source string
-	if json.Unmarshal(m.Source, &source) == nil && (source == "cli" || source == "vscode") {
+	if json.Unmarshal(m.Source, &source) == nil && m.LocalExecutionSource() {
 		m.Source, _ = json.Marshal(source)
 	} else {
 		m.Source = nil

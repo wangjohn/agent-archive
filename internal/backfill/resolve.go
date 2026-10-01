@@ -314,7 +314,7 @@ func (r *resolver) repository(dir string) (repo string, found bool, skip SkipRea
 			if info.IsDir() {
 				return d, true, ""
 			}
-			main, ok := r.worktreeMain(d, gitPath)
+			main, ok := r.worktreeMain(d)
 			if !ok {
 				// The git directory the file names is gone: the worktree's
 				// repository was removed or moved. Only a Claude Code
@@ -338,7 +338,7 @@ func (r *resolver) repository(dir string) (repo string, found bool, skip SkipRea
 // the git directory it names, or the common directory, does not exist.
 // Anything else it cannot follow leaves the checkout holding the file as its
 // own root.
-func (r *resolver) worktreeMain(checkout, gitFile string) (string, bool) {
+func (r *resolver) worktreeMain(checkout string) (string, bool) {
 	return sourcefacts.WorktreeMain(checkout, r.env.readFile, r.env.exists, false)
 }
 

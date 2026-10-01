@@ -12,13 +12,7 @@ func identityDirBatch(f *os.File, offset int64, count int) ([]string, int64, boo
 	}
 	// One kernel record cannot exceed NAME_MAX + dirent metadata. Keep the
 	// batch below the requested bound without dropping buffered entries.
-	bytes := count * 24
-	if bytes < 280 {
-		bytes = 280
-	}
-	if bytes > 4096 {
-		bytes = 4096
-	}
+	bytes := min(max(count*24, 280), 4096)
 	buffer := make([]byte, bytes)
 	n, err := syscall.ReadDirent(int(f.Fd()), buffer)
 	if err != nil {

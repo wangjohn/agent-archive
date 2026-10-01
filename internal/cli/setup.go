@@ -118,10 +118,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return runSetupRefresh(stdout, stderr, env, opts.verbose)
 	}
-	if opts.codexDiscovery != "" && opts.codexDiscovery != "on" && opts.codexDiscovery != "off" {
+	setting := discoverySetting(opts.codexDiscovery)
+	if setting != "" && setting != discoveryOn && setting != discoveryOff {
 		return fs.usageError("--codex-discovery requires on or off")
 	}
-	if opts.codexDiscovery == "on" {
+	if setting == discoveryOn {
 		return fs.usageError("automatic Codex discovery is unavailable for current producers: local-origin evidence has not passed release acceptance; use hooks or deliberate backfill")
 	}
 	if opts.noSkills && opts.skills {

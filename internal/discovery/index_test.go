@@ -13,28 +13,29 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
-func hintDatabase(t testing.TB, root string, wal bool) *sql.DB {
-	t.Helper()
+func hintDatabase(tb testing.TB, root string, wal bool) *sql.DB {
+	tb.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(root, "state_5.sqlite"))
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
+	tb.Cleanup(func() { _ = db.Close() })
 	if wal {
-		if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0"); err != nil {
-			t.Fatal(err)
+		if _, err := db.ExecContext(tb.Context(), "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0"); err != nil {
+			tb.Fatal(err)
 		}
 	}
-	if _, err := db.Exec("CREATE TABLE threads(id TEXT PRIMARY KEY,rollout_path TEXT,created_at_ms INTEGER,updated_at_ms INTEGER,preview TEXT); CREATE INDEX idx_threads_created_at_ms ON threads(created_at_ms DESC,id DESC); CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC,id DESC)"); err != nil {
-		t.Fatal(err)
+	if _, err := db.ExecContext(tb.Context(), "CREATE TABLE threads(id TEXT PRIMARY KEY,rollout_path TEXT,created_at_ms INTEGER,updated_at_ms INTEGER,preview TEXT); CREATE INDEX idx_threads_created_at_ms ON threads(created_at_ms DESC,id DESC); CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC,id DESC)"); err != nil {
+		tb.Fatal(err)
 	}
 	return db
 }
-func addHint(t testing.TB, db *sql.DB, id, path string, at time.Time) {
-	t.Helper()
-	if _, err := db.Exec("INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)", id, path, at.UnixMilli(), at.UnixMilli()); err != nil {
-		t.Fatal(err)
+
+func addHint(tb testing.TB, db *sql.DB, id, path string, at time.Time) {
+	tb.Helper()
+	if _, err := db.ExecContext(tb.Context(), "INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)", id, path, at.UnixMilli(), at.UnixMilli()); err != nil {
+		tb.Fatal(err)
 	}
 }
 
@@ -59,6 +60,7 @@ func TestIndexedHintFindsFreshTaskAheadOfLargeFlatOrSameDayHistory(t *testing.T)
 		})
 	}
 }
+
 func TestIndexHintsNeverSupplyAuthorizationOrSourceSupport(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -76,6 +78,7 @@ func TestIndexHintsNeverSupplyAuthorizationOrSourceSupport(t *testing.T) {
 		t.Fatal("SQLite activated an unverified producer", err)
 	}
 }
+
 func TestIndexHintsRejectOutsideRootAndEscapingSources(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
@@ -97,35 +100,49 @@ func TestIndexHintsRejectOutsideRootAndEscapingSources(t *testing.T) {
 		t.Fatalf("unsafe source read: %#v %v", h, err)
 	}
 }
+
+type indexFailureCase string
+
+const (
+	indexFailureMissing     indexFailureCase = "missing"
+	indexFailureCorrupt     indexFailureCase = "corrupt"
+	indexFailureNoIndex     indexFailureCase = "no_index"
+	indexFailureWrongIndex  indexFailureCase = "wrong_index"
+	indexFailureFifo        indexFailureCase = "fifo"
+	indexFailureSideSymlink indexFailureCase = "side_symlink"
+)
+
 func TestIndexHintFallbackForMissingCorruptAndUnorderedIndexes(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"missing", "corrupt", "no_index", "wrong_index", "fifo", "side_symlink"} {
-		t.Run(failure, func(t *testing.T) {
+	for _, failure := range []indexFailureCase{indexFailureMissing, indexFailureCorrupt, indexFailureNoIndex, indexFailureWrongIndex, indexFailureFifo, indexFailureSideSymlink} {
+		t.Run(string(failure), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
 			path := filepath.Join(root, "state_5.sqlite")
 			switch failure {
-			case "corrupt":
+			case indexFailureMissing:
+				// A missing optional DB deliberately has no fixture.
+			case indexFailureCorrupt:
 				if err := os.WriteFile(path, []byte("not a database"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "fifo":
+			case indexFailureFifo:
 				if err := syscall.Mkfifo(path, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "no_index", "wrong_index", "side_symlink":
+			case indexFailureNoIndex, indexFailureWrongIndex, indexFailureSideSymlink:
 				db := hintDatabase(t, root, false)
-				if failure == "side_symlink" {
+				if failure == indexFailureSideSymlink {
 					if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path+"-wal"); err != nil {
 						t.Fatal(err)
 					}
 				} else {
 					statement := "DROP INDEX idx_threads_created_at_ms"
-					if failure == "wrong_index" {
+					if failure == indexFailureWrongIndex {
 						statement += "; CREATE INDEX idx_threads_created_at_ms ON threads(rollout_path)"
 					}
-					if _, err := db.Exec(statement); err != nil {
+					if _, err := db.ExecContext(t.Context(), statement); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -140,6 +157,7 @@ func TestIndexHintFallbackForMissingCorruptAndUnorderedIndexes(t *testing.T) {
 		})
 	}
 }
+
 func TestLiveWALHintsFallBackWithoutNativeWrites(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -170,10 +188,11 @@ func TestLiveWALHintsFallBackWithoutNativeWrites(t *testing.T) {
 		t.Fatal("cancelled query returned hints")
 	}
 	var count int
-	if err := db.QueryRow("SELECT count(*) FROM threads").Scan(&count); err != nil || count != 1 {
+	if err := db.QueryRowContext(t.Context(), "SELECT count(*) FROM threads").Scan(&count); err != nil || count != 1 {
 		t.Fatal("hint reader damaged writer", err)
 	}
 }
+
 func TestIndexHintsBoundReturnedLocators(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

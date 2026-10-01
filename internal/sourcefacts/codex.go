@@ -23,7 +23,8 @@ func NativeFirstTask(line []byte) (bool, bool) { return nativesessions.NativeFir
 
 // FirstTaskAt reads native start time without retaining body.
 func FirstTaskAt(line []byte) time.Time { return nativesessions.FirstTaskAt(line) }
-func present(v json.RawMessage) bool    { return len(v) > 0 && string(v) != "null" }
+
+func present(v json.RawMessage) bool { return len(v) > 0 && string(v) != "null" }
 
 // SupportedCodexProducer remains false until release acceptance proves local origin.
 func SupportedCodexProducer(CodexMeta) bool { return false }

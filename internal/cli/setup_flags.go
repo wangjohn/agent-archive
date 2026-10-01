@@ -25,6 +25,13 @@ const (
 	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY" //nolint:gosec // G101: a variable's name, not a credential.
 )
 
+type discoverySetting string
+
+const (
+	discoveryOn  discoverySetting = "on"
+	discoveryOff discoverySetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
 	provider             string
@@ -293,7 +300,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if opts.skillEvidence != "" {
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
 	}
-	if opts.codexDiscovery == "off" && cfg.Discovery != nil {
+	if discoverySetting(opts.codexDiscovery) == discoveryOff && cfg.Discovery != nil {
 		d := *cfg.Discovery
 		d.Enabled = false
 		cfg.Discovery = &d

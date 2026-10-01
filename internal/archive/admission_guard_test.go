@@ -214,9 +214,11 @@ func a() {
 	_ = r.Admitted().Before(p.ActivatedAt)
 	next.DestinationSince = now
 }
+
 func (c Config) InCurrentDestination(r archive.SessionRegistration) bool {
 	return c.DestinationSince.IsZero() || !r.Admitted().Before(c.DestinationSince)
 }
+
 func CheckClock() {
 	_ = admittedAt.Before(cfg.DestinationSince)
 }`

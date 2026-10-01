@@ -1,6 +1,7 @@
 package sourcefacts
 
 import (
+	"context"
 	"encoding/json"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 	"os"
@@ -25,6 +26,7 @@ func testRecords(t *testing.T, m map[string]any, task map[string]any) string {
 	second, _ := json.Marshal(map[string]any{"type": "event_msg", "payload": task})
 	return string(first) + "\n" + string(second) + "\n"
 }
+
 func TestCodexNativeShapeDoesNotEnableAnUnverifiedProducer(t *testing.T) {
 	t.Parallel()
 	h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, nil)), "rollout-2026-10-01T12-00-00-"+testID+".jsonl")
@@ -35,6 +37,7 @@ func TestCodexNativeShapeDoesNotEnableAnUnverifiedProducer(t *testing.T) {
 		t.Fatal("unverified source activated")
 	}
 }
+
 func TestCodexFirstImportedTurnNeverBecomesNativeOnResume(t *testing.T) {
 	t.Parallel()
 	data := testRecords(t, nil, map[string]any{"type": "task_started", "turn_id": "external-import-turn-1", "root_turn_id": nil}) + testRecords(t, nil, nil)
@@ -43,6 +46,7 @@ func TestCodexFirstImportedTurnNeverBecomesNativeOnResume(t *testing.T) {
 		t.Fatal(h.Outcome)
 	}
 }
+
 func TestCodexInheritedAndUnknownExecutionFailClosed(t *testing.T) {
 	t.Parallel()
 	for _, field := range []string{"forked_from_id", "forked_from_ordinal_exclusive", "parent_thread_id", "history_base", "subagent_history_start_ordinal", "source"} {
@@ -57,6 +61,7 @@ func TestCodexInheritedAndUnknownExecutionFailClosed(t *testing.T) {
 		})
 	}
 }
+
 func TestCodexHeaderLimitsAndIncompleteRecords(t *testing.T) {
 	t.Parallel()
 	for _, input := range []string{"{", strings.Repeat("x", HeaderBytes), testRecords(t, nil, nil)[:20], strings.Repeat("{}\n", HeaderRecords+1)} {
@@ -66,6 +71,7 @@ func TestCodexHeaderLimitsAndIncompleteRecords(t *testing.T) {
 		}
 	}
 }
+
 func TestRegularSourceRejectsEscapesAndFIFOWithoutBlocking(t *testing.T) {
 	t.Parallel()
 	root, outside := t.TempDir(), t.TempDir()
@@ -139,5 +145,35 @@ func TestFirstTaskAfterLongIdleRetainsSeparateNativeTimestamps(t *testing.T) {
 	h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, task)), "rollout-"+testID+".jsonl")
 	if h.Outcome != "native_format" || h.FirstTaskAt.Sub(h.Started) != 24*time.Hour {
 		t.Fatalf("ordinary idle gap rejected: %#v", h)
+	}
+}
+
+func TestApprovedAncestorAliasOpensCanonicalSnapshotWithoutEscapes(t *testing.T) {
+	t.Parallel()
+	physical, aliasParent, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	alias := filepath.Join(aliasParent, "approved")
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Fatal(err)
+	}
+	name := "rollout-" + testID + ".jsonl"
+	if err := os.WriteFile(filepath.Join(physical, name), []byte(testRecords(t, nil, nil)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := ReadHeader(context.Background(), alias, filepath.Join(alias, name))
+	if h.Outcome != "native_format" {
+		t.Fatalf("approved ancestor alias rejected: %#v", h)
+	}
+	secret := filepath.Join(outside, "outside.jsonl")
+	if err := os.WriteFile(secret, []byte(testRecords(t, nil, nil)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(physical, name)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(physical, name)); err != nil {
+		t.Fatal(err)
+	}
+	if h := ReadHeader(context.Background(), alias, filepath.Join(alias, name)); h.Outcome != "source_unavailable" {
+		t.Fatal("alias weakened source confinement", h.Outcome)
 	}
 }

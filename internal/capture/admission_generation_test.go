@@ -154,7 +154,7 @@ func TestFreshHookDefersAndReplaysDuringIdentityMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate an upgrade with a backlog of old registrations and missing derived indexes.
-	for i := 0; i < 120; i++ {
+	for i := range 120 {
 		r := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("legacy-%03d", i), NativeSessionID: fmt.Sprintf("old-%03d", i), Harness: archive.Harness{Name: "claude"}, ProjectRoot: project, ProjectID: archive.ProjectID(project), SessionStartedAt: at.Add(-time.Minute)}
 		if err := store.SaveRegistration(r); err != nil {
 			t.Fatal(err)
@@ -170,7 +170,7 @@ func TestFreshHookDefersAndReplaysDuringIdentityMigration(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatal("fresh proof not durably deferred", err)
 	}
-	for n := 0; n < 20; n++ {
+	for range 20 {
 		done, err := PrepareIdentityIndexes(home, 256)
 		if err != nil {
 			t.Fatal(err)

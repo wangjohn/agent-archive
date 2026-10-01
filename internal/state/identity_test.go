@@ -40,6 +40,7 @@ func TestAgentNamespacesKeepSameNativeIdentityDistinct(t *testing.T) {
 		}
 	}
 }
+
 func TestLegacyIdentityMigratesOnlyAfterRegistrationOwnership(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)
@@ -65,6 +66,7 @@ func TestLegacyIdentityMigratesOnlyAfterRegistrationOwnership(t *testing.T) {
 		t.Fatal("corrupt namespace allocated replacement")
 	}
 }
+
 func TestRegisterOrMergeConcurrentArrivalsPreserveOneProvenance(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)

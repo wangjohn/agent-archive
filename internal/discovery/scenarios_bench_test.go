@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ import (
 // remain visible rather than implying a universal warm-task latency promise.
 func BenchmarkCodexCoverageAndWarmBurst(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			benchmarkCoverageAndWarmBurst(b, count, false)
 		})
 	}
@@ -27,11 +28,12 @@ func BenchmarkCodexCoverageAndWarmBurst(b *testing.B) {
 
 func BenchmarkNativeDateCoverageAndWarmBurst(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) { benchmarkCoverageAndWarmBurst(b, count, true) })
+		b.Run(strconv.Itoa(count), func(b *testing.B) { benchmarkCoverageAndWarmBurst(b, count, true) })
 	}
 }
 
 func benchmarkCoverageAndWarmBurst(b *testing.B, count int, dated bool) {
+	b.Helper()
 	store, cfg, at, root := fixture(b)
 	project := cfg.Archive.Projects[0].Root
 	historyFolder, freshFolder := "sessions", "sessions"
@@ -78,7 +80,7 @@ func benchmarkCoverageAndWarmBurst(b *testing.B, count int, dated bool) {
 	burstStart := time.Now()
 	b.ResetTimer()
 	warmProbes := 0
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 		if err != nil {
 			b.Fatal(err)
@@ -117,14 +119,14 @@ func BenchmarkSyntheticAdmissionLock(b *testing.B) {
 	const count = 1000
 	headers := make([]sourcefacts.Header, count)
 	locators := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		id := writeRollout(b, root, project, at.Add(time.Minute), i+1, "sessions")
 		locators[i] = filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
 		headers[i] = sourcefacts.ReadHeader(context.Background(), root, locators[i])
 	}
 	durations := make([]time.Duration, b.N)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		index := i % count
 		header := headers[index]
 		generation, _ := cfg.DiscoveryGeneration("codex", project, header.Started, at.Add(2*time.Minute))
@@ -148,24 +150,24 @@ func BenchmarkIndexedWarmBurst(b *testing.B) {
 				store, cfg, at, root := fixture(b)
 				project := cfg.Archive.Projects[0].Root
 				db := hintDatabase(b, root, false)
-				tx, err := db.Begin()
+				tx, err := db.BeginTx(b.Context(), nil)
 				if err != nil {
 					b.Fatal(err)
 				}
-				statement, err := tx.Prepare("INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)")
+				statement, err := tx.PrepareContext(b.Context(), "INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)")
 				if err != nil {
 					b.Fatal(err)
 				}
+				defer func() { _ = tx.Rollback() }()
+				defer func() { _ = statement.Close() }()
 				for n := 1; n <= count; n++ {
 					native := writeRollout(b, root, project, at.Add(-time.Hour), n, folder)
 					path := filepath.Join(root, folder, "rollout-2026-10-01T12-00-00-"+native+".jsonl")
-					if _, err := statement.Exec(native, path, at.Add(-time.Hour).UnixMilli()+int64(n), at.Add(-time.Hour).UnixMilli()+int64(n)); err != nil {
+					if _, err := statement.ExecContext(b.Context(), native, path, at.Add(-time.Hour).UnixMilli()+int64(n), at.Add(-time.Hour).UnixMilli()+int64(n)); err != nil {
 						b.Fatal(err)
 					}
 				}
-				if err := statement.Close(); err != nil {
-					b.Fatal(err)
-				}
+
 				if err := tx.Commit(); err != nil {
 					b.Fatal(err)
 				}
@@ -188,7 +190,7 @@ func BenchmarkIndexedWarmBurst(b *testing.B) {
 				addHint(b, db, native, path, at.Add(time.Minute))
 				passes, queries, headerBytes, indexBytes := 0, 0, int64(0), int64(0)
 				b.ResetTimer()
-				for n := 0; n < b.N; n++ {
+				for n := range b.N {
 					for {
 						h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 						if err != nil {

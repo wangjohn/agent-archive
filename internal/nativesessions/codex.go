@@ -10,24 +10,46 @@ import (
 	"time"
 )
 
+type codexHistoryMode string
+
+const (
+	historyLegacy    codexHistoryMode = "legacy"
+	historyPaginated codexHistoryMode = "paginated"
+)
+
+type codexExecutionSource string
+
+const (
+	executionCLI    codexExecutionSource = "cli"
+	executionVSCode codexExecutionSource = "vscode"
+)
+
+type codexTaskEvent string
+
+const (
+	taskStarted codexTaskEvent = "task_started"
+	turnStarted codexTaskEvent = "turn_started"
+)
+
 // CodexMeta is identity and execution metadata, never transcript body.
 type CodexMeta struct {
-	ID              string          `json:"id"`
-	SessionID       string          `json:"session_id"`
-	Timestamp       string          `json:"timestamp"`
-	Cwd             string          `json:"cwd"`
-	Source          json.RawMessage `json:"source"`
-	Originator      string          `json:"originator"`
-	Version         string          `json:"cli_version"`
-	ForkedFrom      json.RawMessage `json:"forked_from_id"`
-	ForkOrdinal     json.RawMessage `json:"forked_from_ordinal_exclusive"`
-	Parent          json.RawMessage `json:"parent_thread_id"`
-	HistoryBase     json.RawMessage `json:"history_base"`
-	HistoryMode     string          `json:"history_mode"`
-	SubagentOrdinal json.RawMessage `json:"subagent_history_start_ordinal"`
+	ID              string           `json:"id"`
+	SessionID       string           `json:"session_id"`
+	Timestamp       string           `json:"timestamp"`
+	Cwd             string           `json:"cwd"`
+	Source          json.RawMessage  `json:"source"`
+	Originator      string           `json:"originator"`
+	Version         string           `json:"cli_version"`
+	ForkedFrom      json.RawMessage  `json:"forked_from_id"`
+	ForkOrdinal     json.RawMessage  `json:"forked_from_ordinal_exclusive"`
+	Parent          json.RawMessage  `json:"parent_thread_id"`
+	HistoryBase     json.RawMessage  `json:"history_base"`
+	HistoryMode     codexHistoryMode `json:"history_mode"`
+	SubagentOrdinal json.RawMessage  `json:"subagent_history_start_ordinal"`
 }
 
 var uuid = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 var rolloutUUID = regexp.MustCompile(`(?i)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$`)
 
 // RolloutID returns a rollout filename's native identity.
@@ -64,6 +86,7 @@ func ParseCodexMeta(line []byte) (CodexMeta, time.Time, bool, error) {
 func (m CodexMeta) ValidateIdentity(path string) bool {
 	return uuid.MatchString(m.ID) && strings.EqualFold(RolloutID(path), m.ID) && (m.SessionID == "" || m.SessionID == m.ID) && filepath.IsAbs(m.Cwd) && len(m.Cwd) <= 4096
 }
+
 func present(v json.RawMessage) bool { return len(v) > 0 && string(v) != "null" }
 
 // Classification rejects inherited histories, child tasks and unknown source
@@ -72,17 +95,23 @@ func (m CodexMeta) Classification() string {
 	if present(m.ForkedFrom) || present(m.ForkOrdinal) || present(m.Parent) || present(m.HistoryBase) || present(m.SubagentOrdinal) {
 		return "inherited_history"
 	}
-	if m.HistoryMode != "" && m.HistoryMode != "legacy" && m.HistoryMode != "paginated" {
+	if m.HistoryMode != "" && m.HistoryMode != historyLegacy && m.HistoryMode != historyPaginated {
 		return "unsupported_history"
 	}
-	var source string
-	if json.Unmarshal(m.Source, &source) != nil || (source != "cli" && source != "vscode") {
+	if !m.LocalExecutionSource() {
 		return "unsupported_execution"
 	}
 	if m.Version == "" || m.Originator == "" {
 		return "unsupported_producer"
 	}
 	return "native_format"
+}
+
+// LocalExecutionSource recognizes supported local source format tags only;
+// it does not establish local originating execution or producer support.
+func (m CodexMeta) LocalExecutionSource() bool {
+	var source codexExecutionSource
+	return json.Unmarshal(m.Source, &source) == nil && (source == executionCLI || source == executionVSCode)
 }
 
 // NativeFirstTask checks the first task_started, distinguishing Codex's built
@@ -99,12 +128,12 @@ func NativeFirstTask(line []byte) (seen, native bool) {
 		return false, false
 	}
 	var kind struct {
-		Type string `json:"type"`
+		Type codexTaskEvent `json:"type"`
 	}
 	if json.Unmarshal(envelope.Payload, &kind) != nil || kind.Type == "" {
 		return true, false
 	}
-	if kind.Type != "task_started" && kind.Type != "turn_started" {
+	if kind.Type != taskStarted && kind.Type != turnStarted {
 		return false, false
 	}
 	// This IS the first start even when its identity fields have invalid JSON

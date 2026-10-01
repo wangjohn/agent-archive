@@ -30,5 +30,9 @@ func (o RootOpener) EvalSymlinks(path string) (string, error) { return filepath.
 
 // OpenRegular opens through the approved root descriptor.
 func (o RootOpener) OpenRegular(path string) (transcriptio.File, error) {
-	return OpenRegular(o.Root, path)
+	root, err := filepath.EvalSymlinks(o.Root)
+	if err != nil {
+		return nil, err
+	}
+	return OpenRegular(root, path)
 }

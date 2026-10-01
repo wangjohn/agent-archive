@@ -38,6 +38,7 @@ func TestDiscoveryAttemptPrecedesUnavailableStorage(t *testing.T) {
 		t.Fatal("storage initialization prevented discovery")
 	}
 }
+
 func TestDiscoveryStatusDoesNotInventHookObservation(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()

@@ -38,6 +38,7 @@ type DiscoveryInterval struct {
 func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 	return SkillEvidence(strings.TrimSuffix(string(mode), discoveryWriterMarker))
 }
+
 func prepareDiscoveryConfig(c *Config) error {
 	if c.Discovery != nil {
 		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + discoveryWriterMarker)
@@ -45,6 +46,7 @@ func prepareDiscoveryConfig(c *Config) error {
 	}
 	return validateDiscoveryConfig(*c)
 }
+
 func validateDiscoveryConfig(c Config) error {
 	marked := strings.HasSuffix(string(c.SkillEvidence), discoveryWriterMarker)
 	if marked != (c.Discovery != nil) {
@@ -116,10 +118,11 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 				if next.DestinationSince.After(start) {
 					start = next.DestinationSince
 				}
-				a := DiscoveryAuthorization{Generation: id, Agent: "codex", ProjectRoot: p.Root, DestinationID: next.DestinationID()}
+				var intervals []DiscoveryInterval
 				if !next.Paused {
-					a.Intervals = []DiscoveryInterval{{Start: start}}
+					intervals = []DiscoveryInterval{{Start: start}}
 				}
+				a := DiscoveryAuthorization{Generation: id, Agent: "codex", ProjectRoot: p.Root, DestinationID: next.DestinationID(), Intervals: intervals}
 				kept = &a
 			}
 			d.Authorizations = append(d.Authorizations, *kept)
@@ -128,6 +131,7 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 	next.Discovery = &d
 	return prepareDiscoveryConfig(next)
 }
+
 func transitionDiscoveryPause(c *Config, paused bool, now time.Time) {
 	if c.Discovery == nil || c.Paused == paused {
 		return

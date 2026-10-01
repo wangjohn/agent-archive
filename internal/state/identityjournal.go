@@ -22,6 +22,7 @@ type identityMigration struct {
 	Offset   int64 `json:"offset"`
 	Complete bool  `json:"complete"`
 }
+
 type identityRecord struct {
 	Agent  string `json:"agent"`
 	Native string `json:"native"`
@@ -31,6 +32,7 @@ type identityRecord struct {
 func (s *Store) identityRecordPath(agent, native string) string {
 	return filepath.Join(s.home, "identity-journal", filepath.Base(nativeSessionIndexPath(s.home, archive.CanonicalHarness(agent)+"\x00"+native)))
 }
+
 func (s *Store) identityReady() (bool, error) {
 	var m identityMigration
 	err := local.Read(filepath.Join(s.home, "identity-migration.json"), &m)
@@ -42,6 +44,7 @@ func (s *Store) identityReady() (bool, error) {
 	}
 	return m.Complete, err
 }
+
 func (s *Store) journalIdentity(agent, native, id string) error {
 	if archive.CanonicalHarness(agent) == "" || native == "" || len(native) > 4096 || !safeFileComponent(id) {
 		return errors.New("invalid journal identity")
@@ -60,6 +63,7 @@ func (s *Store) journalIdentity(agent, native, id string) error {
 	}
 	return local.Write(path, identityRecord{archive.CanonicalHarness(agent), native, id})
 }
+
 func (s *Store) journalLookup(agent, native string) (string, bool, error) {
 	var r identityRecord
 	err := local.Read(s.identityRecordPath(agent, native), &r)
@@ -176,6 +180,7 @@ func (s *Store) ReconcileIdentityIndexes(limit int, guard func() error) (bool, e
 	}
 	return m.Complete, nil
 }
+
 func (s *Store) saveIdentityMigration(m identityMigration, guard func() error) error {
 	unlock, err := local.NamedLock(s.home, "hooks.lock")
 	if err != nil {
@@ -205,6 +210,7 @@ func identityNames(path string, offset int64, count int) ([]string, int64, bool,
 	// single bounded kernel batch instead (shared helper below).
 	return identityDirBatch(f, offset, count)
 }
+
 func (s *Store) reconcileIdentityRecord(path string, records []identityRecord, guard func() error) error {
 	unlock, err := local.NamedLock(s.home, "hooks.lock")
 	if err != nil {

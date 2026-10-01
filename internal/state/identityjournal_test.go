@@ -32,6 +32,7 @@ func TestIdentityJournalRepairsBothDeletedDerivedIndexes(t *testing.T) {
 		t.Fatal("duplicate registration")
 	}
 }
+
 func TestLegacyMigrationIsBoundedAndGuardsRollbackBeforeIndexes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -39,7 +40,7 @@ func TestLegacyMigrationIsBoundedAndGuardsRollbackBeforeIndexes(t *testing.T) {
 	if err := config.Save(s.home, c); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 90; i++ {
+	for i := range 90 {
 		r := registrationFor(fmt.Sprintf("legacy-%03d", i))
 		r.NativeSessionID = fmt.Sprintf("native-%03d", i)
 		// Synthetic pre-upgrade state has no index, including the damaged-index case.
@@ -82,6 +83,7 @@ func TestLegacyMigrationIsBoundedAndGuardsRollbackBeforeIndexes(t *testing.T) {
 		t.Fatal("guard not durable")
 	}
 }
+
 func TestCorruptJournalNeverAllocatesAReplacementIdentity(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

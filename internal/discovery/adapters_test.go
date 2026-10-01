@@ -28,18 +28,31 @@ func (a factAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obser
 	}
 	return o
 }
+
 func (factAdapter) Supported(Candidate) bool { return true }
+
+type candidateCase string
+
+const (
+	candidateExcluded        candidateCase = "excluded"
+	candidateOldStart        candidateCase = "old_start"
+	candidateDifferentAgent  candidateCase = "different_agent"
+	candidateDifferentSource candidateCase = "different_source"
+	candidateInherited       candidateCase = "inherited"
+	candidateUnknownEvidence candidateCase = "unknown_evidence"
+	candidateFutureTask      candidateCase = "future_task"
+)
 
 func TestAdapterFactsCannotGrantAdmission(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"excluded", "old_start", "different_agent", "different_source", "inherited", "unknown_evidence", "future_task"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []candidateCase{candidateExcluded, candidateOldStart, candidateDifferentAgent, candidateDifferentSource, candidateInherited, candidateUnknownEvidence, candidateFutureTask} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			project := cfg.Archive.Projects[0].Root
 			native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
 			excluded := filepath.Join(project, "excluded")
-			if mode == "excluded" {
+			if mode == candidateExcluded {
 				if err := os.MkdirAll(excluded, 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -54,19 +67,19 @@ func TestAdapterFactsCannotGrantAdmission(t *testing.T) {
 			}
 			adapter := factAdapter{alter: func(c *Candidate) {
 				switch mode {
-				case "excluded":
+				case candidateExcluded:
 					c.WorkingDirectory = excluded
-				case "old_start":
+				case candidateOldStart:
 					c.StartedAt = at.Add(-time.Hour)
-				case "different_agent":
+				case candidateDifferentAgent:
 					c.Agent = "claude"
-				case "different_source":
+				case candidateDifferentSource:
 					c.Source.Locator = filepath.Join(t.TempDir(), "other")
-				case "inherited":
+				case candidateInherited:
 					c.ParentNativeID = "unadmitted-parent"
-				case "future_task":
+				case candidateFutureTask:
 					c.FirstTaskAt = at.Add(24 * time.Hour)
-				case "unknown_evidence":
+				case candidateUnknownEvidence:
 					c.StartEvidence = "mtime"
 				}
 			}}
@@ -80,6 +93,7 @@ func TestAdapterFactsCannotGrantAdmission(t *testing.T) {
 		})
 	}
 }
+
 func TestOnlyCodexIsRegisteredAndEnumerationIsBoundedAndCancelled(t *testing.T) {
 	t.Parallel()
 	adapters := registeredAdapters()
@@ -93,7 +107,7 @@ func TestOnlyCodexIsRegisteredAndEnumerationIsBoundedAndCancelled(t *testing.T) 
 	a := findAdapter(adapters, "codex")
 	cookie := int64(0)
 	seen := 0
-	for n := 0; n < 100; n++ {
+	for range 100 {
 		batch, err := a.Enumerate(context.Background(), root, "sessions", cookie)
 		if err != nil || len(batch.Entries) > 256 {
 			t.Fatal("unbounded enumeration", err)
@@ -143,6 +157,7 @@ func TestDelayedFirstTaskUsesNativeSessionStartForConsent(t *testing.T) {
 	t.Parallel()
 	for _, oldStart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "authorized_start", true: "before_consent"}[oldStart], func(t *testing.T) {
+			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			started := at.Add(time.Minute)
 			if oldStart {

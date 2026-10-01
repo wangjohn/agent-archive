@@ -572,6 +572,7 @@ type Counts struct {
 // follows no Codex turn_context that does. (A placeholder model such as
 // Claude Code's "<synthetic>" produced no usage, and its records are not
 // counted at all.)
+
 const UnknownModel = "unknown"
 
 // MaxModelTokens is the most entries Metadata.ModelTokens holds, and

@@ -54,6 +54,7 @@ type directory struct {
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
 }
+
 type cached struct {
 	Size        int64       `json:"size"`
 	Mtime       int64       `json:"mtime"`
@@ -61,6 +62,7 @@ type cached struct {
 	Observation Observation `json:"observation"`
 	ActiveHint  bool        `json:"active_hint,omitempty"`
 }
+
 type catalog struct {
 	Version  int               `json:"version"`
 	Roots    []string          `json:"roots"`
@@ -179,9 +181,11 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 func catalogNeedsReset(c catalog, roots []string) bool {
 	return c.Version != 1 || len(c.Cache) > maxCatalog || len(c.Queue) > maxDirectories || len(c.Priority) > 64 || !slices.Equal(c.Roots, roots)
 }
+
 func validSource(source SourceDescriptor, root string) bool {
 	return source.Root == root && filepath.IsAbs(source.Locator) && local.PathWithin(source.Locator, root) && source.Kind == archive.SourceKindFile && source.StableKey != "" && len(source.StableKey) <= 4096
 }
+
 func validCandidate(candidate Candidate, source SourceDescriptor, agent string, now time.Time) bool {
 	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "local" && candidate.ParentNativeID == "" && candidate.ForkNativeID == ""
 }
@@ -204,6 +208,7 @@ func approvedRoots(homes []string) []string {
 	}
 	return roots
 }
+
 func appendUnique(values []string, value string) []string {
 	if !slices.Contains(values, value) {
 		values = append(values, value)
@@ -433,7 +438,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	}
 	entry, hit := c.Cache[loc]
 	retryDelay := time.Hour
-	if entry.Observation.Outcome == "incomplete_metadata" || entry.Observation.Outcome == "source_unavailable" || entry.Observation.Outcome == "source_changed" {
+	if entry.Observation.Outcome == outcomeIncomplete || entry.Observation.Outcome == outcomeUnavailable || entry.Observation.Outcome == outcomeChanged {
 		retryDelay = time.Minute
 	}
 	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {

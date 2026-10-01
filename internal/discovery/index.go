@@ -64,6 +64,7 @@ func (s scan) observeIndexHints(ctx context.Context, o Options, roots []string, 
 		}
 	}
 }
+
 func (a codexAdapter) Hints(ctx context.Context, root string) HintBatch {
 	hints, queries, bytes, outcome := indexHints(ctx, root)
 	batch := HintBatch{Queries: queries, Bytes: bytes, Locators: len(hints), Outcome: Outcome(outcome)}
@@ -121,12 +122,18 @@ func indexHints(ctx context.Context, root string) ([]string, int, int64, string)
 		}
 		defer func() { _ = conn.Close() }()
 		// Bound malformed database/schema values before preparing any statement.
-		for _, limit := range []struct{ id, value int }{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
+		for _, limit := range []struct {
+			id    int
+			value int
+		}{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
 			if _, err := sqlite.Limit(conn, limit.id, limit.value); err != nil {
 				return err
 			}
 		}
-		for _, ordered := range []struct{ index, query string }{
+		for _, ordered := range []struct {
+			index string
+			query string
+		}{
 			{"idx_threads_created_at_ms", "SELECT substr(rollout_path,1,4097) FROM threads INDEXED BY idx_threads_created_at_ms ORDER BY created_at_ms DESC,id DESC LIMIT 32"},
 			{"idx_threads_updated_at_ms", "SELECT substr(rollout_path,1,4097) FROM threads INDEXED BY idx_threads_updated_at_ms ORDER BY updated_at_ms DESC,id DESC LIMIT 32"},
 		} {
@@ -138,25 +145,9 @@ func indexHints(ctx context.Context, root string) ([]string, int, int64, string)
 				return err
 			}
 			queries++
-			rows, err := conn.QueryContext(ctx, query)
+			hints, err = readIndexLocators(ctx, conn, query, hints)
 			if err != nil {
 				return err
-			}
-			readErr := func() error {
-				defer func() { _ = rows.Close() }()
-				for rows.Next() {
-					var path string
-					if err := rows.Scan(&path); err != nil {
-						return err
-					}
-					if len(path) <= 4096 {
-						hints = appendUnique(hints, path)
-					}
-				}
-				return rows.Err()
-			}()
-			if readErr != nil {
-				return readErr
 			}
 		}
 		return nil
@@ -166,6 +157,24 @@ func indexHints(ctx context.Context, root string) ([]string, int, int64, string)
 		return nil, queries, fsys.bytes, "index_hints_unavailable"
 	}
 	return hints, queries, fsys.bytes, ""
+}
+
+func readIndexLocators(ctx context.Context, conn *sql.Conn, query string, hints []string) ([]string, error) {
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		if len(path) <= 4096 {
+			hints = appendUnique(hints, path)
+		}
+	}
+	return hints, rows.Err()
 }
 
 func hintPlan(ctx context.Context, conn *sql.Conn, query, index string) error {
@@ -239,6 +248,7 @@ func (f *indexFile) Read(p []byte) (int, error) {
 	f.owner.bytes += int64(n)
 	return n, err
 }
+
 func indexHasSides(path string) bool {
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {

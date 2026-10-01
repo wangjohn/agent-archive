@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+type scopeChange string
+
+const (
+	scopeDisable     scopeChange = "disable"
+	scopeReinclude   scopeChange = "reinclude"
+	scopeDestination scopeChange = "destination"
+	scopeExclusion   scopeChange = "exclusion"
+	scopeHome        scopeChange = "home"
+	scopeAgent       scopeChange = "agent"
+)
+
 func discoveryConfig(t *testing.T) (Config, time.Time) {
 	t.Helper()
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -20,6 +31,7 @@ func discoveryConfig(t *testing.T) (Config, time.Time) {
 	}
 	return cfg, at
 }
+
 func TestDiscoveryIntervalsExcludePauseAndKeepDelayedAuthorizedStarts(t *testing.T) {
 	t.Parallel()
 	cfg, at := discoveryConfig(t)
@@ -45,34 +57,35 @@ func TestDiscoveryIntervalsExcludePauseAndKeepDelayedAuthorizedStarts(t *testing
 		}
 	}
 }
+
 func TestDiscoveryScopeChangesRotateForwardOnlyGenerations(t *testing.T) {
 	t.Parallel()
 	old, at := discoveryConfig(t)
-	for _, mode := range []string{"disable", "reinclude", "destination", "exclusion", "home", "agent"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []scopeChange{scopeDisable, scopeReinclude, scopeDestination, scopeExclusion, scopeHome, scopeAgent} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			next := old
 			d := *old.Discovery
 			next.Discovery = &d
 			next.Archive.Projects = append([]archive.ProjectActivation(nil), old.Archive.Projects...)
 			switch mode {
-			case "disable":
+			case scopeDisable:
 				next.Discovery.Enabled = false
-			case "reinclude":
+			case scopeReinclude:
 				next.Archive.Projects[0].Included = false
-			case "destination":
+			case scopeDestination:
 				next.Storage.Bucket = "new"
-			case "exclusion":
+			case scopeExclusion:
 				next.Archive.Projects = append(next.Archive.Projects, archive.ProjectActivation{Root: "/included/private", Included: false})
-			case "home":
+			case scopeHome:
 				next.Discovery.CodexHomes = []string{"/other"}
-			case "agent":
+			case scopeAgent:
 				next.Harnesses = []string{"claude"}
 			}
 			if err := ReconcileDiscovery(&next, old, at.Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "disable" || mode == "reinclude" || mode == "agent" {
+			if mode == scopeDisable || mode == scopeReinclude || mode == scopeAgent {
 				prior := next
 				next = old
 				next.Discovery = &d
@@ -90,6 +103,7 @@ func TestDiscoveryScopeChangesRotateForwardOnlyGenerations(t *testing.T) {
 		})
 	}
 }
+
 func TestDiscoveryWriterMarkerPreservesPolicyAndRejectsOldWriters(t *testing.T) {
 	t.Parallel()
 	cfg, at := discoveryConfig(t)
@@ -133,6 +147,7 @@ func TestDiscoveryWriterMarkerPreservesPolicyAndRejectsOldWriters(t *testing.T) 
 		t.Fatal("marker without authorization accepted")
 	}
 }
+
 func TestDiscoveryClockReversalCannotPartiallyResume(t *testing.T) {
 	t.Parallel()
 	cfg, at := discoveryConfig(t)
