@@ -153,9 +153,10 @@ From parser `0.17.0` a sidecar may also carry three optional fields that
 say what to call the session:
 
 - `name`: the title the agent gave the session, collapsed to one line and cut
-  to 72 characters like `title`. For Claude Code it is the session name in
-  its sidebar (set from your prompt, or by `/rename`; the last one wins), and
-  for Cursor the chat's name. `title` keeps its meaning, a preview of the
+  to 128 characters from parser `0.17.1` (72 in older metadata), like `title`.
+  For Claude Code it is the session name in its sidebar (set from your prompt,
+  or by `/rename`; the last one wins), and for Cursor the chat's name. Codex
+  titles are not captured yet. `title` keeps its meaning, a preview of the
   first prompt. Absent when the session has no name, including one whose
   transcript is gone and so could not be re-read after the privacy filter
   began keeping names (filter 13).

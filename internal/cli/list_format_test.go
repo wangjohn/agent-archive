@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -77,6 +78,21 @@ func TestFormatSessionRowsShowTheDisplayTitle(t *testing.T) {
 	}
 	if want := []string{"Named in the agent", "First prompt only", "Name only", "dddddddd"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("titles = %q, want %q", got, want)
+	}
+}
+
+func TestListTableShowsLongerStoredTitle(t *testing.T) {
+	t.Parallel()
+	const title = "In the agent-archive repository, investigate why sessions take so long to find and propose a practical fix"
+	rows := formatSessionRows([]archive.Metadata{{
+		SessionID: "aaaaaaaa0123456789abcdef01234567", Title: title,
+	}}, listFormatOptions{Now: time.Now()})
+	var out bytes.Buffer
+	if err := printSessionTable(&out, rows, listFormatOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(title)) {
+		t.Fatalf("list lost the distinguishing end of the title: %s", out.String())
 	}
 }
 
