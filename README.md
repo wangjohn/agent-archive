@@ -26,17 +26,26 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
    v0.1.1 has no Linux binary, so that command is for macOS. On Linux, drop the two pins (`install.sh | sh`) once the latest release has Linux binaries, or [build from source](docs/getting-started/install.md#build-from-source).
 
-2. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+2. **Try a local handoff before setup** inside a project:
 
-3. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+   ```sh
+   agent-archive handoff
+   ```
+
+   Browse existing Claude Code or Codex conversations without configuring storage.
+   [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
+
+3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+
+4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
    agent-archive setup
    ```
 
-4. **Complete setup's per-app steps.** In Codex, run `/hooks` and approve the archive hooks. Start a **new** Claude Code or Codex session, or a new Cursor Agent chat, in an included project and send a prompt ([after setup](docs/getting-started/setup.md#after-setup)).
+5. **Complete setup's per-app steps.** In Codex, run `/hooks` and approve the archive hooks. Start a **new** Claude Code or Codex session, or a new Cursor Agent chat, in an included project and send a prompt ([after setup](docs/getting-started/setup.md#after-setup)).
 
-5. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
+6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
 To add a second machine, install and run setup there with the same bucket (see [multiple machines](docs/guides/multiple-machines.md)).
 

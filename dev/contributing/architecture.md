@@ -48,6 +48,8 @@ flowchart LR
 | Package | Owns |
 | --- | --- |
 | `archive` | The privacy filter and adapters (one per app), source bundles, metadata derivation, the normalized view, and handoff rendering. No filesystem, network, or CLI dependencies, so it is fully testable on fixtures. |
+| `nativesessions` | Read-only Claude/Codex layouts, bounded identity discovery, checkout scoping, coverage and deterministic modification-time catalog ordering. No config, state, storage, collector or CLI dependency. |
+| `transcriptio` | Verified regular-file snapshots, captured read boundaries and complete-record bounded head/tail windows. No native discovery or archive policy. |
 | `collector` | The scan, build, publish loop; change detection; subagent capture. |
 | `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |

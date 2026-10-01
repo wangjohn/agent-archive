@@ -22,6 +22,7 @@ var chooserCallers = []struct {
 	{"show (no ID)", []string{"runShowCommand", "runBareShow"}},
 	{"show --json (no ID)", []string{"runShowCommand", "runBareShow", "selectArchivedSession"}},
 	{`show "<words>", several matches`, []string{"runShowCommand", "resolveShowQuery"}},
+	{"handoff before setup", []string{"runHandoffCommand", "resolveNativeHandoff", "chooseNativePreviews"}},
 	{"handoff (no selector)", []string{"runHandoffCommand", "chooseHandoffSession", "selectHandoffSession"}},
 	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
 }

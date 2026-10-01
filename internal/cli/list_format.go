@@ -21,22 +21,23 @@ const minShortSessionID = 8
 
 // listRow is one session as the human list table renders it.
 type listRow struct {
-	Index      int
-	SessionID  string
-	ShortID    string
-	HarnessKey string // raw harness name for show / locateMetadataKey
-	ProjectID  string // raw identity; display names can collide
-	Title      string // display title (archive.DisplayTitle, else short ID)
-	When       string
-	CapturedAt string
-	Harness    string
-	Project    string
-	Model      string
-	ModelAll   string
-	SkillHint  string
-	Skills     string
-	Origin     string
-	Parser     string
+	selectionKey string
+	Index        int
+	SessionID    string
+	ShortID      string
+	HarnessKey   string // raw harness name for show / locateMetadataKey
+	ProjectID    string // raw identity; display names can collide
+	Title        string // display title (archive.DisplayTitle, else short ID)
+	When         string
+	CapturedAt   string
+	Harness      string
+	Project      string
+	Model        string
+	ModelAll     string
+	SkillHint    string
+	Skills       string
+	Origin       string
+	Parser       string
 	// PR is the pull request the session created last, as "#213"; empty when
 	// it created none.
 	PR string

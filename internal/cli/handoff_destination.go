@@ -178,6 +178,10 @@ func askHandoffDestination(p *prompter, h archive.Handoff, home string, env hand
 	if err != nil {
 		return handoffChoice{}, fmt.Errorf("load config: %w", err)
 	}
+	return askHandoffDestinationConfig(p, h, cfg, env)
+}
+
+func askHandoffDestinationConfig(p *prompter, h archive.Handoff, cfg config.Config, env handoffDestinationDependencies) (handoffChoice, error) {
 	installed := installedDestinations(env)
 	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff), env.clipboardAvailable())
 }

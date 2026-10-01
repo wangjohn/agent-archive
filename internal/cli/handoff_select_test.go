@@ -213,8 +213,9 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 
 func TestHandoffPickerBeforeSetup(t *testing.T) {
 	t.Parallel()
-	out, errOut, code := runPicker(t, testEnv(t, t.TempDir(), time.Now()), "1\n")
-	if code != 1 || out != "" || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	out, errOut, code := runPicker(t, f.env, "1\n")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }
