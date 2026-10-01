@@ -1034,7 +1034,13 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		key, checked := keys[project.Root]
 		if !checked {
 			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
-			key = env.projectRepoKey(child, project.Root)
+			// A key describes the whole repository. A configured subdirectory
+			// must keep its path to avoid widening capture on another machine.
+			if child.Err() == nil {
+				if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+					key = env.projectRepoKey(child, project.Root)
+				}
+			}
 			done()
 			keys[project.Root] = key
 		}
