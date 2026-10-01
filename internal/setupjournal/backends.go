@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
@@ -115,14 +117,28 @@ func (t target) unload() error {
 // it); the scheduler lists only files that are the job's own. A job whose
 // definition is back, as the rollback found it, is left as it is.
 //
+// A path the journal recorded (changes: the definition's own files, which
+// setup wrote) is the rollback's alone, and is never removed here: the
+// rollback has already put it back as it was, and what it put back, or left
+// as setup found it (a link with nothing at its end reads as no file), stays.
+// So only what the manager made beside the definition goes, and a scheduler
+// that lists only its definition file (launchd) has nothing removed.
+//
 // It is for a target that resolved: Restore refuses a journal whose
 // collector does not before it changes anything.
-func (t target) removeStranded() error {
+func (t target) removeStranded(changes []hooks.Change) error {
 	status := t.sched.Definition(t.site, t.ref)
 	if status.Defined {
 		return nil
 	}
+	recorded := make(map[string]bool, len(changes))
+	for _, c := range changes {
+		recorded[filepath.Clean(c.Path)] = true
+	}
 	for _, path := range status.Paths {
+		if recorded[filepath.Clean(path)] {
+			continue
+		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}

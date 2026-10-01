@@ -66,6 +66,18 @@ func TestHostFingerprintFallsBackAndRefusesWhatIsNotAMachineID(t *testing.T) {
 	if got := hostFingerprint(readers(map[string]string{"/etc/machine-id": "uninitialized", "/var/lib/dbus/machine-id": machineA})); got != want {
 		t.Errorf("an unusable systemd ID should fall back to D-Bus's: %q, want %q", got, want)
 	}
+	// A transient ID, mounted over the file at boot on a read-only /etc, is
+	// another at every boot: it is no fingerprint, and neither is D-Bus's,
+	// which is a link to it there. Another mount is not that.
+	transient := "22 1 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n" +
+		"35 26 0:30 /machine-id /etc/machine-id ro,relatime shared:12 - tmpfs tmpfs rw\n"
+	if got := hostFingerprint(readers(map[string]string{"/proc/self/mountinfo": transient, "/etc/machine-id": machineA, "/var/lib/dbus/machine-id": machineA})); got != "" {
+		t.Errorf("a transient machine ID gives fingerprint %q, want none", got)
+	}
+	other := "22 1 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n35 26 0:30 / /etc/machine-id.d rw - tmpfs tmpfs rw\n"
+	if got := hostFingerprint(readers(map[string]string{"/proc/self/mountinfo": other, "/etc/machine-id": machineA})); got != want {
+		t.Errorf("an unrelated mount changes the fingerprint to %q, want %q", got, want)
+	}
 	if got := hostFingerprint(func(string) ([]byte, error) { return nil, errors.New("permission denied") }); got != "" {
 		t.Errorf("unreadable files give %q, want none", got)
 	}

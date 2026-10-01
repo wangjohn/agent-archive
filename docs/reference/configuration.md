@@ -12,7 +12,7 @@ consistent with each other.
 | --- | --- |
 | `schema_version` | Shape of this file. Currently `1`. |
 | `machine_id` | This Mac's random identity, written into every session it captures. Kept across reconfiguration, and copied with the data directory by Migration Assistant or a backup restore; see [multiple Macs](../guides/multiple-macs.md#migration-assistant-and-time-machine). |
-| `host_id` | Linux only: a digest of the machine ID (`/etc/machine-id`) of the machine setup first ran on, recorded once beside `machine_id` and never uploaded. `status` and `setup` warn when it differs from the machine they run on, which means the data directory was copied (a cloned VM or container image). If the original is retired, or the operating system was reinstalled on the same machine, remove the entry and setup records the current machine. Absent on macOS and where there is no machine ID. |
+| `host_id` | Linux only: a digest of the machine ID (`/etc/machine-id`) of the machine setup first ran on, recorded once beside `machine_id` and never uploaded. `status` and `setup` warn when it differs from the machine they run on, which means the data directory was copied (a cloned VM or container image). If the original is retired, or the operating system was reinstalled on the same machine, remove the entry and setup records the current machine. Absent on macOS and where there is no machine ID (or only one made anew at every boot). |
 | `storage.Provider` | `s3` or `r2`. |
 | `storage.Bucket`, `storage.Prefix` | The bucket and the folder inside it (`agent-archive/` unless changed in setup). Every object key is under the prefix; see [bucket layout](bucket-layout.md). |
 | `storage.Region` | S3 region (from the AWS profile when it has one). |
