@@ -30,10 +30,8 @@ func (r KnownProjectsResult) Incomplete() bool { return r.TimedOut || r.Capped |
 // caps distinct roots; maxFiles bounds enumeration even in duplicate histories.
 // The full backfill discovery API keeps its existing behavior.
 func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Config, maxRoots int) KnownProjectsResult {
-	var result KnownProjectsResult
 	if ctx.Err() != nil {
-		result.TimedOut = true
-		return result
+		return KnownProjectsResult{TimedOut: true}
 	}
 	// Resolution also reads filesystem metadata. Stop subsequent operations
 	// after cancellation, including those within the existing resolver.
@@ -47,105 +45,117 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 	if maxRoots <= 0 {
 		maxRoots = 128
 	}
-	seen := map[string]bool{}
-	files := 0
-	entriesExamined := 0
-	r := newResolver(env, cfg, Filters{})
-	stopped := func() bool {
-		if ctx.Err() != nil {
-			result.TimedOut = true
-			return true
-		}
-		return result.Capped
-	}
-	var walk func(string, bool, int)
-	walk = func(dir string, codex bool, depth int) {
-		if stopped() {
-			return
-		}
-		entries, err := readDirIfExists(env, dir)
-		if err != nil {
-			result.Unreadable++
-			return
-		}
-		if stopped() {
-			return
-		}
-		for _, entry := range entries {
-			if stopped() {
-				return
-			}
-			entriesExamined++
-			if entriesExamined > 8192 {
-				result.Capped = true
-				return
-			}
-			path := filepath.Join(dir, entry.name)
-			if entry.dir {
-				if depth >= 32 {
-					result.Capped = true
-					return
-				}
-				walk(path, codex, depth+1)
-				continue
-			}
-			if !entry.regular || !strings.HasSuffix(entry.name, ".jsonl") || (codex && !isRolloutName(entry.name)) {
-				continue
-			}
-			files++
-			if files > 4096 {
-				result.Capped = true
-				return
-			}
-			if _, ok := fileSize(env, path); !ok {
-				result.Unreadable++
-				continue
-			}
-			if stopped() {
-				return
-			}
-			cwd, err := firstProjectRecord(ctx, env, path, codex)
-			if err != nil {
-				if ctx.Err() != nil {
-					result.TimedOut = true
-					return
-				}
-				result.Unreadable++
-				continue
-			}
-			if cwd == "" {
-				continue
-			}
-			if stopped() {
-				return
-			}
-			res := r.resolve(cwd)
-			if stopped() {
-				return
-			}
-			if res.skip != "" || res.root == "" || res.kind == ProjectKindHome || res.kind == ProjectKindTemporary || !env.exists(res.root) {
-				continue
-			}
-			root := env.resolved(res.root)
-			if seen[root] {
-				continue
-			}
-			if len(result.Projects) >= maxRoots {
-				result.Capped = true
-				return
-			}
-			seen[root] = true
-			result.Projects = append(result.Projects, KnownProject{Root: root, Kind: res.kind})
-		}
-	}
+	d := projectDiscovery{ctx: ctx, env: env, resolver: newResolver(env, cfg, Filters{}), maxRoots: maxRoots, seen: map[string]bool{}}
 	for _, dir := range env.claudeDirs() {
-		walk(filepath.Join(dir, "projects"), false, 0)
+		d.walk(filepath.Join(dir, "projects"), false, 0)
 	}
 	for _, dir := range env.codexDirs() {
-		walk(filepath.Join(dir, "sessions"), true, 0)
-		walk(filepath.Join(dir, "archived_sessions"), true, 0)
+		d.walk(filepath.Join(dir, "sessions"), true, 0)
+		d.walk(filepath.Join(dir, "archived_sessions"), true, 0)
 	}
-	return result
+	return d.result
+}
+
+type projectDiscovery struct {
+	ctx      context.Context
+	env      Environment
+	resolver *resolver
+	result   KnownProjectsResult
+	seen     map[string]bool
+	maxRoots int
+	files    int
+	entries  int
+}
+
+func (d *projectDiscovery) stopped() bool {
+	if d.ctx.Err() != nil {
+		d.result.TimedOut = true
+		return true
+	}
+	return d.result.Capped
+}
+
+func (d *projectDiscovery) walk(dir string, codex bool, depth int) {
+	if d.stopped() {
+		return
+	}
+	// ReadDir itself is a native syscall boundary. Process its entries one
+	// at a time so neither conversion nor sorting bypasses our budget.
+	entries, err := d.env.readDir(dir)
+	if d.stopped() {
+		return
+	}
+	if err != nil {
+		if !isNotExist(err) {
+			d.result.Unreadable++
+		}
+		return
+	}
+	for _, entry := range entries {
+		if d.stopped() {
+			return
+		}
+		d.entries++
+		if d.entries > 8192 {
+			d.result.Capped = true
+			return
+		}
+		path := filepath.Join(dir, entry.Name())
+		if d.stopped() {
+			return
+		}
+		if entry.IsDir() {
+			if depth >= 32 {
+				d.result.Capped = true
+				return
+			}
+			d.walk(path, codex, depth+1)
+			continue
+		}
+		if !entry.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") || (codex && !isRolloutName(entry.Name())) {
+			continue
+		}
+		d.readProject(path, codex)
+	}
+}
+
+func (d *projectDiscovery) readProject(path string, codex bool) {
+	d.files++
+	if d.files > 4096 {
+		d.result.Capped = true
+		return
+	}
+	if _, ok := fileSize(d.env, path); !ok {
+		d.result.Unreadable++
+		return
+	}
+	if d.stopped() {
+		return
+	}
+	cwd, err := firstProjectRecord(d.ctx, d.env, path, codex)
+	if err != nil {
+		if !d.stopped() {
+			d.result.Unreadable++
+		}
+		return
+	}
+	if cwd == "" || d.stopped() {
+		return
+	}
+	res := d.resolver.resolve(cwd)
+	if d.stopped() || res.skip != "" || res.root == "" || res.kind == ProjectKindHome || res.kind == ProjectKindTemporary || !d.env.exists(res.root) {
+		return
+	}
+	root := d.env.resolved(res.root)
+	if d.stopped() || d.seen[root] {
+		return
+	}
+	if len(d.result.Projects) >= d.maxRoots {
+		d.result.Capped = true
+		return
+	}
+	d.seen[root] = true
+	d.result.Projects = append(d.result.Projects, KnownProject{Root: root, Kind: res.kind})
 }
 
 func projectOperation[T any](ctx context.Context, operation func(string) (T, error)) func(string) (T, error) {

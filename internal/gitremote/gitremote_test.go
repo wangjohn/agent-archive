@@ -320,3 +320,37 @@ func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
 		t.Errorf("Branch of a plain directory = %q", got)
 	}
 }
+
+type projectExitStatusError int
+
+func (s projectExitStatusError) Error() string { return "synthetic Git exit" }
+
+func (s projectExitStatusError) ExitCode() int { return int(s) }
+
+func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		out   string
+		err   error
+		known bool
+	}{
+		{name: "portable", out: "https://user:synthetic-secret@example.test/acme/repo.git", known: true},
+		{name: "no origin", err: projectExitStatusError(1), known: true},
+		{name: "empty", known: true},
+		{name: "not installed", err: exec.ErrNotFound},
+		{name: "repository failure", err: projectExitStatusError(128)},
+		{name: "malformed", out: "invalid origin"},
+		{name: "nonportable", out: "file:///tmp/source"},
+		{name: "failed with output", out: "invalid", err: projectExitStatusError(1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			key, known := ProjectKey(t.Context(), t.TempDir(), fake.run)
+			if known != tc.known || key != archive.RepoKey(tc.out) || strings.Contains(key, "synthetic-secret") {
+				t.Fatalf("key %q known %t", key, known)
+			}
+		})
+	}
+}

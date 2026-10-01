@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,7 +20,7 @@ func TestProjectMatcherDeduplicatesAndDoesNotExpandExclusions(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	root := filepath.Join(home, "repo")
-	if err := os.MkdirAll(root, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(home, "alias")
@@ -168,7 +168,7 @@ func TestProjectMatcherCapsCandidatesAndPreservesPartialMatches(t *testing.T) {
 	key := archive.RepoKey("git@example.test:repo.git")
 	cfg := config.Config{}
 	for i := range 129 {
-		root := filepath.Join(home, fmt.Sprint(i))
+		root := filepath.Join(home, strconv.Itoa(i))
 		if err := os.Mkdir(root, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -214,5 +214,57 @@ func TestSetupYesExplainsRepoSkipsWhenNoProjectIsIncluded(t *testing.T) {
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--region", "us-east-1", "--apps", "claude", "--project-repo", key)
 	if !strings.Contains(output, "Skipped repository "+key+": not found") {
 		t.Fatalf("missing skip reason: %s", output)
+	}
+}
+
+func TestAnotherMachineCommandPreservesSubdirectoryScope(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo", "public")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(home, "repo", ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := archive.RepoKey("https://example.test/acme/repo.git")
+	env := Env{repoKeyContext: func(context.Context, string) string { return key }}
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: true}}}}
+	got := anotherMachineCommand(cfg, home, env)
+	if strings.Contains(got, "--project-repo") || !strings.Contains(got, "--project ~/repo/public") {
+		t.Fatalf("broadened subdirectory scope: %s", got)
+	}
+}
+
+func TestProjectMatcherWithholdsInvalidOriginLookupPathFallback(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return "invalid-origin" }}
+	got := matchProjects(t.Context(), env, home, config.Config{}, []projectMatchRequest{{RepoKey: archive.RepoKey("https://example.test/repo.git"), Path: home}})
+	if !got.Incomplete || len(got.Roots[0]) != 0 {
+		t.Fatalf("unverified no-origin fallback: %+v", got)
+	}
+}
+
+func TestProjectMatcherDoesNotBroadenOverlappingSavedScope(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	child := filepath.Join(root, "nested")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := archive.RepoKey("https://example.test/repo.git")
+	other := archive.RepoKey("https://example.test/nested.git")
+	env := Env{WorkingDir: func() (string, error) { return root, nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(_ context.Context, path string) string {
+		if path == local.CanonicalPath(child) {
+			return other
+		}
+		return key
+	}}
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: child, Included: true}}}}
+	got := matchProjects(t.Context(), env, home, cfg, []projectMatchRequest{{RepoKey: key}})
+	if len(got.Roots[0]) != 0 {
+		t.Fatalf("broadened saved scope: %+v", got)
 	}
 }

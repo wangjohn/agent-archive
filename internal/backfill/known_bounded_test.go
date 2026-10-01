@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -118,7 +118,7 @@ func TestBoundedProjectsCapsEnumerationWithoutTranscriptFiles(t *testing.T) {
 	tr := newTree(t)
 	var entries []fs.DirEntry
 	for i := range 8193 {
-		entries = append(entries, projectNonTranscriptEntry{name: fmt.Sprint(i)})
+		entries = append(entries, projectNonTranscriptEntry{name: strconv.Itoa(i)})
 	}
 	env := tr.env()
 	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
@@ -135,7 +135,76 @@ func TestBoundedProjectsCapsEnumerationWithoutTranscriptFiles(t *testing.T) {
 
 type projectNonTranscriptEntry struct{ name string }
 
-func (e projectNonTranscriptEntry) Name() string             { return e.name }
-func (projectNonTranscriptEntry) IsDir() bool                { return false }
-func (projectNonTranscriptEntry) Type() fs.FileMode          { return 0 }
+func (e projectNonTranscriptEntry) Name() string { return e.name }
+
+func (projectNonTranscriptEntry) IsDir() bool { return false }
+
+func (projectNonTranscriptEntry) Type() fs.FileMode { return 0 }
+
 func (projectNonTranscriptEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+
+func TestBoundedProjectsLimitsEntryProcessingBeforeConversion(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	calls := 0
+	entries := make([]fs.DirEntry, 9000)
+	for i := range entries {
+		entries[i] = projectCountedEntry{onName: func() { calls++ }}
+	}
+	env := tr.env()
+	env.ReadDir = func(string) ([]fs.DirEntry, error) { return entries, nil }
+	got := KnownProjectsBounded(t.Context(), env, config.Config{}, 128)
+	if !got.Capped || calls > 8192 {
+		t.Fatalf("got %+v; processed %d entries", got, calls)
+	}
+}
+
+type projectCountedEntry struct{ onName func() }
+
+func (e projectCountedEntry) Name() string {
+	e.onName()
+	return "ignored"
+}
+
+func (projectCountedEntry) IsDir() bool { return false }
+
+func (projectCountedEntry) Type() fs.FileMode { return fs.ModeSymlink }
+
+func (projectCountedEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+
+func TestBoundedProjectsStopsProcessingEntriesOnCancellation(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	env := tr.env()
+	env.ReadDir = func(string) ([]fs.DirEntry, error) {
+		return []fs.DirEntry{
+			projectCountedEntry{onName: func() { calls++; cancel() }},
+			projectCountedEntry{onName: func() { calls++ }},
+		}, nil
+	}
+	got := KnownProjectsBounded(ctx, env, config.Config{}, 128)
+	if !got.TimedOut || calls != 1 {
+		t.Fatalf("got %+v; processed %d entries", got, calls)
+	}
+}
+
+func TestBoundedProjectsRecordsCancellationAfterLastEmptyDirectoryRead(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	env := tr.env()
+	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
+		if filepath.Base(path) == "archived_sessions" {
+			cancel()
+		}
+		return nil, nil
+	}
+	got := KnownProjectsBounded(ctx, env, config.Config{}, 128)
+	if !got.TimedOut {
+		t.Fatalf("got %+v", got)
+	}
+}
