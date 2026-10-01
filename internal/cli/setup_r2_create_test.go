@@ -495,6 +495,44 @@ func TestGuidedR2CanReplaceRejectedEnvironmentToken(t *testing.T) {
 	g.assertNothingHolds(t, out, rejected, bootstrapCanary)
 }
 
+func TestGuidedR2RejectsMalformedReplacementBeforeCreatingClient(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
+	const malformed = "CANARY:invalid-bearer"
+	out := g.run(t, guidedAnswers(bootstrapCanary, "token", malformed, "stop"), 1)
+	if len(g.apis) != 1 || !strings.Contains(out, "management token is empty or malformed") {
+		t.Fatalf("malformed replacement reached client creation: %d clients\n%s", len(g.apis), out)
+	}
+	if !g.apis[0].discarded || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
+		t.Fatal("malformed replacement retained a client or created provider resources")
+	}
+	g.assertNothingHolds(t, out, malformed, bootstrapCanary)
+}
+
+func TestGuidedR2UsesAndPreservesConfiguredTokenCommand(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	command := []string{"synthetic-token-source", "read", "synthetic-reference"}
+	must(t, config.Save(g.home, config.Config{CloudflareTokenCommand: command}))
+	calls := 0
+	g.env.RunTokenCommand = func(ctx context.Context, args, environment []string) (string, error) {
+		calls++
+		if !slices.Equal(args, command) {
+			t.Fatal("guided setup did not use the committed source")
+		}
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 20*time.Second {
+			t.Fatal("token source has no bounded deadline")
+		}
+		return bootstrapCanary, nil
+	}
+	out := g.run(t, guidedAnswers(acceptedRest...), 0)
+	if calls != 1 || !slices.Equal(g.savedConfig(t).CloudflareTokenCommand, command) {
+		t.Fatal("guided setup lost or failed to consume the committed source")
+	}
+	g.assertNothingHolds(t, out, bootstrapCanary)
+}
+
 func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
 	t.Parallel()
 	t.Run("listing refused", func(t *testing.T) {
