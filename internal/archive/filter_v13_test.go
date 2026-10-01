@@ -375,11 +375,11 @@ func TestFilterV13CursorChatNameIsCapped(t *testing.T) {
 	}
 }
 
-// Until parser 0.17.0 reads them, the new records change nothing the parser
-// derives: metadata built from a transcript with them equals metadata built
-// from the same transcript without them, apart from the gaps the filter
-// recorded for them.
-func TestFilterV13NewRecordsDoNotChangeDerivedMetadata(t *testing.T) {
+// Parser 0.17.0 reads the new records into the name and pull requests and
+// nothing else: metadata built from a transcript with them equals metadata
+// built from the same transcript without them, apart from those two fields and
+// the gaps the filter recorded for them.
+func TestFilterV13NewRecordsChangeOnlyNameAndPullRequests(t *testing.T) {
 	t.Parallel()
 	raw := string(fixture(t, "claude-session-name.jsonl"))
 	var without []string
@@ -388,7 +388,7 @@ func TestFilterV13NewRecordsDoNotChangeDerivedMetadata(t *testing.T) {
 			without = append(without, line)
 		}
 	}
-	derive := func(jsonl string) string {
+	derive := func(jsonl string) Metadata {
 		filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(jsonl))
 		if err != nil {
 			t.Fatal(err)
@@ -406,14 +406,22 @@ func TestFilterV13NewRecordsDoNotChangeDerivedMetadata(t *testing.T) {
 			t.Fatal(err)
 		}
 		metadata.CaptureGaps = nil
-		encoded, err := json.Marshal(metadata)
+		return metadata
+	}
+	with, bare := derive(raw), derive(strings.Join(without, "\n")+"\n")
+	if with.Name != "Rename the widget parser password=[REDACTED]" || len(with.PullRequests) != 2 {
+		t.Fatalf("labels = name %q, pull requests %#v", with.Name, with.PullRequests)
+	}
+	with.Name, with.PullRequests = "", nil
+	encode := func(m Metadata) string {
+		encoded, err := json.Marshal(m)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(encoded)
 	}
-	if with, without := derive(raw), derive(strings.Join(without, "\n")+"\n"); with != without {
-		t.Fatalf("metadata changed:\nwith:    %s\nwithout: %s", with, without)
+	if encode(with) != encode(bare) {
+		t.Fatalf("metadata changed:\nwith:    %s\nwithout: %s", encode(with), encode(bare))
 	}
 }
 

@@ -47,6 +47,26 @@
       "type": "string",
       "minLength": 1
     },
+    "name": {
+      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name. Absent when the session has none.",
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "description": "From parser 0.17.0: the last git branch the transcript recorded. Absent when none was recorded, it is HEAD (a detached checkout), or it is not a valid branch name.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9._/+-]+$"
+    },
+    "pull_requests": {
+      "description": "From parser 0.17.0: the pull requests the session was linked to (Claude Code's pr-link records), in the order first linked, each once, at most 20. Absent when there are none.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/pull_request_link"
+      }
+    },
     "project_name": {
       "description": "Basename of the session's project root at publish time, for list without local config.",
       "type": "string",
@@ -603,6 +623,33 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "pull_request_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "number"
+      ],
+      "properties": {
+        "repository": {
+          "description": "owner/repo.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "number": {
+          "description": "The pull request's number.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "url": {
+          "description": "The pull request's GitHub address, https://github.com/<owner>/<repo>/pull/<number>, kept only in exactly that form. Absent when the record carried none.",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://github\\.com/"
+        }
+      }
     },
     "git_event": {
       "type": "object",
