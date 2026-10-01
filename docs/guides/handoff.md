@@ -85,7 +85,10 @@ one, else the first listed. A number (or an agent's name) starts that agent
 in this terminal, and `handoff` returns when it exits.
 
 The other answers don't start an agent. `p` prints the handoff, through the
-pager when it is longer than the screen. `c` copies it with `pbcopy`. `w`
+pager when it is longer than the screen. `c` copies it with `pbcopy` on macOS,
+`wl-copy` on Wayland, or `xclip`/`xsel` on X11. The copy choice appears only when
+a provider is installed and, on Linux, a display is configured. In a headless
+session, use `w` to write a file instead. `w`
 asks for a file name (default `handoff-<short id>.md` in the `--project` or
 current directory; `~/` is your home directory), writes it with mode 0600,
 and asks before replacing a file. A write that fails is reported and asked

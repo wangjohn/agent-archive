@@ -5,6 +5,8 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
 
 ```text
 <prefix>/
+  machines/
+    <machine_id>.json               informational machine name, platform, credential claim, daily heartbeat
   sessions/
     <harness>/                       claude, codex, or cursor
       <archive-session-id>/
@@ -35,8 +37,14 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   can be stale after republish or deletion. `list --rebuild-index` scans an
   older bucket's sidecars and writes the `v1-ready` marker last. Until then,
   limited listing uses the full sidecar scan. Retention and undo remove a
-  session's hints using the `by-session` pointers. Upgrade every uploading machine
-  before rebuilding: an older writer cannot create hints for its new uploads.
+  session's hints using the `by-session` pointers. Every uploading machine must
+  run an index-aware collector before rebuilding, and continue to do so afterward.
+  v0.1.1 collectors and external writers that publish metadata without a hint
+  are not supported alongside an enabled index: their new sessions may be absent
+  from bounded JSON listings. The ready marker does not detect those writers.
+  For a development bucket written by those tools, use `list --limit 0` until
+  they have stopped, then rebuild. Current collectors publish each hint before
+  its metadata, so a new session is discoverable as soon as it is published.
   If a hint is damaged, listing falls back to a full sidecar scan; rerun
   `list --rebuild-index` to repair the index.
 - **`source.<sha256>.jsonl.gz`** is gzip of newline-delimited JSON (source
@@ -96,3 +104,14 @@ explains how to apply a plan with every uploading machine paused.
 Object keys are built only from the app name and the archive session ID,
 both checked to be safe key components; no path or native ID from a
 transcript ever becomes part of a key.
+
+## Machine records
+
+`machines/` stores informational records under canonical machine IDs. The
+[machine record schema](../../schemas/machine.schema.json) describes the format.
+They contain chosen names, OS/architecture, application version, nonsecret
+credential provenance and pairing details when locally committed, plus a daily
+heartbeat. They contain no project paths or session content. Any bucket writer
+can modify them, so they are not an authorization source. Session listing,
+retention and privacy purge ignore this folder. Records remain after uninstall;
+include `machines/` when deleting the entire archive.

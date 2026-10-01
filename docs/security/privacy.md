@@ -874,3 +874,21 @@ References used for the implementation:
 - [R2 public bucket settings](https://developers.cloudflare.com/r2/buckets/public-buckets/)
 
 Synthetic tests cover allowed, denied, incomplete, public-policy, public-ACL, R2-unavailable, expired, and changed-configuration results. Actual AWS inspection and R2 dashboard verification remain live acceptance checks.
+
+## Informational machine records
+
+Setup and the collector write a small record under `machines/<machine_id>.json`
+in your bucket. New personal data is the name you choose and the operating
+system/architecture. The default name is `unnamed-` plus four characters of a
+random machine ID, never your hostname. Records also carry application version,
+nonsecret credential identifiers and locally committed provenance when present,
+and a heartbeat updated at most daily. They contain no project paths, sessions,
+transcript content, credential secrets, pairing codes or bundles. A heartbeat
+does not reveal current activity; paused machines need not send one.
+
+All bucket writers can forge these records. Listing does not contact management
+APIs or a password manager, and records do not authorize revocation or establish
+exclusive key ownership. Uninstall leaves remote records and access unchanged;
+remove access at your storage provider, and include `machines/` when deleting
+the entire archive. Local registration retry state is removed by
+`uninstall --delete-local-data`.

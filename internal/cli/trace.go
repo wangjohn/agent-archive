@@ -12,7 +12,7 @@ const envTrace = "AGENT_ARCHIVE_TRACE"
 
 // tracedCommands are the names a trace's root span may carry.
 var tracedCommands = map[string]bool{
-	"status": true, "sync": true, "pause": true, "resume": true, "setup": true, "uninstall": true,
+	"machines": true, "status": true, "sync": true, "pause": true, "resume": true, "setup": true, "uninstall": true,
 	"list": true, "show": true, "stats": true, "feedback": true, "handoff": true, "backfill": true, "purge": true,
 }
 

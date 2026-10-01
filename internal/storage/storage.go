@@ -39,6 +39,12 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// LimitedGetter reads at most limit bytes, rejecting oversized objects before
+// allocating their bodies. Callers of untrusted small records require it.
+type LimitedGetter interface {
+	GetLimited(ctx context.Context, key string, limit int64) ([]byte, error)
+}
+
 // PageLister lists one lexicographically ordered page. Continuation is an
 // opaque token supplied by the preceding page; an empty Next means done.
 // Keeping this as an extension lets older ObjectStore implementations retain

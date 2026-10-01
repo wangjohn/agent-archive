@@ -250,7 +250,7 @@ type Env struct {
 	// waits for it to exit. Defaults to running spec.Binary with spec.Args
 	// in spec.Dir with spec.Env. Tests replace it to avoid starting an agent.
 	LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error
-	// LookPath finds a destination agent's executable. Defaults to
+	// LookPath finds a destination agent or clipboard provider. Defaults to
 	// exec.LookPath.
 	LookPath func(string) (string, error)
 	// RunGit runs `git -C dir args...` and returns its stdout, with its
@@ -264,7 +264,8 @@ type Env struct {
 	// and returns where it opened. Defaults to termlaunch.Open. Tests
 	// replace it so no window opens.
 	OpenTerminal func(termlaunch.Spec) (string, error)
-	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
+	// Clipboard replaces the clipboard's contents. Defaults to pbcopy on
+	// macOS, or wl-copy, xclip, or xsel for a connected Linux desktop.
 	Clipboard func([]byte) error
 	// Interrupts delivers the signals that stop a command while it runs
 	// (backfill while it plans, registers, and uploads, the full-screen
@@ -509,6 +510,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -589,6 +591,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "machines":
+		return runMachinesCommand(args[1:], stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":

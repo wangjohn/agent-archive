@@ -705,6 +705,9 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
+	if err := publishMachineAfterSetup(home, finish.env); err != nil {
+		p.warn("Machine registration pending; capture is configured and the collector will retry.")
+	}
 	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
