@@ -401,6 +401,12 @@ commit, systemd, architecture, result):
   machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
   (the enable link left out of uninstall's paths, and the clone warning turned
   off) failed 8 checks, in sections 6, 9, 11 and 12.
+- 2026-10-01, the network-home guard's pull request after review (section 2
+  also checks that `status` sees no network filesystem and `config.json`
+  records no `allow_network_home` on the container's own disk), same machine:
+  **91 passed, 0 failed**, 103 seconds. A home on a real network filesystem is
+  not run live (the container cannot fake an NFS mount's type); the unit
+  tests cover it with injected mount tables.
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product
