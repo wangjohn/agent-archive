@@ -226,7 +226,8 @@ agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --file PATH    Create a private 0600 bundle file; never overwrite a file
   --yes          Require --name and deliberately print bundle and code
                  (with --file, print only the separately delivered code)
-Interactive codes appear on a cleared alternate screen. Clipboard contents are
+Interactive delivery needs terminal input and output; codes use a cleared
+alternate screen. Clipboard contents are
 cleared on normal exit only if they still equal the bundle. Interrupted delivery
 remains uncertain in the local ledger; shared credentials remain active.
 ```

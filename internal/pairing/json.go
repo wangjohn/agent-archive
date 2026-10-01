@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -60,6 +63,80 @@ func uniqueJSON(data []byte) error {
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("trailing paired JSON")
+	}
+	return nil
+}
+
+// payloadJSON requires exact whitelist names and explicit required values.
+// encoding/json alone accepts case aliases and null scalar zero values.
+func payloadJSON(data []byte) error {
+	if err := uniqueJSON(data); err != nil {
+		return err
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	return exactJSON(value, reflect.TypeFor[Payload]())
+}
+
+func exactJSON(value any, typ reflect.Type) error {
+	if value == nil {
+		return errors.New("null paired setting")
+	}
+	if typ == reflect.TypeFor[time.Time]() {
+		return nil // The typed decoder validates the timestamp.
+	}
+	if typ.Kind() == reflect.Struct {
+		return exactObject(value, typ)
+	}
+	if typ.Kind() == reflect.Slice {
+		items, ok := value.([]any)
+		if !ok {
+			return errors.New("invalid paired array")
+		}
+		for _, item := range items {
+			if err := exactJSON(item, typ.Elem()); err != nil {
+				return err
+			}
+		}
+	}
+	if typ.Kind() == reflect.Map {
+		items, ok := value.(map[string]any)
+		if !ok {
+			return errors.New("invalid paired map")
+		}
+		for _, item := range items {
+			if err := exactJSON(item, typ.Elem()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func exactObject(value any, typ reflect.Type) error {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("invalid paired object")
+	}
+	fields := make(map[string]reflect.Type, typ.NumField())
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		fields[name] = field.Type
+		if _, have := object[name]; !have && options == "" {
+			return errors.New("missing paired setting")
+		}
+	}
+	for name, item := range object {
+		field, have := fields[name]
+		if !have {
+			return errors.New("unknown paired setting")
+		}
+		if err := exactJSON(item, field); err != nil {
+			return err
+		}
 	}
 	return nil
 }

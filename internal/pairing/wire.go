@@ -81,6 +81,9 @@ func Seal(p Payload, code string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if p.Inclusions == nil {
+		p.Inclusions = []Inclusion{}
+	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -159,7 +162,7 @@ func Open(bundle, code string, now time.Time) (Payload, error) {
 		return p, errors.New("paired settings exceed the decompression limit or are damaged")
 	}
 	defer clear(plain)
-	if err = uniqueJSON(plain); err != nil {
+	if err = payloadJSON(plain); err != nil {
 		return Payload{}, errors.New("invalid or duplicate paired settings")
 	}
 	dec := json.NewDecoder(bytes.NewReader(plain))

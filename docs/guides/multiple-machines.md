@@ -255,7 +255,8 @@ configure that local profile with `aws configure --profile NAME` or
 is requested. Registry claims remain informational and untrusted.
 
 Use `--print` for encrypted bundle output or `--file PATH` for an exclusive private
-0600 file. Interactive codes appear only on a cleared alternate screen and the
+0600 file. Interactive source delivery requires terminal input and output;
+codes appear only on a cleared alternate screen and the
 clipboard is cleared on normal exit only when it still contains that exact bundle.
 A crash or interruption leaves delivery uncertain; check `status` or `machines`.
 Do not record or screen-share code display. Delete explicitly saved bundle files

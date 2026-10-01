@@ -276,6 +276,8 @@ type Env struct {
 	Clipboard func([]byte) error
 	// PairingClipboardRead reads clipboard contents for conditional cleanup only.
 	PairingClipboardRead func() ([]byte, error)
+	// PairingTerminal opens the private terminal for redirected bundle input.
+	PairingTerminal func() (io.ReadWriteCloser, error)
 	// PairingCode supplies hidden interactive code input in isolated tests.
 	PairingCode func() (string, error)
 	// PairingRepoRoot is a bounded source scope lookup, injected by tests.

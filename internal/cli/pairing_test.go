@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -192,7 +193,7 @@ func TestPairingClipboardClearsOnlyUnchangedAndCodeUsesAlternateScreen(t *testin
 	}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
-	must(t, showPairingCode(p, "synthetic-secret", Env{Interrupts: noInterrupts}))
+	must(t, showPairingCode(p, "synthetic-secret", Env{Interrupts: noInterrupts, IsTerminal: func(any) bool { return true }}))
 	s := out.String()
 	start, end := strings.Index(s, "\x1b[?1049h"), strings.Index(s, "\x1b[?1049l")
 	pos := strings.Index(s, "synthetic secret")
@@ -348,5 +349,87 @@ func TestPairingReceiverMissingProfileAndChangedDestinationDoNotSave(t *testing.
 		if _, e := os.Stat(draftPath(home)); !os.IsNotExist(e) {
 			t.Fatal("refusal saved draft")
 		}
+	}
+}
+
+func TestPairingInteractiveSourceRefusesRedirectedOutputBeforePreparation(t *testing.T) {
+	t.Parallel()
+	input := strings.NewReader("show\n\ndone\n")
+	env := Env{LookupEnv: noEnv, IsTerminal: func(stream any) bool { return stream == input }, Home: func() (string, error) { t.Fatal("source read with redirected output"); return "", nil }}
+	var out, errOut bytes.Buffer
+	if exit := Run([]string{"machines", "add", "--name", "laptop", "--print"}, input, &out, &errOut, env); exit != 1 || out.Len() != 0 {
+		t.Fatalf("redirected interactive source accepted: %d %s %s", exit, &out, &errOut)
+	}
+}
+
+func TestPairingSubtreeIncompleteValidationWithholdsAllImplicitMatches(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	one, two := filepath.Join(home, "one"), filepath.Join(home, "two")
+	for _, root := range []string{one, two} {
+		must(t, os.MkdirAll(filepath.Join(root, "sub"), 0700))
+	}
+	one, two = local.CanonicalPath(one), local.CanonicalPath(two)
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.WorkingDir = func() (string, error) { return one, nil }
+	env.repoKeyContext = func(context.Context, string) string { return "repo-0123456789abcdef" }
+	env.PairingRepoRoot = func(_ context.Context, root string) (string, error) {
+		if root == two {
+			return "", context.DeadlineExceeded
+		}
+		return root, nil
+	}
+	existing := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: one, Included: true}, {Root: two, Included: true}}}}
+	payload := pairing.Payload{Inclusions: []pairing.Inclusion{{ID: strings.Repeat("4", 32), RepoKey: "repo-0123456789abcdef", RepoPath: "sub", Label: "sub"}}}
+	matches := discoverPairingScope(payload, existing, home, env)
+	var out bytes.Buffer
+	selected, err := choosePairingScopes(newPrompter(strings.NewReader(""), &out), payload, matches, home, true)
+	must(t, err)
+	if !matches.Incomplete || len(selected) != 0 {
+		t.Fatalf("incomplete clone validation selected implicit scope: %+v %+v", matches, selected)
+	}
+}
+
+func TestPairingReceiverPromptsOffNeverOpensPrivateTerminal(t *testing.T) {
+	t.Parallel()
+	env := Env{LookupEnv: func(key string) (string, bool) { return "1", key == envNonInteractive }, PairingTerminal: func() (io.ReadWriteCloser, error) { t.Fatal("terminal opened with prompts off"); return nil, nil }, PairingCode: func() (string, error) { t.Fatal("code requested with prompts off"); return "", nil }}
+	var out bytes.Buffer
+	if exit := Run([]string{"setup", "--pair-file", "-"}, strings.NewReader("aa-pair1:synthetic"), &out, &out, env); exit != 1 || !strings.Contains(out.String(), "prompts are off") {
+		t.Fatalf("prompts-off pairing not refused: %d %s", exit, &out)
+	}
+}
+
+type pairingTestTerminal struct {
+	*strings.Reader
+	output bytes.Buffer
+	closed bool
+}
+
+func (t *pairingTestTerminal) Write(p []byte) (int, error) { return t.output.Write(p) }
+
+func (t *pairingTestTerminal) Close() error { t.closed = true; return nil }
+
+func TestPairingRedirectedBundleUsesPrivateTerminalForReview(t *testing.T) {
+	now := time.Now().UTC()
+	payload := pairing.Payload{Version: 1, PairingID: strings.Repeat("1", 32), RecipientID: strings.Repeat("2", 32), IssuerID: strings.Repeat("3", 32), IssuerName: "studio", Name: "laptop", CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute), Storage: pairing.Storage{Provider: "s3", Bucket: "synthetic", AWSProfile: "archive", Region: "us-east-1"}, Apps: []string{"codex"}, RetentionDays: 90, SkillEvidence: "metadata"}
+	code := "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding"
+	bundle, err := pairing.Seal(payload, code)
+	must(t, err)
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
+	store := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
+	tty := &pairingTestTerminal{Reader: strings.NewReader("save\n")}
+	env.PairingTerminal = func() (io.ReadWriteCloser, error) { return tty, nil }
+	env.IsTerminal = func(stream any) bool { return stream == tty }
+	env.PairingCode = func() (string, error) { return code, nil }
+	var out bytes.Buffer
+	if exit := Run([]string{"setup", "--pair-file", "-", "--project", project}, strings.NewReader(bundle), &out, &out, env); exit != 0 {
+		t.Fatalf("private terminal pairing failed: %d %s %s", exit, &out, &tty.output)
+	}
+	if !tty.closed || !strings.Contains(tty.output.String(), "Sessions will upload") || !strings.Contains(tty.output.String(), "Review pairing settings") {
+		t.Fatalf("private review missing: closed=%t %s", tty.closed, &tty.output)
 	}
 }

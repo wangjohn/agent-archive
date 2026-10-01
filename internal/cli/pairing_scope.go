@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -149,8 +150,14 @@ func discoverPairingScope(payload pairing.Payload, existing config.Config, userH
 		for _, root := range matches.Roots[i] {
 			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
 			top, e := env.pairingRepositoryRoot(child, root)
+			lookupErr := child.Err()
 			done()
-			if e != nil || local.CanonicalPath(top) != local.CanonicalPath(root) {
+			if e != nil || lookupErr != nil {
+				matches.Incomplete = true
+				matches.TimedOut = matches.TimedOut || lookupErr != nil || errors.Is(e, context.DeadlineExceeded)
+				continue
+			}
+			if local.CanonicalPath(top) != local.CanonicalPath(root) {
 				continue
 			}
 			mapped, e := resolvePortablePath(root, inc.RepoPath)
@@ -160,6 +167,8 @@ func discoverPairingScope(payload pairing.Payload, existing config.Config, userH
 		}
 		matches.Roots[i] = validated
 	}
+	matches.TimedOut = matches.TimedOut || ctx.Err() != nil
+	matches.Incomplete = matches.Incomplete || ctx.Err() != nil
 	return matches
 }
 
