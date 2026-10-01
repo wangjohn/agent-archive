@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"slices"
@@ -31,4 +32,11 @@ func launchSupported(c agentmeta.Catalog, name string) bool {
 		return false
 	}
 	return slices.Contains(d.Operations, agentmeta.Launch)
+}
+
+func skillPorts(sources []agentapi.SkillsLookup) agentapi.SkillsLookup {
+	if len(sources) > 0 {
+		return sources[0]
+	}
+	return productionAgents
 }

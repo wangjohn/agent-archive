@@ -18,6 +18,7 @@ type Integration struct {
 	Launcher   agentapi.Launcher
 	Hooks      agentapi.HookConfigurator
 	Decoder    agentapi.HookDecoder
+	Skills     agentapi.SkillProvider
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -54,6 +55,12 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 				return nil, fmt.Errorf("typed nil hooks for %s", d.ID)
 			}
 			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
+		}
+		if b.Skills != nil {
+			if nilImplementation(b.Skills) {
+				return nil, fmt.Errorf("typed nil skills for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.Skills)
 		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
@@ -113,9 +120,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills()},
 	})
 	if err != nil {
 		panic(err)
@@ -142,4 +149,19 @@ func (r *Registry) HookAgents() []string {
 func (r *Registry) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
 	b, ok := r.Lookup(name)
 	return b.Decoder, ok && b.Decoder != nil
+}
+
+// LookupSkills resolves a native skill provider.
+func (r *Registry) LookupSkills(name string) (agentapi.SkillProvider, bool) {
+	b, ok := r.Lookup(name)
+	return b.Skills, ok && b.Skills != nil
+}
+
+// SkillAgents lists implemented skill providers in catalog order.
+func (r *Registry) SkillAgents() []string {
+	var out []string
+	for _, b := range r.Supporting(agentmeta.Skills) {
+		out = append(out, string(b.Descriptor.ID))
+	}
+	return out
 }

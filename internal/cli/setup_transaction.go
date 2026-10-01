@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"path/filepath"
@@ -235,8 +236,8 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	err = setupjournal.Commit(home, journal, env.backends())
 	// A command file created and rolled back, or removed, leaves the
 	// directories written for it; they go while empty.
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(env.hookFiles(userHome)))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
 	return err
 }
 
@@ -247,15 +248,19 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 // Only a file setup wrote is replaced or removed (see agentskills.PlanInstall).
 // While they are off the other files at the skills' paths are returned in
 // kept, for setup to say it left them.
-func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string) (changes []hooks.Change, kept []string, err error) {
+func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string, sources ...agentapi.SkillsLookup) (changes []hooks.Change, kept []string, err error) {
+	ports := agentapi.SkillsLookup(productionAgents)
+	if len(sources) > 0 {
+		ports = sources[0]
+	}
 	if !cfg.NoSkills {
-		changes, _, err = agentskills.PlanInstall(userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
+		changes, _, err = agentskills.PlanInstall(ports, userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
 		return changes, nil, err
 	}
-	if changes, _, err = agentskills.PlanInstall(userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
+	if changes, _, err = agentskills.PlanInstall(ports, userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
 		return nil, nil, err
 	}
-	_, kept, err = agentskills.PlanRemoval(userHome, claudeDir, dataHome)
+	_, kept, err = agentskills.PlanRemoval(ports, userHome, claudeDir, dataHome)
 	return changes, kept, err
 }
 
@@ -392,7 +397,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	}
 	// The agent skills (/handoff), for the apps chosen, or none while they
 	// are turned off. Only a file setup wrote is replaced or removed.
-	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome())
+	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome(), env.agentRegistry())
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}

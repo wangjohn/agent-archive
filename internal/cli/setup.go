@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
@@ -702,7 +703,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills, finish.env.agentRegistry())
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
 	// working, so it is a choice about history and not a step of setup. A
@@ -719,12 +720,16 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 // left alone because it is not setup's; then one line on how to opt out of
 // them. With the skills turned off (opt-out) it says instead what it
 // removed and left alone, and how to turn them on.
-func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut) {
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut, sources ...agentapi.SkillsLookup) {
 	if cfg.NoSkills {
 		printSkillOptOut(p, agentskills.Registry, optOut, userHome)
 		return
 	}
-	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
+	ports := agentapi.SkillsLookup(productionAgents)
+	if len(sources) > 0 {
+		ports = sources[0]
+	}
+	files := agentskills.Files(ports, userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
 	if printSkillFiles(p, agentskills.Registry, files, userHome) {
 		terminal.Println(p.out, "To remove the agent skills and keep them off, run "+p.style.cmd("agent-archive setup --no-skills")+".")
 	}
@@ -748,7 +753,7 @@ func planSkillOptOut(env Env, home, userHome, executable string, old, cfg config
 		return skillOptOut{}
 	}
 	files, previousFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, old)
-	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome())
+	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome(), env.agentRegistry())
 	if err != nil {
 		return skillOptOut{}
 	}

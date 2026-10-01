@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -476,7 +477,7 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode})
+			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{UserHome: userHome})})
 			if err != nil {
 				return nil, err
 			}
@@ -486,7 +487,7 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot})})
 			if err != nil {
 				return nil, err
 			}
@@ -494,4 +495,11 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		}
 		return append(append([]archive.SupplementalEvidence(nil), userScope...), projectScope...), nil
 	}
+}
+
+func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agentapi.SkillRoot {
+	if p, ok := env.agentRegistry().LookupSkills(name); ok {
+		return p.EvidenceRoots(l)
+	}
+	return nil
 }

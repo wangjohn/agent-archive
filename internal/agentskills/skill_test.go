@@ -1,6 +1,8 @@
 package agentskills
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/skillownership"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -29,7 +31,7 @@ func TestHandoffRendersByteForByte(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			files := skillFiles(handoffOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
+			files := skillFiles(builtin.NewBuiltins(), handoffOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
 			if len(files) != 2 || files[0].Skill != "handoff" || files[1].Skill != "handoff" {
 				t.Fatalf("files = %+v", files)
 			}
@@ -60,7 +62,7 @@ func TestRegistrySkillsAreWellFormed(t *testing.T) {
 				if !strings.HasPrefix(content, "---\nname: "+s.Name+"\n") {
 					t.Errorf("%s (%d): frontmatter does not name the skill:\n%s", s.Name, dest, content)
 				}
-				if !owned([]byte(content), dataHome) {
+				if !skillownership.Owned([]byte(content), dataHome) {
 					t.Errorf("%s (%d, data home %q) is not owned by the installation that rendered it:\n%s", s.Name, dest, dataHome, content)
 				}
 				if !strings.Contains(content, commandLine(exe, dataHome)) {

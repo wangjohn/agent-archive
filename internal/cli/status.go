@@ -475,7 +475,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	view.Paused = cfg.Paused
 	if userHome, err := env.userHomeDir(); err == nil {
 		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
-		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
+		view.AgentSkills = agentskills.Installed(env.agentRegistry(), userHome, claudeDir, dataHome)
 		if cfg.NoSkills {
 			// Setup removes a file of its own here rather than refreshing it,
 			// so it is left over (a restored backup, an interrupted removal),
@@ -484,7 +484,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
 			}
 		} else {
-			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			view.AgentSkillsOutOfDate = agentskills.Stale(env.agentRegistry(), userHome, claudeDir, cfg.InstalledExecutable, dataHome)
 			for _, path := range view.AgentSkillsOutOfDate {
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup --refresh to refresh it.", skillLabel(path), path))
 			}
