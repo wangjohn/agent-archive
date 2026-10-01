@@ -1,0 +1,92 @@
+{
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "scenarios": {
+    "fresh": {
+      "scenario": "synthetic Codex fresh start hook subprocess; unique native ID per sample",
+      "results": {
+        "enabled": {
+          "samples": 100,
+          "median_ms": 26.66,
+          "p95_ms": 38.69,
+          "max_ms": 53.52
+        },
+        "paused": {
+          "samples": 100,
+          "median_ms": 18.02,
+          "p95_ms": 27.61,
+          "max_ms": 32.73
+        },
+        "disabled": {
+          "samples": 100,
+          "median_ms": 18.68,
+          "p95_ms": 27.13,
+          "max_ms": 45.67
+        },
+        "ignored": {
+          "samples": 100,
+          "median_ms": 19.15,
+          "p95_ms": 29.22,
+          "max_ms": 113.04
+        }
+      }
+    },
+    "stop": {
+      "scenario": "synthetic Codex stop hook subprocess; no collector/cloud/app integration",
+      "results": {
+        "enabled": {
+          "samples": 100,
+          "median_ms": 24.73,
+          "p95_ms": 32.36,
+          "max_ms": 38.63
+        },
+        "paused": {
+          "samples": 100,
+          "median_ms": 19.76,
+          "p95_ms": 27.02,
+          "max_ms": 34.43
+        },
+        "disabled": {
+          "samples": 100,
+          "median_ms": 18.81,
+          "p95_ms": 32.56,
+          "max_ms": 142.99
+        },
+        "ignored": {
+          "samples": 100,
+          "median_ms": 19.94,
+          "p95_ms": 32.89,
+          "max_ms": 126.96
+        }
+      }
+    },
+    "subagentstop": {
+      "scenario": "synthetic Claude SubagentStop hook subprocess staging a child candidate; no collector/cloud/app integration",
+      "results": {
+        "enabled": {
+          "samples": 100,
+          "median_ms": 27.57,
+          "p95_ms": 43.55,
+          "max_ms": 62.73
+        },
+        "paused": {
+          "samples": 100,
+          "median_ms": 23.83,
+          "p95_ms": 70.79,
+          "max_ms": 105.3
+        },
+        "disabled": {
+          "samples": 100,
+          "median_ms": 30.75,
+          "p95_ms": 80.75,
+          "max_ms": 98.96
+        },
+        "ignored": {
+          "samples": 100,
+          "median_ms": 27.18,
+          "p95_ms": 88.91,
+          "max_ms": 223.72
+        }
+      }
+    }
+  }
+}
