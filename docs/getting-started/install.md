@@ -64,6 +64,8 @@ What is **not** verified on Linux:
 - **Distributions and systemd versions other than those above**, and an
   amd64 live run (the acceptance run above was arm64; amd64 is covered by the
   unit tests and the CI job, not by that run).
+- **Real R2 and Amazon S3 from Linux.** The live run uploaded to a MinIO
+  bucket; the storage code is the same as on macOS.
 - **A real logout with lingering off** (the no-user-bus case is simulated),
   **WSL**, and **a home directory shared across several machines**, which is
   [not supported](../guides/multiple-machines.md#a-home-directory-shared-across-machines-is-not-supported).
@@ -94,9 +96,9 @@ the line to add to your shell profile when the directory isn't on your
 `PATH` (`~/.bash_profile` for Bash on macOS, `~/.bashrc` for Bash on Linux, or
 `~/.zshrc` for zsh). Open a new terminal after adding it. It never runs
 setup. On Linux, setup refuses a program path that systemd cannot take in a
-unit file (one with a quote, a backslash or a control character, such as a
-home directory named `/home/o'brien`); install the binary elsewhere with
-`AGENT_ARCHIVE_INSTALL_DIR`.
+unit file (one with a quote, a backslash, `$`, `*`, `?`, `[` or a control
+character, such as a home directory named `/home/o'brien`); install the
+binary elsewhere with `AGENT_ARCHIVE_INSTALL_DIR`.
 
 **On Linux** the binary is not signed, so the checksum only guards against a
 damaged download. The installer says so and prints the command that confirms

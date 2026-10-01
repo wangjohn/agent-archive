@@ -352,8 +352,9 @@ what was not](install.md#platforms)).
   `agent-archive-collector.service` (a one-shot that runs `agent-archive
   _collect`, with its output appended to `collector.log` and
   `collector-error.log` in the data directory) and
-  `agent-archive-collector.timer` (a minute after the manager starts, then a
-  minute after each run) into `~/.config/systemd/user`, then runs
+  `agent-archive-collector.timer` (a minute after boot, so at once when setup
+  starts it, then a minute after each start; in a container the first run can
+  wait up to a minute) into `~/.config/systemd/user`, then runs
   `systemctl --user daemon-reload` and `enable --now` on the timer. It needs
   systemd 240 or newer (RHEL 8 and its rebuilds from 8.3); an older one is
   refused. There is no cron or other fallback: without a systemd user manager
