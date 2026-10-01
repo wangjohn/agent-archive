@@ -34,7 +34,7 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `config.json` | The configuration: storage, projects, apps, retention, pause. See [configuration](configuration.md). |
+| `config.json` | The configuration: storage, projects, apps, retention, pause, and on Linux a digest of the machine ID setup first ran on (`host_id`, never uploaded), which lets `status` and `setup` notice a copied data directory. See [configuration](configuration.md). |
 | `setup-draft.json` | Setup's saved progress, so an interrupted setup can continue. Holds no secrets. |
 | `setup-transaction.json` | Present only while setup is changing files, or after it was interrupted; see [troubleshooting](../guides/troubleshooting.md#an-interrupted-setup). |
 | `application-versions.json` | Installed app versions setup found. |

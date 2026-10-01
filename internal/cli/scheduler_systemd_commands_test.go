@@ -351,8 +351,10 @@ func TestLinuxSetupWhoseLoadFailsRollsBackToNothing(t *testing.T) {
 		t.Errorf("the failure says:\n%s", text)
 	}
 	timer, service := l.units()
-	for _, path := range []string{timer, service, filepath.Join(l.home, "config.json"), setupjournal.JournalPath(l.home), filepath.Join(l.userHome, ".claude", "settings.json"), filepath.Join(l.userHome, ".codex", "hooks.json")} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
+	// The failed start left the link enabling made, which dangles once the unit
+	// files are gone: the rollback removes it too.
+	for _, path := range []string{timer, service, l.manager.enableLink(l.ref()), filepath.Join(l.home, "config.json"), setupjournal.JournalPath(l.home), filepath.Join(l.userHome, ".claude", "settings.json"), filepath.Join(l.userHome, ".codex", "hooks.json")} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Errorf("%s is left after the rollback (%v)", path, err)
 		}
 	}
