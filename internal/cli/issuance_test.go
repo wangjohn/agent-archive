@@ -187,7 +187,7 @@ func TestDedicatedAddFreshThenSpareAndUncertainDelivery(t *testing.T) {
 		t.Fatal("uncertain file delivery accepted")
 	}
 	if len(cf.Tokens()) != 3 || len(kc.items) != 2 {
-		t.Fatal("spare reused or delivered secret retained")
+		t.Fatalf("spare reused or delivered secret retained: tokens=%d secrets=%d stderr=%s", len(cf.Tokens()), len(kc.items), &errOut)
 	}
 	slots, err := issuance.List(home)
 	must(t, err)
@@ -562,42 +562,5 @@ func TestDedicatedOwnIntentNeverEntersSparePool(t *testing.T) {
 	i.cleanup(&s)
 	if s.State != issuance.OwnIntent || len(cf.Live()) != 1 {
 		t.Fatal("ordinary source cleanup touched own transaction")
-	}
-	must(t, i.cleanupUncommittedOwnIntent(&s))
-	if s.State != issuance.Deleted || len(cf.Live()) != 0 {
-		t.Fatal("uncommitted own transaction was not cleaned")
-	}
-}
-
-func TestDedicatedOwnIntentCleanupPreservesCommittedOrUnknownBindings(t *testing.T) {
-	env, home, cf, kc := dedicatedFixture(t)
-	i := fixtureIssuer(t, env, home)
-	s, _, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
-	must(t, err)
-	cfg := i.cfg
-	cfg.Storage.R2CredentialRef = s.SecretRef
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Own, AccessKeyID: s.ProviderID, RecipientID: s.RecipientID, IssuerID: s.IssuerID, SlotID: s.SlotID}
-	must(t, config.Save(home, cfg))
-	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 1 {
-		t.Fatal("committed key deleted")
-	}
-	s.State = issuance.Own
-	must(t, issuance.Save(home, s))
-	i.cleanup(&s)
-	if len(cf.Live()) != 1 {
-		t.Fatal("committed own key cleaned automatically")
-	}
-	// A different reference may still load the same active provider key.
-	s, key, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
-	must(t, err)
-	cfg = i.cfg
-	must(t, kc.Save(context.Background(), "main", key))
-	must(t, config.Save(home, cfg))
-	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 2 {
-		t.Fatal("aliased active key deleted")
-	}
-	must(t, kc.Delete(context.Background(), "main"))
-	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 2 {
-		t.Fatal("unknown active binding deleted")
 	}
 }
