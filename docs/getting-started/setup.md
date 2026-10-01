@@ -434,6 +434,10 @@ what was not](install.md#platforms)).
   so a `credential_process` helper such as `aws-vault`, `op` or one in
   `~/.local/bin` is found. A directory that does not exist when setup runs
   is not recorded; run setup again after installing a helper there.
+- **The job's working directory is `/`.** Use an absolute path or `~/` for
+  a `credential_process` helper under your home. A path such as
+  `./bin/helper` is resolved from `/`, as it is for the macOS collector.
+  Existing installations get this setting when you run setup again.
 - **Credentials.** There is no Keychain. An R2 key is kept in a private file
   that is not encrypted, and an S3 profile stores no secret of
   agent-archive's own; prefer S3 on Linux. In a container or a service, set

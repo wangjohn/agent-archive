@@ -520,21 +520,22 @@ func TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused(t *testing.T) {
 	}
 }
 
-// A cache home that was already there keeps its mode (0755 and 0775 are the
-// user's to choose, and are not tightened), but one that every account can
-// write to without the sticky bit is refused before anything is made in it:
-// anyone could rename agent-archive's folder away and put their own in its
-// place. A sticky one (like /tmp) is fine: only its owner can rename what is
-// in it.
-func TestExistingCacheHomeKeepsItsModeUnlessEveryoneCanWriteToIt(t *testing.T) {
+// A cache home that was already there keeps its mode, but group or other
+// write access without the sticky bit is refused before anything is made in
+// it: another account could rename agent-archive's folder away and put their
+// own in its place. A sticky one (like /tmp) protects the user's folder.
+func TestExistingCacheHomeKeepsItsModeUnlessOtherAccountsCanWriteToIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		mode fs.FileMode
 		ok   bool
 	}{
 		{0o755, true},
-		{0o775, true},
+		{0o775, false},
+		{0o770, false},
+		{0o720, false},
 		{0o700, true},
+		{0o770 | fs.ModeSticky, true},
 		{0o777 | fs.ModeSticky, true},
 		{0o777, false},
 		{0o703, false},

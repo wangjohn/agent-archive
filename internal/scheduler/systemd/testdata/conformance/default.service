@@ -4,6 +4,7 @@ Description=agent-archive background collector
 
 [Service]
 Type=oneshot
+WorkingDirectory=/
 ExecStart=/Users/test/bin/agent-archive _collect
 Environment=AGENT_ARCHIVE_HOME=/Users/test/.local/share/agent-archive
 Environment=PATH=/usr/local/bin:/usr/bin:/bin

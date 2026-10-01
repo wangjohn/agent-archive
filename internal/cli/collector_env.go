@@ -328,8 +328,8 @@ func commandProgram(command string) string {
 
 // programFound reports whether sh would find program with PATH set to path:
 // a name is looked up in each directory, a path is taken as it is (from the
-// root directory, the collector's working directory, when relative), and a
-// leading ~/ is the user's home.
+// root directory, the collector's working directory under launchd and the
+// generated systemd service, when relative), and a leading ~/ is the user's home.
 func programFound(program, path, userHome string) bool {
 	if rest, ok := strings.CutPrefix(program, "~/"); ok {
 		program = filepath.Join(userHome, rest)

@@ -158,6 +158,26 @@ func TestSetupWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	}
 }
 
+// Both schedulers run from /: a relative helper path is rooted there, while
+// ~/ explicitly selects the user's home. Diagnostics must use the same base.
+func TestCollectorHelperPathsUseTheRootWorkingDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	helper := filepath.Join(home, "credential-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, program := range []string{helper, "./" + strings.TrimPrefix(helper, "/"), "~/credential-helper"} {
+		if !programFound(program, "", home) {
+			t.Errorf("helper %q should be found", program)
+		}
+	}
+	// The file exists under home, but that is not the job's working directory.
+	if programFound("./credential-helper", "", home) {
+		t.Error("found a relative helper under the user's home instead of /")
+	}
+}
+
 // setup --yes gives the same warning.
 func TestSetupYesWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	t.Parallel()
