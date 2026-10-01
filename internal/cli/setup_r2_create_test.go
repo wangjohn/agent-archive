@@ -1165,14 +1165,6 @@ func TestParseR2AccountID(t *testing.T) {
 
 // withR2CreateSwitch is an Env whose lookup answers the experimental R2
 // switch with value, set or not, and nothing else.
-func withR2CreateSwitch(value string, set bool) Env {
-	return Env{LookupEnv: func(key string) (string, bool) {
-		if key == experimentalR2CreateVar {
-			return value, set
-		}
-		return "", false
-	}}
-}
 
 func menuKeys(options []option) string {
 	var keys []string

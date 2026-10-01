@@ -98,11 +98,28 @@ func promptS3Bucket(p *prompter, cfg *credentials.Config, env Env, failedRegion 
 	if err != nil {
 		return err
 	}
+	creationProfile := cfg.AWSProfile
 	bucket, created, err := createS3Bucket(p, cfg, env, profileRegion, noCredentials)
 	if err != nil {
 		return err
 	}
 	if !created {
+		if cfg.AWSProfile != creationProfile {
+			// Creation customization and recovery can select another profile.
+			// Never carry the old profile region or credential status into fallback.
+			profileRegion, noCredentials = "", false
+			if profiles, lookupErr := env.awsProfiles(); lookupErr == nil {
+				for _, profile := range profiles {
+					if profile.Name == cfg.AWSProfile {
+						profileRegion, noCredentials = profile.Region, profile.NoCredentials
+						if !validRegion(profileRegion) {
+							profileRegion = ""
+						}
+						break
+					}
+				}
+			}
+		}
 		return promptS3ExistingBucket(p, cfg, env, failedRegion, profileRegion, noCredentials)
 	}
 	// Two different choices: the profile that created the bucket (asked
@@ -181,19 +198,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			if !noCredentials && region == "" {
 				continue
 			}
-			if !noCredentials && region != "" {
-				switch {
-				case !standardAWSRegion(region):
-					terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
-				case uncertain[name]:
-					terminal.Printf(p.out, "The bucket %s may have been created by an earlier request. Check the S3 console; customize the name before trying another creation.\n", name)
-				default:
-					creator, err = env.awsBucketCreator(cfg.AWSProfile, region)
-					if err != nil {
-						terminal.Printf(p.out, "Couldn't open profile %s (%s).\n", cfg.AWSProfile, discoveryReason(err))
-					}
-				}
-			}
+			creator = openS3CreationClient(p, cfg, env, region, name, noCredentials, uncertain[name])
 		}
 		if creator != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), bucketCreateTimeout)
@@ -248,6 +253,26 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 			}
 		}
 	}
+}
+
+// openS3CreationClient declines unsafe or incomplete settings before loading credentials.
+func openS3CreationClient(p *prompter, cfg *credentials.Config, env Env, region, name string, noCredentials, uncertain bool) BucketCreator {
+	if noCredentials || region == "" {
+		return nil
+	}
+	if !standardAWSRegion(region) {
+		terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
+		return nil
+	}
+	if uncertain {
+		terminal.Printf(p.out, "The bucket %s may have been created by an earlier request. Check the S3 console; customize the name before trying another creation.\n", name)
+		return nil
+	}
+	creator, err := env.awsBucketCreator(cfg.AWSProfile, region)
+	if err != nil {
+		terminal.Printf(p.out, "Couldn't open profile %s (%s).\n", cfg.AWSProfile, discoveryReason(err))
+	}
+	return creator
 }
 
 // s3CreationSettings keeps customization separate from bucket mutations.

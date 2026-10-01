@@ -173,3 +173,37 @@ func TestFailedDraftDefaultsToConnectingItsSavedBucket(t *testing.T) {
 		t.Fatalf("cfg=%+v err=%v\n%s", got, err, &out)
 	}
 }
+
+func TestS3ExistingFallbackUsesTheChangedCreationProfile(t *testing.T) {
+	for _, missingCredentials := range []bool{false, true} {
+		sequentialNames(t)
+		creator := &fakeCreator{privacy: verifiedPrivate}
+		env := createEnv("us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
+		env.AWSProfiles = func() ([]AWSProfile, error) {
+			return []AWSProfile{{Name: "east", Region: "us-east-1", NoCredentials: missingCredentials}, {Name: "west", Region: "us-west-2"}}, nil
+		}
+		input := "east\nc\nprofile\nwest\ne\nsaved\n"
+		if missingCredentials {
+			input = "east\nprofile\nwest\ne\nsaved\n"
+		}
+		cfg := credentials.Config{}
+		out, err := runCreate(t, env, &cfg, input)
+		if err != nil || cfg.AWSProfile != "west" || cfg.Bucket != "saved" || cfg.Region != "us-west-2" || len(creator.calls) != 0 || strings.Contains(out, "Couldn't use profile west: it has no credentials") {
+			t.Fatalf("missing=%v cfg=%+v err=%v\n%s", missingCredentials, cfg, err, out)
+		}
+	}
+}
+
+func TestS3ExistingFallbackPromptsForMalformedChangedProfileRegion(t *testing.T) {
+	sequentialNames(t)
+	creator := &fakeCreator{privacy: verifiedPrivate}
+	env := createEnv("us-east-1", creator, fakeBuckets{regionErr: errAccessDenied, listErr: errAccessDenied}, nil)
+	env.AWSProfiles = func() ([]AWSProfile, error) {
+		return []AWSProfile{{Name: "east", Region: "us-east-1"}, {Name: "west", Region: "malformed"}}, nil
+	}
+	cfg := credentials.Config{}
+	out, err := runCreate(t, env, &cfg, "east\nc\nprofile\nwest\nus-west-2\ne\nsaved\nus-west-1\n")
+	if err != nil || cfg.Region != "us-west-1" || !strings.Contains(out, "Bucket region") || len(creator.calls) != 0 {
+		t.Fatalf("cfg=%+v err=%v\n%s", cfg, err, out)
+	}
+}

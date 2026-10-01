@@ -23,19 +23,16 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	offerKeep := len(keepInstalled) == 0 || keepInstalled[0]
 	var secret credentials.R2Credentials
 	if offerKeep && existing.Bucket != "" {
-		for {
-			terminal.Println(p.out, "Current storage: "+existing.Provider+" / "+existing.Bucket)
-			choice, err := p.actions("Keep your current storage?", "keep", nil, []actionOption{{"keep", "", "Keep current storage"}, {"change", "c", "Change storage"}})
-			if err != nil {
-				return existing, secret, false, err
+		terminal.Println(p.out, "Current storage: "+existing.Provider+" / "+existing.Bucket)
+		choice, err := p.actions("Keep your current storage?", "keep", nil, []actionOption{{"keep", "", "Keep current storage"}, {"change", "c", "Change storage"}})
+		if err != nil {
+			return existing, secret, false, err
+		}
+		if choice == "keep" {
+			if existing.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, existing.R2CredentialRef) {
+				return promptExistingR2(p, existing, env)
 			}
-			if choice == "keep" {
-				if existing.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, existing.R2CredentialRef) {
-					return promptExistingR2(p, existing, env)
-				}
-				return existing, secret, false, nil
-			}
-			break
+			return existing, secret, false, nil
 		}
 	}
 	def := existing.Provider
@@ -43,18 +40,9 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		def = defaultStorageProvider(env)
 	}
 	for {
-		aliases := []option{{"r2-existing", ""}, {"s3-existing", ""}, {storageChoiceS3New, ""}}
-		if experimentalR2Create(env) {
-			aliases = append(aliases, option{guidedR2Choice, ""})
-		}
-		secondary := []actionOption{{"help", "h", "Setup instructions"}}
+		aliases, secondary := storageProviderActions(existing, env)
 		if existing.Bucket != "" {
 			terminal.Println(p.out, "Continue connecting the saved bucket, or choose a replacement.")
-			if existing.Provider == credentials.ProviderS3 {
-				secondary = append(secondary, actionOption{storageChoiceS3New, "n", "Create a replacement S3 bucket"})
-			} else if experimentalR2Create(env) {
-				secondary = append(secondary, actionOption{guidedR2Choice, "n", "Create a replacement R2 bucket"})
-			}
 		}
 		choice, err := p.actions("Where should your archive live?", def, storageMenuOptions(), secondary, aliases...)
 		if err != nil {
@@ -115,6 +103,23 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)
 		return cfg, secret, false, nil
 	}
+}
+
+// storageProviderActions exposes replacement creation only for a saved destination.
+func storageProviderActions(existing credentials.Config, env Env) ([]option, []actionOption) {
+	aliases := []option{{"r2-existing", ""}, {"s3-existing", ""}, {storageChoiceS3New, ""}}
+	if experimentalR2Create(env) {
+		aliases = append(aliases, option{guidedR2Choice, ""})
+	}
+	secondary := []actionOption{{"help", "h", "Setup instructions"}}
+	if existing.Bucket != "" {
+		if existing.Provider == credentials.ProviderS3 {
+			secondary = append(secondary, actionOption{storageChoiceS3New, "n", "Create a replacement S3 bucket"})
+		} else if experimentalR2Create(env) {
+			secondary = append(secondary, actionOption{guidedR2Choice, "n", "Create a replacement R2 bucket"})
+		}
+	}
+	return aliases, secondary
 }
 
 func storageIntroduction(p *prompter, provider string, env Env) (string, error) {
