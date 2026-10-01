@@ -41,7 +41,7 @@ Its sections:
 | Section | What it checks |
 | --- | --- |
 | 0 | the machine: systemd's version, `ada`'s user manager and bus, a machine ID |
-| 1-2 | `setup --yes` (S3 to MinIO) from a shell with `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` set: the unit files (mode, `Environment=`, `PATH`, `append:` logging), the enable link, the timer waiting, `config.json` (`background_backend`, a `host_id` that is not the machine ID), status says loaded |
+| 1-2 | `setup --yes` (S3 to MinIO) from a shell with `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` set: the unit files (mode, `Environment=`, `PATH`, `append:` logging), the enable link, the timer waiting, `config.json` (`background_backend`, a `host_id` that is not the machine ID), status says loaded; no network-home warning or opt-in on the container's own disk |
 | 3 | a synthetic Claude Code session through the installed hook command (the fixture transcript; `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`), published by the **timer's** collector run, not by `sync`; read back from the bucket with `list` and `show`; the journal shows the timer started the service |
 | 4 | a hand-made Cursor database, imported by `backfill`; its copy goes under `$XDG_CACHE_HOME/agent-archive/cursor-snapshots` (0700, `CACHEDIR.TAG`, removed after the read), never `/tmp` or the default cache |
 | 5 | `status` warns when the shell's XDG directories differ from the collector's, and is quiet when they match |
@@ -85,6 +85,21 @@ uninstall with a manager (8), `--skip-scheduler` with a manager (10),
   refuses anywhere else, root or not.
 
 ## When it fails
+
+On 2026-10-01 the default Quay MinIO image returned 401, Docker Hub's MinIO
+images were also unavailable, and official binary downloads returned 410.
+The amd64 run passed using locally built images from pinned official MinIO
+and mc source through `MINIO_IMAGE` and `MC_IMAGE`; see the source pins and
+result in [testing](../../../dev/contributing/testing.md#the-linux-live-acceptance-run).
+If the defaults cannot be pulled, prepare compatible images before running:
+
+```sh
+MINIO_IMAGE=YOUR_MINIO_IMAGE MC_IMAGE=YOUR_MC_IMAGE scripts/acceptance/linux/host.sh
+```
+
+The MinIO image must accept `server /data`; the mc image must provide `/bin/sh`
+and `mc` on `PATH`. Images supplied through these overrides are kept; remove
+any temporary images you built after the run.
 
 A failed check prints the output it looked at. `KEEP=1` leaves the machine up:
 `docker exec -it aa-accept-<random>-machine bash`, then
