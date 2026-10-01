@@ -102,9 +102,13 @@ policy with `none+discovery-v2`, `metadata+discovery-v2`, or `body+discovery-v2`
 That suffix additionally blocks later intermediate writers with skill enum
 validation, but the suffix alone does not block the published releases.
 Previously written numeric version-2 configurations remain readable and are
-atomically rewritten with the object fence before a namespaced identity write.
+atomically rewritten with the object fence before a namespaced identity write
+or before setup/refresh captures protected rollback snapshots.
 Already fenced configurations need no extra rewrite. Both guards survive
-disablement and journal recovery. Do not edit them away:
+disablement and journal recovery. Published readers refuse routine configuration
+and capture writes; setup may create locks or restore matching transaction
+snapshots before loading configuration. Protected snapshot migration retains
+the fence across that recovery path. Do not edit the guards away:
 rollback needs an explicit safe downgrade that disables discovery and resets
 future-only authorization. No downgrade command is supplied in this release.
 

@@ -28,6 +28,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Empty identity migration completes atomically before concurrent fresh hooks
+  can queue behind a pending marker. Setup and refresh fence existing protected
+  configuration before capturing rollback snapshots, preserving old-writer
+  refusal after interrupted transactions.
+
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
   Incomplete local `--latest` offers an explicit picker or known-ID recipes

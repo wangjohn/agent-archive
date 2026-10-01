@@ -221,6 +221,9 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if !reflect.DeepEqual(withoutBucketPrivacy(current), withoutBucketPrivacy(old)) {
 		return fmt.Errorf("settings changed while setup was open; restart setup to review the current settings")
 	}
+	if err := protectSetupWriter(home, current); err != nil {
+		return err
+	}
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
 		next.BucketPrivacy = fresher
 	}
@@ -610,4 +613,17 @@ func freshestBucketPrivacy(cfg config.Config, candidate *storage.PrivacyReport) 
 		return nil
 	}
 	return candidate
+}
+
+// Callers hold hooks.lock and have settled any previous setup journal. Protect
+// rollback snapshots too: an older recovery must not restore numeric schema2
+// over a newly fenced config that already has namespaced identities.
+func protectSetupWriter(home string, current config.Config) error {
+	if setupjournal.TransactionPending(home) {
+		return errors.New("setup pending before writer protection")
+	}
+	if current.Discovery == nil {
+		return nil
+	}
+	return config.ProtectIdentityWriter(home)
 }

@@ -183,6 +183,14 @@ func (s *Store) startIdentityMigration(m identityMigration, guard func() error) 
 	if err != nil || ready {
 		return ready, err
 	}
+	// Finish empty state while admission is still serialized. Otherwise a hook
+	// can take hooks.lock after the pending marker but before completion, leaving
+	// every concurrent start queued despite there being no history to migrate.
+	if err := s.ensureIdentityReady(); err == nil {
+		return true, nil
+	} else if !errors.Is(err, ErrIdentityMigrationPending) {
+		return false, err
+	}
 	return false, local.Write(filepath.Join(s.home, "identity-migration.json"), m)
 }
 

@@ -170,3 +170,32 @@ func TestIdentityWriteFencesExistingNumericProtectedConfig(t *testing.T) {
 		t.Fatal("fence migration changed existing consent or skill policy", err)
 	}
 }
+
+// A competing hook can acquire hooks.lock before the migrator's final save.
+// Empty state must already permit admission at that boundary, even while the
+// separate migration lock remains held by the first hook.
+func TestEmptyMigrationPermitsAdmissionBeforeFinalSave(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	releaseMigration, err := local.NamedLock(s.home, "identity-migration.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseMigration()
+	guarded := false
+	complete, err := s.startIdentityMigration(identityMigration{}, func() error {
+		guarded = true
+		return config.ProtectIdentityWriter(s.home)
+	})
+	if err != nil || !complete || !guarded {
+		t.Fatalf("empty migration left admission pending: complete=%t guarded=%t err=%v", complete, guarded, err)
+	}
+	releaseHooks, err := local.NamedLock(s.home, "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseHooks()
+	if _, _, err := s.EnsureAgentSessionID("cursor", "first-concurrent-start"); err != nil {
+		t.Fatal("empty migration blocked competing admission", err)
+	}
+}
