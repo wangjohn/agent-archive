@@ -64,26 +64,40 @@ func TestQualifiedLegacyAdoptionAndCrossAgentCollision(t *testing.T) {
 	}
 }
 
+type migrationDefect string
+
+const (
+	defectAgent   migrationDefect = "agent"
+	defectNative  migrationDefect = "native"
+	defectArchive migrationDefect = "archive"
+	defectMissing migrationDefect = "missing"
+	defectCorrupt migrationDefect = "corrupt"
+	defectVersion migrationDefect = "version"
+	defectUTF8    migrationDefect = "utf8"
+)
+
 func TestQualifiedLookupRejectsWrongReferencedOwner(t *testing.T) {
-	for _, defect := range []string{"agent", "native", "archive", "missing", "corrupt", "version", "utf8"} {
-		t.Run(defect, func(t *testing.T) {
+	for _, defect := range []migrationDefect{defectAgent, defectNative, defectArchive, defectMissing, defectCorrupt, defectVersion, defectUTF8} {
+		t.Run(string(defect), func(t *testing.T) {
 			s := newTestStore(t)
 			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "s"}
 			reg := migrationRegistration(key, "old")
 			entry := indexEntry(key, "old")
 			switch defect {
-			case "agent":
+			case defectAgent:
 				reg.Harness.Name = "claude"
-			case "native":
+			case defectNative:
 				reg.NativeSessionID = " S "
-			case "archive":
+			case defectArchive:
 				reg.ArchiveSessionID = "other"
-			case "version":
+			case defectVersion:
 				entry.Version = 2
-			case "utf8":
+			case defectMissing, defectCorrupt:
+			// These defects are applied to the persisted files below.
+			case defectUTF8:
 				key.NativeID = string([]byte{0xff})
 			}
-			if defect != "missing" {
+			if defect != defectMissing {
 				if err := local.Write(s.registrationPath("old"), reg); err != nil {
 					t.Fatal(err)
 				}
@@ -91,10 +105,10 @@ func TestQualifiedLookupRejectsWrongReferencedOwner(t *testing.T) {
 			if err := local.Write(qualifiedSessionIndexPath(s.home, key), entry); err != nil {
 				t.Fatal(err)
 			}
-			if defect == "corrupt" {
+			if defect == defectCorrupt {
 				writeCorrupt(t, s.registrationPath("old"))
 			}
-			if _, found, err := s.ArchiveSessionID(key); found || (err == nil && defect != "missing") {
+			if _, found, err := s.ArchiveSessionID(key); found || (err == nil && defect != defectMissing) {
 				t.Fatalf("accepted defect found=%t err=%v", found, err)
 			}
 		})
@@ -248,7 +262,13 @@ func TestQualifiedRecoveryConflictsAndIncompleteEnumeration(t *testing.T) {
 }
 
 func TestQualifiedRecoveryResumesEveryDurableBoundary(t *testing.T) {
-	for _, boundary := range []string{"recovery-begin", "recovery-incomplete", "recovery-enumerated", "recovery-entry", "recovery-completing", "recovery-complete"} {
+	for _, tc := range []struct {
+		boundary   string
+		incomplete bool
+	}{
+		{"recovery-begin", false}, {"recovery-incomplete", true}, {"recovery-enumerated", true}, {"recovery-entry", true}, {"recovery-completing", true}, {"recovery-complete", false},
+	} {
+		boundary := tc.boundary
 		t.Run(boundary, func(t *testing.T) {
 			s := newTestStore(t)
 			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "old"}
@@ -263,6 +283,7 @@ func TestQualifiedRecoveryResumesEveryDurableBoundary(t *testing.T) {
 			if err := s.RecoverSessionIndex(context.Background()); !errors.Is(err, interrupted) {
 				t.Fatalf("missing boundary %v", err)
 			}
+			//lint:ignore LV1001 boundary names match the string-valued durable interruption seam
 			if boundary != "recovery-begin" && boundary != "recovery-complete" {
 				if err := s.sessionIndexMissAllowed(); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 					t.Fatalf("partial census marked complete %v", err)
@@ -384,5 +405,113 @@ func TestQualifiedRegistrationUpdateAndRemovalCannotChangeOwner(t *testing.T) {
 	}
 	if id, found, err := s.ArchiveSessionID(key); err != nil || !found || id != reg.ArchiveSessionID {
 		t.Fatalf("owner lost %q %t %v", id, found, err)
+	}
+}
+
+// A newer hook request cannot be certified by an earlier recovery census.
+// Regression: phase 3a P3A-R1.
+func TestQualifiedRecoveryKeepsRequestDuringCompletion(t *testing.T) {
+	for _, duringSync := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before stage", true: "staged before commit"}[duringSync], func(t *testing.T) {
+			s := newTestStore(t)
+			key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "arriving-at-completion"}
+			requested := false
+			request := func() error {
+				if requested {
+					return nil
+				}
+				requested = true
+				unlock, err := local.NamedLock(s.home, "hooks.lock")
+				if err != nil {
+					return err
+				}
+				defer unlock()
+				return s.RequestSessionIndexRecovery(key)
+			}
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-completing" {
+					if duringSync {
+						s.onWriteSync = func() {
+							if err := request(); err != nil {
+								t.Fatal(err)
+							}
+						}
+						return nil
+					}
+					return request()
+				}
+				return nil
+			}
+			err := s.RecoverSessionIndex(context.Background())
+			if !requested {
+				t.Fatal("request boundary not reached")
+			}
+			if !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+				t.Fatalf("newer generation accepted: %v", err)
+			}
+			s.onIndexStep, s.onWriteSync = nil, nil
+			if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, created, err := s.EnsureArchiveSessionID(key); err != nil || !created {
+				t.Fatalf("newer request stranded by completed census: created=%t err=%v", created, err)
+			}
+		})
+	}
+}
+
+func TestQualifiedRecoveryAcceptsExistingMarkerWithoutGeneration(t *testing.T) {
+	t.Parallel()
+	for _, complete := range []bool{false, true} {
+		s := newTestStore(t)
+		if err := local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Complete: complete}); err != nil {
+			t.Fatal(err)
+		}
+		s.onWriteSync = func() {
+			unlock, err := local.NamedLock(s.home, "hooks.lock")
+			if err != nil {
+				t.Fatalf("marker sync held hooks lock: %v", err)
+			}
+			unlock()
+		}
+		if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.sessionIndexMissAllowed(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Forgetting never leaves a live registration after its index was removed.
+// Regression: phase 3a P3A-R2.
+func TestQualifiedForgetInterruptionCannotLeaveUnindexedRegistration(t *testing.T) {
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "forgotten"}
+	reg, err := s.RegisterNewSession(key, func(id string) archive.SessionRegistration { return migrationRegistration(key, id) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	interrupted := errors.New("interrupted after index removal")
+	s.onIndexStep = func(step string) error {
+		if step == "forget-indexes" {
+			return interrupted
+		}
+		return nil
+	}
+	if err := s.ForgetSession(reg.ArchiveSessionID, key); !errors.Is(err, interrupted) {
+		t.Fatalf("interruption: %v", err)
+	}
+	s.onIndexStep = nil
+	if _, found, err := s.LoadRegistration(reg.ArchiveSessionID); err != nil || found {
+		t.Fatalf("index disappeared before registration: found=%t err=%v", found, err)
+	}
+	fresh, err := s.RegisterNewSession(key, func(id string) archive.SessionRegistration { return migrationRegistration(key, id) })
+	if err != nil || fresh.ArchiveSessionID == reg.ArchiveSessionID {
+		t.Fatalf("fresh retry: %#v %v", fresh, err)
+	}
+	regs, err := s.LoadRegistrations()
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("orphan duplicate: %#v %v", regs, err)
 	}
 }

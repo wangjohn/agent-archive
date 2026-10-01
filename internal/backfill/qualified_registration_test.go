@@ -34,10 +34,9 @@ func TestQualifiedBackfillKeepsParentChildIDsAcrossInterruptedHolds(t *testing.T
 			}
 			key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"}
 			c := Candidate{Harness: "claude-code", NativeSessionID: key.NativeID, TranscriptPath: parentPath, ProjectRoot: project, StartedAt: at.Add(-time.Minute), StartedAtSource: archive.StartedAtSourceTranscript, Subagents: []Subagent{{AgentID: "child", Path: childPath}}}
-			r := Registration{Home: home, Store: store, Batch: "2026-09-22-1", AdmittedAt: at, MaxHoldSteps: 1}
 			var original state.SubagentCandidate
 			observed := false
-			r.Stop = func() bool {
+			r := Registration{Home: home, Store: store, Batch: "2026-09-22-1", AdmittedAt: at, MaxHoldSteps: 1, Stop: func() bool {
 				if observed {
 					return false
 				}
@@ -59,7 +58,7 @@ func TestQualifiedBackfillKeepsParentChildIDsAcrossInterruptedHolds(t *testing.T
 					return false
 				}
 				return true
-			}
+			}}
 			result, err := r.Run([]Candidate{c})
 			if expire {
 				if err == nil || len(result.Sessions) != 0 {

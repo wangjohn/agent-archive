@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 
@@ -32,8 +33,12 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", "SubagentStop omitted agent_id", now)
 	}
 	childNativeID := parent.NativeSessionID + ":subagent:" + agentID
-	childID, _, err := store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(parent.Harness.Name)), NativeID: childNativeID})
+	childKey := agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(parent.Harness.Name)), NativeID: childNativeID}
+	childID, _, err := store.EnsureArchiveSessionID(childKey)
 	if err != nil {
+		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			err = errors.Join(err, store.RequestSessionIndexRecovery(childKey))
+		}
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}
 	status := archive.LinkedSessionUnavailable
