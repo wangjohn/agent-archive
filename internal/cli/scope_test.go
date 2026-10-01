@@ -321,8 +321,10 @@ func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, dir, want string
-		ok              bool
+		name string
+		dir  string
+		want string
+		ok   bool
 	}{
 		{"a main checkout", main, "app", true},
 		{"a worktree", gitWorktree(t, main, filepath.Join(root, "app-pr7")), "app", true},
