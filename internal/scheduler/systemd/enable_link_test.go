@@ -118,3 +118,30 @@ func TestDefinitionListsOnlyItsOwnJobsLink(t *testing.T) {
 		t.Errorf("the other installation's own paths %q lack its link", got)
 	}
 }
+
+// A home reached through a link is one location under either spelling: the
+// manager may write the link's target under the home's real path while setup
+// names the home by the link (or the other way round), and the link is the
+// job's own either way.
+func TestDefinitionListsItsOwnLinkUnderEitherSpellingOfTheHome(t *testing.T) {
+	t.Parallel()
+	s := noManager()
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	spelled := filepath.Join(t.TempDir(), "home")
+	must(t, os.Symlink(real, spelled))
+	for _, tc := range []struct{ name, home, target string }{
+		{"a target under the real path", spelled, real},
+		{"a target under the linked path", real, spelled},
+	} {
+		site := scheduler.Site{UserHome: tc.home}
+		ref := write(t, s, site)
+		link := filepath.Join(s.UnitDir(site), "timers.target.wants", string(ref)+".timer")
+		must(t, os.MkdirAll(filepath.Dir(link), 0o755))
+		must(t, os.RemoveAll(link))
+		must(t, os.Symlink(s.timerPath(scheduler.Site{UserHome: tc.target}, ref), link))
+		if got := s.Definition(site, ref).Paths; !slices.Contains(got, link) {
+			t.Errorf("%s: paths %q lack the job's own link", tc.name, got)
+		}
+	}
+}
