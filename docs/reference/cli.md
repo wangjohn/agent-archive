@@ -294,8 +294,8 @@ order; the first that has a match answers, and a note says how many more match
 in other projects. The words are matched against metadata, never the
 conversation. Without WORDS, the table and browser list top-level sessions
 only: subagent sessions are left out before --limit counts, and the footer
-says how many; a parent shows how many it has. --json lists every session,
-subagents included.
+says how many; a parent shows how many it has. --json without WORDS lists
+every session, subagents included.
 Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
@@ -346,9 +346,10 @@ paged through $PAGER unless --no-pager.
                                  configured project labels, exactly, ignoring
                                  case). Default: the current directory's
                                  repository
-  --all-projects                 List every project's sessions. Scripts that
-                                 read every session pass this, since list
-                                 run inside a project now lists only its own
+  --all-projects                 List every project's sessions (not with
+                                 --project). Scripts that read every session
+                                 pass this, since list run inside a project
+                                 now lists only its own
   --rebuild-index                Rebuild the listing index from live metadata;
                                  scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,

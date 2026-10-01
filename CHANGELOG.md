@@ -30,6 +30,14 @@ Planned for v0.2.0. This release has not been tagged or published.
   publishes after commit; the collector independently retries registration and
   refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
+### Fixed
+
+- Native handoff keeps verified IDs selectable when its cumulative label-read
+  budget is exhausted, and reuses unused header reservations after inspection.
+  Incomplete local `--latest` offers an explicit picker or known-ID recipes
+  rather than selecting automatically. Cancellation during canonical checkout
+  scoping stops further path resolution.
+
 ### Changed
 
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
