@@ -305,11 +305,11 @@ func printR2BootstrapInstructions(p *prompter) {
 func askBootstrapToken(p *prompter, env Env) (token string, fromEnv, removed bool, err error) {
 	if value, ok := env.lookupEnv("CLOUDFLARE_API_TOKEN"); ok && strings.TrimSpace(value) != "" {
 		terminal.Println(p.out, "Using the API token in CLOUDFLARE_API_TOKEN.")
-		if e := env.unsetEnv("CLOUDFLARE_API_TOKEN"); e != nil {
-			p.warn("Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment, so programs setup starts can still see it: " + e.Error() + ".")
-			return strings.TrimSpace(value), true, false, nil
+		unsetErr := env.unsetEnv("CLOUDFLARE_API_TOKEN")
+		if unsetErr != nil {
+			p.warn("Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment, so programs setup starts can still see it: " + unsetErr.Error() + ".")
 		}
-		return strings.TrimSpace(value), true, true, nil
+		return strings.TrimSpace(value), true, unsetErr == nil, nil
 	}
 	token, err = p.secret("Cloudflare API token (hidden; Enter to choose another option): ")
 	if err != nil {
