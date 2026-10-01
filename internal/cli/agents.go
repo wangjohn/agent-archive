@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"slices"
@@ -32,3 +33,6 @@ func launchSupported(c agentmeta.Catalog, name string) bool {
 	}
 	return slices.Contains(d.Operations, agentmeta.Launch)
 }
+
+func (e Env) runtimeLookup() agentapi.RuntimeLookup   { return e.agentRegistry() }
+func (e Env) launcherLookup() agentapi.LauncherLookup { return e.agentRegistry() }

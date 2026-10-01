@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"slices"
 	"strings"
 	"testing"
@@ -101,9 +102,7 @@ func TestHandoffSessionEnvIsPinned(t *testing.T) {
 		"CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_HOST_SESSION_ID CLAUDE_PID " +
 		"CLAUDE_EFFORT AI_AGENT CODEX_THREAD_ID CODEX_SESSION_ID CODEX_CI CODEX_SANDBOX " +
 		"CODEX_SANDBOX_NETWORK_DISABLED CODEX_PERMISSION_PROFILE CODEX_VERSION CURSOR_AGENT")
-	for _, v := range currentSessionEnv {
-		want = append(want, v.key)
-	}
+	want = append(want, agentVariables...)
 	for _, name := range want {
 		if !slices.Contains(handoffSessionEnv, name) {
 			t.Errorf("handoffSessionEnv lacks %s", name)
@@ -145,3 +144,6 @@ func TestBuildLaunchSpecRefusesDoubleDashInArguments(t *testing.T) {
 		}
 	}
 }
+
+func (fakeLaunchEnv) runtimeLookup() agentapi.RuntimeLookup   { return productionAgents }
+func (fakeLaunchEnv) launcherLookup() agentapi.LauncherLookup { return productionAgents }

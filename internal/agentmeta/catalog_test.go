@@ -89,3 +89,13 @@ func TestCanonicalDoesNotCopyDescriptors(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeLaunchRuntimeHaveNoHostDependencies(t *testing.T) {
+	t.Parallel()
+	prefix := "github.com/wangjohn/agent-archive/internal/"
+	for _, pkg := range []string{"agentapi", "agents/claude", "agents/codex", "agents/cursor"} {
+		direct, all := importgraph.Imports(t, prefix+pkg)
+		importgraph.Forbid(t, pkg, direct, "os")
+		importgraph.Forbid(t, pkg, all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
+	}
+}

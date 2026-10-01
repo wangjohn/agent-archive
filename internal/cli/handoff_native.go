@@ -219,18 +219,18 @@ func nativeIdentity(candidates []nativesessions.Candidate, query, harness string
 
 func nativeCurrent(candidates []nativesessions.Candidate, harness string, env currentSessionDependencies) (*nativesessions.Candidate, error) {
 	var found *nativesessions.Candidate
-	for _, v := range currentSessionEnv {
-		if harness != "" && harness != v.harness {
+	for _, observation := range runtimeObservations(env) {
+		if harness != "" && harness != string(observation.Agent) {
 			continue
 		}
-		value, ok := env.lookupEnv(v.key)
-		if !ok || strings.TrimSpace(value) == "" {
+		value := observation.NativeID
+		if value == "" {
 			continue
 		}
 		// Current identity is exact; short prefixes never identify a running agent.
 		var matches []nativesessions.Candidate
 		for _, c := range candidates {
-			if c.Ref.Harness == v.harness && c.NativeID == strings.TrimSpace(value) {
+			if c.Ref.Harness == string(observation.Agent) && c.NativeID == value {
 				matches = append(matches, c)
 			}
 		}
@@ -436,8 +436,8 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 }
 
 func isCurrentNative(c nativesessions.Candidate, env currentSessionDependencies) bool {
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && v.harness == c.Ref.Harness && strings.TrimSpace(value) == c.NativeID {
+	for _, observation := range runtimeObservations(env) {
+		if observation.NativeID != "" && string(observation.Agent) == c.Ref.Harness && observation.NativeID == c.NativeID {
 			return true
 		}
 	}
