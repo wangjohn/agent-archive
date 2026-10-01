@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,6 +147,50 @@ func TestClientPermissionGroupPagingStopsOnRepeats(t *testing.T) {
 	groups, err := client.PermissionGroups(context.Background(), "acct", "n")
 	if err != nil || len(groups) != 1 || calls != 2 {
 		t.Fatalf("groups %+v, %d calls, %v", groups, calls, err)
+	}
+}
+
+// An answer without result_info (no total) does not end paging: the group
+// asked for may be on the next page. Paging then ends when a page adds
+// nothing.
+func TestClientPermissionGroupPagingWithoutATotalFollowsThePages(t *testing.T) {
+	t.Parallel()
+	pages := map[string]string{
+		"1": `{"success":true,"result":[{"id":"g1","name":"other","is_selectable":true}]}`,
+		"2": `{"success":true,"result":[{"id":"g2","name":"target","is_selectable":true}]}`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := pages[r.URL.Query().Get("page")]
+		if !ok {
+			body = `{"success":true,"result":[]}`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	client := cloudflare.New("tok", cloudflare.Options{BaseURL: srv.URL})
+	groups, err := client.PermissionGroups(context.Background(), "acct", "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := cloudflare.SelectPermissionGroup(groups, "target")
+	if err != nil || id != "g2" {
+		t.Fatalf("groups %+v: %q, %v", groups, id, err)
+	}
+}
+
+// A server that ignores the page number and sends no total still ends paging.
+func TestClientPermissionGroupPagingWithoutATotalStopsOnRepeats(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"g1","name":"n","is_selectable":true}]}`))
+	}))
+	defer srv.Close()
+	client := cloudflare.New("tok", cloudflare.Options{BaseURL: srv.URL})
+	groups, err := client.PermissionGroups(context.Background(), "acct", "n")
+	if err != nil || len(groups) != 1 || calls.Load() != 2 {
+		t.Fatalf("groups %+v, %d calls, %v", groups, calls.Load(), err)
 	}
 }
 

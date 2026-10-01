@@ -136,9 +136,11 @@ func (c *Client) PermissionGroups(ctx context.Context, account, name string) ([]
 				fresh++
 			}
 		}
-		// Stop at the last page, and if a server that ignores the page
-		// number sends the same groups again.
-		if fresh == 0 || len(all) >= env.ResultInfo.TotalCount {
+		// Stop when a page adds nothing (the last page, or a server that
+		// ignores the page number and sends the same groups again), or when
+		// the total is known and reached. A missing total reads as zero:
+		// unknown, not "nothing more".
+		if fresh == 0 || env.ResultInfo.TotalCount > 0 && len(all) >= env.ResultInfo.TotalCount {
 			break
 		}
 	}
