@@ -189,7 +189,7 @@ Guide: [Multiple machines](../guides/multiple-machines.md).
 Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
 
 Rename this machine only, keeping its immutable machine and credential IDs.
-Use the full machine ID when a current name is ambiguous. The new name has
+Use the full MACHINE_ID when a current name is ambiguous. The new name has
 1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.
 Observed duplicate names are refused; concurrent naming can still race.
 A failed publication keeps the local name and the collector retries.
