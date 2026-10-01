@@ -297,8 +297,8 @@ and below (the newest 50 at first), match a name, title, branch, project, app,
 or the start of a native ID but not a pull request number, can match a session
 with no prompt yet, and never widen to other projects unless you pass
 `--all-projects`. Several matches open the picker on a
-terminal; without one, each is printed as `local <ID> (<app>): <title>` and the
-command exits 1 with no `Next:` line.
+terminal; without one, the first 20 are printed as `local <ID> (<app>): <title>`
+and the command exits 1, saying how many matched, with no `Next:` line.
 
 **What a word matches.** Every word must appear, case-insensitively, in some
 field of the session: its name (the one your agent shows in its sidebar), its
@@ -416,6 +416,29 @@ selector is a usage error (exit 2) instead. `AGENT_ARCHIVE_NONINTERACTIVE=0`
 turns them back on; see
 [configuration](../reference/configuration.md#environment-variables).
 
+With `--to` and no selector, run from inside an agent, `handoff` hands off
+the session it is running in without asking: the one Claude Code names in
+`CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
+session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
+session for the current directory, as `--latest --harness cursor` would.
+That is not a prompt, so it works while prompts are off. Otherwise a terminal
+gets the picker, and anything else is told to name a session.
+
+A session registered on this machine is read from its transcript as it is now, so
+a handoff right after you stop needs no sync and works while collection is
+paused; nothing is uploaded. Otherwise the session is downloaded from the
+archive, which is how a second machine hands off a session from the first.
+`--source local|archive` forces one or the other; with neither, a local
+transcript that cannot be read falls back to the archive's copy. Either kind
+can be launched with `--to`.
+
+`--latest` names its choice on stderr, passes over sessions with no prompt
+yet, and, when run by an agent that names its own session (Claude Code does,
+through `CLAUDE_CODE_SESSION_ID`), skips that session unless `--to` is used.
+With `--to`, the calling session is eligible because it is the source being
+handed off. `--latest` matches the current directory's project, not projects
+beneath it.
+
 ### The picker
 
 The picker is the one session browser that `list` and bare `show` open, and
@@ -529,29 +552,6 @@ characters, are words too.
 
 *After you pick.* The picker closes and `Continue in:` follows. Whatever you
 type ahead for that question while the picker is closing is kept for it.
-
-With `--to` and no selector, run from inside an agent, `handoff` hands off
-the session it is running in without asking: the one Claude Code names in
-`CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
-session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
-session for the current directory, as `--latest --harness cursor` would.
-That is not a prompt, so it works while prompts are off. Otherwise a terminal
-gets the picker, and anything else is told to name a session.
-
-A session registered on this machine is read from its transcript as it is now, so
-a handoff right after you stop needs no sync and works while collection is
-paused; nothing is uploaded. Otherwise the session is downloaded from the
-archive, which is how a second machine hands off a session from the first.
-`--source local|archive` forces one or the other; with neither, a local
-transcript that cannot be read falls back to the archive's copy. Either kind
-can be launched with `--to`.
-
-`--latest` names its choice on stderr, passes over sessions with no prompt
-yet, and, when run by an agent that names its own session (Claude Code does,
-through `CLAUDE_CODE_SESSION_ID`), skips that session unless `--to` is used.
-With `--to`, the calling session is eligible because it is the source being
-handed off. `--latest` matches the current directory's project, not projects
-beneath it.
 
 ### Finding a session by repository
 
