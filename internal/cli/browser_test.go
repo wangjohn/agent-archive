@@ -497,6 +497,34 @@ func TestListWordsOpenTheKeyBrowserFilteredAndEscClearsThem(t *testing.T) {
 	}
 }
 
+// list "<words>" that match only in another project opens on all projects,
+// saying nothing in the scope matches while the filter holds those words; the
+// scope's sessions are still there: Esc lists all projects under their own
+// heading, and a shows the scope.
+func TestListWordsFoundOnlyElsewhereKeepTheScopeOneKeyAway(t *testing.T) {
+	t.Parallel()
+	a := newScopedArchive(t)
+	a.add(t, "mine0001", "Local work here", a.label)
+	a.add(t, "else0001", "Elsewhere thing", "billing")
+	out, errOut, code := runOnTerminal(t, a.env, newFakeKeys("\x1b", "a", "q"), "", "list", "elsewhere")
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	screens := strings.Split(out, clearScreenSequence)
+	if len(screens) != 4 {
+		t.Fatalf("%d screens:\n%s", len(screens), out)
+	}
+	if !strings.Contains(screens[1], "Nothing in "+a.label+` · showing all projects · "elsewhere" matches 1`) {
+		t.Fatalf("opening screen:\n%s", screens[1])
+	}
+	if !strings.HasPrefix(screens[2], "All projects · 3 sessions") || !strings.Contains(screens[2], "· a "+a.label) || strings.Contains(screens[2], "Nothing in") {
+		t.Fatalf("after Esc:\n%s", screens[2])
+	}
+	if !strings.HasPrefix(screens[3], a.label+" · 2 sessions") || !strings.Contains(screens[3], "Local work here") || strings.Contains(screens[3], "Elsewhere thing") {
+		t.Fatalf("after a:\n%s", screens[3])
+	}
+}
+
 // What was typed ahead of a pick, in the same burst as its Enter or still
 // waiting at the terminal, is handed back for the prompts after the browser:
 // text and Enter, with Backspace taking a character back, and keys that move

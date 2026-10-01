@@ -98,23 +98,36 @@ func newScopeChoices(scope sessionScope, format listFormatOptions, plain bool, r
 // shown is the choice on screen.
 func (c *scopeChoices) shown() *scopeChoice { return c.choice(c.current) }
 
-// canToggle reports whether `a` has another choice to show.
-func (c *scopeChoices) canToggle() bool { return c.scope.Label != "" && !c.fellBack }
+// canToggle reports whether `a` has another choice to show: none once the
+// browser fell back from a scope with no session, but the scope's sessions
+// when it fell back only because the words it opened with match none of them.
+func (c *scopeChoices) canToggle() bool {
+	return c.scope.Label != "" && (!c.fellBack || c.scopeHasRows())
+}
+
+// scopeHasRows reports whether the scope, already built, has rows to show
+// once a filter is cleared.
+func (c *scopeChoices) scopeHasRows() bool {
+	built := c.built[viewScope]
+	return built != nil && len(built.rows) > 0
+}
 
 // toggle shows the other choice. A scope that holds nothing (all projects
 // were shown first, with --all-projects) is not shown empty: all projects
 // stay, and the heading says so, as when the browser opens on such a scope.
+// A scope whose sessions the words in the filter do not match is shown, so
+// clearing the filter there lists them.
 func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && c.choice(viewScope).holdsNothing() {
+	if c.current == viewAll && len(c.choice(viewScope).rows) == 0 {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)
 		return
 	}
-	c.current = 1 - c.current
+	c.current, c.fellBack = 1-c.current, false
 }
 
 // choice builds choice i once.
@@ -167,7 +180,9 @@ func (c *scopeChoices) headingWith(i int, view scopeView, constants []string, o 
 	}
 	switch {
 	case label == "":
-	case c.fellBack:
+	case c.fellBack && (!c.scopeHasRows() || o.Words != "" && o.Words == view.searchWords):
+		// The scope has no session, or none the words the browser opened
+		// with match (said while the filter holds them).
 		parts = append(parts, "Nothing in "+label, "showing all projects")
 	case i == viewScope:
 		parts = append(parts, label)

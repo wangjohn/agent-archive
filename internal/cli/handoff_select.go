@@ -160,9 +160,12 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 // handoffSearch lists the sessions of a scope for the filter to search: every
 // top-level session the picker could offer (not only the first screens),
 // numbered as the picker numbers them, then the archive's subagents, which
-// have no number.
+// have no number. A session not uploaded yet is searched only within the
+// picker's limit, as a title search reads them (handoffTitleScanLimit): its
+// title takes reading and filtering its transcript, which the first key
+// typed into the filter must not wait for every one of.
 func handoffSearch(picker handoffPicker, scope sessionScope, regs []archive.SessionRegistration, archived []archive.Metadata, format listFormatOptions) func() []listRow {
-	picker.scope = scope
+	picker.scope, picker.readLimit = scope, handoffTitleScanLimit
 	return func() []listRow {
 		rows, _, _ := picker.rows(regs, archived, math.MaxInt)
 		out := formatHandoffRows(rows, format)
@@ -205,6 +208,10 @@ type handoffPicker struct {
 	// scope limits the rows to one repository's or project's sessions; the
 	// zero value offers every session.
 	scope sessionScope
+	// readLimit, when set, bounds the rows a session the archive lacks may
+	// be read into (its transcript read to title it): past it, such a
+	// session is left out, as a limit would leave it out. 0 for no bound.
+	readLimit int
 }
 
 // rows merges registrations with archived sessions, joined on the archive
@@ -277,6 +284,9 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			return rows, len(rows) + len(rest), true
 		}
 		if row.unbuilt != nil {
+			if p.readLimit > 0 && len(rows) >= p.readLimit {
+				continue
+			}
 			metadata, ok := p.localMetadata(*row.unbuilt, row.active)
 			if !ok {
 				continue

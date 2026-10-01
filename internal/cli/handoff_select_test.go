@@ -2,16 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -548,5 +551,37 @@ func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
 	published := pickerLine(t, out, id)
 	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
 		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// The filter's search over the picker's sessions reads the transcripts of
+// sessions not uploaded yet only within its bound, as the picker and a title
+// search do; an archived session past the bound is still searched.
+func TestHandoffPickerReadLimitBoundsTranscriptReads(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	older := f.addSession(t, "codex", "native-older", "Older not uploaded", f.env.now().Add(-3*time.Hour))
+	regs, err := state.OpenReadOnly(f.home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's own session is archived; the rest are only here.
+	archived := []archive.Metadata{{SessionID: f.both, Harness: archive.Harness{Name: "codex"}, Title: "Archived and here", CapturedAt: f.env.now().Add(-2 * time.Hour)}}
+	picker := handoffPicker{ctx: context.Background(), env: f.env, home: f.home, archiveRead: true}
+	ids := func(rows []handoffPickerRow) []string {
+		var out []string
+		for _, row := range rows {
+			out = append(out, row.metadata.SessionID)
+		}
+		return out
+	}
+	all, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(all); !sameStrings(got, []string{f.notUploaded, f.both, older}) {
+		t.Fatalf("unbounded rows %v", got)
+	}
+	picker.readLimit = 1
+	bounded, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(bounded); !sameStrings(got, []string{f.notUploaded, f.both}) {
+		t.Fatalf("bounded rows %v, want the first not uploaded and the archived one", got)
 	}
 }
