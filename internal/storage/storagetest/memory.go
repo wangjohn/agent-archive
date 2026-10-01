@@ -64,6 +64,23 @@ func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), obj.data...), nil
 }
 
+// GetLimited refuses an oversized body before copying it.
+func (s *MemoryStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.objects[key]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if limit < 1 || int64(len(obj.data)) > limit {
+		return nil, storage.ErrObjectTooLarge
+	}
+	return append([]byte(nil), obj.data...), nil
+}
+
 // Stat describes an object, with the SHA-256 of its bytes.
 func (s *MemoryStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	if err := ctx.Err(); err != nil {

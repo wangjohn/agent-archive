@@ -173,6 +173,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		return nil
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
+	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	return nil
 }
 
@@ -638,7 +639,7 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"config.json", "setup-draft.json", "setup-transaction.json", "imports",
+	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",

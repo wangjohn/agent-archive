@@ -508,6 +508,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -588,6 +589,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "machines":
+		return runMachinesCommand(args[1:], stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":
