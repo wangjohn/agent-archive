@@ -131,6 +131,7 @@ type Unreadable struct {
 
 // ListResult preserves successful records when listing is incomplete.
 type ListResult struct {
+	SchemaVersion    int          `json:"schema_version"`
 	Records          []Record     `json:"records"`
 	Unreadable       []Unreadable `json:"unreadable,omitempty"`
 	Partial          bool         `json:"partial"`
@@ -149,7 +150,7 @@ func diagnostic(key, reason string) Unreadable {
 // 1000 examined keys and four concurrent allocation-bounded fetches. Stores
 // lacking the required extensions are refused rather than read unboundedly.
 func List(ctx context.Context, store storage.ObjectStore) ListResult {
-	result := ListResult{Records: []Record{}}
+	result := ListResult{SchemaVersion: SchemaVersion, Records: []Record{}}
 	pages, ok := store.(storage.PageLister)
 	getter, limited := store.(storage.LimitedGetter)
 	if !ok || !limited {

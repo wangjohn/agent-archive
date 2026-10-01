@@ -184,3 +184,48 @@ func TestRefreshLeavesRegistrationUntouchedUntilCollectorUpdatesVersion(t *testi
 		t.Fatalf("%+v", result)
 	}
 }
+
+func TestRenamePreservesCommittedCredentialAssignment(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := testEnv(t, home, time.Now())
+	s := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "before", Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}}
+	cfg.Archive.Enabled = true
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: "r2_shared", AccessKeyID: "synthetic-key", RecipientID: strings.Repeat("b", 32), IssuerID: strings.Repeat("c", 32), SharedWith: strings.Repeat("c", 32)}
+	must(t, config.Save(home, cfg))
+	record, e := machines.Build(cfg, "linux/amd64", "dev", "", time.Now())
+	must(t, e)
+	must(t, machines.Publish(context.Background(), s, record))
+	var out bytes.Buffer
+	if code := Run([]string{"machines", "rename", "after"}, nil, &out, &out, env); code != 0 {
+		t.Fatalf("%d %s", code, out.String())
+	}
+	got, _, e := config.Load(home)
+	must(t, e)
+	if got.MachineAssignment == nil || *got.MachineAssignment != *cfg.MachineAssignment || got.MachineID != cfg.MachineID {
+		t.Fatal("rename changed immutable credential identity")
+	}
+	if code := Run([]string{"machines", "--json"}, nil, &out, &out, env); code != 0 {
+		t.Fatalf("list exit %d", code)
+	}
+}
+
+func TestMachineRecordsStayOutsideSessionListingAndRetention(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	s := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project)
+	var out bytes.Buffer
+	if code := Run([]string{"list", "--json", "--all-projects", "--limit", "0"}, nil, &out, &out, env); code != 0 || strings.Contains(out.String(), "unnamed-") {
+		t.Fatalf("session list included machine: %d %s", code, out.String())
+	}
+	_, e := runOnePass(env, false)
+	must(t, e)
+	if got := machines.List(context.Background(), s); len(got.Records) != 1 {
+		t.Fatalf("retention removed registry: %+v", got)
+	}
+}
