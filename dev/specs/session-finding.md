@@ -959,8 +959,8 @@ guide. Live check on the owner's Mac:
   open. `resolveShowQuery` takes `noPager` and `pickOne` for it.
 - PR 6: while the filter line is open, `a`, `n`, `p` and `q` are typed text
   (§5 says they act outside it), so the other scope is one Esc away; digits
-  are typed text too, so in key mode a row's number is chosen by after Esc,
-  and in line mode at once. A row the filter finds past the table's limit is
+  are typed text too, so in key mode a row is chosen by its number after
+  Esc, and in line mode at once. A row the filter finds past the table's limit is
   numbered on from the table's last row, and is chosen in the filter: with
   the highlight and Enter in key mode, and in line mode by its number while
   the page drawn shows it. Once the filter is gone (and in line mode on
