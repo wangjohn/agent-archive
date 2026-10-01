@@ -291,24 +291,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	defer unlock()
 	// Preserve a proven start or validated Cursor path when bounded identity
 	// lookup discovers damage. Continuation alone still cannot admit a session.
-	defer func() {
-		if !errors.Is(runErr, state.ErrSessionIndexRecoveryRequired) {
-			return
-		}
-		store := state.OpenReadOnly(home)
-		key, keyErr := agentmeta.NewSessionKey(harness, firstNonEmptyString(payload, "session_id", "conversation_id"))
-		markerErr := keyErr
-		if keyErr == nil {
-			markerErr = store.RequestSessionIndexRecovery(key)
-		}
-		_, queueErr := queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
-		project, owned := ConfiguredProjectActivationFor(observedConfig, projectRoot(payload))
-		var diagnosticErr error
-		if owned && project.Included {
-			diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: archive.CanonicalHarness(harness), ProjectRoot: project.Root, ObservedAt: now})
-		}
-		runErr = errors.Join(runErr, markerErr, queueErr, diagnosticErr)
-	}()
+	defer func() { runErr = preserveIdentityRecovery(home, harness, kind, payload, now, observedConfig, runErr) }()
 
 	if afterLock != nil {
 		afterLock()
@@ -1025,4 +1008,23 @@ func projectRoot(payload map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func preserveIdentityRecovery(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, observedConfig config.Config, runErr error) error {
+	if !errors.Is(runErr, state.ErrSessionIndexRecoveryRequired) {
+		return runErr
+	}
+	store := state.OpenReadOnly(home)
+	key, keyErr := agentmeta.NewSessionKey(harness, firstNonEmptyString(payload, "session_id", "conversation_id"))
+	markerErr := keyErr
+	if keyErr == nil {
+		markerErr = store.RequestSessionIndexRecovery(key)
+	}
+	_, queueErr := queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
+	project, owned := ConfiguredProjectActivationFor(observedConfig, projectRoot(payload))
+	var diagnosticErr error
+	if owned && project.Included {
+		diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: archive.CanonicalHarness(harness), ProjectRoot: project.Root, ObservedAt: now})
+	}
+	return errors.Join(runErr, markerErr, queueErr, diagnosticErr)
 }

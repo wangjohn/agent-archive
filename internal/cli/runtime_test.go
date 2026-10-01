@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -78,13 +79,14 @@ func TestInjectedRuntimeDrivesCurrentSessionAndInteraction(t *testing.T) {
 	latest := base
 	latest.ArchiveSessionID = "newer"
 	latest.RegisteredAt = time.Unix(2, 0)
-	must(t, store.SaveRegistration(latest))
+	// Multiple historical owners exercise latest selection independently of index admission.
+	must(t, local.Write(filepath.Join(home, "registrations", latest.ArchiveSessionID+".json"), latest))
 	child := latest
 	child.ArchiveSessionID = "child"
 	child.ParentSessionID = "older"
 	child.SubagentID = "child-native"
 	child.RegisteredAt = time.Unix(3, 0)
-	must(t, store.SaveRegistration(child))
+	must(t, local.Write(filepath.Join(home, "registrations", child.ArchiveSessionID+".json"), child))
 	id, ok, err := currentHandoffSession(env, home, handoffOptions{})
 	if err != nil || !ok || id != "newer" {
 		t.Fatalf("current %s %v %v", id, ok, err)
@@ -100,7 +102,7 @@ func TestInjectedRuntimeDrivesCurrentSessionAndInteraction(t *testing.T) {
 	if isCallingAgent(env, other) {
 		t.Fatal("wrong harness calling agent")
 	}
-	if !currentSessions(env)["exact-native"] {
+	if !currentSessions(env)[agentmeta.SessionKey{Agent: syntheticID, NativeID: "exact-native"}] {
 		t.Fatal("latest exclusion missed exact runtime")
 	}
 	candidate := nativesessions.Candidate{NativeID: "exact-native", Ref: nativesessions.Ref{Harness: string(syntheticID)}}

@@ -75,34 +75,9 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-incomplete"); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("recover session identities: %w", err)
-	}
-	inventory := make(map[agentmeta.SessionKey][]string, len(entries))
-	for _, file := range entries {
-		if filepath.Ext(file.Name()) == quarantineSuffix {
-			return ErrSessionIndexRecoveryRequired
-		}
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
-			continue
-		}
-		id := strings.TrimSuffix(file.Name(), ".json")
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(id)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrSessionIndexRecoveryRequired
-		}
-		key, err := registrationKey(reg)
-		if err != nil || reg.Validate() != nil || reg.ArchiveSessionID != id || !safeFileComponent(id) {
-			return fmt.Errorf("invalid registration identity %q: %w", id, ErrSessionIndexRecoveryRequired)
-		}
-		inventory[key] = append(inventory[key], id)
+	inventory, err := s.sessionRegistrationInventory(ctx)
+	if err != nil {
+		return err
 	}
 	if err := s.indexStep("recovery-enumerated"); err != nil {
 		return err
@@ -320,4 +295,37 @@ func (s *Store) recoverRequestedMisses(ctx context.Context, inventory map[agentm
 		}
 	}
 	return nil
+}
+
+func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta.SessionKey][]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("recover session identities: %w", err)
+	}
+	inventory := make(map[agentmeta.SessionKey][]string, len(entries))
+	for _, file := range entries {
+		if filepath.Ext(file.Name()) == quarantineSuffix {
+			return nil, ErrSessionIndexRecoveryRequired
+		}
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(file.Name(), ".json")
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, ErrSessionIndexRecoveryRequired
+		}
+		key, err := registrationKey(reg)
+		if err != nil || reg.Validate() != nil || reg.ArchiveSessionID != id || !safeFileComponent(id) {
+			return nil, fmt.Errorf("invalid registration identity %q: %w", id, ErrSessionIndexRecoveryRequired)
+		}
+		inventory[key] = append(inventory[key], id)
+	}
+	return inventory, nil
 }
