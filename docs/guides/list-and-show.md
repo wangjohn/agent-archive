@@ -18,6 +18,7 @@ agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
+agent-archive list "flaky retention"  # the sessions these words find, as for show (below)
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -37,7 +38,11 @@ agent-archive list --rebuild-index  # one-time full scan for older archives
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same
-# session browser as list. A title substring or short ID also works.
+# session browser as list. Words also work, as for `list "<words>"`: every
+# word must appear in the session's name, title, branch, project, app, or
+# the start of its ID (4 characters or more), and #212 or 212 also matches a
+# pull request number, never the start of an ID. This repository's sessions
+# are searched first, subagent sessions last.
 agent-archive show
 agent-archive show SESSION_ID
 agent-archive show "OAuth callback"
@@ -151,8 +156,8 @@ None of this happens when a coding agent runs the command, even if its shell
 is a pseudo-terminal. With `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment, or `AGENT_ARCHIVE_NONINTERACTIVE=1`,
 `list` prints its table without a pager or browser, bare `show` asks for a
-SESSION_ID, and a `show` title that matches several sessions prints the
-candidates on stderr and exits 1, exactly as when piped.
+SESSION_ID, and `show` words that match several sessions print the
+candidates on stderr and exit 1, exactly as when piped.
 `AGENT_ARCHIVE_NONINTERACTIVE=0` brings the browser back; see
 [configuration](../reference/configuration.md#environment-variables) and
 [troubleshooting](troubleshooting.md#no-picker-or-prompt-in-an-agents-terminal).
@@ -178,10 +183,13 @@ configured project basename. The ID column is a short prefix you can pass to
 separate groups, labeled with their project ID prefixes.
 
 Codex currently uses the first-prompt preview because its sidebar title is
-stored separately from the transcript. Claude Code subagents usually show
-the first prompt because their assigned descriptions are not yet included in
-metadata. New and refreshed previews keep up to 128 characters from parser
-`0.17.1`; older metadata keeps its shorter saved preview.
+stored separately from the transcript. The table leaves subagent sessions
+out: the footer says how many, and a parent carries a `· N subagents` hint.
+Words find one, as for `list "<words>"`, and its row reads `· subagent of`
+its parent's short ID; a Claude Code subagent's name is the description its
+parent gave the task (see below). New and refreshed previews keep up to 128
+characters from parser `0.17.1`; older metadata keeps its shorter saved
+preview.
 
 Metadata also says what a session did without downloading its transcript:
 when it ended (`ended_at`), its most-called tools (`tools_used`), and how

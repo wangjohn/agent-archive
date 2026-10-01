@@ -367,6 +367,27 @@ follow [Semantic Versioning](https://semver.org/).
   `show`'s `--no-pager` now covers the summary too. Piped output is
   unchanged.
 
+- **`agent-archive list "<words>"` searches.** One or two words find a
+  session: every word must appear, in any case, in some field of it (its name,
+  title, branch, project name, harness, or the first 4 or more characters of its
+  ID), and words may match different fields, so `list "linux 212"` finds the
+  session named for Linux that opened PR 212. `#212`, or a bare number of 1 to 6
+  digits, also matches a pull request number, any the session linked or created.
+  On a terminal it opens the browser over the matches; piped it prints the
+  table; `list "<words>" --json` prints the same document, narrowed, with the
+  same `scope` object. `handoff "<words>"` and `show "<words>"` use the same
+  matcher and the same order, so a person and an agent get the same answer: this
+  repository's top-level sessions first, then every project's, then subagent
+  sessions (in the repository, then everywhere); the first that has a match
+  answers, and a note says how many more match in other projects.
+- When several sessions match and nothing can ask (`handoff` or `show` piped,
+  or inside a coding agent), the table of candidates gains a PR column, labels
+  a subagent `subagent of <parent ID>`, and ends with the exact command to run
+  next (`Next: agent-archive handoff d7a77938 --harness claude`, or
+  `agent-archive show d7a77938`) and the `list "<words>" --json` that shows
+  them as data. The agent skill says so, and that the words may be a topic, a
+  PR number, a branch, or a project name.
+
 ### Changed
 
 - **Privacy filter 14: a subagent's task description is now archived.**
@@ -407,6 +428,27 @@ follow [Semantic Versioning](https://semver.org/).
   below. See the
   [filter changelog](dev/specs/privacy-filter-changelog.md) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list` and the browser show top-level sessions only.** A session's
+  subagents are no longer rows of their own: they are left out before
+  `--limit` counts (so `--limit 50` is 50 sessions), the footer says how many
+  were hidden (`42 sessions (318 subagent sessions hidden; search to find
+  one)`), and a session that has some carries a dim `· 45 subagents` hint, as
+  the handoff picker does. A subagent is found by searching. `list --json`
+  keeps every row, subagents included, so scripts see what they did. The
+  table and the browser now read every session's metadata (the cache keeps it
+  quick) instead of the index's newest page, so that subagents can be left out
+  before the limit; `list --json` without words keeps the index's page outside
+  a project or with `--all-projects`.
+- `handoff "<words>"` and `show "<words>"` match words across a session's
+  fields (above) where they matched the whole text as a substring of the title
+  or the start of an ID. Words that matched a title before still match it,
+  except a `#N` that was only the start of a longer number (`#21` no longer
+  finds `PR #213`). The start of an ID now needs 4 characters or more, and a PR
+  number such as `212` or `#212` never matches one, so it does not also find
+  every session whose random ID happens to start with those digits.
+  `show "<words>"` now offers a subagent session only when no top-level session
+  matches, where it listed both. The table printed for several matches is the
+  one described above.
 - **`list`, `show`, and `handoff` start from the repository you are in.**
   Run inside a project, `agent-archive list` and `list --json` now return
   that repository's sessions (every checkout and worktree of it, and its

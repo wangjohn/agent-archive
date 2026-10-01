@@ -19,6 +19,13 @@ import (
 // project is that checkout's name.
 func (f pickerFixture) addArchived(t *testing.T, id, title, project string) {
 	t.Helper()
+	f.addArchivedWith(t, id, title, project, nil)
+}
+
+// addArchivedWith is addArchived with change applied to the metadata before
+// it is published.
+func (f pickerFixture) addArchivedWith(t *testing.T, id, title, project string, change func(*archive.Metadata)) {
+	t.Helper()
 	key, err := archive.MetadataObjectKey("codex", f.id)
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +44,9 @@ func (f pickerFixture) addArchived(t *testing.T, id, title, project string) {
 		m.ProjectID = archive.ProjectID(f.project)
 	}
 	m.CapturedAt = m.CapturedAt.Add(-time.Minute)
+	if change != nil {
+		change(&m)
+	}
 	key, err = archive.MetadataObjectKey("codex", id)
 	if err != nil {
 		t.Fatal(err)

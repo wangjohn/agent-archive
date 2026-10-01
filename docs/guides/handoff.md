@@ -54,7 +54,7 @@ warns when one was written by an earlier release (after you upgrade
 `agent-archive`); `agent-archive setup --refresh` (which the installer runs)
 refreshes it. To bring a session *into* the agent you are in, without opening
 another one, ask it in words: the `agent-archive` skill runs
-`handoff "<title>"` for you ([agent skills](agent-skills.md)).
+`handoff "<words>"` for you ([agent skills](agent-skills.md)).
 
 ## From a terminal
 
@@ -98,7 +98,7 @@ agent-archive handoff --to codex                       # pick the session
 agent-archive handoff --latest --harness claude --to codex
 agent-archive handoff SESSION_ID --to claude
 agent-archive handoff SESSION_ID --to cursor
-agent-archive handoff "fix the auth bug" --to claude   # a title, as for show
+agent-archive handoff "fix the auth bug" --to claude   # words, as for show
 ```
 
 `handoff` asks where to continue only on a terminal, and not with `--to`,
@@ -219,40 +219,55 @@ and continues. When an agent hands off its own session with
 `--to`, as `/handoff` does, it is active by definition; a note is printed
 and nothing is asked.
 
-## Naming a session by its title
+## Naming a session in words
 
-The argument is a session ID or a title; quote a title of several words:
+The argument is a session ID or words; quote several words as one argument:
 
 ```sh
 agent-archive handoff "fix the auth bug" --harness codex
 agent-archive handoff "fix the auth bug" --to claude --worktree
 ```
 
-It matches the way `show` does: a substring of the title (the session's
-first prompt), case-insensitively, a short session ID, or an ID prefix. A
-full session ID, of a session on this machine or in the archive, names that
-session, even when another title mentions it. `--harness` and `--source`
-narrow the search. When the command runs inside a Claude Code or Codex
-session, that session is not offered for a title (as `--latest` passes over
-it), unless `--to` is set, which hands off a session the caller names.
+It matches the way `show` and `list "<words>"` do: every word must appear,
+case-insensitively, in some field of the session (its name, its title (the first
+prompt), its branch, its project name, or its app), or start its session ID
+(from 4 characters), and a word like `#212` or `212` also matches a pull request
+the session linked or created, never the start of an ID. Words may match
+different fields, so a topic, a PR number, a branch, or a project name all work.
+A session ID, full or the short one a table shows, names that session, even when
+another title mentions it. Inside a repository, its top-level sessions are
+searched first, then every project's, and subagent sessions only when no other
+session matches; a note on stderr says how many more match in other projects.
+`--harness` and `--source` narrow the search. When the command runs inside a
+Claude Code or Codex session, that session is not offered for words (as
+`--latest` passes over it), unless `--to` is set, which hands off a session the
+caller names.
 
-The search looks at this machine's sessions first, which needs no network and no
-upload (a session's title, its first prompt, is read from its transcript file
-on this machine, and only the title is matched, never the rest of the
-conversation), and goes on to the archive's sessions only when none of this
-machine's match, so an archive that cannot be reached does not fail a title this
-machine can answer. `--source local` or `--source archive` limits it to one. Only
-the 50 most recently active sessions on this machine that have a prompt are
-searched by title; an older one that was uploaded is found in the archive.
+The search looks at this machine's sessions first, which needs no network and
+no upload: a session's name, title (its first prompt), branch, and linked pull
+requests are read from its transcript file on this machine, and only those, its
+project name, and its app are matched, never the rest of the conversation. It
+goes on to the archive's sessions when none of this machine's match (inside a
+repository, the repository's archived sessions come before this machine's
+sessions in other projects), and a single word of 8 hexadecimal characters that
+is not the short ID of one of this machine's sessions is also looked up in the
+archive as a short ID first. An archive that cannot be reached does not fail
+words this machine can answer. `--source local` or `--source archive` limits it
+to one. Only the 50 most recently active sessions on this machine that have a
+prompt are searched by words; an older one that was uploaded is found in the
+archive.
 
 One match is handed off, and then everything else applies to it: `--to`,
 `--worktree`, the `Continue in:` question on a terminal. Several matches are
 never guessed between. On a terminal the picker opens with just those
 sessions. Without one, and inside a coding agent (where nothing is asked),
-they are printed to standard error, each with its short ID, app, project,
-age, and title, and the command exits with code 1, so the caller can ask
-which and run it again with an ID. At most the 20 newest are listed, with a
-count of the rest; add more of the title, or `--harness`, to narrow. One
+they are printed to standard error, each with its short ID, app, project
+(when they span several), age, pull request (when one has any), and title,
+followed by the exact command to run next (`Next: agent-archive handoff
+d7a77938 --harness claude`) and the `list "<words>" --json` that shows them as
+data; the command exits with code 1, so the caller can ask which and run it
+again with an ID. At most the 20 newest are listed, with a count of the rest;
+add words, a PR number, or `--harness` to narrow. One
 match on this machine is taken even when the archive holds others, so name an ID
 when in doubt. With none, the message points to `agent-archive list`.
 
@@ -265,7 +280,7 @@ first; a session that is both appears once. Subagent sessions and sessions
 with no prompt yet are left out, and `--harness` narrows the list. When the
 archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing. Quit with `q` without producing a
-handoff. In a script or pipeline, pass a session ID or title, `--latest`, or
+handoff. In a script or pipeline, pass a session ID or words, `--latest`, or
 `--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
@@ -429,7 +444,7 @@ codex "$(agent-archive handoff --latest --harness claude)"
 Other outputs:
 
 ```sh
-# A specific session, from `list` or by its title, written to a file (mode 0600)
+# A specific session, from `list` or by words, written to a file (mode 0600)
 agent-archive handoff SESSION_ID --output /tmp/handoff.md
 agent-archive handoff "fix the auth bug" --output /tmp/handoff.md
 

@@ -26,7 +26,10 @@ explicitly.
   listing (`--harness`, `--model`, `--since`, `--skill`, `--complete`,
   `--imported`, `--limit`, …). Each item is an instance of
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
-  `null`.
+  `null`. With words (`list "<words>" --json`), `sessions` is the first tier
+  of the search that has a match, as in the table: the scope's top-level
+  sessions, then every project's, then subagent sessions (in the scope, then
+  everywhere), so a subagent appears only when no top-level session matches.
 - `limit` is the `--limit` value (`50` by default; `0` means no cap).
   `returned` is `sessions.length`. `total_matched_known` says whether the
   count is exact. When false, `total_matched` is omitted and `truncated` is
@@ -40,7 +43,8 @@ explicitly.
   it was not applied (`--all-projects`, or the scope held nothing);
   `fell_back` is true when it held nothing and all projects are listed;
   `outside_matches` is how many more sessions the same filters match outside
-  it. Outside any project there is no `scope` and every session is listed.
+  it (with words, how many sessions of the answering tier match outside it).
+  Outside any project there is no `scope` and every session is listed.
   Scripts that want every session pass `--all-projects`. The field is
   additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on

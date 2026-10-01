@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 4 merged, PR 7 (filter 14, parser 0.18.0) in review, the rest not started. Where this
-plan and the code differ once packages merge, the code is the reference and
-differences go under Deviations.
+PRs 1 to 4 and 7 merged, PR 5 (one matcher) in review, the rest not
+started. Where this plan and the code differ once packages merge, the code
+is the reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -764,6 +764,90 @@ guide. Live check on the owner's Mac:
   `TestFilterV13NewRecordsChangeOnlyNameAndPullRequests`, asserting that they
   change `name` and `pull_requests` and nothing else. The non-interactive
   ambiguous-`show` list also prints `DisplayTitle`.
+- PR 5: the matcher's `prs` is parallel to `words` (`prs[i]` is word i read as
+  a PR number, 0 when it is not one), so each word is checked on its own. A
+  word `#N` matches a PR number exactly, or the text `#N` in a field when the
+  next character is not a digit (so `#21` finds neither PR 213 nor "PR
+  #213"); a bare number of 1 to 6 digits matches a PR exactly or as any other
+  text does (a substring). `fieldsOf` collects every PR the session linked
+  (`pull_requests`) and every `pr_created` in `git_activity`, deduplicated,
+  not merged ones; `LatestPR` stays the PR column's.
+- PR 5: an exact session ID is a single word equal to a full ID, or to an
+  ID's first 8 characters (the short ID the table shows). It wins before the
+  tiers, as §3's first tier, across every session the search reads: an exact
+  ID of an out-of-scope session or a subagent outranks an in-scope title that
+  mentions it, so a candidate table's `Next:` command takes the row it names.
+  In `handoff` the exact full-ID reads (registered, then the archive) still
+  come first, unchanged; then an exact short ID among this machine's sessions,
+  and then, for a word of 8 hex characters only, the archive's (subagents
+  too), so other words still need no network when this machine answers them.
+- PR 5: `--harness`, `--since` and the other filters are applied when the
+  archive is listed, before the tiers, rather than after them, so a filter can
+  never empty a tier and hide a lower one. `--limit` applies last, as planned.
+- PR 5: the tiers' shared code is `searchSessions` (archived metadata: `list`,
+  `show`) and `matchPool` (`handoff`'s rows, which read this machine's sessions
+  before the archive). Local subagent registrations are never searched (the
+  picker never listed them; one is still handed off by its full ID), so
+  `handoff`'s subagent tier is the archive's.
+- PR 5: `list`'s table and browser always read every session's metadata (the
+  cache applies) instead of the index's newest page, so subagents can be left
+  out before `--limit` and counted for the footer; `list --json` without a
+  query keeps the index fast path. The index spec's per-parent counts will
+  bring the fast path back. A table with an index-limited count ("Showing 2
+  or more") no longer exists.
+- PR 5: with a query, `list` in a scope shows only the first tier's sessions
+  in that scope, and an empty scope falls back to all projects as PR 4's
+  fallback does, so `a` toggles between "in scope" and "everywhere" for the
+  same words. The note about matches elsewhere is `list`'s footer line (in
+  place of the count when nothing was cut, after it otherwise), and the
+  browser, which names the toggle in its heading, prints the same line.
+  `scope.outside_matches` counts the sessions of the answering tier outside
+  the scope (top-level ones, or subagents when those answered).
+- PR 5: the footer's hidden count reads as §1 has it, ending in a period:
+  `42 sessions (318 subagent sessions hidden; search to find one).`; when
+  `--limit` cut the list, the same parenthesis follows the existing `Showing
+  N of M session(s)`. A query hides nothing: subagents are a tier, not hidden.
+- PR 5: `show "<words>"` has no `--all-projects` or `--project`, so it always
+  searches from the working directory's scope, and prints the "N more in other
+  projects" note on stderr too, where the plan names only `handoff` and
+  `list`. Its several-matches terminal chooser is still the line-mode
+  `pickBrowseSession`; PR 6 replaces it with the browser.
+- PR 5: the candidate table is `candidateList` (`candidates.go`), shared by
+  `handoff` and `show`. It shows the PROJECT column only when the rows span
+  projects and the PR column only when a row has a PR; it names the scope in
+  its first line (`matches 3 sessions in agent-archive`) only when the scope
+  answered. The `(or: agent-archive list "<words>" --json)` line repeats
+  `--harness`, `--all-projects` and `--project` when `handoff` was given them,
+  and is left out when the query was cut for display or holds control
+  characters, since the command would not be the one searched. `show`'s table
+  ends with the same two lines, the `Next:` one being `agent-archive show <ID>`.
+- PR 5: a subagent is labelled `· subagent of <parent short ID>` after its
+  title (the parent's first 8 characters, `listRow.Parent`), in every table
+  that holds one, not only the candidate table; PR 6's indented `↳` row
+  replaces it. A parent's hint is `· N subagents` (`· 1 subagent`), after the
+  skill hint, counted from the sessions already loaded
+  (`listFormatOptions.Children`).
+- PR 5: `list "<words>"` takes one positional argument, before or after the
+  flags; a blank one is a usage error, and a query nothing matches prints `No
+  archived sessions match "<words>".` and exits 0, as an empty list does.
+  Pre-filling the browser's `/` filter with the query is PR 6's; until then it
+  opens over the matched rows.
+- PR 5: `sessionFields` declares one field per line (`Name`, `Title`, `Branch`,
+  `Project`, `Harness`, `SessionID`, then `PRs []int`), because the repository's
+  lint (LV1003) rejects several names in one declaration; the names and types
+  are those of the shared-names table.
+- PR 5: "short or full ID prefix" (§4) is read per word with two limits. A
+  word that is a PR number (`#N`, or a bare number of 1 to 6 digits) never
+  matches the start of an ID, and any other word does only from 4 characters
+  (`minIDPrefixWord`, git's shortest abbreviation). Session IDs are random
+  hex, so without them `handoff 21` meant for PR 21 also matched about one
+  session in 256 by its ID, a 3-digit PR one in 4096, and a short word such as
+  "add" or "bed" one in 4096, making PR and word searches ambiguous in a large
+  archive (and a test flaky when a fixture's random ID began with "212"). The
+  old matcher took a prefix of any length, but only of the whole query, which
+  had no PR numbers. An exact full ID, or exactly the 8-character short ID,
+  still wins outright (`exactIDWins`); an ID that starts with digits only is
+  found by more than 6 of its characters.
 - PR 7: the `.meta.json` reaches the filter through
   `ClaudeAdapter.FilterSubagentJSONL(r io.Reader, metaJSON []byte)`, not a
   field on the `Adapter` interface, which stays a reader of one transcript. The

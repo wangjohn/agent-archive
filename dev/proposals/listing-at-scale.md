@@ -213,9 +213,10 @@ What the [session-finding plan](../specs/session-finding.md) needs from phase 4:
   "all projects" toggle.
 - **(e) Search stays exhaustive.** The shared matcher (the picker's `/`,
   `handoff "<words>"`, `list "<words>"`) reads name, title, branch,
-  `pull_requests[].number`, `project_name`, harness, session ID and
-  `parent_session_id`. `name`, `branch` and `pull_requests` are new optional
-  fields in parser 0.17.0. Search keeps using the phase 1 full scan or the
+  `pull_requests[].number`, the `pr_number` of `git_activity`'s
+  `pr_created` events, `project_name` (else `project_id`, for a configured
+  project label), harness, session ID and `parent_session_id`. `name`,
+  `branch` and `pull_requests` are new optional fields in parser 0.17.0. Search keeps using the phase 1 full scan or the
   local cache. If an index ever carries search data, it must carry all of
   these fields.
 

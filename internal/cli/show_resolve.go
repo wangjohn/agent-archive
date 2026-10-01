@@ -21,10 +21,12 @@ type showLookup struct {
 }
 
 // resolveShowQuery turns a show argument into a session. Exact SESSION_ID
-// lookups win. Otherwise it matches short ids and case-insensitive title
-// substrings among archived metadata (capped like list). Multiple matches on
-// a TTY open a one-shot picker that returns the chosen session (so the caller
-// can still honor --transcript and --json); off a TTY they error with the candidates.
+// lookups win. Otherwise the argument is words, matched as list matches them
+// (sessionQuery) over every archived sidecar, in the tiers of the search: the
+// working directory's repository first, then every project, subagents last.
+// Several matches on a terminal open a one-shot picker that returns the chosen
+// session (so the caller can still honor --transcript and --json); off a
+// terminal they print the candidates and exit 1.
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
@@ -47,6 +49,11 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		}
 	}
 
+	scope, err := scopeFor(env, "", false)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		return showLookup{}, 1
+	}
 	stopSearch := startActivity(stdout, "Finding sessions…")
 	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: harness}, reader.ListOptions{
 		Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"),
@@ -58,7 +65,13 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	}
 	// Search every listed sidecar — do not apply list's --limit window, or
 	// older title matches would be silently invisible.
-	matches := matchSessionsByQuery(sessions, query)
+	found := searchSessions(sessions, parseSessionQuery(query), scope, func(m archive.Metadata) sessionFields {
+		return fieldsOf(m, sessionProjectName(m, cfgProjects))
+	})
+	matches := found.matches
+	if note := found.outsideNote(scope); note != "" {
+		terminal.Println(stderr, note)
+	}
 	switch len(matches) {
 	case 0:
 		terminal.Printf(stderr, "agent-archive: show: no archived session %q (see `agent-archive list`)\n", archive.DisplayLine(query))
@@ -66,18 +79,24 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	case 1:
 		return showLookup{SessionID: matches[0].SessionID, Harness: matches[0].Harness.Name}, 0
 	}
+	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Children: childCounts(sessions)}
 	if !browseInteractive(env, stdin, stdout) {
-		terminal.Printf(stderr, "agent-archive: show: %q matches %d sessions; pass a SESSION_ID or run show on a terminal to pick one\n", archive.DisplayLine(query), len(matches))
-		for _, m := range matches {
-			label := archive.DisplayTitle(m)
-			if label == "" {
-				label = m.SessionID
-			}
-			terminal.Printf(stderr, "  %s  %s  %s\n", archive.DisplayLine(m.Harness.Name), archive.DisplayLine(shortSessionID(m.SessionID)), archive.DisplayLine(label))
+		shown := matches[:min(len(matches), handoffCandidateLimit)]
+		label := ""
+		if found.inScope {
+			label = scope.Label
 		}
+		var listFlags []string
+		if harness != "" {
+			listFlags = append(listFlags, "--harness "+harness)
+		}
+		candidateList{
+			command: "show", query: query, label: label, total: len(matches), rows: formatSessionRows(shown, format), listFlags: listFlags,
+			next: func(row listRow) string { return "agent-archive show " + archive.DisplayLine(row.ShortID) },
+		}.print(stderr)
 		return showLookup{}, 1
 	}
-	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Style: styleFor(stdout), GroupByProject: true}
+	format.Style, format.GroupByProject = styleFor(stdout), true
 	row, ok, err := pickBrowseSession(env, newPrompter(stdin, stdout), stdout, matches, len(matches), false, format, "show")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
@@ -87,42 +106,6 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		return showLookup{Cancelled: true}, 0
 	}
 	return showLookup{SessionID: row.SessionID, Harness: row.HarnessKey}, 0
-}
-
-// matchSessionsByQuery returns sessions whose short id, full id, or title
-// contains query (case-insensitive). Exact short/full id matches alone win
-// when any are present.
-func matchSessionsByQuery(sessions []archive.Metadata, query string) []archive.Metadata {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
-	}
-	lower := strings.ToLower(query)
-	var exact, fuzzy []archive.Metadata
-	shorts := uniqueShortIDs(sessionIDs(sessions))
-	for i, m := range sessions {
-		idLower := strings.ToLower(m.SessionID)
-		shortLower := strings.ToLower(shorts[i])
-		if idLower == lower || shortLower == lower {
-			exact = append(exact, m)
-			continue
-		}
-		if strings.HasPrefix(idLower, lower) || strings.Contains(strings.ToLower(m.Title), lower) {
-			fuzzy = append(fuzzy, m)
-		}
-	}
-	if len(exact) > 0 {
-		return exact
-	}
-	return fuzzy
-}
-
-func sessionIDs(sessions []archive.Metadata) []string {
-	ids := make([]string, len(sessions))
-	for i, m := range sessions {
-		ids[i] = m.SessionID
-	}
-	return ids
 }
 
 // shortSessionID is the first minShortSessionID bytes of id, cut on a

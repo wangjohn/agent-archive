@@ -97,6 +97,7 @@ type showCommandDependencies interface {
 type showQueryDependencies interface {
 	metadataCacheDependencies
 	sessionBrowseDependencies
+	scopeDependencies
 	now() time.Time
 }
 
