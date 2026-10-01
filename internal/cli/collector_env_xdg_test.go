@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -137,6 +138,68 @@ func TestStatusWarnsWhenTheCollectorHasNoXDGDirectoryTheShellHas(t *testing.T) {
 	l.env.LookupEnv = shellEnvironment(map[string]string{"XDG_CACHE_HOME": "/srv/cache"})
 	warnings := statusWarnings(t, l.env)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "This shell's XDG_CACHE_HOME is /srv/cache and the background collector's is not set") || !strings.Contains(warnings[0], "agent-archive setup") {
+		t.Errorf("warnings %q", warnings)
+	}
+}
+
+// The warning's words for each case: both values, what an unset one means,
+// a value the specification ignores shown as the shell has it (so the user
+// recognizes it) and why it counts as unset, and the fix.
+func TestXDGDriftWarningSaysWhatEachSideHas(t *testing.T) {
+	t.Parallel()
+	const fix = "The collector uses what setup recorded; if this shell's is the right one, run agent-archive setup again from here."
+	for _, tc := range []struct {
+		name      string
+		shell     map[string]string
+		collector map[string]string
+		want      []string
+	}{
+		{"changed", map[string]string{"XDG_CACHE_HOME": "/elsewhere"}, map[string]string{"XDG_CACHE_HOME": "/srv/cache"},
+			[]string{"This shell's XDG_CACHE_HOME is /elsewhere and the background collector's is /srv/cache, so they keep the temporary copies they read Cursor's chat database from in different places. " + fix}},
+		{"dropped", map[string]string{}, map[string]string{"XDG_CONFIG_HOME": "/srv/config"},
+			[]string{"This shell's XDG_CONFIG_HOME is not set (the default under the home directory) and the background collector's is /srv/config, so they look for Cursor's chat database in different places. " + fix}},
+		{"relative", map[string]string{"XDG_CONFIG_HOME": "config"}, map[string]string{"XDG_CONFIG_HOME": "/srv/config"},
+			[]string{`This shell's XDG_CONFIG_HOME is "config", which is not an absolute path and so counts as not set (the default under the home directory) and the background collector's is /srv/config, so they look for Cursor's chat database in different places. ` + fix}},
+		{"relative on both sides", map[string]string{"XDG_CONFIG_HOME": "config"}, map[string]string{}, nil},
+	} {
+		env := Env{OS: platform.Linux, LookupEnv: shellEnvironment(tc.shell)}
+		if got := env.xdgDrift(tc.collector); !slices.Equal(got, tc.want) {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+		env.OS = platform.Darwin
+		if got := env.xdgDrift(tc.collector); got != nil {
+			t.Errorf("%s on macOS: %q", tc.name, got)
+		}
+	}
+}
+
+// The same holds for R2, whose job had no environment of its own before: the
+// real setup writes the shell's XDG directories into the unit, setup
+// --refresh from a shell that now has others keeps what setup recorded (as it
+// keeps the AWS variables), and status then says the two differ.
+func TestLinuxR2SetupRecordsXDGDirectoriesAndRefreshKeepsThem(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	recorded := map[string]string{"XDG_CONFIG_HOME": "/srv/config", "XDG_CACHE_HOME": "/srv/cache/"}
+	l.env.LookupEnv = shellEnvironment(recorded)
+	setupRun(t, l.env, r2SetupInput(t.TempDir(), "r2-secret"), 0)
+	ref := l.env.installation(l.home, l.userHome).ref()
+	want := map[string]string{"XDG_CONFIG_HOME": "/srv/config", "XDG_CACHE_HOME": "/srv/cache"}
+	if got := l.env.jobDefinition(l.userHome, ref).Env; !maps.Equal(got, want) {
+		t.Fatalf("the R2 unit records %v, want %v", got, want)
+	}
+	if warnings := statusWarnings(t, l.env); len(warnings) != 0 {
+		t.Fatalf("status right after setup warns %q", warnings)
+	}
+	l.env.LookupEnv = shellEnvironment(map[string]string{"XDG_CACHE_HOME": "/elsewhere"})
+	if code, stdout, stderr := refreshRun(t, l.env); code != 0 {
+		t.Fatalf("refresh: exit %d\n%s%s", code, stdout, stderr)
+	}
+	if got := l.env.jobDefinition(l.userHome, ref).Env; !maps.Equal(got, want) {
+		t.Errorf("after refresh the unit records %v, want what setup recorded, %v", got, want)
+	}
+	warnings := statusWarnings(t, l.env)
+	if len(warnings) != 2 || !strings.HasPrefix(warnings[0], "This shell's XDG_CONFIG_HOME is not set") || !strings.HasPrefix(warnings[1], "This shell's XDG_CACHE_HOME is /elsewhere and the background collector's is /srv/cache") {
 		t.Errorf("warnings %q", warnings)
 	}
 }

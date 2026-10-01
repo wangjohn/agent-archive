@@ -399,8 +399,12 @@ func (e Env) xdgDrift(environment map[string]string) []string {
 		if shell == collector {
 			continue
 		}
+		shellText := xdgOrUnset(shell)
+		if shell == "" && shellValue != "" {
+			shellText = fmt.Sprintf("%q, which is not an absolute path and so counts as %s", shellValue, shellText)
+		}
 		drift = append(drift, fmt.Sprintf("This shell's %s is %s and the background collector's is %s, so they %s. The collector uses what setup recorded; if this shell's is the right one, run agent-archive setup again from here.",
-			name, xdgOrUnset(shell), xdgOrUnset(collector), purpose[name]))
+			name, shellText, xdgOrUnset(collector), purpose[name]))
 	}
 	return drift
 }

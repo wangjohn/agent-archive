@@ -417,3 +417,48 @@ func TestCacheDirectoryIsNotFollowedThroughALink(t *testing.T) {
 		t.Errorf("a snapshot root was made through the link: %v", err)
 	}
 }
+
+// A cache home that was already there keeps its mode (0755 and 0775 are the
+// user's to choose, and are not tightened), but one that every account can
+// write to without the sticky bit is refused before anything is made in it:
+// anyone could rename agent-archive's folder away and put their own in its
+// place. A sticky one (like /tmp) is fine: only its owner can rename what is
+// in it.
+func TestExistingCacheHomeKeepsItsModeUnlessEveryoneCanWriteToIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode fs.FileMode
+		ok   bool
+	}{
+		{0o755, true},
+		{0o775, true},
+		{0o700, true},
+		{0o777 | fs.ModeSticky, true},
+		{0o777, false},
+		{0o703, false},
+	} {
+		cache := filepath.Join(t.TempDir(), "cache")
+		if err := os.Mkdir(cache, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(cache, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(cache, "agent-archive")
+		_, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir)
+		if tc.ok && err != nil {
+			t.Errorf("cache home %v: %v", tc.mode, err)
+		}
+		if !tc.ok {
+			if !errors.Is(err, errCacheDirNotPrivate) || !strings.Contains(err.Error(), cache) || !strings.Contains(err.Error(), "XDG_CACHE_HOME") {
+				t.Errorf("cache home %v: err %v, want errCacheDirNotPrivate naming it", tc.mode, err)
+			}
+			if _, statErr := os.Lstat(dir); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Errorf("cache home %v: agent-archive's folder was made in it", tc.mode)
+			}
+		}
+		if info, err := os.Stat(cache); err != nil || info.Mode()&(fs.ModePerm|fs.ModeSticky) != tc.mode {
+			t.Errorf("cache home %v: now %v, %v; want its mode left alone", tc.mode, info.Mode(), err)
+		}
+	}
+}
