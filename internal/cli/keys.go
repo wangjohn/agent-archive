@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -240,7 +241,7 @@ func (k *keyInput) unused() []byte {
 			break
 		}
 	}
-	keys := append(k.pending, k.decode(data)...)
+	keys := slices.Concat(k.pending, k.decode(data))
 	k.pending = nil
 	var text []byte
 	for _, key := range keys {

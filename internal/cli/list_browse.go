@@ -64,7 +64,7 @@ type sessionBrowser struct {
 	last *sessionView
 }
 
-func (b *sessionBrowser) run(choices *scopeChoices) error {
+func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 	for {
 		b.screen.clear()
 		row, ok, err := b.list.pickScoped(b.prompt, b.stdout, choices, "show")
@@ -72,13 +72,13 @@ func (b *sessionBrowser) run(choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		view, err := readSessionView(context.Background(), b.store, row.HarnessKey, row.SessionID)
+		view, err := readSessionView(ctx, b.store, row.HarnessKey, row.SessionID)
 		stop()
 		if err != nil {
 			return err
 		}
 		b.last = &view
-		action, err := b.details(view, row)
+		action, err := b.details(ctx, view, row)
 		if err != nil || action == browseQuit {
 			return err
 		}
@@ -86,9 +86,9 @@ func (b *sessionBrowser) run(choices *scopeChoices) error {
 }
 
 // details shows one session's summary and reads what to do next.
-func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, error) {
+func (b *sessionBrowser) details(ctx context.Context, view sessionView, row listRow) (browseAction, error) {
 	if b.keys != nil {
-		return b.detailsKeys(view, row)
+		return b.detailsKeys(ctx, view, row)
 	}
 	var notice browseNotice
 	for {
@@ -99,7 +99,7 @@ func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, e
 		var rest string
 		var redraw bool
 		rest, notice, redraw = b.drawDetails(summary.String(), hint, notice)
-		action, next, err := b.detailsPrompt(row, summary.Bytes(), rest, hint, notice, redraw)
+		action, next, err := b.detailsPrompt(ctx, row, summary.Bytes(), rest, hint, notice, redraw)
 		if err != nil || action != browseRedraw {
 			return action, err
 		}
@@ -220,7 +220,7 @@ func (b *sessionBrowser) transcriptHint() string {
 // detailsPrompt reads what to do with the details drawn above it. A
 // message about an answer is printed below the prompt, or, when redraw is
 // set, returned with browseRedraw to be shown on the details drawn again.
-func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint string, notice browseNotice, redraw bool) (browseAction, browseNotice, error) {
+func (b *sessionBrowser) detailsPrompt(ctx context.Context, row listRow, summary []byte, rest, hint string, notice browseNotice, redraw bool) (browseAction, browseNotice, error) {
 	for first := true; ; first = false {
 		if first && notice.text != "" {
 			notice.print(b.stdout, b.stderr)
@@ -242,7 +242,7 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 		case "q", "quit":
 			return browseQuit, browseNotice{}, nil
 		case "t", "transcript":
-			action, failure, err := b.transcript(row)
+			action, failure, err := b.transcript(ctx, row)
 			if err != nil || action != browseStay {
 				return action, browseNotice{}, err
 			}
@@ -261,7 +261,7 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 				continue
 			}
 			// The whole summary, through the pager as the transcript is.
-			action, err := b.page(summary)
+			action, err := b.page(ctx, summary)
 			return action, browseNotice{}, err
 		default:
 			if rest != "" {
@@ -280,22 +280,21 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 // transcript downloads and verifies the session's bundle and shows its
 // transcript through the pager. A bundle that cannot be read is reported
 // in failure, with browseStay: the details stay open.
-func (b *sessionBrowser) transcript(row listRow) (action browseAction, failure string, err error) {
-	ctx := context.Background()
+func (b *sessionBrowser) transcript(ctx context.Context, row listRow) (action browseAction, failure string, err error) {
 	stop := startActivity(b.stdout, "Loading transcript…")
 	text, err := b.renderTranscript(ctx, row)
 	stop()
 	if err != nil {
 		return browseStay, "agent-archive: show: " + describeBundleError(err, row.SessionID, "--transcript"), nil
 	}
-	action, err = b.page(text)
+	action, err = b.page(ctx, text)
 	return action, "", err
 }
 
 // page shows text through the pager on a cleared screen and returns to the
 // details once the user is done with it. A signal while the pager runs
 // stops the pager, then the browser restores the screen and exits.
-func (b *sessionBrowser) page(text []byte) (browseAction, error) {
+func (b *sessionBrowser) page(ctx context.Context, text []byte) (browseAction, error) {
 	b.screen.clear()
 	endPaging := func() {}
 	if b.keys != nil {
@@ -303,7 +302,7 @@ func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 		endPaging = b.keys.page()
 	}
 	restoreTerminal := saveTerminalState(b.prompt.source)
-	pagerCtx, stopPager := context.WithCancel(context.Background())
+	pagerCtx, stopPager := context.WithCancel(ctx)
 	b.screen.startPaging(stopPager)
 	paged, waited, err := pageText(pagerCtx, b.stdout, b.stderr, b.env, b.noPager, true, text)
 	sig := b.screen.endPaging()
@@ -611,7 +610,8 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				l.toggled = command == lineScope
 				return listRow{}, false, nil
 			}
-			message, again := "", false
+			var message string
+			var again bool
 			switch {
 			case command == lineClear:
 				l.setFilter("")
@@ -936,7 +936,7 @@ func selectArchivedSession(env archivedSessionDependencies, store storage.Object
 	if !ok {
 		return listRow{}, false, code
 	}
-	return runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
+	return runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
 }
 
 // saveTerminalState records the terminal modes of in, when it is a

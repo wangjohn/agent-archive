@@ -150,7 +150,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Println(stdout, "No sessions match.")
 		return "", "", false, 0
 	}
-	row, selected, code := runBrowser(env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
+	row, selected, code := runBrowser(context.Background(), env, in.prompter(stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: choices, Command: "handoff"})
 	if code != 0 {
 		return "", "", false, code
 	}

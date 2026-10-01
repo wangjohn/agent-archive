@@ -387,7 +387,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 		}
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
 		rows := formatHandoffRows(matches, format)
-		picked, selected, code := runBrowser(r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
+		picked, selected, code := runBrowser(context.Background(), r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
 		if code != 0 {
 			return code, true
 		}

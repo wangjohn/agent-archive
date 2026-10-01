@@ -160,18 +160,8 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
 		GroupByProject: true, Numbered: browsing, Children: childCounts(sessions),
 	}
-	rowsFor := func(s sessionScope) scopeView {
-		v := view(s)
-		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden, note: v.note}
-	}
-	// The browser lists every top-level session, and opens with the words in
-	// its filter; the sessions the search finds decide only which scope it
-	// opens on and the note about matches elsewhere.
 	words := strings.Join(strings.Fields(query), " ")
-	if browsing {
-		rowsFor = browseSearchRows(archiveRows(sessions, opts.limit, format), view, words)
-	}
-	choices := newScopeChoices(scope, format, !browsing, rowsFor)
+	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
 	if choices.shown().holdsNothing() {
 		if !q.empty() {
 			terminal.Printf(stdout, "No archived sessions match %q.\n", queryLabel(query))
@@ -181,7 +171,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	if browsing {
-		_, _, code := runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
+		_, _, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
 		return code
 	}
 	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
@@ -191,6 +181,20 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	return 0
+}
+
+// listChoices is what list shows of the archive: for a browser, every
+// top-level session, opened with the words in its filter (the sessions the
+// search finds decide only which scope it opens on and the note about matches
+// elsewhere), and for a table, the sessions the search finds.
+func listChoices(scope sessionScope, format listFormatOptions, browsing bool, sessions []archive.Metadata, limit int, view func(sessionScope) listView, words string) *scopeChoices {
+	if browsing {
+		return newScopeChoices(scope, format, false, browseSearchRows(archiveRows(sessions, limit, format), view, words))
+	}
+	return newScopeChoices(scope, format, true, func(s sessionScope) scopeView {
+		v := view(s)
+		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden, note: v.note}
+	})
 }
 
 // browseSearchRows is a browser's rows when it opens with words in its filter:
@@ -567,26 +571,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	ctx := context.Background()
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		if *jsonOut {
-			// The one-shot picker, as before the browser: a script-like
-			// request for one document.
-			row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "Show")
-			if code != 0 || !selected {
-				return code
-			}
-			view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
-			if err != nil {
-				terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-				return 1
-			}
-			return printJSON(stdout, stderr, view)
-		}
-		choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, *harness, "show")
-		if !ok {
-			return code
-		}
-		_, _, code = runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: *noPager})
-		return code
+		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
 
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
@@ -631,6 +616,29 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
 		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
+}
+
+// runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
+// --json one session picked in it and printed as its sidecar.
+func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+	if jsonOut {
+		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		if code != 0 || !selected {
+			return code
+		}
+		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		return printJSON(stdout, stderr, view)
+	}
+	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	if !ok {
+		return code
+	}
+	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	return code
 }
 
 // checkShowMaxBytes reports a --max-bytes that is negative, or given

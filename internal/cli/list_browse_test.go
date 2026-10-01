@@ -245,7 +245,7 @@ func runSessionPicker(t *testing.T, picker *sessionPicker, sessions []archive.Me
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
 	format.Now = pickerNow
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(input), &out), &out, sessions, len(sessions), false, format, "show")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(input), &out), &out, sessions, format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestPickerOnTheNormalScreenPrintsMessagesBelow(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	format := listFormatOptions{Now: pickerNow}
-	_, _, err := (&sessionPicker{env: fixedTerminal{120, 10}}).pick(newPrompter(strings.NewReader("p\nn\nn\nn\nq\n"), &out), &out, pickerSessions(12, oneProject), 12, false, format, "show")
+	_, _, err := (&sessionPicker{env: fixedTerminal{120, 10}}).pick(newPrompter(strings.NewReader("p\nn\nn\nn\nq\n"), &out), &out, pickerSessions(12, oneProject), format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}

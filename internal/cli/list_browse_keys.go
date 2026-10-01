@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -374,7 +375,7 @@ type detailsScreen struct {
 // detailsKeys is details reading a key at a time: ↑ ↓ PgUp PgDn space Home
 // and End scroll a summary taller than the window; t, m, b, and q act at
 // once, and Enter and Backspace go back to the list as b does.
-func (b *sessionBrowser) detailsKeys(view sessionView, row listRow) (browseAction, error) {
+func (b *sessionBrowser) detailsKeys(ctx context.Context, view sessionView, row listRow) (browseAction, error) {
 	var summary bytes.Buffer
 	renderSessionSummary(&summary, view, b.summaryOptions(false))
 	lines := strings.Split(strings.TrimSuffix(summary.String(), "\n"), "\n")
@@ -390,7 +391,7 @@ func (b *sessionBrowser) detailsKeys(view sessionView, row listRow) (browseActio
 			if err != nil {
 				return endOfInput(err)
 			}
-			action, message, err := b.detailsKey(k, &screen, row, summary.Bytes(), pager)
+			action, message, err := b.detailsKey(ctx, k, &screen, row, summary.Bytes(), pager)
 			if err != nil || action == browseBack || action == browseQuit {
 				return action, err
 			}
@@ -409,7 +410,7 @@ func (b *sessionBrowser) detailsKeys(view sessionView, row listRow) (browseActio
 // detailsKey applies one key to the details drawn as screen. It scrolls
 // by moving screen.top, or returns what the browser does next: browseStay
 // with a message to show, or browseRedraw after a pager.
-func (b *sessionBrowser) detailsKey(k key, screen *detailsScreen, row listRow, summary []byte, pager bool) (browseAction, browseNotice, error) {
+func (b *sessionBrowser) detailsKey(ctx context.Context, k key, screen *detailsScreen, row listRow, summary []byte, pager bool) (browseAction, browseNotice, error) {
 	if move, ok := scrollKeys[k.kind]; ok {
 		screen.scroll(move)
 		return browseStay, browseNotice{}, nil
@@ -422,7 +423,7 @@ func (b *sessionBrowser) detailsKey(k key, screen *detailsScreen, row listRow, s
 	case keyResize:
 		return browseRedraw, browseNotice{}, nil
 	case keyRune:
-		return b.detailsRune(k.r, screen, row, summary, pager)
+		return b.detailsRune(ctx, k.r, screen, row, summary, pager)
 	case keyEscape, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
 		// Scrolled above, or nothing to do. Esc does not go back: it may
 		// be the start of a wheel's arrow split from the rest.
@@ -431,7 +432,7 @@ func (b *sessionBrowser) detailsKey(k key, screen *detailsScreen, row listRow, s
 }
 
 // detailsRune applies a typed character to the details.
-func (b *sessionBrowser) detailsRune(r rune, screen *detailsScreen, row listRow, summary []byte, pager bool) (browseAction, browseNotice, error) {
+func (b *sessionBrowser) detailsRune(ctx context.Context, r rune, screen *detailsScreen, row listRow, summary []byte, pager bool) (browseAction, browseNotice, error) {
 	switch unicode.ToLower(r) {
 	case 'b':
 		return browseBack, browseNotice{}, nil
@@ -441,14 +442,14 @@ func (b *sessionBrowser) detailsRune(r rune, screen *detailsScreen, row listRow,
 		screen.scroll(scrollPageDown)
 		return browseStay, browseNotice{}, nil
 	case 't':
-		action, failure, err := b.transcript(row)
+		action, failure, err := b.transcript(ctx, row)
 		if action == browseStay {
 			return action, browseNotice{text: failure, error: true}, err
 		}
 		return action, browseNotice{}, err
 	case 'm':
 		if screen.cut && pager {
-			action, err := b.page(summary)
+			action, err := b.page(ctx, summary)
 			return action, browseNotice{}, err
 		}
 	}

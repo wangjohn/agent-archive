@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 4 and 7 merged, PR 5 (one matcher) in review, the rest not
-started. Where this plan and the code differ once packages merge, the code
-is the reference and differences go under Deviations.
+PRs 1 to 5 and 7 merged, PR 6 (one browser) in review, PR 8 not started.
+Where this plan and the code differ once packages merge, the code is the
+reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -920,3 +920,66 @@ guide. Live check on the owner's Mac:
   unlisted. Two fuzz targets are added (`FuzzSubagentMeta`,
   `FuzzSubagentMetaDropsSecrets`) beside the description shapes in
   `fuzzSecretRecords`.
+- PR 6: `browserSpec` carries `Choices *scopeChoices` (PR 4's rows for the
+  scope and for all projects, which `a` switches between) in place of the
+  plan's `Rows []listRow`, and also `Command`, `Store` and `NoPager`. A caller
+  whose rows are already chosen (an ambiguous word's matches) wraps them with
+  `rowChoices`, a scope-less choices. `runBrowser(ctx, env, p, stdout, stderr,
+  spec) (row, picked, code)` takes the prompter, the writers and a context
+  (the details read the archive, and the `show` resolver has one) besides the
+  environment and spec. `runSessionBrowser` is folded into it, not kept as a
+  wrapper: its browse mode is `Mode: browseSessions`. The sessionBrowser's
+  details functions take the context as a parameter.
+- PR 6: `Query` fills the filter for every caller. `list "<words>"` opens
+  over the scope's top-level sessions with the words in the filter, and the
+  filter searches every session of the scope (subagents too, and past
+  `--limit`; row numbers continue past the last unfiltered row, and a subagent
+  has none), so editing the words widens the search; Esc clears the filter to
+  the plain list. PR 5's tiers still decide which scope the browser opens on
+  (a scope with no match falls back to all projects, saying so) and the note
+  about matches elsewhere, which shows while the filter holds the opening
+  words; the subagent tier's "last, only when nothing else matches" is
+  replaced in the browser by nesting under the parent (§5). The ambiguous
+  `show` and `handoff` choosers pass their matches as the rows and the words
+  as `Query`, so their heading is `"words" matches N` and Esc lists the
+  matches. Their interactive picker lists every match, not the first 20
+  (`handoffCandidateLimit` still bounds what a pipe or an agent is shown): it
+  scrolls and filters, and a cap would have hidden what Esc and the filter
+  are for.
+- PR 6: `show "<words>"` with several matches on a terminal browses (Enter
+  shows the details, as the table says) unless `--json` or `--transcript` is
+  given, when it picks one session (`Show ·`) for the caller to print, since
+  the browser cannot print JSON or a transcript for a session it also keeps
+  open. `resolveShowQuery` takes `noPager` and `pickOne` for it.
+- PR 6: while the filter line is open, `a`, `n`, `p` and `q` are typed text
+  (§5 says they act outside it), so the other scope is one Esc away; the
+  heading while filtering names `Esc clear`, not `a`. Esc clears the words and
+  closes the line in one press, and Backspace on an empty filter closes it.
+  In line mode `a` still switches the scope with a filter on, and keeps it.
+- PR 6: the `/ filter` hint is on the key-mode status line, not in the
+  heading as §5's picture has it, so a `list` outside any project (which has
+  no heading) names it too. The heading while filtering is `<verb> · <scope>
+  · "words" matches N · … · Esc clear` and the marked row has `▸` before its
+  live dot (`listFormatOptions.Cursor`); a subagent is `  ↳ title`, indented
+  two spaces, with no `· subagent of` hint, and the parent keeps its `· N
+  subagents` hint while filtering. Columns a filter's rows no longer share
+  come back (`filteredFormat`: PR, HARNESS, PROJECT, the live dot).
+- PR 6: in line mode an unmatched number is words (a PR number, `208`), `n`
+  and `p` always turn pages (`Everything is on this page.` when there is one),
+  and more words add to the filter (`Enter for all` clears it). The question
+  now says `words to filter`, which wraps one row more at 40 columns, so
+  `list-page-2.txt` and two width-dependent tests moved a row. Typed text
+  that is not a number, ID or command word no longer gets a "bad answer"
+  message, so the tests pinning those messages were removed.
+- PR 6: the picker, `show --json` and the ambiguous pickers now enter the
+  alternate screen when stdout is a terminal, even where keys cannot be read
+  (as `list` always did), so the line-mode fallback also leaves no table
+  behind; the tests that read the picker's output strip the screen's control
+  sequences.
+- PR 6: handoff's answers are one `bufio.Reader` over a `handedBack` reader
+  (`typedInput`), so the key browser can read the real terminal
+  (`prompter.source`) and hand back what it read but did not use: text and
+  Enter typed after the pick, with Backspace applied and other keys dropped,
+  go to the front of the answers. Closing the key terminal then does not flush
+  the input still waiting (it is read by the prompts as lines). Only a pick
+  hands back; quitting still flushes, as before.

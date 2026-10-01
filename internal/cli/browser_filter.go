@@ -60,27 +60,28 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if m := l.memo; m != nil && m.words == words && m.filtering == l.filtering {
 		return m
 	}
-	v := &pickerView{words: words, filtering: l.filtering, rows: rows, matched: len(rows), format: format}
+	shown, matched, laid := rows, len(rows), format
 	var footer bytes.Buffer
 	if words == "" {
 		printListFooter(&footer, len(rows), totalMatched, truncated, format)
 	} else {
-		v.rows, v.matched = filterRows(l.universe(rows), parseSessionQuery(words))
-		v.format = filteredFormat(format, v.rows)
-		footer.WriteString(l.filterFooter(v.matched, words))
+		shown, matched = filterRows(l.universe(rows), parseSessionQuery(words))
+		laid = filteredFormat(format, shown)
+		footer.WriteString(l.filterFooter(matched, words))
 	}
 	// The mark is for the key browser's filter line; a table read by lines
 	// is chosen from by number.
-	v.format.Cursor = l.filtering && l.keys != nil
-	v.groups = sessionTableGroups(v.rows, v.format)
-	for _, group := range v.groups {
-		v.order = append(v.order, group.rows...)
+	laid.Cursor = l.filtering && l.keys != nil
+	groups := sessionTableGroups(shown, laid)
+	var order []listRow
+	for _, group := range groups {
+		order = append(order, group.rows...)
 	}
-	v.heading = l.heading
+	heading := l.heading
 	if l.headingFor != nil {
-		v.heading = l.headingFor(words, v.matched)
+		heading = l.headingFor(words, matched)
 	}
-	v.footer = footer.String()
+	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
 	l.memo = v
 	return v
 }

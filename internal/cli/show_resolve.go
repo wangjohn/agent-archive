@@ -101,11 +101,12 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		return showLookup{}, 1
 	}
 	format.Style, format.GroupByProject, format.Numbered = styleFor(stdout), true, true
-	spec := browserSpec{Mode: browseSessions, Choices: rowChoices(formatSessionRows(matches, format), format), Query: strings.Join(strings.Fields(query), " "), Command: "show", Store: store, NoPager: noPager}
-	if pickOne {
-		spec.Mode, spec.Verb = pickSession, "Show"
+	choices, words := rowChoices(formatSessionRows(matches, format), format), strings.Join(strings.Fields(query), " ")
+	spec := browserSpec{Mode: pickSession, Verb: "Show", Choices: choices, Query: words, Command: "show"}
+	if !pickOne {
+		spec = browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "show", Store: store, NoPager: noPager}
 	}
-	row, picked, code := runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, spec)
+	row, picked, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, spec)
 	if code != 0 {
 		return showLookup{}, code
 	}

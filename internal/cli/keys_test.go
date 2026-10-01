@@ -118,7 +118,7 @@ func TestKeyScreensClampAfterAResize(t *testing.T) {
 	keys := startKeys(fake)
 	var out bytes.Buffer
 	picker := &sessionPicker{env: size, keys: keys, clear: func() { out.WriteString(screenBreak) }}
-	if _, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(50, oneProject), 50, false, listFormatOptions{Now: pickerNow}, "show"); err != nil {
+	if _, _, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(50, oneProject), listFormatOptions{Now: pickerNow}, "show"); err != nil {
 		t.Fatal(err)
 	}
 	keys.close()

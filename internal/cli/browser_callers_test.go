@@ -19,8 +19,8 @@ var chooserCallers = []struct {
 	chain []string
 }{
 	{"list", []string{"runListCommand"}},
-	{"show (no ID)", []string{"runShowCommand"}},
-	{"show --json (no ID)", []string{"runShowCommand", "selectArchivedSession"}},
+	{"show (no ID)", []string{"runShowCommand", "runBareShow"}},
+	{"show --json (no ID)", []string{"runShowCommand", "runBareShow", "selectArchivedSession"}},
 	{`show "<words>", several matches`, []string{"runShowCommand", "resolveShowQuery"}},
 	{"handoff (no selector)", []string{"runHandoffCommand", "chooseHandoffSession", "selectHandoffSession"}},
 	{`handoff "<words>", several matches`, []string{"runHandoffCommand", "resolveHandoffQuery", "handoffQueryResolver.resolve", "handoffQueryResolver.choose"}},
@@ -145,8 +145,9 @@ func TestEveryChooserReachesTheOneBrowser(t *testing.T) {
 	for _, caller := range chooserCallers {
 		listed = append(listed, caller.chain[len(caller.chain)-1])
 	}
-	// The command functions that run it directly are listed by their chain's
-	// last function; list and show share runShowCommand's two calls.
+	// The functions that run it directly are the last of a chain; bare show
+	// and show --json share runBareShow, which calls it for one and goes on to
+	// selectArchivedSession for the other.
 	want := map[string]bool{}
 	for _, fn := range listed {
 		want[fn] = true

@@ -509,7 +509,7 @@ func TestPickHandsBackWhatWasTypedAhead(t *testing.T) {
 	fake := newFakeKeys("1\rcx\x7fp\r\x1b[B")
 	picker := &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
 	var out bytes.Buffer
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, len(sessions), false, listFormatOptions{Now: pickerNow}, "hand off")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, listFormatOptions{Now: pickerNow}, "hand off")
 	if err != nil || !ok || row.Index != 1 {
 		t.Fatalf("picked %+v ok=%v err=%v", row, ok, err)
 	}
@@ -613,7 +613,7 @@ func TestKeysHandoffFilteredGolden(t *testing.T) {
 }
 
 // pick is pickRows over the rows of sessions, numbered.
-func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
+func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, format listFormatOptions, action string) (listRow, bool, error) {
 	format.Numbered = true
-	return l.pickRows(p, stdout, formatSessionRows(sessions, format), totalMatched, truncated, format, action)
+	return l.pickRows(p, stdout, formatSessionRows(sessions, format), len(sessions), false, format, action)
 }

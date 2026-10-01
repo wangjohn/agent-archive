@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"strings"
 
@@ -62,7 +63,7 @@ func rowChoices(rows []listRow, format listFormatOptions) *scopeChoices {
 // the person quit. code is the exit code when the browser failed, else 0. When
 // it picks on a terminal read by keys, what the person typed ahead is handed
 // back for the prompts after it to read (prompter.handBack).
-func runBrowser(env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, spec browserSpec) (row listRow, picked bool, code int) {
+func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, spec browserSpec) (row listRow, picked bool, code int) {
 	screen := enterAltScreen(stdout, env)
 	// Only a screen that clears can draw a page again in place.
 	var redraw func()
@@ -81,7 +82,7 @@ func runBrowser(env sessionBrowserDependencies, p *prompter, stdout, stderr io.W
 	var err error
 	if spec.Mode == browseSessions {
 		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list}
-		err = b.run(spec.Choices)
+		err = b.run(ctx, spec.Choices)
 		b.screen.leave()
 		if err == nil && b.last != nil {
 			renderSessionSummary(stdout, *b.last, b.summaryOptions(true))

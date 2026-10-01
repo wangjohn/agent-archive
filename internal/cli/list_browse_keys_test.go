@@ -269,7 +269,7 @@ func runKeyPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metada
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
 	format.Now = pickerNow
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, len(sessions), false, format, "show")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +485,7 @@ func TestKeysSuspendRestoresTheTerminal(t *testing.T) {
 	keys := startKeys(fake)
 	var out bytes.Buffer
 	picker := &sessionPicker{env: fixedTerminal{120, 20}, keys: keys, clear: func() { out.WriteString(screenBreak) }}
-	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), 30, false, listFormatOptions{Now: pickerNow}, "show")
+	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), listFormatOptions{Now: pickerNow}, "show")
 	keys.close()
 	if err != nil || ok || strings.Count(out.String(), screenBreak) != 1 {
 		t.Fatalf("ok=%v err=%v:\n%s", ok, err, out.String())
