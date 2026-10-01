@@ -466,7 +466,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	if err := capture.HandleEvent(f.data, "claude", map[string]any{
 		"hook_event_name": "Stop", "session_id": "c-lev-1", "cwd": reg.ProjectRoot, "transcript_path": reg.TranscriptPath,
 		"last_assistant_message": "Done again.",
-	}, resumedAt); err != nil {
+	}, resumedAt, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	f.env.Now = func() time.Time { return resumedAt }

@@ -484,7 +484,7 @@ func addCursorSession(t *testing.T, f handoffFixture, conversation string, activ
 		name string
 		path any
 	}{{"beforeSubmitPrompt", nil}, {"stop", transcript}} {
-		if err := capture.HandleEvent(f.home, "cursor", cursorDesktopPayload(event.name, conversation, f.project, event.path), active); err != nil {
+		if err := capture.HandleEvent(f.home, "cursor", cursorDesktopPayload(event.name, conversation, f.project, event.path), active, capture.WithDecoders(productionAgents)); err != nil {
 			t.Fatalf("%s: %v", event.name, err)
 		}
 	}

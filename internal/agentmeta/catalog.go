@@ -26,6 +26,9 @@ const Launch Operation = "launch"
 // ManagedHooks means pure hook planning and inspection are implemented.
 const ManagedHooks Operation = "managed-hooks"
 
+// LifecycleHooks means native hook decoding is implemented.
+const LifecycleHooks Operation = "lifecycle-hooks"
+
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
 	ID          ID
@@ -63,7 +66,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != ManagedHooks) || seen[op] {
+			if (op != Launch && op != ManagedHooks && op != LifecycleHooks) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

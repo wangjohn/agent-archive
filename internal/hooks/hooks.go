@@ -3,6 +3,7 @@ package hooks
 
 import (
 	"errors"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -139,9 +140,15 @@ func observe(files Files, h Hook, name string) (agentapi.HookFile, agentapi.Hook
 		}
 	}
 	owner, e := resolveOwners(p, file, h.owner())
+	if e != nil {
+		e = fmt.Errorf("%s: %w", path, e)
+	}
 	return file, p, owner, e
 }
 func resolveOwners(p agentapi.HookConfigurator, file agentapi.HookFile, owner agentapi.HookOwner) (agentapi.HookOwner, error) {
+	if file.ReadError != nil {
+		return owner, nil
+	}
 	first, err := p.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
 	if err != nil {
 		return owner, err

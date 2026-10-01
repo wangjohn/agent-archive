@@ -8,8 +8,6 @@ import (
 
 var testPorts = builtin.NewBuiltins()
 
-const prototypeOwner = "Recording private skill-run evidence"
-
 var errInvalidConfiguration = hookconfig.ErrInvalidConfiguration
 
 func (h Hook) sameInstallation(home string) bool {

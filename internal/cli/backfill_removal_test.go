@@ -70,7 +70,7 @@ func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 				"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 			}
-			if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
+			if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
 				t.Fatal(err)
 			}
 			regs, err := store.LoadRegistrations()

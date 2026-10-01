@@ -29,6 +29,7 @@ type Spec struct {
 // Configurator edits injected JSON values using the byte preserving editor.
 type Configurator struct{ Spec Spec }
 
+// Hook contains installation ownership observations for pure edits.
 type Hook agentapi.HookOwner
 
 // Hook is what setup installs into each application's hook configuration:

@@ -30,7 +30,7 @@ func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
 	if err := os.WriteFile(skill, []byte("---\nname: review\n---\nRead design decisions."), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": transcript}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": transcript}, now, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	local, err := state.Open(home)

@@ -30,6 +30,7 @@ type HookFile struct {
 // HookAction selects installation or removal.
 type HookAction uint8
 
+// The following values define the supported typed observations.
 const (
 	HookInstall HookAction = iota + 1
 	HookRemove
@@ -51,6 +52,7 @@ type HookInspectionRequest struct {
 // HookState distinguishes missing, managed, foreign and unreadable configuration.
 type HookState uint8
 
+// The following values define the supported typed observations.
 const (
 	HookAbsent HookState = iota
 	HookOwned

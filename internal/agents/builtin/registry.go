@@ -55,6 +55,12 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			}
 			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
 		}
+		if b.Decoder != nil {
+			if nilImplementation(b.Decoder) {
+				return nil, fmt.Errorf("typed nil decoder for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
+		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
 	}

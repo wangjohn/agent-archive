@@ -820,7 +820,7 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 			err := capture.HandleEvent(home, "claude", map[string]any{
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("hook-%d", i), "cwd": project,
 				"transcript_path": filepath.Join(project, fmt.Sprintf("hook-%d.jsonl", i)),
-			}, time.Now())
+			}, time.Now(), capture.WithDecoders(productionAgents))
 			mu.Lock()
 			if err != nil {
 				hookErrs = append(hookErrs, err)

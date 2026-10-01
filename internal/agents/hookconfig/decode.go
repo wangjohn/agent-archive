@@ -103,9 +103,9 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 		session.Mode = first(payload, "composer_mode")
 	}
 	event := agentapi.LifecycleEvent{Kind: kind, Session: session, ProjectRoot: root(payload), Reason: strings.ToLower(name), NativeEvent: name, Source: agentapi.SourceRef{Path: d.locator(payload, id)}}
-	if d.Spec.OwnedFilename {
+	if d.Spec.OwnedFilename && (kind == agentapi.EventStart || kind == agentapi.EventTurnStart || d.Spec.Followups[name]) {
 		event.Locator = agentapi.LocatorFillFile
-	} else {
+	} else if !d.Spec.OwnedFilename && kind == agentapi.EventStart {
 		event.Locator = agentapi.LocatorReplaceFile
 	}
 	if kind == agentapi.EventStart || kind == agentapi.EventTurnStart && d.Spec.PromptStarts {
@@ -116,7 +116,7 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 		event.Deferred = agentapi.DeferredFollowup
 	}
 	if kind == agentapi.EventSubagent {
-		event.Child = &agentapi.ChildObservation{ID: first(payload, "agent_id"), Path: first(payload, "agent_transcript_path"), Type: archive.SanitizeSubagentType(first(payload, "agent_type")), CaptureTranscript: d.Spec.ChildTranscript}
+		event.Child = &agentapi.ChildObservation{ID: first(payload, "agent_id"), Path: first(payload, "agent_transcript_path"), Type: archive.SanitizeSubagentType(first(payload, "agent_type")), CaptureTranscript: d.Spec.ChildTranscript, MissingDetail: "SubagentStop omitted agent_id"}
 		return []agentapi.LifecycleEvent{event}, nil
 	}
 	lifecycle := kind == agentapi.EventStart || kind == agentapi.EventTurnStart || kind == agentapi.EventStop
@@ -184,8 +184,8 @@ func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event string, p
 	return archive.SupplementalEvidence{Kind: kind, ObservedAt: input.ObservedAt, Provenance: provenance, Payload: out}
 }
 
-// DecodeLegacy preserves the old stored proof, never restatting a grown source.
-func (d Decoder) DecodeLegacy(old agentapi.LegacyAdmission) ([]agentapi.LifecycleEvent, error) {
+// DecodeLegacy preserves the old stored proof, without inspecting the grown source again.
+func (d Decoder) DecodeLegacy(old agentapi.AdmissionIntent) ([]agentapi.LifecycleEvent, error) {
 	payload := map[string]any{"hook_event_name": old.Event, "session_id": old.NativeSessionID, "cwd": old.ProjectRoot, "transcript_path": old.TranscriptPath, "cursor_version": old.CursorVersion, "composer_mode": old.ComposerMode}
 	events, err := d.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: old.ObservedAt})
 	if err != nil {
@@ -199,10 +199,6 @@ func (d Decoder) DecodeLegacy(old agentapi.LegacyAdmission) ([]agentapi.Lifecycl
 		} else if event.Deferred == agentapi.DeferredFollowup {
 			retained = append(retained, event)
 		}
-	}
-	// A first prompt's turn effect must preserve the historical deferred lifecycle evidence.
-	if len(retained) > 0 && retained[0].Kind == agentapi.EventStart && retained[0].NewOnly {
-		retained[0].Evidence = []archive.SupplementalEvidence{d.evidence(archive.EvidenceKindLifecycleHook, old.Event, payload, false, agentapi.HookInput{ObservedAt: old.ObservedAt})}
 	}
 	return retained, nil
 }
