@@ -1,6 +1,10 @@
 package capture
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -136,9 +140,9 @@ func TestPruneWaitsForAHookHoldingTheLock(t *testing.T) {
 // Whatever the interleaving, the excluded project's diagnostic is gone at
 // the end, and an included project's diagnostic is never lost to the prune.
 //
-// The hook's wait is raised for this test only. At 50 ms a slow fsync on a
-// busy machine makes a hook drop its diagnostic by design, which would be
-// indistinguishable here from a lost update; the bounded wait has its own test.
+// The hook's wait is raised for this test only. At 50 ms a busy machine can
+// make a hook drop its diagnostic by design, which would be indistinguishable
+// here from a lost update; the bounded wait has its own test.
 func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 	const rounds = 40
 	saved := hookDiagnosticsWait
@@ -178,6 +182,162 @@ func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 		}
 		if !roots["/work/kept"] {
 			t.Fatalf("round %d: an included project's diagnostic was lost", round)
+		}
+	}
+}
+
+// A hook's diagnostic is synced to disk before diagnostics.lock is taken,
+// because a sync can take seconds on a busy Mac and setup's prune waits only
+// pruneDiagnosticsWait. Setup commits an exclusion and prunes while the hook
+// syncs; the prune finds the lock free, and the hook, finding the file
+// changed, builds its update again from the pruned file.
+//
+// Regression: the hook synced under the lock, and on a loaded machine the
+// prune failed with "another collector or setup is running".
+func TestPruneDoesNotWaitForAHookSyncingItsDiagnostic(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+		t.Fatal(err)
+	}
+	update := recordUpdate(home, diagnosticFor("/work/kept", at.Add(time.Minute)))
+	syncs := 0
+	var lockErr, pruneErr error
+	update.afterStage = func() {
+		syncs++
+		if syncs > 1 {
+			return
+		}
+		release, err := local.NamedLock(home, DiagnosticsLockName)
+		if err != nil {
+			lockErr = err
+			return
+		}
+		release()
+		pruneErr = PruneDiagnostics(home, twoProjectConfig(t, home, "/work/kept"))
+	}
+	if err := update.run(home); err != nil {
+		t.Fatal(err)
+	}
+	if lockErr != nil || pruneErr != nil {
+		t.Fatalf("while the hook synced: lock=%v prune=%v", lockErr, pruneErr)
+	}
+	if syncs != 2 {
+		t.Fatalf("the hook staged %d times, want its update built again once", syncs)
+	}
+	roots := storedRoots(t, home)
+	if roots["/work/excluded"] || !roots["/work/kept"] {
+		t.Fatalf("stored roots = %v", roots)
+	}
+}
+
+// A hook that read the configuration before setup excluded its project, and
+// syncs its diagnostic while setup commits and prunes, rechecks the
+// configuration under the lock and writes nothing, whether or not the prune
+// had anything to drop.
+func TestAHookSyncingDuringThePruneDoesNotResurrectAnExcludedProject(t *testing.T) {
+	t.Parallel()
+	for _, earlier := range []bool{true, false} {
+		t.Run(fmt.Sprintf("earlier diagnostic=%t", earlier), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			twoProjectConfig(t, home, "/work/kept", "/work/excluded")
+			if err := RecordDiagnostic(home, diagnosticFor("/work/kept", at)); err != nil {
+				t.Fatal(err)
+			}
+			if earlier {
+				if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			update := recordUpdate(home, diagnosticFor("/work/excluded", at.Add(time.Minute)))
+			var pruneErr error
+			pruned := false
+			update.afterStage = func() {
+				if !pruned {
+					pruned = true
+					pruneErr = PruneDiagnostics(home, twoProjectConfig(t, home, "/work/kept"))
+				}
+			}
+			if err := update.run(home); err != nil {
+				t.Fatal(err)
+			}
+			if pruneErr != nil {
+				t.Fatalf("prune: %v", pruneErr)
+			}
+			roots := storedRoots(t, home)
+			if roots["/work/excluded"] || !roots["/work/kept"] {
+				t.Fatalf("stored roots = %v", roots)
+			}
+		})
+	}
+}
+
+// A hook that records while setup's prune syncs is not lost: the prune finds
+// the file changed under the lock and prunes what the hook left.
+func TestAHookRecordingWhileThePruneSyncsIsNotLost(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+		t.Fatal(err)
+	}
+	projects := twoProjectConfig(t, home, "/work/kept")
+	update := pruneUpdate(projects)
+	syncs := 0
+	var hookErr error
+	update.afterStage = func() {
+		syncs++
+		if syncs == 1 {
+			hookErr = recordDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Minute)), true)
+		}
+	}
+	if err := update.run(home); err != nil {
+		t.Fatal(err)
+	}
+	if hookErr != nil {
+		t.Fatalf("the hook could not record while the prune synced: %v", hookErr)
+	}
+	if syncs != 2 {
+		t.Fatalf("the prune staged %d times, want it built again once", syncs)
+	}
+	roots := storedRoots(t, home)
+	if roots["/work/excluded"] || !roots["/work/kept"] {
+		t.Fatalf("stored roots = %v", roots)
+	}
+}
+
+// An update that other writers overtake every time gives up after
+// diagnosticsAttempts, as busy: a hook drops its diagnostic, and the prune
+// reports it.
+func TestAnUpdateOvertakenEveryTimeGivesUpAsBusy(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+		t.Fatal(err)
+	}
+	update := pruneUpdate(twoProjectConfig(t, home, "/work/kept"))
+	syncs := 0
+	update.afterStage = func() {
+		syncs++
+		if err := RecordDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Duration(syncs)*time.Minute))); err != nil {
+			t.Error(err)
+		}
+	}
+	err := update.run(home)
+	if !errors.Is(err, local.ErrBusy) || syncs != diagnosticsAttempts {
+		t.Fatalf("err=%v after %d attempts, want ErrBusy after %d", err, syncs, diagnosticsAttempts)
+	}
+	entries, _ := os.ReadDir(home)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".pending-") {
+			t.Fatalf("a staged file was left behind: %s", entry.Name())
 		}
 	}
 }
