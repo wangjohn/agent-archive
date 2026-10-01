@@ -31,6 +31,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
@@ -93,6 +94,9 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	handoffConfigLoad func(string) (config.Config, bool, error)
+	nativeFS          nativesessions.FileSystem
+	nativeStoreRoots  []nativesessions.StoreRoot
 	// sweepClock, set only by tests, adjusts the retention sweep's clock
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
 	// moves Now months ahead moves only this machine's clock; the sweep rightly

@@ -213,8 +213,9 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 
 func TestHandoffPickerBeforeSetup(t *testing.T) {
 	t.Parallel()
-	out, errOut, code := runPicker(t, testEnv(t, t.TempDir(), time.Now()), "1\n")
-	if code != 1 || out != "" || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	out, errOut, code := runPicker(t, f.env, "1\n")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }
@@ -463,7 +464,7 @@ func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
 		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
 	}
 	out, errOut, code := runPicker(t, f.env, "q\n", "--source", "archive")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
@@ -507,8 +508,11 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
 	}
 	f.sync(t)
+	// Registered, the archived session with no prompt would be read to see
+	// whether it has one by now; archived only, it is not counted.
+	f.unregister(t, f.noPrompt)
 	out, errOut, code := runPicker(t, f.env, "q\n")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
 		t.Fatalf("all archived: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	f.addSession(t, "codex", "native-old", "", f.env.now().Add(-3*time.Hour))
@@ -518,7 +522,7 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 		t.Fatalf("one not uploaded: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
@@ -551,6 +555,70 @@ func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
 	published := pickerLine(t, out, id)
 	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
 		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// archiveNoPrompt uploads the fixture's session with no prompt and checks that
+// list still shows it: list shows every archived session, and only handoff
+// passes over one with nothing to hand off.
+func (f pickerFixture) archiveNoPrompt(t *testing.T) {
+	t.Helper()
+	f.sync(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"list", "--json"}, nil, &out, &errOut, f.env); code != 0 || !strings.Contains(out.String(), f.noPrompt) {
+		t.Fatalf("list --json: code=%d stderr=%s\n%s", code, errOut.String(), out.String())
+	}
+}
+
+// An archived session with no prompt is passed over as a local one is, whether
+// or not this machine still has it registered, and the footer does not count it.
+func TestHandoffPickerSkipsArchivedSessionsWithNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	check := func(label string, args ...string) {
+		t.Helper()
+		out, errOut, code := runPicker(t, f.env, "q\n", args...)
+		if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, "3 session(s).") {
+			t.Fatalf("%s: code=%d stderr=%s\n%s", label, code, errOut, out)
+		}
+		// Row 1 is the newest session that has a prompt.
+		if !strings.HasPrefix(pickerLine(t, out, f.notUploaded), "1 ") {
+			t.Fatalf("%s: row numbers:\n%s", label, out)
+		}
+	}
+	check("registered")
+	check("registered, archive only", "--source", "archive")
+	f.unregister(t, f.noPrompt)
+	check("archive only")
+	// Words typed into the picker's filter search the same sessions.
+	out, errOut, code := runPicker(t, f.env, "codex\nq\n")
+	if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, `"codex" matches 3`) {
+		t.Fatalf("filter: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A session archived before its first prompt is offered once its transcript
+// here has one, titled by it, as the archive's copy will be on the next sync.
+func TestHandoffPickerOffersAnArchivedSessionPromptedSince(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	transcript := filepath.Join(f.project, "native-empty.jsonl")
+	content := fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-01-02T00:00:00Z","payload":{"id":"native-empty","cwd":%q}}`+"\n", f.project) +
+		`{"type":"response_item","timestamp":"2026-01-02T00:00:02Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Prompted after upload"}]}}` + "\n"
+	must(t, os.WriteFile(transcript, []byte(content), 0o600))
+	active := f.env.now().Add(2 * time.Hour)
+	must(t, os.Chtimes(transcript, active, active))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	line := pickerLine(t, out, f.noPrompt)
+	if code != 0 || !strings.Contains(line, "Prompted after upload") || strings.Contains(line, "not yet uploaded") || !strings.HasPrefix(line, "1 ") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	// The archive's copy alone still has nothing to hand off.
+	out, _, _ = runPicker(t, f.env, "q\n", "--source", "archive")
+	if strings.Contains(out, f.noPrompt[:minShortSessionID]) {
+		t.Fatalf("--source archive offers the archive's prompt-less copy:\n%s", out)
 	}
 }
 

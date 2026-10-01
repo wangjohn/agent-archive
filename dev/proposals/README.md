@@ -12,6 +12,7 @@ moving a proposal.
 
 | Proposal | Status |
 | --- | --- |
+| [Release remediation](release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](cloud-capture.md) | Proposed; not implemented or scheduled. |
 | [Local session discovery](local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
 | [Archive listing at scale](listing-at-scale.md) | Phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
