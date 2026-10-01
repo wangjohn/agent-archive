@@ -254,6 +254,8 @@ func (c *r2Creator) connect() error {
 			continue
 		case r2ConnectOther:
 			return errChooseStorageAgain
+		case r2ConnectStop:
+			return errors.New("guided bucket creation stopped")
 		default:
 			return errors.New("guided bucket creation stopped")
 		}
