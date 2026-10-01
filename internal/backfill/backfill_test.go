@@ -86,7 +86,7 @@ func (tr *tree) worktree(repoRel, rel, name string) string {
 }
 
 func (tr *tree) env() Environment {
-	return Environment{
+	return Environment{Sources: testSources,
 		Home: tr.home,
 		// These tests model a Mac (Library folders, Documents/Codex, TCC);
 		// linux_test.go covers the other branch.

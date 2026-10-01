@@ -1,13 +1,12 @@
 package collector
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -39,7 +38,11 @@ func versionChanged(a, b archive.SourceBundle) bool {
 // detected here. Cursor database chats are never reported: a rewritten chat
 // is published as the chat now is (see guard).
 func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
-	if s.reg.SourceKind != archive.SourceKindFile {
+	semantics, err := sourceSemantics(s.opts.Sources, s.reg)
+	if err != nil {
+		return false, err
+	}
+	if semantics.Mutation != agentapi.AppendOnly {
 		return false, nil
 	}
 	if reason, blocked := s.published.Blocked(); blocked && reason == state.BlockedReasonTranscriptRewritten {
@@ -78,25 +81,11 @@ func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bu
 // refilterNative runs a snapshot's native records, or its native text, back
 // through the filter.
 func refilterNative(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
-	if len(bundle.NativeText) > 0 {
-		cursor, ok := adapter.(archive.CursorAdapter)
-		if !ok || len(bundle.NativeText) != 1 || len(bundle.NativeRecords) > 0 {
-			return archive.FilteredTranscript{}, errors.New("snapshot text cannot be filtered again by this adapter")
-		}
-		return cursor.FilterText(strings.NewReader(bundle.NativeText[0].Content), reg.SessionStartedAt)
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return archive.FilteredTranscript{}, errors.New("native refilter port required")
 	}
-	var jsonl bytes.Buffer
-	for i, record := range bundle.NativeRecords {
-		encoded, err := json.Marshal(record)
-		if err != nil {
-			return archive.FilteredTranscript{}, fmt.Errorf("encode retained record %d: %w", i, err)
-		}
-		if i > 0 {
-			jsonl.WriteByte('\n')
-		}
-		jsonl.Write(encoded)
-	}
-	return adapter.FilterJSONL(&jsonl)
+	return f.Refilter(context.Background(), bundle, reg.SessionStartedAt)
 }
 
 // mergeCaptureGaps is first followed by each gap of second not already in

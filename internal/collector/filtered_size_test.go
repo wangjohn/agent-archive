@@ -34,7 +34,7 @@ func TestSizeLimitAppliesToTheFilteredTranscript(t *testing.T) {
 	}
 	path := claudeSession(t, local, content)
 	at := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
-	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, MaxTranscriptBytes: limit}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, MaxTranscriptBytes: limit}
 	if r, _ := measurePass(t, local, remote, opts); len(r.Published) != 1 || len(r.Errors) != 0 {
 		t.Fatalf("a transcript over the limit only in dropped tool output was not captured: %#v", r)
 	}
@@ -65,7 +65,7 @@ func TestFilteredTranscriptOverTheLimitIsAGap(t *testing.T) {
 		fmt.Fprintf(&b, `{"type":"user","uuid":"u%d","sessionId":"native-claude","timestamp":"2026-09-22T12:00:0%dZ","message":{"role":"user","content":%q}}`+"\n", i, i, strings.Repeat("kept text ", 1000))
 	}
 	claudeSession(t, local, b.String())
-	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC) }, MaxTranscriptBytes: 32 << 10}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC) }, MaxTranscriptBytes: 32 << 10}
 	if r, _ := measurePass(t, local, remote, opts); len(r.Errors) != 0 || len(r.Published) != 0 {
 		t.Fatalf("%#v", r)
 	}

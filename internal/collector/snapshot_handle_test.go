@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"os"
@@ -29,13 +30,13 @@ func TestFilterSnapshotKeepsVerifiedHandleAndHonorsCancellation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not the selected transcript"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	filtered, _, err := FilterTranscriptSnapshot(context.Background(), snapshot, "claude", time.Time{}, DefaultMaxTranscriptBytes)
+	filtered, _, err := FilterTranscriptSnapshot(context.Background(), snapshot, "claude", time.Time{}, DefaultMaxTranscriptBytes, testSources)
 	if err != nil || len(filtered.Records) != 1 {
 		t.Fatalf("verified handle: records=%d err=%v", len(filtered.Records), err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := FilterTranscriptSnapshot(ctx, snapshot, "claude", time.Time{}, DefaultMaxTranscriptBytes); !errors.Is(err, context.Canceled) {
+	if _, _, err := FilterTranscriptSnapshot(ctx, snapshot, "claude", time.Time{}, DefaultMaxTranscriptBytes, testSources); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled filter: %v", err)
 	}
 }
@@ -49,7 +50,7 @@ func TestFileReaderPassesCancellationToTranscriptFilter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	source := fileReader{reg: archive.SessionRegistration{TranscriptPath: path}}
-	if _, _, err := source.Filter(ctx, archive.ClaudeAdapter{}, DefaultMaxTranscriptBytes); !errors.Is(err, context.Canceled) {
+	if _, _, err := source.Filter(ctx, claude.Filter{}, DefaultMaxTranscriptBytes); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled read: %v", err)
 	}
 }

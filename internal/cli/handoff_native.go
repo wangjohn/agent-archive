@@ -96,6 +96,7 @@ type nativePreviewCatalog struct {
 	previews   agentapi.PreviewsLookup
 	ctx        context.Context
 	files      nativesessions.FileSystem
+	sources    agentapi.SourcesLookup
 	candidates []nativesessions.Candidate
 	next       int
 	reserved   int64
@@ -137,7 +138,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	for range 2 {
 		workers.Go(func() {
 			for j := range jobs {
-				p, err := previewNativeCandidate(n.ctx, n.files, j.c, n.previews)
+				p, err := previewNativeCandidate(n.ctx, n.files, j.c, n.sources, n.previews)
 				a := answer{index: j.index, p: p, err: err}
 				select {
 				case results <- a:
@@ -345,12 +346,12 @@ func nativeRowIndex(row listRow, candidates []nativesessions.Candidate) int {
 	return -1
 }
 
-func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files nativesessions.FileSystem, clock handoffFileDependencies) (handoffTarget, error) {
-	s, err := transcriptio.Open(files, c.Ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store})
+func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files nativesessions.FileSystem, clock handoffFileDependencies) (_ handoffTarget, resultErr error) {
+	pass, snapshot, s, err := openNativeSource(ctx, files, c, registryFor(clock))
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	defer func() { _ = s.Close() }()
+	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
 	if !c.Stamp.SameFile(s.Stamp()) {
 		return handoffTarget{}, transcriptio.ErrChanged
 	}
@@ -362,7 +363,7 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if e != nil || h.IdentityMismatch || h.NativeID != c.NativeID || dir != c.Directory {
 		return handoffTarget{}, errors.New("selected local transcript identity or checkout changed; discover again")
 	}
-	filtered, adapter, err := collector.FilterTranscriptSnapshot(ctx, s, c.Ref.Harness, c.StartedAt, collector.DefaultMaxTranscriptBytes)
+	filtered, adapter, err := collector.FilterTranscriptSnapshot(ctx, s, c.Ref.Harness, c.StartedAt, collector.DefaultMaxTranscriptBytes, registryFor(clock))
 	if err != nil {
 		return handoffTarget{}, err
 	}
@@ -429,7 +430,7 @@ func isCurrentNative(c nativesessions.Candidate, env currentSessionDependencies)
 func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativesessions.Result, interactive bool, signals <-chan os.Signal, input *typedInput, stdout, stderr io.Writer, env nativeHandoffDependencies) (*nativesessions.Candidate, bool, int, error) {
 	candidates := result.Candidates
 	var selected *nativesessions.Candidate
-	n := &nativePreviewCatalog{previews: previewsFor(env), ctx: ctx, files: env.nativeFiles(), candidates: candidates, reserved: result.Coverage.ReservedBytes, stderr: stderr, now: env.now()}
+	n := &nativePreviewCatalog{previews: previewsFor(env), sources: registryFor(env), ctx: ctx, files: env.nativeFiles(), candidates: candidates, reserved: result.Coverage.ReservedBytes, stderr: stderr, now: env.now()}
 	more, e := n.load()
 	if e != nil {
 		return nil, false, 1, e
@@ -488,12 +489,12 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 	return selected, true, 0, nil
 }
 
-func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, previews agentapi.PreviewsLookup) (collector.TranscriptPreview, error) {
-	s, err := transcriptio.Open(files, c.Ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store})
+func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup) (_ collector.TranscriptPreview, resultErr error) {
+	pass, snapshot, s, err := openNativeSource(ctx, files, c, sources)
 	if err != nil {
 		return collector.TranscriptPreview{}, err
 	}
-	defer func() { _ = s.Close() }()
+	defer func() { resultErr = errors.Join(resultErr, snapshot.Close(), pass.Close()) }()
 	if !c.Stamp.SameFile(s.Stamp()) || s.Stamp().Size != c.Stamp.Size {
 		return collector.TranscriptPreview{}, transcriptio.ErrChanged
 	}
@@ -505,4 +506,21 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 		return collector.TranscriptPreview{}, errors.New("preview unavailable")
 	}
 	return collector.PreviewTranscript(ctx, s, preview, collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
+}
+
+// Each browser worker owns its own serial pass; no shared mutable provider resource enters the pool.
+func openNativeSource(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, sources agentapi.SourcesLookup) (agentapi.SourcePass, agentapi.SourceSnapshot, agentapi.FileInput, error) {
+	p, _, ok := sources.LookupSources(c.Ref.Harness)
+	if !ok {
+		return nil, nil, nil, errors.New("native source integration unavailable")
+	}
+	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: files, Policy: transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store}})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Path: c.Ref.Path}, agentapi.ReadLimits{})
+	if err != nil {
+		return nil, nil, nil, errors.Join(err, pass.Close())
+	}
+	return pass, snapshot, snapshot.Input().File, nil
 }

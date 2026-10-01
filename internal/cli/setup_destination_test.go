@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"strings"
 	"testing"
@@ -236,7 +235,7 @@ func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	cloud := storagetest.NewMemoryStore()
-	opts := collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	run := func(store storage.ObjectStore, fail bool) {
 		t.Helper()
 		r, e := collector.Run(context.Background(), ls, store, opts)

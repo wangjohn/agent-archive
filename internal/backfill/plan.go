@@ -407,7 +407,7 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{}, env.Sources)
 		if err != nil {
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
@@ -504,7 +504,7 @@ func runAdapter(env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart)
+	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart, env.Sources)
 	if err != nil {
 		info, statErr := env.lstat(w.t.path)
 		switch {

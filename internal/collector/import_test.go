@@ -24,7 +24,7 @@ func publishedMetadataBytes(t *testing.T, reg archive.SessionRegistration) []byt
 	}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	if result, err := Run(context.Background(), local, remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+	if result, err := Run(context.Background(), local, remote, Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
@@ -77,7 +77,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	now := importedAt.Add(time.Minute)
-	opts := Options{Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -178,7 +178,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			}}}}
 			remote := storagetest.NewMemoryStore()
 			now := tc.observedAt.Add(time.Minute)
-			result, err := Run(context.Background(), local, remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+			result, err := Run(context.Background(), local, remote, Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 			if err != nil || len(result.Errors) != 0 {
 				t.Fatalf("%#v %v", result, err)
 			}
@@ -406,7 +406,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			}
 			for range 2 {
 				// Inside the grace a hook candidate is given to write.
-				materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, importedAt.Add(time.Minute))
+				materializeSubagentCandidates(context.Background(), local, Options{Sources: testSources}, importedAt.Add(time.Minute))
 			}
 			candidates, err := local.LoadSubagentCandidates()
 			if err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -222,7 +223,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// arrives), and nothing is recorded as a failure.
 		return read, false, nil
 	}
-	if read.adapter, err = archive.NewAdapter(s.reg.Harness.Name); err != nil {
+	if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
 		return read, false, err
 	}
 	if s.filtered != nil {
@@ -261,6 +262,9 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
+	if agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return outcomeSkipped, err
+	}
 	switch {
 	case errors.Is(err, errTranscriptTooLarge):
 		// The file will not shrink by retrying: record the gap once and
@@ -497,7 +501,15 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 	if !haveGuard || nativeEvidenceExtends(guardBundle, candidate) {
 		return candidate, false, nil
 	}
-	if s.reg.SourceKind != archive.SourceKindCursorSQLite {
+	provider, _, found := s.opts.Sources.LookupSources(s.reg.Harness.Name)
+	if !found {
+		return candidate, false, errors.New("source integration unavailable")
+	}
+	semantics, describeErr := provider.Describe(sourceRef(s.reg))
+	if describeErr != nil {
+		return candidate, false, describeErr
+	}
+	if semantics.Mutation != agentapi.ReplaceableSnapshot {
 		// Truncated, compacted, or rewritten: the retained snapshot is richer
 		// than what the file now holds, and nothing the collector can do will
 		// change that. Record the gap so later passes are no-ops until the

@@ -121,7 +121,7 @@ func TestSetupAndBackfillShareOneTempFolderList(t *testing.T) {
 			t.Parallel()
 			env := Env{OS: goos, LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
 			temps := env.backfillTempDirs()
-			for _, want := range append(backfill.Environment{OS: goos}.DefaultTempDirs(), "/scratch/tmp") {
+			for _, want := range append(backfill.Environment{Sources: productionAgents, OS: goos}.DefaultTempDirs(), "/scratch/tmp") {
 				if !slices.Contains(temps, want) {
 					t.Fatalf("temporary folders %v lack %s", temps, want)
 				}

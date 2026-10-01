@@ -27,7 +27,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
-		result, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
 	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v err=%v", result, err)
 	}
@@ -73,7 +73,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
-		result, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +93,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 	}
 
 	writeTranscript(t, filepath.Dir(transcript), "native-1.jsonl", `{"role":"user","message":{"content":[{"type":"text","text":"hello"}]}}`+"\n"+`{"role":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n")
-	result, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
 	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v err=%v", result, err)
 	}

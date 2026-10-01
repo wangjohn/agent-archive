@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"time"
 )
 
@@ -28,7 +27,7 @@ type TranscriptPreview struct {
 }
 
 // PreviewTranscript reads bounded complete head/tail records on the verified handle.
-func PreviewTranscript(ctx context.Context, snapshot *transcriptio.Snapshot, preview agentapi.RecordPreviewer, limits PreviewLimits) (TranscriptPreview, error) {
+func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview agentapi.RecordPreviewer, limits PreviewLimits) (TranscriptPreview, error) {
 	var recordErr error
 	var accumulator archive.PreviewAccumulator
 	visit := func(first bool) func([]byte) bool {
@@ -50,7 +49,7 @@ func PreviewTranscript(ctx context.Context, snapshot *transcriptio.Snapshot, pre
 		return out, recordErr
 	}
 	out.NameComplete = head.Complete
-	if !head.Complete && snapshot.Stamp().Size > limits.HeadBytes {
+	if !head.Complete && snapshot.Length() > limits.HeadBytes {
 		tail, e := snapshot.Records(ctx, true, limits.TailBytes, limits.RecordBytes, visit(false))
 		out.Bytes += tail.Bytes
 		if e != nil {

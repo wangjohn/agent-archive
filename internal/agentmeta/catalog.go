@@ -24,6 +24,9 @@ type Operation string
 const Launch Operation = "launch"
 const Parse Operation = "parse"
 
+// Source means an integration provides bounded sources and native filtering.
+const Source Operation = "source"
+
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
 	ID          ID
@@ -61,7 +64,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != Parse) || seen[op] {
+			if (op != Launch && op != Parse && op != Source) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

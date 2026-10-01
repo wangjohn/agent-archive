@@ -37,7 +37,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 			}
 			remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-			options := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
+			options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 				SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 					return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 				},
@@ -95,7 +95,7 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	mode := config.SkillEvidenceBody
-	options := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }, SkillEvidence: mode,
+	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},
@@ -152,7 +152,7 @@ func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing
 	remote := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	mode := config.SkillEvidenceBody
-	options := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
+	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},

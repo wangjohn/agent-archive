@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -235,7 +234,7 @@ func publishPairSession(t *testing.T, home string, store *state.Store, remote *s
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collector.Run(context.Background(), store, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return now }})
+	result, err := collector.Run(context.Background(), store, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("publish result=%#v err=%v", result, err)
 	}

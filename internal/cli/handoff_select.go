@@ -277,7 +277,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		}
 		return !p.scope.contains(registrationMetadata(reg), &reg)
 	})
-	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase())
+	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase(), registryFor(p.env))
 	for _, reg := range regs {
 		active, ok := activity[reg.ArchiveSessionID]
 		if !ok {
@@ -342,7 +342,7 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 }
 
 func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
-	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase())
+	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
 	if err != nil {
 		return archive.Metadata{}, false
 	}
