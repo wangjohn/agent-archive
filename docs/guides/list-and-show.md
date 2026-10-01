@@ -201,9 +201,10 @@ rows; a session with no name keeps the first prompt as its heading. `PRs`
 lists the pull requests the agent linked to the session, where `Git` counts
 the ones its own commands opened or merged. A session published before the
 name was kept (privacy filter 13) gets one the next time the collector
-re-reads its transcript, if the transcript is still on the machine. A Claude Code
-subagent's name is the description its parent gave the task (filter 14 and
-parser `0.18.0`), so a subagent archived before that gets one the same way.
+re-reads its transcript, if the transcript is still on the machine. A Claude
+Code subagent's name is the description its parent gave the task (filter 14
+and parser `0.18.0`), so a subagent archived before that gets one the same
+way.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its

@@ -43,11 +43,11 @@ task, and nothing else that was dropped.
     from a description that is JSON text, filtered as a prompt's is), is
     written only when the transcript has records of its own, so it never
     makes an empty or unrecognized transcript look captured, and never
-    changes the transcript's timestamps or identities. There is at most one: a `subagent-meta` record in the
-    transcript itself (a retained snapshot filtered again carries the one
-    written earlier) is rebuilt from its description alone, and a second
-    one, or one beside the file's, is dropped with an
-    `unsupported_value_omitted` gap.
+    changes the transcript's timestamps or identities. There is at most
+    one: a `subagent-meta` record in the transcript itself (a retained
+    snapshot filtered again carries the one written earlier) is rebuilt from
+    its description alone, and a second one, or one beside the file's, is
+    dropped with an `unsupported_value_omitted` gap.
   - A transcript that is not a Claude Code subagent's never reads a
     `.meta.json`.
 

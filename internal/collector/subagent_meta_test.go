@@ -59,6 +59,7 @@ const syntheticMeta = `{"agentType":"general-purpose","description":"Find the re
 // record of its source, redacted, and the name in its metadata. Nothing else of
 // the file is.
 func TestSubagentDescriptionIsPublishedWithTheSubagent(t *testing.T) {
+	t.Parallel()
 	f := newNamedSubagentFixture(t)
 	f.writeMeta(syntheticMeta)
 	f.write(2)
@@ -91,6 +92,7 @@ func TestSubagentDescriptionIsPublishedWithTheSubagent(t *testing.T) {
 // A subagent with no .meta.json, or an unusable one, publishes as it did: no
 // description record, no name, and no gap about it.
 func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(f *resumedSubagentFixture){
 		"missing": func(*resumedSubagentFixture) {},
 		"malformed": func(f *resumedSubagentFixture) {
@@ -120,6 +122,7 @@ func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
 	}
 	for name, prepare := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := newNamedSubagentFixture(t)
 			prepare(f)
 			f.write(2)
@@ -145,6 +148,7 @@ func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
 // published, and the earlier snapshot, which had none, is extended by it (the
 // description is not evidence of the transcript), not blocked as rewritten.
 func TestSubagentMetaFileThatAppearsLaterIsPublishedWithTheNextChange(t *testing.T) {
+	t.Parallel()
 	f := newNamedSubagentFixture(t)
 	f.write(2)
 	f.stop(3)
@@ -187,6 +191,7 @@ func TestSubagentMetaFileThatAppearsLaterIsPublishedWithTheNextChange(t *testing
 // A description that changes between snapshots is the latest one, again
 // without counting as a rewrite.
 func TestSubagentDescriptionChangeIsNotARewrite(t *testing.T) {
+	t.Parallel()
 	f := newNamedSubagentFixture(t)
 	f.writeMeta(`{"description":"First name"}`)
 	f.write(2)
@@ -214,6 +219,7 @@ func TestSubagentDescriptionChangeIsNotARewrite(t *testing.T) {
 // description like a hook-reported one: the collector's registration carries
 // the parent either way.
 func TestImportedSubagentIsPublishedWithItsDescription(t *testing.T) {
+	t.Parallel()
 	f := newNamedSubagentFixture(t)
 	f.writeMeta(syntheticMeta)
 	f.write(2)
@@ -254,6 +260,7 @@ func TestImportedSubagentIsPublishedWithItsDescription(t *testing.T) {
 // with the .meta.json, republishes it with the name, and keeps its capture
 // time, without taking the new first record for a rewrite.
 func TestFilterUpgradePublishesTheDescriptionOfAnUnchangedSubagent(t *testing.T) {
+	t.Parallel()
 	f := newNamedSubagentFixture(t)
 	f.write(2)
 	f.stop(3)
@@ -283,7 +290,8 @@ func TestFilterUpgradePublishesTheDescriptionOfAnUnchangedSubagent(t *testing.T)
 
 // Only a subagent's transcript reads a .meta.json: not a session without a
 // parent, even one named like a subagent's with a file beside it, and not a
-// subagent whose transcript is named otherwise.
+// subagent whose transcript is named otherwise. It stays sequential: it reads
+// subagentMetaReads, which every filter of a subagent in the process counts.
 func TestOnlyASubagentTranscriptReadsAMetaFile(t *testing.T) {
 	dir := t.TempDir()
 	line := `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"child"}}` + "\n"
@@ -326,6 +334,7 @@ func TestOnlyASubagentTranscriptReadsAMetaFile(t *testing.T) {
 
 // An unusable file changes nothing about what the filter returns.
 func TestUnusableMetaFileLeavesTheFilteredTranscriptUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	line := `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"child"}}` + "\n"
 	path := writeTranscript(t, dir, "agent-1.jsonl", line)
