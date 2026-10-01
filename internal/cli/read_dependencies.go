@@ -36,6 +36,7 @@ type terminalSizeDependencies interface {
 type sessionSelectionDependencies interface {
 	metadataCacheDependencies
 	terminalSizeDependencies
+	scopeDependencies
 	now() time.Time
 }
 
@@ -54,6 +55,7 @@ type sessionBrowserDependencies interface {
 type listCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
+	scopeDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
@@ -87,6 +89,7 @@ type statsCommandDependencies interface {
 type showCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
+	scopeDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
@@ -140,6 +143,7 @@ type workingDirDependencies interface {
 type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
+	scopeDependencies
 	sessionBrowseDependencies
 	handoffLaunchDependencies
 	handoffDestinationDependencies

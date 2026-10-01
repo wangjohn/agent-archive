@@ -12,6 +12,8 @@ a session.
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
 # use --no-pager to print directly.
 agent-archive list
+agent-archive list --all-projects     # every project, not only this repository's
+agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
