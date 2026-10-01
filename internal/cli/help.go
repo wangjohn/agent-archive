@@ -26,7 +26,8 @@ Deliver the bundle and six-word code separately. Pairing refuses in any coding
 agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
   --share-key    Explicitly share the active R2 key (beta)
-  --spares N     Save unused R2 key target, 0..5 (default 2); refill with a token
+  --spares N     Save unused R2 key target, 0..5 (default 2)
+                 Refill with an available management token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
   --print        Print the encrypted bundle instead of copying it
   --file PATH    Create a private 0600 bundle file; never overwrite a file

@@ -519,9 +519,9 @@ func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) 
 func TestDedicatedDistinctBucketClaimsRemainInformational(t *testing.T) {
 	env, home, _, _ := dedicatedFixture(t)
 	i := fixtureIssuer(t, env, home)
-	s, _, err := i.create(issuance.Precreated)
+	_, _, err := i.create(issuance.Precreated)
 	must(t, err)
-	s, _, err = reserveSpare(home, i.cfg, strings.Repeat("b", 32), "laptop", env.now().Add(time.Hour), env)
+	s, _, err := reserveSpare(home, i.cfg, strings.Repeat("b", 32), "laptop", env.now().Add(time.Hour), env)
 	must(t, err)
 	s.State = issuance.DeliveryIntent
 	must(t, issuance.Save(home, s))
@@ -572,7 +572,7 @@ func TestDedicatedOwnIntentNeverEntersSparePool(t *testing.T) {
 func TestDedicatedOwnIntentCleanupPreservesCommittedOrUnknownBindings(t *testing.T) {
 	env, home, cf, kc := dedicatedFixture(t)
 	i := fixtureIssuer(t, env, home)
-	s, key, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
+	s, _, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
 	must(t, err)
 	cfg := i.cfg
 	cfg.Storage.R2CredentialRef = s.SecretRef
@@ -588,7 +588,7 @@ func TestDedicatedOwnIntentCleanupPreservesCommittedOrUnknownBindings(t *testing
 		t.Fatal("committed own key cleaned automatically")
 	}
 	// A different reference may still load the same active provider key.
-	s, key, err = i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
+	s, key, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
 	must(t, err)
 	cfg = i.cfg
 	must(t, kc.Save(context.Background(), "main", key))

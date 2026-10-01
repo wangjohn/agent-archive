@@ -53,7 +53,7 @@ func (i *keyIssuer) create(origin issuance.Origin) (issuance.Slot, credentials.R
 // createWithIntent binds a chosen recipient before the immutable provider name
 // is journaled, and lets an owning transaction persist that exact slot before API.
 func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string, beforeProvider func(issuance.Slot) error) (issuance.Slot, credentials.R2Credentials, error) {
-	if recipientID == i.cfg.MachineID && beforeProvider == nil {
+	if recipientID != "" && recipientID == i.cfg.MachineID && beforeProvider == nil {
 		return issuance.Slot{}, credentials.R2Credentials{}, errors.New("own-key creation requires durable transaction intent callback")
 	}
 	s, err := issuance.New(i.cfg.MachineID, i.cfg.DestinationID(), i.account, i.bucket, i.group, origin, i.env.now())
