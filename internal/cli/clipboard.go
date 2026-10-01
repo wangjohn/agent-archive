@@ -35,6 +35,8 @@ func (e Env) clipboardCommand() (string, []string, error) {
 				clipboardProgram{name: "xclip", args: []string{"-selection", "clipboard"}},
 				clipboardProgram{name: "xsel", args: []string{"--clipboard", "--input"}})
 		}
+	case platform.Unknown:
+		return "", nil, errClipboardUnavailable
 	default:
 		return "", nil, errClipboardUnavailable
 	}
