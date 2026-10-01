@@ -70,7 +70,9 @@ type Payload struct {
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
 var repoPattern = regexp.MustCompile(`^repo-[a-f0-9]{16}$`)
 
 // ValidID reports whether an identifier is canonical 128-bit lowercase hex.
@@ -117,6 +119,7 @@ func (p Payload) Validate() error {
 func invalidSettings() error {
 	return errors.New("pairing settings are invalid or unsupported; create a new bundle with a current source")
 }
+
 func (p Payload) validateStorage() error {
 	bad := invalidSettings()
 	s := p.Storage
@@ -135,6 +138,7 @@ func (p Payload) validateStorage() error {
 	}
 	return nil
 }
+
 func (p Payload) validateApplications() error {
 	bad := invalidSettings()
 	agents := []string{"claude", "codex", "cursor"}
@@ -162,6 +166,7 @@ func (p Payload) validateApplications() error {
 	}
 	return nil
 }
+
 func (p Payload) validateScopes() error {
 	bad := invalidSettings()
 	if len(p.Inclusions) > 128 || len(p.Exclusions) > 128 {

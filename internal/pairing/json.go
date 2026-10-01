@@ -26,7 +26,8 @@ func uniqueJSON(data []byte) error {
 		if !ok {
 			return nil
 		}
-		if delimiter == '{' {
+		switch delimiter {
+		case '{':
 			seen := map[string]bool{}
 			for dec.More() {
 				key, err := dec.Token()
@@ -42,13 +43,13 @@ func uniqueJSON(data []byte) error {
 					return err
 				}
 			}
-		} else if delimiter == '[' {
+		case '[':
 			for dec.More() {
 				if err = value(depth + 1); err != nil {
 					return err
 				}
 			}
-		} else {
+		default:
 			return errors.New("invalid paired JSON")
 		}
 		_, err = dec.Token()
@@ -57,7 +58,7 @@ func uniqueJSON(data []byte) error {
 	if err := value(0); err != nil {
 		return err
 	}
-	if _, err := dec.Token(); err != io.EOF {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("trailing paired JSON")
 	}
 	return nil

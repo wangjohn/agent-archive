@@ -27,6 +27,7 @@ const MaxBundle = 64 * 1024
 
 // MaxPayload bounds authenticated decompression and JSON encoding.
 const MaxPayload = 256 * 1024
+
 const headerSize = 74
 
 // Header is unauthenticated inspection data until Open authenticates it.
@@ -64,6 +65,7 @@ func Inspect(bundle string) (Header, error) {
 	}
 	return header(b), nil
 }
+
 func header(b []byte) Header {
 	var seconds int64
 	_, _ = binary.Decode(b[66:74], binary.BigEndian, &seconds)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/pairing"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+)
+
+type pairingCloneChoice string
+
+const (
+	pairingCloneSkip  pairingCloneChoice = "skip"
+	pairingCloneEvery pairingCloneChoice = "both"
 )
 
 func portableHomePath(root, home string) string {
@@ -119,8 +127,8 @@ func discoverPairingScope(payload pairing.Payload, existing config.Config, userH
 			if err == nil {
 				if inc.RepoPath != "" && inc.RepoPath != "." {
 					suffix := filepath.FromSlash(inc.RepoPath)
-					if strings.HasSuffix(root, string(filepath.Separator)+suffix) {
-						root = strings.TrimSuffix(root, string(filepath.Separator)+suffix)
+					if value, ok := strings.CutSuffix(root, string(filepath.Separator)+suffix); ok {
+						root = value
 					} else {
 						root = ""
 					}
@@ -168,14 +176,15 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 			} else {
 				options := []option{{"skip", "Skip this repository"}}
 				for j, root := range roots {
-					options = append(options, option{fmt.Sprint(j + 1), homeRelative(root, userHome)})
+					options = append(options, option{strconv.Itoa(j + 1), homeRelative(root, userHome)})
 				}
 				options = append(options, option{"both", "Include every listed clone"})
 				choice, err := p.menu("Choose a clone for "+inc.Label, "skip", options...)
 				if err != nil {
 					return nil, err
 				}
-				if choice == "both" {
+				switch pairingCloneChoice(choice) {
+				case pairingCloneEvery:
 					allow, err := p.yesNo("Include all listed clones?", false)
 					if err != nil {
 						return nil, err
@@ -183,11 +192,11 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 					if !allow {
 						roots = nil
 					}
-				} else if choice == "skip" {
+				case pairingCloneSkip:
 					roots = nil
-				} else {
+				default:
 					for j := range roots {
-						if choice == fmt.Sprint(j+1) {
+						if choice == strconv.Itoa(j+1) {
 							roots = []string{roots[j]}
 							break
 						}

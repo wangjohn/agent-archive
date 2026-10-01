@@ -14,27 +14,45 @@ import (
 	"github.com/wangjohn/agent-archive/internal/pairing"
 )
 
+type pairingCredentialKind string
+
+const (
+	pairingSharedR2   pairingCredentialKind = "r2_shared"
+	pairingAWSProfile pairingCredentialKind = "aws_profile"
+)
+
+type pairingDeliveryState string
+
+const (
+	pairingPrepared       pairingDeliveryState = "prepared"
+	pairingDeliveryIntent pairingDeliveryState = "delivery-intent"
+	pairingDelivered      pairingDeliveryState = "delivered"
+	pairingClaimObserved  pairingDeliveryState = "claim-observed"
+	pairingExpired        pairingDeliveryState = "expired"
+	pairingCancelled      pairingDeliveryState = "cancelled"
+)
+
 // pairingLedger deliberately contains no code, bundle, payload, or secret.
 // A delivery-intent written before exposure stays uncertain after interruption.
 type pairingLedger struct {
-	Version           int       `json:"version"`
-	PairingID         string    `json:"pairing_id"`
-	RecipientID       string    `json:"recipient_id"`
-	IssuerID          string    `json:"issuer_id"`
-	Name              string    `json:"name"`
-	DestinationID     string    `json:"destination_id"`
-	AccessKeyID       string    `json:"access_key_id,omitempty"`
-	CredentialRef     string    `json:"credential_ref,omitempty"`
-	Kind              string    `json:"kind"`
-	State             string    `json:"state"`
-	CreatedAt         time.Time `json:"created_at"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	DeliveredAt       time.Time `json:"delivered_at,omitzero"`
-	ObservedMachineID string    `json:"observed_machine_id,omitempty"`
+	Version           int                   `json:"version"`
+	PairingID         string                `json:"pairing_id"`
+	RecipientID       string                `json:"recipient_id"`
+	IssuerID          string                `json:"issuer_id"`
+	Name              string                `json:"name"`
+	DestinationID     string                `json:"destination_id"`
+	AccessKeyID       string                `json:"access_key_id,omitempty"`
+	CredentialRef     string                `json:"credential_ref,omitempty"`
+	Kind              pairingCredentialKind `json:"kind"`
+	State             pairingDeliveryState  `json:"state"`
+	CreatedAt         time.Time             `json:"created_at"`
+	ExpiresAt         time.Time             `json:"expires_at"`
+	DeliveredAt       time.Time             `json:"delivered_at,omitzero"`
+	ObservedMachineID string                `json:"observed_machine_id,omitempty"`
 }
 
 func (l pairingLedger) valid() bool {
-	return l.Version == 1 && pairing.ValidID(l.PairingID) && pairing.ValidID(l.RecipientID) && pairing.ValidID(l.IssuerID) && pairing.ValidName(l.Name) && l.DestinationID != "" && len(l.DestinationID) <= 128 && len(l.AccessKeyID) <= 128 && len(l.CredentialRef) <= 128 && slices.Contains([]string{"r2_shared", "aws_profile"}, l.Kind) && slices.Contains([]string{"prepared", "delivery-intent", "delivered", "claim-observed", "expired", "cancelled"}, l.State) && (l.ObservedMachineID == "" || pairing.ValidID(l.ObservedMachineID))
+	return l.Version == 1 && pairing.ValidID(l.PairingID) && pairing.ValidID(l.RecipientID) && pairing.ValidID(l.IssuerID) && pairing.ValidName(l.Name) && l.DestinationID != "" && len(l.DestinationID) <= 128 && len(l.AccessKeyID) <= 128 && len(l.CredentialRef) <= 128 && slices.Contains([]pairingCredentialKind{pairingSharedR2, pairingAWSProfile}, l.Kind) && slices.Contains([]pairingDeliveryState{pairingPrepared, pairingDeliveryIntent, pairingDelivered, pairingClaimObserved, pairingExpired, pairingCancelled}, l.State) && (l.ObservedMachineID == "" || pairing.ValidID(l.ObservedMachineID))
 }
 
 func savePairingLedger(home string, l pairingLedger) error {
@@ -82,12 +100,12 @@ func pairingWarnings(home string, now time.Time) []string {
 	}
 	var warnings []string
 	for _, l := range ledgers {
-		if l.State == "claim-observed" || l.State == "cancelled" {
+		if l.State == pairingClaimObserved || l.State == pairingCancelled {
 			continue
 		}
 		if now.After(l.ExpiresAt) {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s expired; claim not observed. Shared access may still work; replace a shared R2 key everywhere to revoke it.", l.PairingID, l.Name))
-		} else if l.State == "delivery-intent" {
+		} else if l.State == pairingDeliveryIntent {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s has uncertain delivery; its key remains valid. Claim not observed.", l.PairingID, l.Name))
 		} else {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s is pending; claim not observed.", l.PairingID, l.Name))
@@ -113,19 +131,19 @@ func observePairingClaims(home, destination string, result machines.ListResult, 
 		return
 	}
 	for _, l := range ledgers {
-		if l.DestinationID != destination || l.State == "cancelled" || l.State == "claim-observed" {
+		if l.DestinationID != destination || l.State == pairingCancelled || l.State == pairingClaimObserved {
 			continue
 		}
 		old := l.State
 		for _, record := range result.Records {
-			if record.PairingID == l.PairingID && record.Credential.RecipientID == l.RecipientID && record.Credential.IssuerID == l.IssuerID && record.Credential.Kind == l.Kind && record.Credential.AccessKeyID == l.AccessKeyID && record.PairedFrom == l.IssuerID {
-				l.State = "claim-observed"
+			if record.PairingID == l.PairingID && record.Credential.RecipientID == l.RecipientID && record.Credential.IssuerID == l.IssuerID && string(record.Credential.Kind) == string(l.Kind) && record.Credential.AccessKeyID == l.AccessKeyID && record.PairedFrom == l.IssuerID {
+				l.State = pairingClaimObserved
 				l.ObservedMachineID = record.MachineID
 				break
 			}
 		}
-		if l.State != "claim-observed" && now.After(l.ExpiresAt) {
-			l.State = "expired"
+		if l.State != pairingClaimObserved && now.After(l.ExpiresAt) {
+			l.State = pairingExpired
 		}
 		if old != l.State {
 			_ = savePairingLedger(home, l)
