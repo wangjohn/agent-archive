@@ -401,7 +401,10 @@ const minPickerPageRows = 3
 // Row numbers stay those of the whole table, so any listed number or short
 // ID can be typed from any page.
 type sessionPicker struct {
-	env terminalSizeDependencies
+	older         *browserLoadAction
+	loadedOlder   bool
+	boundedNotice string
+	env           terminalSizeDependencies
 	// keys, when set, reads the list a key at a time: it scrolls instead
 	// of turning pages (see pickKeys).
 	keys *keyInput
@@ -473,6 +476,22 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		l.search, l.searched, l.searchRead = c.search, nil, false
 		l.noteText, l.noteWords = c.searchNote, c.searchWords
 		row, ok, err := l.pickRows(p, stdout, c.rows, c.total, c.truncated, c.format, action)
+		if l.loadedOlder && err == nil {
+			l.loadedOlder = false
+			more, e := l.older.Load()
+			if e != nil {
+				return listRow{}, false, e
+			}
+			if !more {
+				l.older = nil
+			}
+			l.memo, l.cache, l.bottom = nil, nil, nil
+			l.searched, l.searchRead = nil, false
+			if l.clear != nil {
+				l.clear()
+			}
+			continue
+		}
 		if !l.toggled || err != nil {
 			return row, ok, err
 		}
@@ -589,7 +608,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 		if paged {
 			terminal.Println(stdout, pageLine(page, len(pages), len(v.rows)))
 		}
-		if len(rows) == 0 && v.words == "" {
+		if len(rows) == 0 && v.words == "" && l.older == nil {
 			return listRow{}, false, nil
 		}
 		for {
@@ -608,6 +627,10 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				return listRow{}, false, err
 			}
 			answer = strings.TrimSpace(answer)
+			if l.older != nil && (strings.EqualFold(answer, "o") || strings.EqualFold(answer, "older")) {
+				l.loadedOlder = true
+				return listRow{}, false, nil
+			}
 			command := l.lineCommand(answer)
 			if command == lineQuit || command == lineScope {
 				l.toggled = command == lineScope

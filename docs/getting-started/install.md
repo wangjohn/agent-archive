@@ -6,6 +6,10 @@ and arm64).
 
 After installing, continue with [setup](setup.md).
 
+After installing, try `agent-archive handoff` inside a project to continue an
+existing Claude Code or Codex conversation before creating a bucket or running
+setup. [Native local selection, limits and verification](../guides/handoff.md#before-setup-native-local-sessions).
+
 ## Platforms
 
 **macOS** is the platform the project was built on. Releases are signed with

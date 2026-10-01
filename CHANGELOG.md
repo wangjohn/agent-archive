@@ -10,6 +10,13 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Handoff before setup discovers Claude Code and Codex native conversations in
+  the current checkout, with filtered batches of 50 previews, explicit older
+  loading, native ID selection and modification-time latest selection. It writes
+  no archive or configuration; private launch files have seven-day best-effort
+  cleanup on later local handoffs. Disposable real-app acceptance is still
+  unverified on macOS and Linux.
+
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
 - Interactive session browsing and search, project-aware listings, richer

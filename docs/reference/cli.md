@@ -628,7 +628,21 @@ Guide: [Continue a session in another agent](../guides/handoff.md).
 ```text
 Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
-Continue a session in another coding agent. On a terminal, pick a session
+Before setup, browse Claude Code and Codex native sessions in this checkout
+and its descendants. Local IDs (qualified with --harness) or unique prefixes
+select beyond the first 50 filtered previews. o loads another 50 explicitly;
+/ filters loaded rows only. Word queries report their bounded preview window.
+--project requires a directory; --all-projects explicitly broadens the scope.
+Local --latest ranks file modification time and requires complete identity
+coverage. Direct --to uses an exact current identity or asks for selection;
+it never guesses newest. --source archive requires setup. No capture hooks,
+credentials, configuration, registrations or scheduler are created. Private
+temporary launch files survive launch; later local handoffs clean owned files
+older than seven days, best effort. Cursor discovery is not automatic.
+
+
+After setup, continue a session in another coding agent. On a terminal, pick
+a session
 (this machine's, including ones not yet uploaded, and archived ones), then pick
 where to continue: an installed agent starts in this terminal with the
 session as its context (Enter takes handoff.default_to in config.json, else
@@ -643,7 +657,8 @@ prints without asking. Without a terminal, give a SESSION_ID or WORDS,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
-WORDS are matched as list matches them: every word must appear, in any case,
+After setup, WORDS are matched as list matches them: every word must appear,
+in any case,
 in some field of a session (its name, title, branch, project name, harness, or
 the start of its SESSION_ID, from 4 characters), and a word like #212 or 212
 also matches a pull request number, never a SESSION_ID. Quote them as one

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
@@ -55,7 +54,7 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 // of --latest, else the working directory.
 func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) {
 	dir := ""
-	if opts.latest {
+	if opts.latest || opts.native {
 		dir = opts.project
 	}
 	var err error
@@ -82,7 +81,7 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 		return launchSpec{}, fmt.Errorf("executable: %w", err)
 	}
 	// `--file` works before setup, when there is no configuration.
-	cfg, _, err := config.Load(home)
+	cfg, _, err := handoffConfig(home, opts)
 	if err != nil {
 		return launchSpec{}, fmt.Errorf("load config: %w", err)
 	}
@@ -121,6 +120,9 @@ const launchHandoffName = "handoff.md"
 // setup) the directory is a new private one under tempDir instead, also
 // kept (a resumed session may read it again) for the system to clear.
 func writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (string, error) {
+	if target.native != nil {
+		return writeNativeLaunchHandoff(tempDir, content, now)
+	}
 	if _, err := os.Stat(home); err != nil {
 		dir, err := os.MkdirTemp(tempDir, "agent-archive-handoff-")
 		if err != nil {
@@ -175,6 +177,9 @@ func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget,
 	b.WriteString(executable)
 	b.WriteString(". The record below is historical context; check the current files before acting.\n\n")
 	switch {
+	case target.native != nil:
+		c := target.native
+		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff %s --harness %s --source local --max-bytes 0 --project %s. Native discovery requires access to the original app stores.\n\n", shellQuote(c.NativeID), shellQuote(c.Ref.Harness), shellQuote(c.Directory))
 	case target.filePath != "":
 		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %q --harness %s --max-bytes 0.\n\n", target.filePath, h.Session.Harness)
 	case target.source == "archive":

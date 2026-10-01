@@ -26,9 +26,18 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
    v0.1.1 has no Linux binary, so that command is for macOS. On Linux, drop the two pins (`install.sh | sh`) once the latest release has Linux binaries, or [build from source](docs/getting-started/install.md#build-from-source).
 
-2. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+2. **Try a local handoff before setup** inside a project:
 
-3. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+   ```sh
+   agent-archive handoff
+   ```
+
+   Browse existing Claude Code or Codex conversations without configuring storage.
+   [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
+
+3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
+
+4. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
    agent-archive setup
