@@ -195,20 +195,110 @@ func TestListPagesOnTerminal(t *testing.T) {
 
 func TestListPagerFailureFallsBack(t *testing.T) {
 	t.Parallel()
+	for _, consumed := range []int{0, 7, -1} {
+		t.Run(fmt.Sprintf("consumed=%d", consumed), func(t *testing.T) {
+			t.Parallel()
+			env, _, _ := publishedFixture(t)
+			var want, out, errOut bytes.Buffer
+			if code := Run([]string{"list", "--no-pager"}, nil, &want, &errOut, env); code != 0 {
+				t.Fatalf("direct: code=%d stderr=%s", code, errOut.String())
+			}
+			env.IsTerminal = func(stream any) bool {
+				switch stream.(type) {
+				case *bytes.Buffer, pagerFailingWriter:
+					return true
+				default:
+					return false
+				}
+			}
+			env.RunPager = func(_ context.Context, _ string, _ []string, stdin io.Reader, _, _ io.Writer) error {
+				reader := stdin
+				if consumed >= 0 {
+					reader = io.LimitReader(stdin, int64(consumed))
+				}
+				n, err := io.Copy(io.Discard, reader)
+				if err != nil || (consumed >= 0 && n != int64(consumed)) || (consumed < 0 && n != int64(want.Len())) {
+					t.Fatalf("pager consumed %d bytes: %v", n, err)
+				}
+				return errors.New("pager failed")
+			}
+			errOut.Reset()
+			if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
+				t.Fatalf("code=%d stderr=%s", code, errOut.String())
+			}
+			if !bytes.Equal(out.Bytes(), want.Bytes()) || !strings.Contains(errOut.String(), "pager failed); printing directly") {
+				t.Fatalf("fallback: got=%q want=%q stderr=%q", out.String(), want.String(), errOut.String())
+			}
+		})
+	}
+}
+
+func TestListPagerSubprocess(t *testing.T) {
+	t.Parallel()
+	for _, exitCode := range []int{0, 127} {
+		t.Run(fmt.Sprintf("exit=%d", exitCode), func(t *testing.T) {
+			t.Parallel()
+			env, _, _ := publishedFixture(t)
+			var want, out, errOut bytes.Buffer
+			if code := Run([]string{"list", "--no-pager"}, nil, &want, &errOut, env); code != 0 {
+				t.Fatalf("direct: code=%d stderr=%s", code, errOut.String())
+			}
+			env.IsTerminal = func(stream any) bool {
+				switch stream.(type) {
+				case *bytes.Buffer, pagerFailingWriter:
+					return true
+				default:
+					return false
+				}
+			}
+			// The real child consumes all input before exiting.
+			env.LookupEnv = func(key string) (string, bool) {
+				return fmt.Sprintf("cat > /dev/null; exit %d", exitCode), key == "AGENT_ARCHIVE_PAGER"
+			}
+			env.RunPager = nil
+			errOut.Reset()
+			if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
+				t.Fatalf("code=%d stderr=%s", code, errOut.String())
+			}
+			if exitCode == 0 {
+				if out.Len() != 0 || errOut.Len() != 0 {
+					t.Fatalf("successful pager triggered fallback: stdout=%q stderr=%q", out.String(), errOut.String())
+				}
+			} else if !bytes.Equal(out.Bytes(), want.Bytes()) || !strings.Contains(errOut.String(), "exit status 127); printing directly") {
+				t.Fatalf("fallback: got=%q want=%q stderr=%q", out.String(), want.String(), errOut.String())
+			}
+		})
+	}
+}
+
+type pagerFailingWriter struct{ err error }
+
+func (w pagerFailingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestListPagerFallbackWriteFailure(t *testing.T) {
+	t.Parallel()
 	env, _, _ := publishedFixture(t)
 	env.IsTerminal = func(stream any) bool {
-		_, ok := stream.(*bytes.Buffer)
-		return ok
+		switch stream.(type) {
+		case *bytes.Buffer, pagerFailingWriter:
+			return true
+		default:
+			return false
+		}
 	}
-	env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
-		return errors.New("no less")
+	env.RunPager = func(_ context.Context, _ string, _ []string, stdin io.Reader, _, _ io.Writer) error {
+		if _, err := io.Copy(io.Discard, stdin); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("pager failed")
 	}
-	var out, errOut bytes.Buffer
-	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
-		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	var errOut bytes.Buffer
+	out := pagerFailingWriter{err: errors.New("stdout failed")}
+	if code := Run([]string{"list"}, nil, out, &errOut, env); code != 1 {
+		t.Fatalf("code=%d want=1 stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "pager") || !strings.Contains(out.String(), "session(s).") {
-		t.Fatalf("fallback missing: out=%q err=%q", out.String(), errOut.String())
+	if !strings.Contains(errOut.String(), "printing directly") || !strings.Contains(errOut.String(), "stdout failed") {
+		t.Fatalf("missing errors: %s", errOut.String())
 	}
 }
 

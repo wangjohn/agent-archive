@@ -250,7 +250,7 @@ Every PR follows the standing process: a separate implementer (worktree, fresh c
 
 | PR | Scope | Depends on | Owns |
 | --- | --- | --- | --- |
-| **P0** | This document | none | `dev/proposals/platform-abstraction.md`, a pointer in the older plan |
+| **P0** | This document | none | `dev/proposals/implemented/platform-abstraction.md`, a pointer in the older plan |
 | **5a-0** | Characterization (tests only) of the behavior on `main`; an addendum for `files_only`, timeouts and refresh once #172 lands | none | new tests and testdata |
 | **5a-1** | The seam in place, `Ref`- and `Site`-keyed from the start (launchd's `Ref` is the label `launchLabel(plist)` yields today): an unexported `scheduler` interface in `cli` with a `launchdScheduler` wrapper over the current functions; replaces `Env.JobState`, `LoadLaunchAgent`, `UnloadLaunchAgent` and the `Env.jobState` hidden default (a test-only behavior change, called out); migrates the 19 test files onto one fake that hides identity (state, load and unload closures); keeps the fail-closed package variable | 5a-0; #172's stack merged, or stacked on #172's branch | `internal/cli/{cli,env_defaults,setup_preflight,setup_transaction,status,uninstall}.go`, the tests, `isolation_test.go` |
 | **5a-2** | Move: the plist codec (about 185 lines) and the wrapper into `internal/scheduler/launchd` and the port types into `internal/scheduler`, pure code motion plus a fuzz target; `host` and the default `Runner` (combined output, process groups, timeouts) | 5a-1 | `internal/hooks/install.go` (the moved lines only), `internal/scheduler/**`, `internal/testutil/schedulertest` |

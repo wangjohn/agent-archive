@@ -1265,7 +1265,7 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
+// (dev/proposals/implemented/portable-handoff-and-onboarding.md, Part 2).
 func guidedStorageOptions() []option {
 	return []option{{storageChoiceS3New, storageLabelS3New}}
 }

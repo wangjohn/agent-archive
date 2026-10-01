@@ -1,7 +1,7 @@
 # List and browse UX: implementation plan
 
 > **Design record.** This is the original proposal, not the current CLI
-> contract. See [list and show](../../docs/guides/list-and-show.md) for
+> contract. See [list and show](../../../docs/guides/list-and-show.md) for
 > released behavior.
 
 Prepared 2026-09-28. Implementation work is tracked in [Phase 1 (#99)](https://github.com/wangjohn/agent-archive/pull/99), [Phase 2 (#100)](https://github.com/wangjohn/agent-archive/pull/100), and [Phase 3 (#101)](https://github.com/wangjohn/agent-archive/pull/101). The “baseline when proposed” below records the CLI at the time this plan was written; decisions and scope may differ in the implementation.
@@ -20,7 +20,7 @@ Phase 1 is useful alone. Phase 2 is the lasting fix for “session name first.�
 
 ## Constraints (non-negotiable)
 
-These come from the [archive design](../specs/archive.md) and the current `list` / `show` contracts:
+These come from the [archive design](../../specs/archive.md) and the current `list` / `show` contracts:
 
 | Constraint | Implication |
 | --- | --- |
@@ -28,7 +28,7 @@ These come from the [archive design](../specs/archive.md) and the current `list`
 | `list` downloads **metadata only** | Any title used by `list` must live in the sidecar (Phase 2), never require a source Get |
 | `--json` and redirected stdout are for scripts | Interactive mode only when stdin **and** stdout are TTYs; `--json` never enters a picker |
 | Strings printed to a TTY go through `archive.DisplayLine` / `DisplayJSON` | Titles and labels stay escape-safe like every other cell |
-| Optional metadata fields do not bump `MetadataSchemaVersion` | Phase 2 can add `title` without an incompatible schema bump; bump `DefaultParserVersion` ([versions](../maintainers/versions.md)) |
+| Optional metadata fields do not bump `MetadataSchemaVersion` | Phase 2 can add `title` without an incompatible schema bump; bump `DefaultParserVersion` ([versions](../../maintainers/versions.md)) |
 
 ## Baseline when proposed
 
@@ -193,7 +193,7 @@ Rules:
 - Must pass through the same display-safety rules as other printed strings.
 - Optional companion later (same phase or Phase 3): `project_name` (basename of `ProjectRoot` from the registration/bundle at publish time) so remote `list` shows a project without local config.
 
-Update `schemas/metadata.schema.json` with the optional property. **Do not** bump `MetadataSchemaVersion` (optional field). **Do** bump `DefaultParserVersion` because derived metadata changes ([versions](../maintainers/versions.md)).
+Update `schemas/metadata.schema.json` with the optional property. **Do not** bump `MetadataSchemaVersion` (optional field). **Do** bump `DefaultParserVersion` because derived metadata changes ([versions](../../maintainers/versions.md)).
 
 ### 2.2 Backfill and re-derive
 
@@ -220,7 +220,7 @@ Interactive picker labels become `title` (dim short ID). `--json` includes `titl
 
 ### 2.4 Privacy
 
-Titles are filtered prompt text. They can still contain sensitive phrases the filter did not catch. Document in [privacy](../../docs/security/privacy.md) / list guide: titles are a short preview of the first user prompt, stored in the bucket like other metadata. Do not open a path that pulls unfiltered transcript into the sidecar.
+Titles are filtered prompt text. They can still contain sensitive phrases the filter did not catch. Document in [privacy](../../../docs/security/privacy.md) / list guide: titles are a short preview of the first user prompt, stored in the bucket like other metadata. Do not open a path that pulls unfiltered transcript into the sidecar.
 
 ### 2.5 Phase 2 acceptance criteria
 
@@ -273,7 +273,7 @@ Ordered by value; each can ship separately.
 - Downloading transcripts during `list`
 - MCP or GUI clients (CLI only)
 - Making `handoff --latest` interactive (related, but separate)
-- Linux/cloud capture ([cloud-capture](cloud-capture.md))
+- Linux/cloud capture ([cloud-capture](../cloud-capture.md))
 
 ## Documentation touch list
 

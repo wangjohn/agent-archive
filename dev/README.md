@@ -26,12 +26,21 @@ differ, the code and the user documentation describe current behavior.
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
 | [Agent skills](specs/agent-skill.md) | Implemented; follow-ups listed in the spec. |
+
+## Proposals
+
+Open and in-progress proposals stay at the top level of [proposals](proposals/README.md);
+implemented design records live in `proposals/implemented/`.
+
+| Proposal | Status |
+| --- | --- |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
-| [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Implemented (repo-key handoff, guided S3 and R2 creation, Linux); guided R2 is experimental. Open items in the document. |
-| [Platform abstraction](proposals/platform-abstraction.md) | Implemented (scheduler port, OS value, systemd backend, Linux support); open items in the document. |
-| [Git activity in metadata](proposals/git-activity.md) | Implemented in parser 0.15.0. |
-| [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
-| [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phase 1 (parallel range listing) of 4. |
+| [Portable handoff, guided setup, and Linux](proposals/implemented/portable-handoff-and-onboarding.md) | Implemented (repo-key handoff, guided S3 and R2 creation, Linux); guided R2 is experimental. Open items in the document. |
+| [Platform abstraction](proposals/implemented/platform-abstraction.md) | Implemented (scheduler port, OS value, systemd backend, Linux support); open items in the document. |
+| [Git activity in metadata](proposals/implemented/git-activity.md) | Implemented in parser 0.15.0. |
+| [List and browse UX](proposals/implemented/list-browse-ux.md) | Implemented design record; see the current list and show documentation. |
+| [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
+| [Adding a machine: pairing, per-machine keys, and revocation](proposals/machine-pairing.md) | Proposed; not implemented. |
 
 ## Maintainers
 
