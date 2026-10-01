@@ -300,7 +300,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - **Privacy filter 14: a subagent's task description is now archived.**
   When Claude Code starts a subagent, its parent gives the task a short
-  description ("find the retention tests"), which Claude Code keeps in a
+  description ("find the retention tests"), which Claude Code keeps in an
   `agent-<id>.meta.json` file beside the subagent's transcript. That
   description is now kept, with the subagent's session, and is its name in
   `list` and `show`. It passes the same redaction as your

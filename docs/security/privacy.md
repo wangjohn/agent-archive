@@ -184,9 +184,9 @@ something was removed.
 For the current configured bucket, `agent-archive purge plan` inventories
 unreferenced source objects and separately lists sessions whose current source
 still uses an older filter. It writes a private, expiring plan under the local
-data directory. `agent-archive purge plan --mode old-filter --before-filter 13`
+data directory. `agent-archive purge plan --mode old-filter --before-filter 14`
 narrows deletion candidates to unreferenced sources made by older filter
-versions; replace `13` with the version you are upgrading to. Review the
+versions; replace `14` with the version you are upgrading to. Review the
 printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
 to the prefix, then run `agent-archive purge apply PLAN` within five minutes
 and enter the digest prefix, or pass `--yes` for a noninteractive run. The

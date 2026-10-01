@@ -76,9 +76,10 @@ transcript's own (filter 14):
   description changes nothing and records no gap.
 - The record, and any gap about it (including the names of keys dropped
   from a description that is JSON text, filtered as a prompt's is), is
-  written only when the transcript has records of its own: it does not make an empty or unrecognized transcript
-  look captured, and it carries no timestamp, session, or agent identity, so
-  it changes none of the transcript's.
+  written only when the transcript has records of its own: it does not make
+  an empty or unrecognized transcript look captured, and it carries no
+  timestamp, session, or agent identity, so it changes none of the
+  transcript's.
 - A transcript holds one. A `subagent-meta` record in the transcript itself
   (the one a retained snapshot carries when it is filtered again) is rebuilt
   from its `description` alone, other keys named in `unknown_field_omitted`;
