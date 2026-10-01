@@ -42,7 +42,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	}
 	hook := func(payload map[string]any, when time.Time) {
 		t.Helper()
-		if err := capture.HandleEvent(home, "claude", payload, when); err != nil {
+		if err := capture.HandleEvent(home, "claude", payload, when, capture.WithDecoders(productionAgents)); err != nil {
 			t.Fatal(err)
 		}
 	}

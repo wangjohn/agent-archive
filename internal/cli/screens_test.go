@@ -676,7 +676,7 @@ func (f *screenFixture) published(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
 	path := writeCodexTranscript(t, project)
-	must(t, capture.HandleEvent(f.home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, screenNow))
+	must(t, capture.HandleEvent(f.home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, screenNow, capture.WithDecoders(productionAgents)))
 	result, err := runOnePass(f.env, false)
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("publish: %+v %v", result, err)

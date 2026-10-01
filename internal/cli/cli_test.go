@@ -172,7 +172,7 @@ func publishedThroughSync(t *testing.T, now time.Time) (Env, string, string, sto
 	bucket := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	path := writeCodexTranscript(t, project)
-	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	result, err := runOnePass(env, false)

@@ -31,7 +31,7 @@ func BenchmarkHookLocalEffects(b *testing.B) {
 			}
 			repoCalls := 0
 			option := WithRepoKey(func(string) string { repoCalls++; return "" })
-			if err := HandleEvent(home, harness, map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "synthetic", "cwd": project}, now, option); err != nil {
+			if err := HandleEvent(home, harness, map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "synthetic", "cwd": project}, now, option, WithDecoders(testDecoders)); err != nil {
 				b.Fatal(err)
 			}
 			child := filepath.Join(b.TempDir(), "child.jsonl")
@@ -52,7 +52,7 @@ func BenchmarkHookLocalEffects(b *testing.B) {
 				if scenario == "fresh" {
 					payload = map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("fresh-%d", i), "cwd": project}
 				}
-				if err := HandleEvent(home, harness, payload, now, option); err != nil {
+				if err := HandleEvent(home, harness, payload, now, option, WithDecoders(testDecoders)); err != nil {
 					b.Fatal(err)
 				}
 			}

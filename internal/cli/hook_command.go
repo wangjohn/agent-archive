@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -25,11 +28,16 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		home    string
 		harness = new(string)
 		payload map[string]any
+		batch   []agentapi.LifecycleEvent
 	)
 	defer func() {
 		if r := recover(); r != nil {
 			terminal.Printf(stderr, "agent-archive: hook: internal error: %v\n", r)
-			capture.RecordFailure(home, *harness, payload)
+			root := ""
+			if len(batch) > 0 {
+				root = batch[0].ProjectRoot
+			}
+			capture.RecordFailure(home, *harness, root)
 			code = 0
 		}
 	}()
@@ -42,7 +50,11 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	// A hook that sends no or malformed JSON is treated as a no-op, not an
 	// error: some hook events (per the harness's own docs) carry no useful
 	// fields at all, and we must never fail loudly on the harness's input.
-	_ = json.NewDecoder(stdin).Decode(&payload)
+	limited := &io.LimitedReader{R: stdin, N: (16 << 20) + 1}
+	_ = json.NewDecoder(limited).Decode(&payload)
+	if limited.N <= 0 {
+		return 0
+	}
 
 	// Resolved without creating it: a hook left behind after the data
 	// directory was deleted has nothing to record and must not recreate it.
@@ -54,8 +66,24 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	if err := capture.HandleEvent(home, *harness, payload, env.now(), capture.WithRepoKey(env.repoKeyResolver())); err != nil {
+	decoder, ok := env.agentRegistry().LookupDecoder(*harness)
+	if !ok {
+		return 0
+	}
+	batch, err = decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
+		return 0
+	}
+	now := env.now()
+	for i := range batch {
+		for j := range batch[i].Evidence {
+			batch[i].Evidence[j].ObservedAt = now
+		}
+	}
+	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver()), capture.WithDecoders(env.agentRegistry())); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
+
 	return 0
 }

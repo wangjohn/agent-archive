@@ -161,6 +161,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		Parsers:              parsersFor(env),
 		Sources:              registryFor(env),
+		Decoders:             env.agentRegistry(),
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:        cfg.EffectiveSkillEvidence(),

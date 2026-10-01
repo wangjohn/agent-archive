@@ -1,17 +1,22 @@
 package capture
 
 import (
+	"errors"
 	"fmt"
-	"strings"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNativeID string, payload map[string]any, now time.Time) error {
-	parentID, found, err := store.ArchiveSessionID(parentNativeID)
+func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, after func(string) error) error {
+	harness, parentNativeID := string(event.Session.Agent), event.Session.NativeID
+
+	parentID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: parentNativeID})
 	if err != nil {
 		return fmt.Errorf("look up parent archive session ID: %w", err)
 	}
@@ -26,24 +31,31 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		return nil
 	}
 
-	agentID := firstNonEmptyString(payload, "agent_id")
+	agentID := event.Child.ID
 	if agentID == "" {
-		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", "SubagentStop omitted agent_id", now)
+		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", event.Child.MissingDetail, now)
 	}
 	childNativeID := parent.NativeSessionID + ":subagent:" + agentID
-	childID, _, err := store.EnsureArchiveSessionID(childNativeID)
+	childKey := agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(parent.Harness.Name)), NativeID: childNativeID}
+	childID, _, err := store.EnsureArchiveSessionID(childKey)
 	if err != nil {
+		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			err = errors.Join(err, store.RequestSessionIndexRecovery(childKey))
+		}
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}
+	if err := effectBoundary(after, "child-reservation"); err != nil {
+		return err
+	}
 	status := archive.LinkedSessionUnavailable
-	path := firstNonEmptyString(payload, "agent_transcript_path")
-	if supportsSubagentTranscript(harness) && path != "" {
+	path := event.Child.Path
+	if event.Child.CaptureTranscript && path != "" {
 		status = archive.LinkedSessionPending
 	}
 	if existing, childFound, err := store.LoadRegistration(childID); err != nil {
 		return err
 	} else if childFound {
-		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || !strings.EqualFold(existing.Harness.Name, parent.Harness.Name) || existing.SubagentID != agentID {
+		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(parent.Harness.Name) || existing.SubagentID != agentID {
 			return nil
 		}
 		if _, _, published, err := store.LoadLastPublished(childID); err != nil {
@@ -55,25 +67,23 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 	if err := saveLinkedSessionEvidence(store, parent.ArchiveSessionID, childID, status, now); err != nil {
 		return err
 	}
-	if !supportsSubagentTranscript(harness) || path == "" {
+	if err := effectBoundary(after, "child-link"); err != nil {
+		return err
+	}
+	if !event.Child.CaptureTranscript || path == "" {
 		return nil
 	}
-	return store.SaveSubagentCandidate(state.SubagentCandidate{
+	err = store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: childID, NativeSessionID: childNativeID,
 		ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness,
 		AgentID: agentID, TranscriptPath: path, ObservedAt: now,
-		AgentType: archive.SanitizeSubagentType(firstNonEmptyString(payload, "agent_type")),
+		AgentType: event.Child.Type,
 	})
-}
-
-func supportsSubagentTranscript(harness string) bool {
-	switch archive.CanonicalHarness(harness) {
-	case "claude":
-		return true
-	default:
-		return false
+	if err != nil {
+		return err
 	}
+	return effectBoundary(after, "child-candidate")
 }
 
 func saveLinkedSessionEvidence(store *state.Store, parentID, childID string, status archive.LinkedSessionStatus, observedAt time.Time) error {

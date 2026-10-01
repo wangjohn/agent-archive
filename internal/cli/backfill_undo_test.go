@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -227,11 +228,11 @@ func TestBackfillUndoGolden(t *testing.T) {
 		if err != nil || !found || record.Reason != state.RemovalReasonUndo || !record.At.Equal(backfillNow.UTC()) {
 			t.Errorf("removal record of %s: %+v %v %v", reg.ArchiveSessionID, record, found, err)
 		}
-		if _, found, _ := store.ArchiveSessionID(reg.NativeSessionID); found {
+		if _, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); found {
 			t.Errorf("%s is still indexed", reg.ArchiveSessionID)
 		}
 	}
-	if _, found, _ := store.ArchiveSessionID("c-archived"); !found {
+	if _, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-archived"}); !found {
 		t.Fatal("the hook-captured session was forgotten")
 	}
 	if candidates, _ := store.LoadSubagentCandidates(); len(candidates) != 0 {
@@ -302,7 +303,7 @@ func TestBackfillUndoProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hooked, err := store.RegisterNewSession("h-lev", func(id string) archive.SessionRegistration {
+	hooked, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "h-lev"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "h-lev", ProjectID: archive.ProjectID(levenshtein), ProjectRoot: levenshtein,
 			Harness: archive.Harness{Name: "claude"}, SessionStartedAt: backfillNow, RegisteredAt: backfillNow, AdmittedAt: backfillNow, Origin: archive.SessionOriginHook}
 	})
@@ -446,7 +447,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	store := state.OpenReadOnly(f.data)
-	id, found, _ := store.ArchiveSessionID("c-lev-1")
+	id, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-lev-1"})
 	if !found {
 		t.Fatal("c-lev-1 not imported")
 	}
@@ -465,7 +466,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	if err := capture.HandleEvent(f.data, "claude", map[string]any{
 		"hook_event_name": "Stop", "session_id": "c-lev-1", "cwd": reg.ProjectRoot, "transcript_path": reg.TranscriptPath,
 		"last_assistant_message": "Done again.",
-	}, resumedAt); err != nil {
+	}, resumedAt, capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	f.env.Now = func() time.Time { return resumedAt }

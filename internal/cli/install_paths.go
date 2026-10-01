@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 // installation locates one data directory's integrations: the hook command
 // its hooks run and its background collector's LaunchAgent.
 type installation struct {
+	ports    agentapi.HooksLookup
 	home     string // the data directory
 	userHome string // $HOME, where LaunchAgents and app configs live
 	// accountHome is the account's own home directory from the user
@@ -26,7 +28,7 @@ type installation struct {
 }
 
 func (e Env) installation(home, userHome string) installation {
-	return installation{home: home, userHome: userHome, accountHome: e.accountHome(), sched: e.scheduler}
+	return installation{ports: e.agentRegistry(), home: home, userHome: userHome, accountHome: e.accountHome(), sched: e.scheduler}
 }
 
 // defaultDataHome is the data directory of the account's own default
@@ -57,7 +59,11 @@ func (in installation) hook(executable string) hooks.Hook {
 	if in.accountHome != "" {
 		defaultHome = in.defaultDataHome()
 	}
-	return hooks.Hook{Executable: executable, DataHome: dataHome, DefaultDataHome: defaultHome}
+	ports := in.ports
+	if ports == nil {
+		ports = productionAgents
+	}
+	return hooks.Hook{Ports: ports, Executable: executable, DataHome: dataHome, DefaultDataHome: defaultHome}
 }
 
 // commandDataHome is the AGENT_ARCHIVE_HOME this installation's commands
@@ -143,13 +149,13 @@ func (in installation) installed(userHome string) ([]scheduler.Job, error) {
 // hookFiles resolves each app's hook file from the environment this command
 // runs in (CLAUDE_CONFIG_DIR, CODEX_HOME); see hooks.ResolveFiles.
 func (e Env) hookFiles(userHome string) hooks.Files {
-	return hooks.ResolveFiles(userHome, e.lookupEnv)
+	return hooks.ResolveFiles(userHome, e.lookupEnv, e.agentRegistry())
 }
 
 // legacyHookFiles are the fixed paths every release before hook_files
 // installed into, whatever CLAUDE_CONFIG_DIR or CODEX_HOME said.
 func legacyHookFiles(userHome string) hooks.Files {
-	return hooks.ResolveFiles(userHome, func(string) (string, bool) { return "", false })
+	return hooks.ResolveFiles(userHome, func(string) (string, bool) { return "", false }, productionAgents)
 }
 
 // installedHookFiles is where setup installed each app's hooks: the paths it

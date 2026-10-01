@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -41,11 +41,11 @@ type Journal struct {
 	// directory's own label. The first stays in Relabeled, where releases
 	// that retired at most one recorded it, so either reads the other's
 	// journal of one.
-	Relabeled     *LegacyJob     `json:"relabeled,omitempty"`
-	MoreRelabeled []*LegacyJob   `json:"more_relabeled,omitempty"`
-	Changes       []hooks.Change `json:"changes"`
-	Plist         string         `json:"plist"`
-	WasLoaded     bool           `json:"was_loaded"`
+	Relabeled     *LegacyJob         `json:"relabeled,omitempty"`
+	MoreRelabeled []*LegacyJob       `json:"more_relabeled,omitempty"`
+	Changes       []fileapply.Change `json:"changes"`
+	Plist         string             `json:"plist"`
+	WasLoaded     bool               `json:"was_loaded"`
 	// Backend is the name of the scheduler that runs the collector's job (see
 	// scheduler.Definer.Name), and JobRef the job's ref in it. Both are
 	// optional: a journal written before they existed has neither, and then
@@ -112,7 +112,7 @@ func Commit(home string, journal Journal, backends Backends) error {
 		return fmt.Errorf("previous installation restored: %w", cause)
 	}
 	if journal.FilesOnly {
-		if err := hooks.Apply(journal.Changes); err != nil {
+		if err := fileapply.Apply(journal.Changes); err != nil {
 			return fail(err)
 		}
 		if err := os.Remove(JournalPath(home)); err != nil {
@@ -125,7 +125,7 @@ func Commit(home string, journal Journal, backends Backends) error {
 			return fail(fmt.Errorf("stop previous collector: %w", err))
 		}
 	}
-	if err := hooks.Apply(journal.Changes); err != nil {
+	if err := fileapply.Apply(journal.Changes); err != nil {
 		return fail(err)
 	}
 	if err := retireLegacyJob(journal.Legacy, backends); err != nil {
@@ -151,18 +151,18 @@ func Commit(home string, journal Journal, backends Backends) error {
 func Restore(home string, journal Journal, backends Backends) error {
 	// Every file is checked before anything, the collector included, is
 	// touched: a recovery that stops halfway would leave less to go on.
-	var changed []hooks.Change
+	var changed []fileapply.Change
 	for _, c := range journal.Changes {
-		if c.Unapplied() {
+		if fileapply.Unapplied(c) {
 			continue
 		}
-		if !c.Applied() {
+		if !fileapply.Applied(c) {
 			return &RecoveryBlockedError{home: home, cause: c.Path + " changed outside setup, and recovery never overwrites your edits"}
 		}
 		changed = append(changed, c)
 	}
 	if journal.FilesOnly {
-		if err := hooks.Rollback(changed); err != nil {
+		if err := fileapply.Rollback(changed); err != nil {
 			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 		}
 		return os.Remove(JournalPath(home))
@@ -190,7 +190,7 @@ func Restore(home string, journal Journal, backends Backends) error {
 	} else if state == scheduler.Unknown {
 		return &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + collector.tool() + " and rerun setup"}
 	}
-	if err := hooks.Rollback(changed); err != nil {
+	if err := fileapply.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
 	if err := collector.removeStranded(journal.Changes); err != nil {

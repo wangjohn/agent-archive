@@ -3,11 +3,14 @@ package capture
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -17,21 +20,10 @@ import (
 )
 
 // An admission intent contains the minimum identity needed to retry a proven
-// start or a Cursor transcript-path follow-up. It deliberately has no raw hook
+// start or a validated locator follow-up. It deliberately has no raw hook
 // payload or conversation text. The original start proof is recorded at hook
 // time because a transcript may no longer be empty when the collector retries.
-type admissionIntent struct {
-	Harness         string    `json:"harness"`
-	Event           string    `json:"event"`
-	NativeSessionID string    `json:"native_session_id"`
-	ProjectRoot     string    `json:"project_root"`
-	DestinationID   string    `json:"destination_id"`
-	PauseGeneration string    `json:"pause_generation,omitempty"`
-	TranscriptPath  string    `json:"transcript_path,omitempty"`
-	CursorVersion   string    `json:"cursor_version,omitempty"`
-	ComposerMode    string    `json:"composer_mode,omitempty"`
-	ObservedAt      time.Time `json:"observed_at"`
-}
+type admissionIntent = agentapi.AdmissionIntent
 
 const (
 	maxAdmissionIntents   = 128
@@ -45,13 +37,6 @@ const (
 	// clearAdmissionIntentsWait stays short: pause and resume clear holding
 	// hooks.lock, which hooks wait on inside their own budget.
 	clearAdmissionIntentsWait = 2 * time.Second
-)
-
-type cursorFollowupEvent string
-
-const (
-	cursorResponseEvent cursorFollowupEvent = "afterAgentResponse"
-	cursorStopEvent     cursorFollowupEvent = "stop"
 )
 
 func admissionIntentDir(home string) string { return filepath.Join(home, "admission-intents") }
@@ -135,27 +120,15 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 	return included
 }
 
-// queueAdmissionIntentInGeneration binds a contended event to the capture
+// queueEventBatchInGeneration binds a contended event to the capture
 // window observed before its lock wait, rather than whichever window is active
 // after that wait. A complete pause/resume cycle must not admit the old start.
-func queueAdmissionIntentInGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, generation string) (bool, error) {
-	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, nil, &generation)
-}
-
-// The intent is written and synced before the lock and only renamed into
-// the queue under it; the directory is synced after the lock is released.
-// Each sync is an F_FULLFSYNC on macOS and can take seconds on a busy
-// machine, and setup's prune and pause's clear wait for this lock, so
-// neither waits for a hook's disk. Each intent has a file of its own, so
-// nothing another holder does can make the staged file stale. The first
-// intent creates only the queue directory under the lock, then stages without
-// creating directories, so uninstall's purge cannot be undone by its write.
-func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func(), generation *string) (bool, error) {
-	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
+func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func()) (bool, error) {
+	intent, queued, err := eventAdmissionIntent(home, batch, now)
 	if err != nil || !queued {
 		return false, err
 	}
-	if generation != nil && intent.PauseGeneration != *generation {
+	if intent.PauseGeneration != generation {
 		return false, nil
 	}
 	id, err := local.ID()
@@ -163,7 +136,7 @@ func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind
 		return false, err
 	}
 	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
-	staged, err := stageAdmissionIntent(home, intent, payload, path, local.StageInExistingDir)
+	staged, err := stageEventIntent(home, intent, path, local.StageInExistingDir)
 	if err != nil || staged == nil {
 		return false, err
 	}
@@ -171,7 +144,7 @@ func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind
 	if afterStage != nil {
 		afterStage()
 	}
-	committed, err := commitAdmissionIntent(home, intent, payload, staged)
+	committed, err := commitEventIntent(home, intent, staged)
 	if err != nil || committed == nil {
 		return false, err
 	}
@@ -184,7 +157,7 @@ func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind
 // Create the first queue directory under its lock, but sync every intent
 // outside it. Staging never creates a directory, so a concurrent purge cannot
 // be undone by a hook that was waiting for its disk write.
-func stageAdmissionIntent(home string, intent admissionIntent, payload map[string]any, path string, stage func(string, any) (*local.Staged, error)) (*local.Staged, error) {
+func stageEventIntent(home string, intent admissionIntent, path string, stage func(string, any) (*local.Staged, error)) (*local.Staged, error) {
 	staged, err := stage(path, intent)
 	if !os.IsNotExist(err) {
 		return staged, err
@@ -193,7 +166,7 @@ func stageAdmissionIntent(home string, intent admissionIntent, payload map[strin
 	if err != nil {
 		return nil, fmt.Errorf("lock admission intent queue: %w", err)
 	}
-	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	ok, err := eventIntentStillQueueable(home, intent)
 	if err == nil && ok {
 		err = os.MkdirAll(admissionIntentDir(home), 0700)
 	}
@@ -212,13 +185,13 @@ func stageAdmissionIntent(home string, intent admissionIntent, payload map[strin
 // unless the queue is full or the intent is no longer valid, and returns
 // the committed file (nil when it queued nothing). staged is the intent
 // already staged; the caller discards it if it is not committed.
-func commitAdmissionIntent(home string, intent admissionIntent, payload map[string]any, staged *local.Staged) (*local.Staged, error) {
+func commitEventIntent(home string, intent admissionIntent, staged *local.Staged) (*local.Staged, error) {
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
 	if err != nil {
 		return nil, fmt.Errorf("lock admission intent queue: %w", err)
 	}
 	defer unlock()
-	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	ok, err := eventIntentStillQueueable(home, intent)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -228,46 +201,46 @@ func commitAdmissionIntent(home string, intent admissionIntent, payload map[stri
 	return staged, nil
 }
 
-func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (admissionIntent, bool, error) {
+func eventAdmissionIntent(home string, batch []agentapi.LifecycleEvent, now time.Time) (admissionIntent, bool, error) {
 	if setupjournal.TransactionPending(home) {
 		return admissionIntent{}, false, nil
 	}
-	nativeID := firstNonEmptyString(payload, "session_id", "conversation_id")
-	cursorPath := cursorTranscriptPath(payload, nativeID)
-	start := startsCapture(kind, harness) && provesFreshSessionStart(harness, payload)
-	followup := archive.CanonicalHarness(harness) == "cursor" &&
-		(kind == hookEventResponse || cursorFollowupEvent(firstNonEmptyString(payload, "hook_event_name")) == cursorStopEvent) && cursorPath != ""
-	if !start && !followup {
+	var effects []agentapi.ReplayEffect
+	for _, event := range batch {
+		start := event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit
+		followup := event.Deferred == agentapi.DeferredFollowup && event.Source.Path != ""
+		if !start && !followup {
+			continue
+		}
+		// Retain only the previous content-free retry observation, never text/model IDs.
+		event.Evidence = nil
+		event.Child = nil
+		if start {
+			event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "retained_hook_proof"}
+		}
+		effects = append(effects, agentapi.ReplayEffect{Event: event})
+	}
+	if len(effects) == 0 {
 		return admissionIntent{}, false, nil
 	}
+	event := effects[0].Event
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
 		return admissionIntent{}, false, err
 	}
-	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
 	if !owned || !project.Included || !cfg.Archive.Eligible(project.Root, now) {
 		return admissionIntent{}, false, nil
 	}
-	if nativeID == "" {
-		return admissionIntent{}, false, nil
+	for i := range effects {
+		effects[i].Event.ProjectRoot = project.Root
 	}
-	intent := admissionIntent{
-		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
-		NativeSessionID: nativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(),
-		PauseGeneration: cfg.PauseGeneration,
-		CursorVersion:   firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
-	}
-	if intent.Harness == "cursor" {
-		intent.TranscriptPath = cursorPath
-	} else {
-		intent.TranscriptPath = firstNonEmptyString(payload, "transcript_path")
-	}
-	return intent, true, nil
+	return admissionIntent{Version: 1, Harness: string(event.Session.Agent), Event: event.NativeEvent, NativeSessionID: event.Session.NativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(), PauseGeneration: cfg.PauseGeneration, TranscriptPath: event.Source.Path, Effects: effects}, true, nil
 }
 
 // admissionIntentStillQueueable is the check made under the queue lock
 // before an intent goes in.
-func admissionIntentStillQueueable(home string, intent admissionIntent, payload map[string]any) (bool, error) {
+func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error) {
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
@@ -275,7 +248,7 @@ func admissionIntentStillQueueable(home string, intent admissionIntent, payload 
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused || setupjournal.TransactionPending(home) {
 		return false, err
 	}
-	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	current, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
 		return false, nil
 	}
@@ -301,6 +274,7 @@ func admissionIntentStillQueueable(home string, intent admissionIntent, payload 
 type deferredFollowup struct {
 	path   string
 	intent admissionIntent
+	events []agentapi.LifecycleEvent
 }
 
 // ReplayAdmissionIntents runs before the collector reads registrations. The
@@ -308,7 +282,14 @@ type deferredFollowup struct {
 // never revives an excluded project. Successfully handled and expired intents
 // are removed, while transient failures remain for the next pass. Hook
 // registration is idempotent by native session ID.
-func ReplayAdmissionIntents(home string, now time.Time) error {
+func ReplayAdmissionIntents(home string, now time.Time, lookups ...agentapi.DecodersLookup) error {
+	var lookup agentapi.DecodersLookup
+	if len(lookups) > 0 {
+		lookup = lookups[0]
+	}
+	return replayAdmissionIntents(home, now, lookup, nil)
+}
+func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(string) error) error {
 	if setupjournal.TransactionPending(home) {
 		return nil
 	}
@@ -343,7 +324,7 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 			continue
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
-		followup, err := replayAdmissionFile(home, store, cfg, path, now)
+		followup, err := replayAdmissionFile(home, store, cfg, path, now, lookup, after)
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -352,14 +333,14 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		}
 	}
 	for _, followup := range deferred {
-		if err := replayDeferredFollowup(store, cfg, followup); err != nil {
+		if err := replayDeferredFollowup(store, cfg, followup, after); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
 }
 
-func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time) (*deferredFollowup, error) {
+func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time, lookup agentapi.DecodersLookup, after func(string) error) (*deferredFollowup, error) {
 	var intent admissionIntent
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
@@ -367,31 +348,46 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 	if !replayIntentEligible(cfg, intent, now) {
 		return nil, removeAdmissionIntent(path)
 	}
-	payload := intentPayload(intent)
-	start, followup := replayIntentKinds(intent, payload)
-	if (!start && !followup) || intent.NativeSessionID == "" {
+	events, err := intentEvents(intent, lookup)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
 		return nil, removeAdmissionIntent(path)
 	}
-	registered, err := HasRegistration(store, intent.NativeSessionID)
+	events, err = validateBatch(intent.Harness, events, intent.ObservedAt)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		if event.Session.NativeID != intent.NativeSessionID || string(event.Session.Agent) != archive.CanonicalHarness(intent.Harness) || event.ProjectRoot != intent.ProjectRoot {
+			return nil, errors.New("admission intent effect ownership conflict")
+		}
+	}
+	key, err := agentmeta.NewSessionKey(intent.Harness, intent.NativeSessionID)
+	if err != nil {
+		return nil, err
+	}
+	registered, err := HasRegistration(store, key)
 	if err != nil {
 		return nil, fmt.Errorf("look up admission intent: %w", err)
 	}
 	if registered {
 		matches, err := replayRegistrationMatches(store, cfg, intent)
 		if err != nil {
-			return nil, fmt.Errorf("validate admission intent registration: %w", err)
+			return nil, err
 		}
 		if !matches {
 			return nil, removeAdmissionIntent(path)
 		}
 	}
-	if !registered && followup && !start {
-		return &deferredFollowup{path: path, intent: intent}, nil
+	if !registered && events[0].Deferred == agentapi.DeferredFollowup {
+		return &deferredFollowup{path: path, intent: intent, events: events}, nil
 	}
-	if err := replayAdmissionAction(home, store, cfg, intent, payload, registered, start, followup); err != nil {
+	if err := replayEffects(home, store, cfg, intent, events, registered, after); err != nil {
 		return nil, err
 	}
-	return nil, removeAdmissionIntent(path)
+	return nil, acknowledgeIntent(path, after)
 }
 
 func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Time) bool {
@@ -405,76 +401,122 @@ func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Ti
 		cfg.Archive.Eligible(project.Root, intent.ObservedAt)
 }
 
-func intentPayload(intent admissionIntent) map[string]any {
-	return map[string]any{
-		"hook_event_name": intent.Event, "session_id": intent.NativeSessionID,
-		"cwd": intent.ProjectRoot, "transcript_path": intent.TranscriptPath,
-		"cursor_version": intent.CursorVersion, "composer_mode": intent.ComposerMode,
-	}
-}
-
-func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, followup bool) {
-	start = startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness)
-	followup = intent.Harness == "cursor" &&
-		(cursorFollowupEvent(intent.Event) == cursorResponseEvent || cursorFollowupEvent(intent.Event) == cursorStopEvent) &&
-		cursorTranscriptPath(payload, intent.NativeSessionID) != ""
-	return start, followup
-}
-
-func replayAdmissionAction(home string, store *state.Store, cfg config.Config, intent admissionIntent, payload map[string]any, registered, start, followup bool) error {
-	switch {
-	case !registered && start:
-		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, ""); err != nil {
-			return fmt.Errorf("replay admission intent: %w", err)
+func intentEvents(intent admissionIntent, lookup agentapi.DecodersLookup) ([]agentapi.LifecycleEvent, error) {
+	if intent.Version == 1 {
+		var events []agentapi.LifecycleEvent
+		for _, effect := range intent.Effects {
+			if len(effect.Event.Evidence) > 0 || effect.Event.Child != nil {
+				return nil, errors.New("admission replay effects must be content-free")
+			}
+			events = append(events, effect.Event)
 		}
-	case registered && followup:
-		if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt); err != nil {
-			return fmt.Errorf("replay Cursor follow-up: %w", err)
-		}
-	case registered && start && intent.Harness == "cursor" && intent.TranscriptPath != "":
-		return adoptQueuedCursorPath(store, intent, payload)
+		return events, nil
 	}
-	return nil
+	if intent.Version != 0 {
+		return nil, errors.New("unsupported admission intent version")
+	}
+	if lookup == nil {
+		return nil, errors.New("legacy admission decoder required")
+	}
+	decoder, ok := lookup.LookupDecoder(intent.Harness)
+	if !ok {
+		return nil, errors.New("legacy admission decoder unavailable")
+	}
+	legacy, ok := decoder.(agentapi.LegacyHookDecoder)
+	if !ok {
+		return nil, errors.New("legacy admission translation unavailable")
+	}
+	return legacy.DecodeLegacy(intent)
 }
-
-func adoptQueuedCursorPath(store *state.Store, intent admissionIntent, payload map[string]any) error {
-	archiveID, _, err := store.ArchiveSessionID(intent.NativeSessionID)
+func replayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, events []agentapi.LifecycleEvent, registered bool, after func(string) error) error {
+	prepared := make([]agentapi.LifecycleEvent, len(events))
+	copy(prepared, events)
+	for i, event := range prepared {
+		if event.Session.NativeID != intent.NativeSessionID || string(event.Session.Agent) != archive.CanonicalHarness(intent.Harness) || event.ProjectRoot != intent.ProjectRoot {
+			return errors.New("admission intent effect identity conflict")
+		}
+		event.Evidence = nil
+		if event.Kind == agentapi.EventStart || event.Kind == agentapi.EventStop {
+			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindLifecycleHook, event, intent.ObservedAt))
+		}
+		if event.Kind == agentapi.EventStop || event.Kind == agentapi.EventResponse {
+			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindFinalResponse, event, intent.ObservedAt))
+		}
+		prepared[i] = event
+	}
+	prepared, err := validateBatch(intent.Harness, prepared, intent.ObservedAt)
 	if err != nil {
 		return err
 	}
-	reg, found, err := store.LoadRegistration(archiveID)
-	if err != nil {
-		return fmt.Errorf("load registered Cursor start: %w", err)
-	}
-	if !found {
-		return errors.New("registered Cursor start disappeared")
-	}
-	if err := adoptCursorTranscriptPath(store, &reg, intent.Harness, payload); err != nil {
-		return fmt.Errorf("adopt queued Cursor path: %w", err)
+	for _, event := range prepared {
+		if registered && event.Deferred == agentapi.DeferredStart {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			id, found, err := store.ArchiveSessionID(key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return state.ErrSessionNotRegistered
+			}
+			reg, found, err := store.LoadRegistration(id)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return state.ErrSessionNotRegistered
+			}
+			if err := adoptLocator(store, &reg, event, after); err != nil {
+				return err
+			}
+			// A durable registration may precede its evidence write. Complete both
+			// replay-safe effects before acknowledging the original proven intent.
+			if err := saveLifecycleEvidence(store, id, event, intent.ObservedAt, after); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
+			return err
+		}
 	}
 	return nil
 }
-
-func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup) error {
-	registered, err := HasRegistration(store, followup.intent.NativeSessionID)
+func minimalReplayEvidence(kind archive.SupplementalEvidenceKind, event agentapi.LifecycleEvent, at time.Time) archive.SupplementalEvidence {
+	return archive.SupplementalEvidence{Kind: kind, ObservedAt: at, Provenance: "hook:" + string(event.Session.Agent) + ":" + event.Reason, Payload: map[string]any{"event_name": event.NativeEvent}}
+}
+func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup, after func(string) error) error {
+	key, err := agentmeta.NewSessionKey(followup.intent.Harness, followup.intent.NativeSessionID)
 	if err != nil {
-		return fmt.Errorf("look up deferred Cursor follow-up: %w", err)
+		return err
+	}
+	registered, err := HasRegistration(store, key)
+	if err != nil {
+		return err
 	}
 	if !registered {
-		// A follow-up never admits a session. Keep it until a start or expiry.
 		return nil
 	}
 	matches, err := replayRegistrationMatches(store, cfg, followup.intent)
 	if err != nil {
-		return fmt.Errorf("validate deferred Cursor follow-up: %w", err)
+		return err
 	}
 	if !matches {
 		return removeAdmissionIntent(followup.path)
 	}
-	if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, intentPayload(followup.intent), followup.intent.ObservedAt); err != nil {
-		return fmt.Errorf("replay deferred Cursor follow-up: %w", err)
+	if err := replayEffects(store.Home(), store, cfg, followup.intent, followup.events, true, after); err != nil {
+		return err
 	}
-	return removeAdmissionIntent(followup.path)
+	return acknowledgeIntent(followup.path, after)
+}
+
+func acknowledgeIntent(path string, after func(string) error) error {
+	if err := removeAdmissionIntent(path); err != nil {
+		return err
+	}
+	return effectBoundary(after, "intent-ack")
 }
 
 func removeAdmissionIntent(path string) error {
@@ -485,7 +527,7 @@ func removeAdmissionIntent(path string) error {
 }
 
 func replayRegistrationMatches(store *state.Store, cfg config.Config, intent admissionIntent) (bool, error) {
-	archiveID, found, err := store.ArchiveSessionID(intent.NativeSessionID)
+	archiveID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(intent.Harness)), NativeID: intent.NativeSessionID})
 	if err != nil || !found {
 		return false, err
 	}
@@ -494,5 +536,5 @@ func replayRegistrationMatches(store *state.Store, cfg config.Config, intent adm
 		return false, err
 	}
 	return filepath.Clean(reg.ProjectRoot) == filepath.Clean(intent.ProjectRoot) &&
-		archive.CanonicalHarness(reg.Harness.Name) == intent.Harness && cfg.AcceptSession(reg), nil
+		archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(intent.Harness) && reg.NativeSessionID == intent.NativeSessionID && cfg.AcceptSession(reg), nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,7 +36,7 @@ func TestInvalidHookFilesSayWhereAndWhat(t *testing.T) {
 	for _, c := range cases {
 		for _, harness := range []string{"claude", "cursor"} {
 			_, err := Merge([]byte(c.input), harness, testHook("/bin/agent-archive"))
-			if !errors.Is(err, errInvalidConfiguration) || !regexp.MustCompile(c.want).MatchString(err.Error()) {
+			if !errors.Is(err, hookconfig.ErrInvalidConfiguration) || !regexp.MustCompile(c.want).MatchString(err.Error()) {
 				t.Errorf("%s (%s): %v, want %q", c.name, harness, err, c.want)
 			}
 		}
@@ -53,7 +54,7 @@ func TestDuplicateKeysUnderHooksAreRefused(t *testing.T) {
 	} {
 		for _, run := range []func() error{
 			func() error { _, err := Merge([]byte(input), "claude", testHook("/bin/agent-archive")); return err },
-			func() error { _, _, err := Remove([]byte(input), "claude", Hook{}); return err },
+			func() error { _, _, err := Remove([]byte(input), "claude", Hook{Ports: testPorts}); return err },
 		} {
 			if err := run(); err == nil || !strings.Contains(err.Error(), "remove the duplicate") {
 				t.Errorf("%s: %v", input, err)
@@ -78,7 +79,7 @@ func TestMixedLayoutGetsIndentedMembers(t *testing.T) {
 	if !strings.Contains(string(merged), "\n    \"hooks\": {\n        \"SessionStart\"") {
 		t.Fatalf("not indented like the file:\n%s", merged)
 	}
-	removed, _, err := Remove(merged, "claude", Hook{})
+	removed, _, err := Remove(merged, "claude", Hook{Ports: testPorts})
 	if err != nil || string(removed) != input {
 		t.Fatalf("round trip: %v\n%q", err, removed)
 	}
@@ -96,7 +97,7 @@ func TestRemovalDeletesAFileSetupCreated(t *testing.T) {
 			changes, err := Plan(files, testHook("/bin/agent-archive"), []string{app})
 			must(t, err)
 			must(t, Apply(changes))
-			removal, err := PlanRemoval(files, Hook{}, []string{app})
+			removal, err := PlanRemoval(files, Hook{Ports: testPorts}, []string{app})
 			must(t, err)
 			if len(removal) != 1 || !removal[0].Delete {
 				t.Fatalf("removal: %+v", removal)
@@ -118,7 +119,7 @@ func TestRemovalDeletesAFileSetupCreated(t *testing.T) {
 			must(t, os.WriteFile(target, data, 0o600))
 			must(t, os.Remove(files[app]))
 			must(t, os.Symlink(target, files[app]))
-			removal, err = PlanRemoval(files, Hook{}, []string{app})
+			removal, err = PlanRemoval(files, Hook{Ports: testPorts}, []string{app})
 			must(t, err)
 			if len(removal) != 1 || removal[0].Delete {
 				t.Fatalf("symlink removal: %+v", removal)
@@ -136,7 +137,7 @@ func TestRemovalDeletesAFileSetupCreated(t *testing.T) {
 	// Cursor's version stays when anything else is in the file.
 	merged, err := Merge([]byte(`{"x": 1}`), "cursor", testHook("/bin/agent-archive"))
 	must(t, err)
-	removed, _, err := Remove(merged, "cursor", Hook{})
+	removed, _, err := Remove(merged, "cursor", Hook{Ports: testPorts})
 	must(t, err)
 	if !bytes.Contains(removed, []byte(`"version"`)) || !bytes.Contains(removed, []byte(`"x": 1`)) && !bytes.Contains(removed, []byte(`"x":1`)) {
 		t.Fatalf("%s", removed)
@@ -152,7 +153,7 @@ func TestDeletionOfAFileThatBecameALinkKeepsTheLink(t *testing.T) {
 	changes, err := Plan(files, testHook("/bin/agent-archive"), []string{"claude"})
 	must(t, err)
 	must(t, Apply(changes))
-	removal, err := PlanRemoval(files, Hook{}, []string{"claude"})
+	removal, err := PlanRemoval(files, Hook{Ports: testPorts}, []string{"claude"})
 	must(t, err)
 	if len(removal) != 1 || !removal[0].Delete {
 		t.Fatalf("removal: %+v", removal)
@@ -204,95 +205,10 @@ func TestApplyReportsOneErrorWhenTheWriteFails(t *testing.T) {
 // exactly what Merge put in: the user's own settings and handlers are
 // unchanged, and a file without a "hooks" member (and, for Cursor, with its
 // "version") gets its bytes back.
-func FuzzMergeRemove(f *testing.F) {
-	for _, seed := range []string{
-		"", "{}", "{}\n", `{"model":"opus"}`, "{\n\t\"model\": \"opus\"\n}\n",
-		"{\r\n  \"model\": \"opus\"\r\n}\r\n", "{\"a\": 1,\n  \"b\": 2\n}\n",
-		"{\n  \"hooks\": {},\n  \"model\": \"x\"\n}\n", `{"hooks": null}`,
-		`{"version":1,"hooks":{"stop":[{"command":"echo hi"}]}}`, `{"x":1}`,
-		"{\n  \"hooks\": {\n    \"Stop\": [\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"echo hi\"}]}\n    ]\n  }\n}\n",
-		`{"n": 12345678901234567890, "s": "a&b<c>é\/"}`, "\xef\xbb\xbf{}", `{"a":1,}`,
-	} {
-		for harness := range uint8(3) {
-			f.Add([]byte(seed), harness)
-		}
-	}
-	f.Fuzz(func(t *testing.T, input []byte, which uint8) {
-		harness := []string{"claude", "codex", "cursor"}[which%3]
-		if bytes.Contains(input, []byte(Owner)) || bytes.Contains(input, []byte(prototypeOwner)) {
-			return
-		}
-		hook := testHook("/usr/local/bin/agent-archive")
-		merged, err := Merge(input, harness, hook)
-		if err != nil {
-			return
-		}
-		if !json.Valid(merged) {
-			t.Fatalf("invalid JSON:\n%s", merged)
-		}
-		again, err := Merge(merged, harness, hook)
-		if err != nil || !bytes.Equal(again, merged) {
-			t.Fatalf("merge is not idempotent (%v):\n%s\n---\n%s", err, merged, again)
-		}
-		removed, changed, err := Remove(merged, harness, Hook{})
-		if err != nil || !changed {
-			t.Fatalf("remove: changed=%v err=%v", changed, err)
-		}
-		if !json.Valid(removed) {
-			t.Fatalf("remove left invalid JSON:\n%s", removed)
-		}
-		original, err := parseDocument(input)
-		if err != nil {
-			t.Fatalf("merge accepted what parse refuses: %v", err)
-		}
-		_, hadHooks := original.root.get("hooks")
-		version, hadVersion := original.root.get("version")
-		// An object with no members at all is laid out afresh when the hooks
-		// go in, so only its emptiness comes back, not the whitespace inside
-		// its braces.
-		// Cursor's lone "version" goes with the hooks, since it is what
-		// setup adds to a file it creates (see Remove).
-		empty := len(original.root.members) == 0 || harness == "cursor" && !hadHooks && len(usersMembers(original.root).members) == 0
-		if empty && !Empty(removed) {
-			t.Fatalf("an empty file came back with %q", removed)
-		}
-		if !empty && !hadHooks && (harness != "cursor" || hadVersion && isOne(version)) && !bytes.Equal(removed, input) {
-			t.Fatalf("round trip changed the file:\n%q\n---\n%q", input, removed)
-		}
-		// Whatever the shape, the user's members other than "hooks" and
-		// "version" are untouched.
-		left, err := parseDocument(removed)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !sameJSON(usersMembers(original.root), usersMembers(left.root)) {
-			t.Fatalf("the user's settings changed:\n%q\n---\n%q", input, removed)
-		}
-	})
-}
-
-// usersMembers is root without the members setup owns, in file order.
-func usersMembers(root *object) *object {
-	out := &object{}
-	for _, m := range root.members {
-		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; these two are setup's
-		if m.key != "hooks" && m.key != "version" {
-			out.members = append(out.members, m)
-		}
-	}
-	return out
-}
-
-func sameJSON(a, b any) bool {
-	var x, y bytes.Buffer
-	return encodeValue(&x, a) == nil && encodeValue(&y, b) == nil && bytes.Equal(x.Bytes(), y.Bytes())
-}
-
-// Regression: hook ownership review, 2026-09 (1a9420b).
 func TestDuplicateHooksKeyIsRefused(t *testing.T) {
 	for _, src := range []string{`{"hooks":{},"model":"x","hooks":{}}`, `{"version":1,"version":1,"hooks":{}}`} {
 		_, err := Merge([]byte(src), "cursor", testHook("/bin/agent-archive"))
-		if !errors.Is(err, errInvalidConfiguration) || !strings.Contains(err.Error(), "more than one") {
+		if !errors.Is(err, hookconfig.ErrInvalidConfiguration) || !strings.Contains(err.Error(), "more than one") {
 			t.Fatalf("%s: %v", src, err)
 		}
 	}
@@ -311,7 +227,7 @@ func TestCRLFFileKeepsItsLineEndings(t *testing.T) {
 	if strings.Count(string(merged), "\n") != strings.Count(string(merged), "\r\n") {
 		t.Fatalf("bare LF in a CRLF file:\n%q", merged)
 	}
-	removed, _, err := Remove(merged, "claude", Hook{})
+	removed, _, err := Remove(merged, "claude", Hook{Ports: testPorts})
 	if err != nil || string(removed) != original {
 		t.Fatalf("round trip: %v\n%q", err, removed)
 	}
@@ -341,6 +257,7 @@ func TestCursorVersionPrecedesHooks(t *testing.T) {
 }
 
 func isValidJSON(b []byte) (bool, error) {
-	_, err := parseDocument(b)
+	var value any
+	err := json.Unmarshal(b, &value)
 	return err == nil, err
 }

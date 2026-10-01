@@ -193,7 +193,7 @@ func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidat
 	if err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(parent.Harness.Name, candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
+	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
 		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
 	}
 	return parent, nil
@@ -279,7 +279,7 @@ func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandida
 func checkSubagentRegistrationConflict(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
 	if existing, found, err := local.LoadRegistration(reg.ArchiveSessionID); err != nil {
 		return err
-	} else if found && (existing.ParentSessionID != reg.ParentSessionID || existing.ParentNativeSessionID != reg.ParentNativeSessionID || existing.ProjectID != reg.ProjectID || existing.ProjectRoot != reg.ProjectRoot || !strings.EqualFold(existing.Harness.Name, reg.Harness.Name) || existing.SubagentID != reg.SubagentID || existing.TranscriptPath != reg.TranscriptPath || !existing.SessionStartedAt.Equal(reg.SessionStartedAt)) {
+	} else if found && (existing.NativeSessionID != reg.NativeSessionID || existing.ParentSessionID != reg.ParentSessionID || existing.ParentNativeSessionID != reg.ParentNativeSessionID || existing.ProjectID != reg.ProjectID || existing.ProjectRoot != reg.ProjectRoot || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(reg.Harness.Name) || existing.SubagentID != reg.SubagentID || existing.TranscriptPath != reg.TranscriptPath || !existing.SessionStartedAt.Equal(reg.SessionStartedAt)) {
 		return rejectSubagentCandidate(local, candidate, "subagent_registration_conflict")
 	}
 	return nil

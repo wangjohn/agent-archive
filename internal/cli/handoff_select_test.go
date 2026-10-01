@@ -30,7 +30,7 @@ func (f handoffFixture) addSession(t *testing.T, harness, native, prompt string,
 	transcript := filepath.Join(f.project, native+".jsonl")
 	must(t, os.WriteFile(transcript, nil, 0o600))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": f.project, "transcript_path": transcript}
-	if err := capture.HandleEvent(f.home, harness, payload, f.env.now()); err != nil {
+	if err := capture.HandleEvent(f.home, harness, payload, f.env.now(), capture.WithDecoders(productionAgents)); err != nil {
 		t.Fatal(err)
 	}
 	var content string
