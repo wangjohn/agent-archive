@@ -729,7 +729,12 @@ func TestNativeEvidenceExtendsYieldsToVersionChange(t *testing.T) {
 // transcript again as it does after a real upgrade.
 func simulateFilterUpgrade(t *testing.T, store *state.Store) {
 	t.Helper()
-	const id = "session-1"
+	simulateFilterUpgradeOf(t, store, "session-1")
+}
+
+// simulateFilterUpgradeOf is simulateFilterUpgrade for the session id.
+func simulateFilterUpgradeOf(t *testing.T, store *state.Store, id string) {
+	t.Helper()
 	var file publishedFile
 	if err := local.Read(publishedPath(store, id), &file); err != nil {
 		t.Fatal(err)

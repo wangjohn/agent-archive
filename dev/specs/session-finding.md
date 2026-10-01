@@ -1,9 +1,9 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 4 merged, PR 5 (one matcher) in review, the rest not started. Where
-this plan and the code differ once packages merge, the code is the reference
-and differences go under Deviations.
+PRs 1 to 4 and 7 merged, PR 5 (one matcher) in review, the rest not
+started. Where this plan and the code differ once packages merge, the code
+is the reference and differences go under Deviations.
 
 Goal: the session a person means is on the first screen of the handoff
 picker or `list` without typing, and one or two words find it when it is
@@ -848,3 +848,75 @@ guide. Live check on the owner's Mac:
   had no PR numbers. An exact full ID, or exactly the 8-character short ID,
   still wins outright (`exactIDWins`); an ID that starts with digits only is
   found by more than 6 of its characters.
+- PR 7: the `.meta.json` reaches the filter through
+  `ClaudeAdapter.FilterSubagentJSONL(r io.Reader, metaJSON []byte)`, not a
+  field on the `Adapter` interface, which stays a reader of one transcript. The
+  collector's `filterReader` calls it when the adapter is Claude Code's, the
+  registration has a `ParentSessionID`, and the transcript is named
+  `agent-<id>.jsonl` (`archive.SubagentMetaPath`: the sibling is
+  `agent-<id>.meta.json`). The file is read through the same non-blocking
+  regular-file open as the transcript and at most `MaxSubagentMetaBytes`
+  (16 KB) of it, after an `Lstat` that refuses a symbolic link (and a check
+  that the file opened is the one found), so a link never makes it read a
+  file elsewhere; anything else (missing, a link, a directory or pipe,
+  oversized, not a JSON object, no non-blank string `description`) is as if
+  absent, with no gap and no warning. Only `description` is read;
+  `worktreePath` and `agentType` are never kept, and are not reported as
+  omitted keys.
+- PR 7: the description is cut to 512 bytes, after redaction (a cut before it
+  could leave half a secret that no pattern matches) and then redacted again
+  until stable, with a `content_truncated` gap. The plan said "a sane cap";
+  512 is far under a prompt string's 64 KB, and the parser cuts `name` to 128
+  runes anyway.
+- PR 7: the `subagent-meta` record is written only when the transcript has
+  records of its own. The collector reads an empty subagent transcript as
+  "not written yet" (`subagentTranscriptEmpty`) and waits, and a transcript
+  with no recognized record as unsafe; the record must change neither. It has
+  no `sessionId`, `agentId`, or timestamp, so the provenance checks are
+  unchanged. The filter also accepts a `subagent-meta` record in its own
+  input, because a retained snapshot is filtered again when the filter
+  version changes (`refilterBundle`), and keeps at most one (the file's wins,
+  else the first; later ones are dropped with an `unsupported_value_omitted`
+  gap). A top-level transcript that holds such a line would get a name from it,
+  as it would from a `custom-title` line; both are the person's own file and
+  pass the prompt rules.
+- PR 7: the plan put a subagent's `name` in parser 0.17.0's field table. It is
+  in parser 0.18.0 (`DefaultParserVersion` 0.17.1 to 0.18.0), because 0.17.0
+  and 0.17.1 shipped without it: `deriveSessionName` also reads
+  `subagent-meta`. The record is first, so a `custom-title` (which a subagent
+  transcript does not normally hold) comes later and wins, as the last name
+  always does. A subagent's own prompts are sidechain records, which are not
+  the person's, so its `title` is empty and `name` is its only label.
+- PR 7: backfill needs no code. `claudeSubagents` only lists the
+  `agent-<id>.jsonl` files (and already ignores the `.meta.json` beside them);
+  the plan's filter call there (`FilterTranscriptFile`, which has no
+  registration) is a check that the collector would register the subagent and
+  its output is not kept. An import saves a subagent candidate, and the
+  collector filters it with the registration it assembles from the parent
+  (`ParentSessionID` set, `TranscriptPath` the same file), which is where the
+  description is read, so imported and hook-reported subagents are the same
+  path (`TestImportedSubagentIsPublishedWithItsDescription`).
+  `FilterTranscriptFile` (`handoff --file`, backfill's check) reads no
+  `.meta.json`.
+- PR 7: a changed or late `.meta.json` is not treated as a rewrite. The
+  collector's check that a new snapshot extends the last one
+  (`nativeEvidenceExtends`) leaves a leading `subagent-meta` record out of
+  both sides (`archive.WithoutSubagentMeta`), as it does a Cursor chat's name;
+  without that, a subagent captured before its file existed would be blocked
+  with `transcript_rewritten` the next time its transcript grew. The scan
+  signature that lets an unchanged session skip a read is the transcript's
+  size and modification time only, so a `.meta.json` that appears or changes
+  beside a transcript that does not change is not noticed until the transcript
+  changes or a filter or adapter version changes (a parser version alone
+  re-derives metadata from the retained snapshot, not the file). A subagent is
+  registered when its `SubagentStop` fires, or when backfill finds it, so
+  the file is normally there at the first read; one captured before it was
+  written and never rescanned stays without a name.
+- PR 7: `filter-golden.json` gains one entry, for the new
+  `claude-subagent.jsonl` fixture, whose golden test filters it with the
+  `claude-subagent.meta.json` beside it; every existing entry is unchanged,
+  since a transcript filtered without a file is byte for byte what it was.
+  Fixtures filtered before it that the golden file never listed were left
+  unlisted. Two fuzz targets are added (`FuzzSubagentMeta`,
+  `FuzzSubagentMetaDropsSecrets`) beside the description shapes in
+  `fuzzSecretRecords`.
