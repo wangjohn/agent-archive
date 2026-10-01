@@ -76,6 +76,9 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			if b.Sources == nil || b.Filter == nil {
 				return nil, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
 			}
+			if b.Filter.Name() != string(d.ID) {
+				return nil, fmt.Errorf("agent %s has filter for %s", d.ID, b.Filter.Name())
+			}
 			d.Operations = append(d.Operations, agentmeta.Source)
 		}
 		b.Descriptor = d
