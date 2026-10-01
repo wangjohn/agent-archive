@@ -72,6 +72,14 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	} else {
 		shown, matched = filterRows(l.universe(rows), q)
 		laid = filteredFormat(format, shown)
+		for _, r := range shown {
+			if r.Index > len(rows) {
+				if l.listed == nil {
+					l.listed = map[int]listRow{}
+				}
+				l.listed[r.Index] = r
+			}
+		}
 		footer.WriteString(l.filterFooter(matched, words))
 	}
 	// The mark is for the key browser's filter line; a table read by lines
@@ -96,15 +104,42 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 }
 
 // universe is every session the filter searches: those of the table's scope
-// when it knows them (subagents too), else the table's own rows.
+// when it knows them (subagents too), else the table's own rows. The table's
+// rows keep the numbers the table gave them (withTableNumbers).
 func (l *sessionPicker) universe(rows []listRow) []listRow {
 	if l.search == nil {
 		return rows
 	}
 	if !l.searchRead {
-		l.searched, l.searchRead = l.search(), true
+		l.searched, l.searchRead = withTableNumbers(rows, l.search()), true
 	}
 	return l.searched
+}
+
+// withTableNumbers is the table's rows, as the table numbers them, then the
+// sessions searched that the table does not hold, numbered on from its last
+// row (a subagent keeps no number). A search reads its sessions after the
+// table did, and the handoff picker's have moved since when one of this
+// machine's sessions was active in between, so its own numbers would name
+// other rows than the table's.
+func withTableNumbers(table, searched []listRow) []listRow {
+	inTable := make(map[string]bool, len(table))
+	for _, r := range table {
+		inTable[childKey(r.HarnessKey, r.SessionID)] = true
+	}
+	out := slices.Clone(table)
+	next := len(table)
+	for _, r := range searched {
+		if inTable[childKey(r.HarnessKey, r.SessionID)] {
+			continue
+		}
+		if r.Index != 0 {
+			next++
+			r.Index = next
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // filterFooter says what the filter found. A table read by lines also says

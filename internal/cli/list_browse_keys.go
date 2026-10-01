@@ -168,20 +168,17 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 }
 
 // submitted resolves what was typed at the list's prompt to a row: one of the
-// table's, or, by its number, one the filter finds past the table's limit
-// (the number the filter showed it with, typed after Esc).
+// table's, or, by its number, one a filter listed past the table's limit (the
+// number the filter showed it with, typed after Esc). A number past the table
+// that no filter listed names a session the person has not seen, and is
+// refused.
 func (l *sessionPicker) submitted(typed string, rows []listRow) (listRow, bool) {
 	if row, ok := matchBrowseRow(typed, rows); ok {
 		return row, true
 	}
-	n, err := strconv.Atoi(typed)
-	if err != nil || len(typed) >= minShortSessionID || n <= len(rows) || l.search == nil {
-		return listRow{}, false
-	}
-	for _, r := range l.universe(rows) {
-		if r.Index == n {
-			return r, true
-		}
+	if n, err := strconv.Atoi(typed); err == nil && len(typed) < minShortSessionID {
+		row, ok := l.listed[n]
+		return row, ok
 	}
 	return listRow{}, false
 }

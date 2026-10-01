@@ -585,3 +585,49 @@ func TestHandoffPickerReadLimitBoundsTranscriptReads(t *testing.T) {
 		t.Fatalf("bounded rows %v, want the first not uploaded and the archived one", got)
 	}
 }
+
+// touchFirst is stdin that runs touch before its first read: what happens on
+// the machine while the picker waits for an answer.
+type touchFirst struct {
+	r     io.Reader
+	touch func()
+}
+
+func (t *touchFirst) Read(p []byte) (int, error) {
+	if t.touch != nil {
+		t.touch()
+		t.touch = nil
+	}
+	return t.r.Read(p)
+}
+
+// The filter reads this machine's sessions again, after the table did; a
+// session active in between keeps the number the table gave it, so the number
+// the person saw hands off the session they saw it on.
+func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	later := f.env.now().Add(3 * time.Hour)
+	stdin := &touchFirst{r: strings.NewReader("codex\n3\np\n"), touch: func() {
+		must(t, os.Chtimes(filepath.Join(f.project, "codex.jsonl"), later, later))
+	}}
+	var out, errOut bytes.Buffer
+	env := f.env
+	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	var pager string
+	env.RunPager = copyPager(&pager)
+	if code := Run([]string{"handoff"}, stdin, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "session "+f.both+" · source: local") {
+		t.Fatalf("3, the table's number of %s, handed off another session:\n%s", f.both[:minShortSessionID], out.String())
+	}
+	_, filtered, found := strings.Cut(out.String(), `"codex" matches 3`)
+	filtered, _, _ = strings.Cut(filtered, "Continue in:")
+	if !found {
+		t.Fatalf("the filter was not drawn:\n%s", out.String())
+	}
+	if line := pickerLine(t, filtered, f.both); !strings.HasPrefix(line, "3 ") {
+		t.Fatalf("the filter renumbered %s: %q", f.both[:minShortSessionID], line)
+	}
+}

@@ -21,9 +21,10 @@ type scopeView struct {
 	note string
 	// search, when set, lists every session the view's scope holds, subagents
 	// too, which the filter searches; read only once a filter is typed, and
-	// the rows alone are searched without it. A top-level row there has the
-	// number it has in rows (more of them, past a limit), and a subagent has
-	// none.
+	// the rows alone are searched without it. A top-level row there is
+	// numbered as rows number it (more of them, past a limit), and a subagent
+	// has none; the browser keeps rows' own numbers for the rows it holds
+	// (withTableNumbers).
 	search func() []listRow
 	// searchNote is the footer's line about the matches elsewhere of the
 	// words the browser opens with, which the filter shows only while it

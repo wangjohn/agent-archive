@@ -933,7 +933,10 @@ guide. Live check on the owner's Mac:
 - PR 6: `Query` fills the filter for every caller. `list "<words>"` opens over
   the scope's top-level sessions with the words in the filter, and the filter
   searches every session of the scope (subagents too, and past `--limit`; row
-  numbers continue past the last unfiltered row, and a subagent has none; in
+  numbers continue past the last unfiltered row, and a subagent has none; the
+  table's rows keep the table's numbers even when the search, read later,
+  orders them otherwise, as the handoff picker's does when one of this
+  machine's sessions was active in between (`withTableNumbers`); in
   the handoff picker a session not uploaded yet is searched only within the
   picker's 50 rows, as a title search reads them, since its title takes
   reading its transcript), so editing the words widens the search; Esc clears
@@ -958,8 +961,9 @@ guide. Live check on the owner's Mac:
   (§5 says they act outside it), so the other scope is one Esc away; digits
   are typed text too, so in key mode a row's number is chosen by after Esc (it
   is the number the row had in the filter, past the table's limit too: Enter
-  looks a number past the last row up among the sessions the filter
-  searches), and in line mode at once; the
+  takes a number past the last row for a row a filter listed, and refuses
+  one no filter listed, which names a session never shown), and in line mode
+  at once; the
   heading while filtering names `Esc clear`, not `a`. Esc clears the words and
   closes the line in one press, and Backspace on an empty filter closes it. In
   line mode `a` still switches the scope with a filter on, and keeps it.

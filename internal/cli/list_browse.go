@@ -447,6 +447,9 @@ type sessionPicker struct {
 	search     func() []listRow
 	searched   []listRow
 	searchRead bool
+	// listed holds, by number, the rows past the table's last that a filter
+	// has listed, which a number typed at the table's prompt can pick.
+	listed map[int]listRow
 	// headingFor, when set, words the heading for the table shown, and for
 	// a filter's words and how many sessions match them.
 	headingFor func(words string, matches int) string
@@ -470,7 +473,7 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		l.headingFor = func(words string, matches int) string {
 			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Keys: l.keys != nil})
 		}
-		l.search, l.searched, l.searchRead = c.search, nil, false
+		l.search, l.searched, l.searchRead, l.listed = c.search, nil, false, nil
 		l.noteText, l.noteWords = c.searchNote, c.searchWords
 		row, ok, err := l.pickRows(p, stdout, c.rows, c.total, c.truncated, c.format, action)
 		if !l.toggled || err != nil {

@@ -228,17 +228,20 @@ func TestKeyNumberOfARowPastTheLimitPicksItAfterEsc(t *testing.T) {
 	if got := rowNumbers(screens[2]); !sameInts(got, []int{27}) {
 		t.Fatalf("the filter numbers the row past the limit %v:\n%s", got, screens[2])
 	}
-	// A number no session has is still refused.
-	fake = newFakeKeys("31", "\r", "q")
-	picker = &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
-	defer picker.keys.close()
-	out.Reset()
-	picker.clear = func() { out.WriteString(screenBreak) }
-	if _, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show"); err != nil || ok {
-		t.Fatalf("31 picked a row: ok=%v err=%v", ok, err)
-	}
-	if !strings.Contains(out.String(), "Enter a listed number or unique short SESSION_ID") {
-		t.Fatalf("31 was not refused:\n%s", out.String())
+	// A number past the table that no filter listed names a session never
+	// shown, and is refused, as is a number no session has.
+	for _, typed := range []string{"27", "31"} {
+		fake = newFakeKeys(typed, "\r", "q")
+		out.Reset()
+		picker = &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake), clear: func() { out.WriteString(screenBreak) }}
+		row, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
+		picker.keys.close()
+		if err != nil || ok {
+			t.Fatalf("%s picked row %d: ok=%v err=%v", typed, row.Index, ok, err)
+		}
+		if !strings.Contains(out.String(), "Enter a listed number or unique short SESSION_ID") {
+			t.Fatalf("%s was not refused:\n%s", typed, out.String())
+		}
 	}
 }
 
