@@ -108,7 +108,7 @@ func readManagementToken(ctx context.Context, p *prompter, env Env, command []st
 }
 
 func validateManagementToken(value string) error {
-	if len(value) == 0 || len(value) > maxManagementTokenBytes || strings.ContainsAny(value, "\r\n\x00\t ") {
+	if len(value) == 0 || len(value) > maxManagementTokenBytes || strings.Trim(value, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/=") != "" {
 		return errors.New("management token is empty or malformed")
 	}
 	return nil

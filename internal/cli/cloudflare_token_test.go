@@ -5,6 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+
+	"github.com/wangjohn/agent-archive/internal/config"
 	"strings"
 	"testing"
 	"time"
@@ -72,5 +75,42 @@ func TestManagementTokenCommandIsBoundedAndStripsCredentialEnvironment(t *testin
 	token, err = env.runManagementTokenCommand(ctx, []string{script})
 	if err == nil || token != "" {
 		t.Fatal("canceled command completed")
+	}
+}
+
+func TestManagementTokenRejectsInvalidBearerHeaderBytes(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"secret\x01canary", "secret\x1bcanary", "secret\x7fcanary", "secreté", "secret:canary", "secret,canary"} {
+		if err := validateManagementToken(value); err == nil {
+			t.Fatalf("invalid bearer token accepted: %q", value)
+		}
+	}
+	if err := validateManagementToken("abc_DEF-123+/="); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagementTokenCommandHonorsNoninteractivePolicy(t *testing.T) {
+	t.Parallel()
+	for _, vars := range []map[string]string{{"CLAUDE_CODE_SESSION_ID": "s"}, {"CODEX_THREAD_ID": "s"}, {"CURSOR_AGENT": "1"}, {envNonInteractive: "1"}} {
+		env := withEnvironment(testEnv(t, t.TempDir(), time.Now()), vars)
+		env.IsTerminal = func(any) bool { return true }
+		env.RunTokenCommand = func(context.Context, []string, []string) (string, error) {
+			t.Fatal("noninteractive token command ran")
+			return "", nil
+		}
+		if _, _, _, err := readManagementToken(t.Context(), nil, env, []string{"fake"}, env.interactive(nil)); err == nil {
+			t.Fatal("noninteractive acquisition accepted")
+		}
+	}
+}
+
+func TestSetupReviewPreservesCommittedTokenSourceOverStaleDraft(t *testing.T) {
+	t.Parallel()
+	existing := config.Config{CloudflareTokenCommand: []string{"current-source", "read"}}
+	draft := setupDraft{Config: config.Config{CloudflareTokenCommand: []string{"obsolete-source"}}}
+	got := reviewedSetupConfig(existing, draft)
+	if !reflect.DeepEqual(got.CloudflareTokenCommand, existing.CloudflareTokenCommand) {
+		t.Fatal("stale draft replaced current token source")
 	}
 }

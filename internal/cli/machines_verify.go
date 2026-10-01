@@ -112,7 +112,7 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 	ctx, cancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
 	defer cancel()
 	report := verifyProvider(ctx, cfg, listing, api, inventoryAPI, account, bucket, env.now())
-	listing.ProviderVerified = !report.Partial && report.PaginationComplete
+	listing.ProviderVerified = !listing.Partial && len(listing.Unreadable) == 0 && !report.Partial && report.PaginationComplete
 	result := verifiedMachinesResult{ListResult: listing, Verification: report}
 	if asJSON {
 		if err := json.NewEncoder(out).Encode(result); err != nil {
@@ -120,6 +120,12 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 		}
 	} else {
 		terminal.Printf(out, "Provider check at %s.\n", report.CheckedAt.Format(time.RFC3339))
+		for _, omitted := range listing.Unreadable {
+			terminal.Printf(out, "Omitted %s: %s.\n", omitted.Key, omitted.Reason)
+		}
+		if listing.Partial {
+			terminal.Println(out, "Bucket machine listing is incomplete; provider observations cover only readable records.")
+		}
 		for _, observation := range report.Observations {
 			terminal.Printf(out, "%s  %s  %s (%s)\n", observation.MachineID, observation.AccessKeyID, observation.State, observation.Binding)
 		}

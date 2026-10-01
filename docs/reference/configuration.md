@@ -112,3 +112,22 @@ it from its process environment; it is never saved. Deliver it separately from
 the encrypted bundle, and clear it in the parent shell afterward. There is no
 code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
 redirected bundle input uses a private terminal for the code and destination review.
+
+## Experimental management token source
+
+`cloudflare_token_command` is an optional argv array, for example
+`["op", "read", "op://Private/Cloudflare/agent-archive"]`. Store a reference to
+an external secret, never the token itself or a literal secret argument. Guided
+R2 creation and experimental `machines --verify` share this source. Both prefer
+`CLOUDFLARE_API_TOKEN` and remove that variable before management requests;
+removal failure stops the operation. Otherwise an interactive invocation runs
+the configured program directly, without a shell, or asks for a hidden token.
+
+The command receives no stdin, has a 20-second deadline and a 4 KiB stdout
+limit, and suppresses stderr and failure output. Its environment excludes
+credential variables. `--yes`, `--json`, pipes and the noninteractive policy
+never run the configured command or prompt; explicit verification in those
+modes requires the environment token. Ordinary listing, status and collection
+never acquire a management token. See [experimental provider observations](../guides/multiple-machines.md#experimental-provider-observations)
+for the opt-in gate and limits. This command configuration is local and is not
+part of a pairing payload.
