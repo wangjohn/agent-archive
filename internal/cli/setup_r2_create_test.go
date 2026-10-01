@@ -205,7 +205,7 @@ func routes(reqs []cloudflaretest.Request) []string {
 	return names
 }
 
-// The whole flow: the bucket, a token limited to it, the key derived from the
+// The whole flow: the permission lookup, the bucket, a token limited to it, the key derived from the
 // token and stored as a pasted key would be, and the
 // public-access reads, in that order, with setup finishing on the stored key.
 func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
@@ -216,7 +216,7 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 		t.Fatalf("account was not selected automatically:\n%s", out)
 	}
 	want := []string{
-		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RoutePermissionGroups),
+		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RouteCreateBucket),
 		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
 	}
 	if got := routes(g.cf.Requests()); strings.Join(got, ",") != strings.Join(want, ",") {
@@ -261,7 +261,7 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 			t.Fatal("the bootstrap token was not discarded")
 		}
 	}
-	for _, want := range []string{"Created bucket " + cfg.Storage.Bucket, "r2.dev public access: off (checked at setup).", "Custom domains: none enabled (checked at setup).", "not saved anywhere", "Connected to your storage."} {
+	for _, want := range []string{"Bucket: " + cfg.Storage.Bucket, "Location: automatic", "Created bucket " + cfg.Storage.Bucket, "r2.dev public access: off (checked at setup).", "Custom domains: none enabled (checked at setup).", "Archive key saved.", "not saved anywhere", "Connected to your storage."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -278,14 +278,27 @@ func TestGuidedR2ExplainsTheTokenBeforeAskingForIt(t *testing.T) {
 		t.Fatalf("token introduction is not concise:\n%s", out)
 	}
 	link := strings.Index(out, "Get your token: "+cloudflare.TokenDashboardURL)
-	create := strings.Index(out, "Sign in, select your account, choose Create Token, and give it these permissions:")
-	intro := strings.Index(out, "Workers R2 Storage Write")
+	create := strings.Index(out, "Choose Create Token and use the custom token form")
+	intro := strings.Index(out, "Account > Workers R2 Storage > Edit")
 	ask := strings.Index(out, "Cloudflare API token (hidden")
-	if link < 0 || create < link || intro < create || ask < intro || !strings.Contains(out, "Account API Tokens Write") {
+	if link < 0 || create < link || intro < create || ask < intro || !strings.Contains(out, "Account > Account API Tokens > Edit") {
 		t.Fatalf("instructions:\n%s", out)
 	}
-	if strings.Contains(out[:ask], "Manage account > Account API tokens") || strings.Contains(out[:ask], "Cloudflare's steps:") {
-		t.Fatalf("instructions show another route to the token page:\n%s", out)
+	for _, want := range []string{
+		"Manage account > Account API tokens",
+		"Name it agent-archive setup",
+		"Account > Workers R2 Storage > Edit",
+		"Account > Account API Tokens > Edit",
+		"Limit access to this account only",
+		"Copy the API token value and paste it below",
+		"not the S3 Access Key ID or Secret Access Key",
+		"If you see Create Account API token and Object Read & Write",
+		"return to Manage account: that is the R2-specific form",
+		"choose existing R2 storage and follow the manual steps: " + bucketDocURL,
+	} {
+		if !strings.Contains(out[:ask], want) {
+			t.Errorf("instructions before token prompt lack %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -446,12 +459,11 @@ func TestGuidedR2BlankTokenReturnsToTheMenu(t *testing.T) {
 	}
 }
 
-// A token Cloudflare does not accept ends guided creation, saying so, and
-// setup goes on with another option.
+// A rejected token offers a way back to the storage menu.
 func TestGuidedR2RejectedTokenReturnsToTheMenu(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, guidedAnswers("some-other-token", "s3", "work", "2", ""), 0)
+	out := g.run(t, guidedAnswers("some-other-token", "other", "s3", "work", "2", ""), 0)
 	if !strings.Contains(out, "Cloudflare didn't accept the API token") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 {
 		t.Fatalf("output:\n%s", out)
 	}
@@ -459,6 +471,28 @@ func TestGuidedR2RejectedTokenReturnsToTheMenu(t *testing.T) {
 		t.Fatal("the rejected token was not discarded")
 	}
 	g.assertNothingHolds(t, out, "some-other-token")
+}
+
+func TestGuidedR2CanReplaceRejectedEnvironmentToken(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	const rejected = "CANARY-rejected-env-token"
+	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": rejected})
+	input := guidedAnswers(append([]string{"token", bootstrapCanary}, acceptedRest...)...)
+	out := g.run(t, input, 0)
+	if len(g.apis) != 2 || !g.apis[0].discarded || !g.apis[1].discarded {
+		t.Fatalf("replacement did not discard both clients: %+v", g.apis)
+	}
+	checked := strings.Index(out, "Archive-key permission lookup succeeded")
+	bucket := strings.Index(out, "Bucket name")
+	if checked < 0 || bucket < checked || !strings.Contains(out, "Paste a different token") {
+		t.Fatalf("replacement was not checked before bucket settings:\n%s", out)
+	}
+	if strings.Contains(out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN") {
+		t.Fatalf("replacement described as environment token:\n%s", out)
+	}
+	g.savedConfig(t)
+	g.assertNothingHolds(t, out, rejected, bootstrapCanary)
 }
 
 func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
@@ -791,11 +825,11 @@ func TestGuidedR2StepFailures(t *testing.T) {
 		{"bucket account not found", cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusNotFound},
 			[]string{"Cloudflare doesn't know that account or bucket"}, false, nil},
 		{"permission group lookup forbidden", cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden},
-			[]string{"Couldn't look up the permission", cloudflare.PermissionTokensWrite, "subset of their own permissions"}, true, nil},
+			[]string{"Couldn't look up the permission", cloudflare.PermissionTokensWrite, "subset of their own permissions", "No bucket or key has been created", "Account > Account API Tokens > Edit"}, false, nil},
 		{"permission group missing", "", cloudflaretest.Failure{},
-			[]string{"Couldn't find the permission for the bucket's key", "is listed"}, true, func(s *cloudflaretest.Server) { s.Groups = nil }},
+			[]string{"Couldn't find the permission for the bucket's key", "is listed", "No bucket or key has been created"}, false, func(s *cloudflaretest.Server) { s.Groups = nil }},
 		{"permission group not selectable", "", cloudflaretest.Failure{},
-			[]string{"may not grant it"}, true, func(s *cloudflaretest.Server) {
+			[]string{"may not grant it", "No bucket or key has been created"}, false, func(s *cloudflaretest.Server) {
 				s.Groups = []cloudflaretest.Group{{ID: "aaaa0000000000000000000000000002", Name: cloudflare.PermissionBucketItemWrite}}
 			}},
 		{"token forbidden", cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden, Message: "Unauthorized to access requested resource"},
@@ -816,6 +850,9 @@ func TestGuidedR2StepFailures(t *testing.T) {
 				tc.mutate(g.cf)
 			}
 			input := guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...)
+			if strings.HasPrefix(tc.name, "permission group") {
+				input = guidedAnswers(append(append([]string{}, askToken...), "stop")...)
+			}
 			out := g.run(t, input, 1)
 			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
@@ -824,6 +861,9 @@ func TestGuidedR2StepFailures(t *testing.T) {
 			}
 			if left := strings.Contains(out, "was created and is empty"); left != tc.bucket {
 				t.Errorf("bucket reported left behind = %v, want %v:\n%s", left, tc.bucket, out)
+			}
+			if strings.HasPrefix(tc.name, "permission group") && (g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 || strings.Contains(out, "Create the bucket and its key now?") || strings.Contains(out, "Bucket name")) {
+				t.Errorf("permission failure reached creation or confirmation:\n%s", out)
 			}
 			if len(g.cf.Live()) != 0 || len(g.keychain.items) != 0 {
 				t.Errorf("a key was made: %d tokens, %d stored", len(g.cf.Live()), len(g.keychain.items))
@@ -861,6 +901,27 @@ func TestGuidedR2PrintsTheTokenNameBeforeCreatingIt(t *testing.T) {
 	if strings.Index(out, "revoke that token in the dashboard") > strings.Index(out, "Couldn't create the key") {
 		t.Fatalf("the recovery text came after the failure:\n%s", out)
 	}
+}
+
+func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "retry", "", "n", "", "")...), 0)
+	want := []string{
+		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RoutePermissionGroups),
+		string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RouteCreateToken),
+		string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
+	}
+	if got := routes(g.cf.Requests()); !slices.Equal(got, want) {
+		t.Fatalf("calls %v, want %v", got, want)
+	}
+	failed := strings.Index(out, "No bucket or key has been created.")
+	confirm := strings.Index(out, "Create the bucket and its key now?")
+	if failed < 0 || confirm < failed || strings.Count(out, "Create the bucket and its key now?") != 1 || strings.Contains(out, "Try again with the same bucket") {
+		t.Fatalf("lookup retry did not precede creation confirmation:\n%s", out)
+	}
+	g.savedConfig(t)
 }
 
 // A retry after a failed token step reuses the bucket, and the permission
@@ -1253,7 +1314,7 @@ func TestGuidedR2NetworkFailuresAreNotBlamedOnTheToken(t *testing.T) {
 		g.env.Cloudflare = func(token string) cloudflare.API {
 			return &networkDownAPI{API: cloudflare.New(token, cloudflare.Options{BaseURL: g.cf.URL + "/client/v4"}), groups: down}
 		}
-		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "stop")...), 1)
 		refuse(t, out)
 	})
 	t.Run("public access reads", func(t *testing.T) {

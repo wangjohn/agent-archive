@@ -70,6 +70,14 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 setup checks the token before asking for bucket settings, offers
+  token replacement or retry on failure, and summarizes the bucket and
+  automatic or customized location before creation.
+- Guided R2 setup checks the archive-key permission before confirmation and
+  bucket creation, so a failed lookup leaves no empty bucket behind.
+- R2 setup instructions distinguish custom account tokens from the R2 token
+  form, show the dashboard's Edit permission labels, and explain how to use
+  a bucket-scoped Object Read & Write key instead.
 - HTML statistics exports preserve concurrently created destination files when
   `--force` is absent, including when the filesystem cannot create hard links.
 - Clipboard handoff uses `pbcopy` on macOS and installed `wl-copy`, `xclip`, or
