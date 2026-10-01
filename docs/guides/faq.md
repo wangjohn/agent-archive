@@ -121,9 +121,17 @@ agent-archive hasn't seen is reported as `unverified` rather than assumed to
 work.
 
 **Is my R2 bucket verified private?**
-No. R2's S3-compatible credentials can't inspect public-bucket settings, so
-status reports R2 privacy as `not_verified`. For S3, setup and the collector
-inspect Block Public Access, the bucket policy, and the ACL read-only.
+An existing or manually configured R2 bucket remains `not_verified`: its
+S3-compatible credentials can't inspect public-bucket settings. When guided
+setup creates a bucket, its temporary Cloudflare token can check that
+`r2.dev` is off and no custom domains are enabled. If both checks succeed,
+status shows **R2 public access off at setup** with `verified_private`
+evidence. This is a setup-time snapshot, not a continuing guarantee: the
+collector's next privacy refresh returns to `not_verified`, and without a
+refresh the observation becomes stale after 24 hours. Check public access
+in the Cloudflare dashboard; see [bucket privacy evidence](../security/privacy.md#bucket-privacy-evidence).
+For S3, setup and the collector inspect Block Public Access, the bucket
+policy, and the ACL read-only.
 
 **Why didn't a session show up?**
 Check `agent-archive status` first. A connected bucket or `Ready` state does not by itself prove this app captured and read back a session. Follow the app-specific steps for [Claude Code](troubleshooting.md#no-claude-code-session), [Codex](troubleshooting.md#no-codex-session), or [Cursor](troubleshooting.md#no-cursor-session).
