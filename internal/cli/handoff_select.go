@@ -135,9 +135,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	// The archive's sessions name the scope; this Mac's are named for their
-	// checkout, which may be a worktree's.
-	choices := newScopeChoices(scope.named(archived), format, false, func(s sessionScope) scopeView {
+	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
 		picker.scope = s
 		rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
 		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated}

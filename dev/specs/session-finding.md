@@ -705,10 +705,11 @@ guide. Live check on the owner's Mac:
   key, or inside a configured project root. Elsewhere the working directory
   has no scope (every session). A directory named with `--project` is always
   the scope, so one in no project holds nothing and falls back with the
-  heading saying so. A scope made from a worktree's directory is named after the
-  project its sessions have, not the directory (`sessionScope.named`), once per
-  command from the sessions it read, so every view, heading, and `--json`
-  document names it alike.
+  heading saying so. A scope made from a directory in a git checkout is named after the
+  repository's main checkout (`repositoryName`: a worktree's `.git` file
+  points into it, and a subdirectory walks up to it), not after the directory
+  or the sessions a command happened to read, so every view, heading, title
+  note, and `--json` document names it alike, with or without the archive.
 - PR 4: `listScope.label` is the scope's name even when it is turned off
   (`all_projects` says so); `outside_matches` counts the sessions outside the
   scope that match the same filters. The object is omitted outside a project.

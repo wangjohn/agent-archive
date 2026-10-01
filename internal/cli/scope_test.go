@@ -239,17 +239,102 @@ func TestScopeNameThatMatchesNothingIsStillAScope(t *testing.T) {
 	}
 }
 
-// A scope made from a worktree's directory is named for the repository its
-// sessions belong to.
-func TestScopeRelabelsAWorktreeAfterItsProject(t *testing.T) {
-	t.Parallel()
-	scope := sessionScope{Label: "pr4", Dir: "/w/pr4", RepoKey: scopeKey}
-	got := scope.relabeled([]string{"agent-archive", "agent-archive", "", "-", "pr4"})
-	if got.Label != "agent-archive" {
-		t.Fatalf("label %q", got.Label)
+// gitCheckout makes dir a git checkout's folder: a .git directory, as git
+// init leaves it.
+func gitCheckout(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "worktrees"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	configured := sessionScope{Label: "agent-archive", Dir: "/w/pr4", RepoKey: scopeKey}
-	if got := configured.relabeled([]string{"other"}); got.Label != "agent-archive" {
-		t.Fatalf("a label from the configuration was replaced: %q", got.Label)
+	return dir
+}
+
+// gitWorktree makes dir a worktree of the checkout at main, as git worktree
+// add leaves it: a .git file pointing into main's .git/worktrees.
+func gitWorktree(t *testing.T, main, dir string) string {
+	t.Helper()
+	gitDir := filepath.Join(main, ".git", "worktrees", filepath.Base(dir))
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A scope made from a directory is named after its repository's main
+// checkout, from the checkout itself, a subdirectory, or a worktree, so
+// every command names it alike whatever sessions it reads.
+func TestScopeIsNamedAfterTheRepositorysMainCheckout(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	main := gitCheckout(t, filepath.Join(root, "agent-archive"))
+	sub := filepath.Join(main, "internal", "cli")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktree := gitWorktree(t, main, filepath.Join(root, "wt", "pr4"))
+	worktreeSub := filepath.Join(worktree, "docs")
+	if err := os.MkdirAll(worktreeSub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := &scopeStub{home: scopeHome(t), keys: map[string]string{}}
+	for _, dir := range []string{main, sub, worktree, worktreeSub} {
+		stub.keys[dir] = scopeKey
+		stub.dir = dir
+		scope, err := scopeFor(stub, "", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scope.Label != "agent-archive" {
+			t.Errorf("%s: label %q, want agent-archive", dir, scope.Label)
+		}
+		// --project names a worktree's scope the same way.
+		if scope, err = scopeFor(stub, dir, true); err != nil || scope.Label != "agent-archive" {
+			t.Errorf("--project %s: label %q, err %v", dir, scope.Label, err)
+		}
+	}
+}
+
+// A worktree is named after the checkout its .git file links to; a
+// submodule or any other link is its own repository.
+func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	write := func(dir, gitFile string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(gitFile), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	main := gitCheckout(t, filepath.Join(root, "app"))
+	bare := filepath.Join(root, "service.git")
+	if err := os.MkdirAll(filepath.Join(bare, "worktrees", "feature"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, dir, want string
+		ok              bool
+	}{
+		{"a main checkout", main, "app", true},
+		{"a worktree", gitWorktree(t, main, filepath.Join(root, "app-pr7")), "app", true},
+		{"a worktree linked by a relative path", write(filepath.Join(root, "rel"), "gitdir: ../app/.git/worktrees/rel\n"), "app", true},
+		{"a worktree of a bare repository", write(filepath.Join(root, "feature"), "gitdir: "+filepath.Join(bare, "worktrees", "feature")), "service", true},
+		{"a submodule", write(filepath.Join(main, "vendor", "lib"), "gitdir: ../../.git/modules/lib\n"), "lib", true},
+		{"an unreadable link", write(filepath.Join(root, "odd"), "not a link"), "odd", true},
+		{"no checkout", root, "", false},
+	} {
+		got, ok := repositoryName(tc.dir)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("%s: repositoryName = %q, %v; want %q, %v", tc.name, got, ok, tc.want, tc.ok)
+		}
 	}
 }

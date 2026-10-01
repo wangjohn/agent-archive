@@ -52,8 +52,7 @@ const (
 
 // newScopeChoices opens on the scope, on all projects when there is none or
 // it was turned off (--all-projects), and on all projects too, saying so,
-// when the scope holds nothing. The scope comes named (sessionScope.named),
-// so both headings name it alike.
+// when the scope holds nothing.
 func newScopeChoices(scope sessionScope, format listFormatOptions, plain bool, rowsFor scopeRowsFunc) *scopeChoices {
 	c := &scopeChoices{scope: scope.only(), rowsFor: rowsFor, format: format, plain: plain}
 	switch {

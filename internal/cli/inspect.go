@@ -144,7 +144,6 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
-	scope = scope.named(sessions)
 	// view is what a scope lists: its sessions, how many there are, and
 	// whether --limit cut them.
 	view := func(s sessionScope) (shown []archive.Metadata, totalMatched int, truncated bool) {

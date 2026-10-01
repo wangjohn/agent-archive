@@ -25,7 +25,9 @@ type scopeDependencies interface {
 // search looks at first: one repository, or one project by name. The zero
 // value, and any scope with All set, holds every session.
 type sessionScope struct {
-	// Label names the scope for a person ("agent-archive"). Empty when the
+	// Label names the scope for a person ("agent-archive"): the configured
+	// project's folder, else the repository's main checkout (so a worktree
+	// or a subdirectory reads alike), else the directory. Empty when the
 	// working directory is in no project, which leaves nothing to narrow to.
 	Label string
 	// RepoKey is the repository key of Dir (archive.RepoKey of its origin
@@ -87,6 +89,8 @@ func scopeFor(env scopeDependencies, project string, allProjects bool) (sessionS
 	label := filepath.Base(dir)
 	if configured {
 		label = filepath.Base(root)
+	} else if name, ok := repositoryName(dir); ok {
+		label = name
 	}
 	ids := make([]string, 0, 4)
 	for id := range archiveProjectIDs(cfg, dir) {
@@ -111,6 +115,58 @@ func workingDirOrNone(env workingDirDependencies) (string, bool) {
 func isDirectory(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// repositoryName is the name of the git repository dir is in: the folder of
+// its main checkout. A worktree's .git file points into the main checkout's
+// .git/worktrees, so every checkout, worktree, and subdirectory of one
+// repository is named alike, whatever sessions a command reads. ok is false
+// when dir is in no git checkout.
+func repositoryName(dir string) (string, bool) {
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		dotGit := filepath.Join(d, ".git")
+		if info, err := os.Stat(dotGit); err == nil {
+			if info.IsDir() {
+				return filepath.Base(d), true
+			}
+			return linkedCheckoutName(d, dotGit), true
+		}
+		if filepath.Dir(d) == d {
+			return "", false
+		}
+	}
+}
+
+// linkedCheckoutName names the checkout at root, whose .git is a file: a
+// worktree's "gitdir: <main>/.git/worktrees/<name>" names it after <main>
+// (or after a bare <main>.git); any other link (a submodule, a separate git
+// directory) is its own repository, named after root.
+func linkedCheckoutName(root, dotGit string) string {
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return filepath.Base(root)
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	if !ok {
+		return filepath.Base(root)
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	if filepath.Base(filepath.Dir(gitDir)) != "worktrees" {
+		return filepath.Base(root)
+	}
+	common := filepath.Dir(filepath.Dir(gitDir))
+	if filepath.Base(common) == ".git" {
+		return filepath.Base(filepath.Dir(common))
+	}
+	if name := strings.TrimSuffix(filepath.Base(common), ".git"); name != "" {
+		return name
+	}
+	return filepath.Base(root)
 }
 
 // nameScope is the scope of the projects called name: sessions whose project
@@ -219,49 +275,13 @@ func (s sessionScope) filter(sessions []archive.Metadata) []archive.Metadata {
 	return slices.DeleteFunc(slices.Clone(sessions), func(m archive.Metadata) bool { return !s.contains(m, nil) })
 }
 
-// named is the scope named after the project its sessions have (relabeled),
-// counting those of sessions that are in it. Every view of one command names
-// the scope the same way, so it is named once, from what the command read.
-func (s sessionScope) named(sessions []archive.Metadata) sessionScope {
-	var names []string
-	for _, m := range s.only().filter(sessions) {
-		names = append(names, m.ProjectName)
-	}
-	return s.relabeled(names)
-}
-
-// relabeled names a scope made from a directory after the project its
-// sessions have, when it would otherwise be named for the directory: run in a
-// worktree called pr4 of agent-archive, the scope reads agent-archive. names
-// are the project names of the sessions in scope.
-func (s sessionScope) relabeled(names []string) sessionScope {
-	if s.Dir == "" || s.Label != filepath.Base(s.Dir) {
-		return s
-	}
-	counts := map[string]int{}
-	best := ""
-	for _, name := range names {
-		if name == "" || name == "-" {
-			continue
-		}
-		counts[name]++
-		if counts[name] > counts[best] || counts[name] == counts[best] && name < best {
-			best = name
-		}
-	}
-	if best != "" {
-		s.Label = best
-	}
-	return s
-}
-
 // listScope is the `scope` object of `list --json`: what the listing looked
 // at, so a script knows when the working directory narrowed it.
 type listScope struct {
-	// Label is the scope's name, or "All projects".
+	// Label is the scope's name, even when the scope was not applied.
 	Label string `json:"label"`
-	// AllProjects is set when no scope was applied: --all-projects, the
-	// scope's listing having nothing, or the toggle.
+	// AllProjects is set when no scope was applied: --all-projects, or the
+	// scope having nothing to list.
 	AllProjects bool `json:"all_projects"`
 	// FellBack is set when the scope held nothing, and the listing shows all
 	// projects instead.

@@ -348,17 +348,18 @@ func TestListScopeSpansCheckoutsOfOneRepository(t *testing.T) {
 	}
 }
 
-// Run in a checkout whose directory is not the project's name (a worktree
-// called pr4), every view names the scope after its sessions' project: the
-// scoped and --all-projects documents, and both headings of the browser, before
-// and after a switches the scope.
+// Run in a worktree called pr4, every view names the scope after the
+// repository's main checkout, whatever sessions it read: the scoped and
+// --all-projects documents (the latter from the index's newest page, which
+// here holds none of the repository's sessions), one whose filters leave the
+// scope empty, and both headings of the browser, before and after a switches
+// the scope.
 func TestScopeIsNamedAfterItsProjectInEveryView(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
-	worktree := filepath.Join(t.TempDir(), "pr4")
-	if err := os.MkdirAll(worktree, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
+	main := gitCheckout(t, filepath.Join(root, a.label))
+	worktree := gitWorktree(t, main, filepath.Join(root, "pr4"))
 	a.env.WorkingDir = func() (string, error) { return worktree, nil }
 	a.env.repoKey = func(root string) string {
 		if root == worktree {
@@ -370,7 +371,7 @@ func TestScopeIsNamedAfterItsProjectInEveryView(t *testing.T) {
 	a.add(t, "mine0002", "Second task here", a.label, inRepo)
 	a.add(t, "mine0003", "Third task here", a.label, inRepo)
 	a.add(t, "bill0001", "Invoice export", "billing")
-	for _, args := range [][]string{{"--json"}, {"--json", "--all-projects"}} {
+	for _, args := range [][]string{{"--json"}, {"--json", "--all-projects"}, {"--json", "--limit", "1"}, {"--json", "--all-projects", "--limit", "1"}, {"--json", "--harness", "claude"}} {
 		out, errOut, code := a.runList(t, args...)
 		if code != 0 {
 			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut)

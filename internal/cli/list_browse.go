@@ -862,7 +862,7 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 		return nil, false, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
-	choices = newScopeChoices(scope.named(sessions), format, false, archiveRows(sessions, defaultListLimit, format))
+	choices = newScopeChoices(scope, format, false, archiveRows(sessions, defaultListLimit, format))
 	if len(choices.shown().rows) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return nil, false, 0
