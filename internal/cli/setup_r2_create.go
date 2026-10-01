@@ -197,6 +197,14 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	return c.storageConfig(), key, true, nil
 }
 
+type r2RecoveryChoice string
+
+const (
+	r2RecoveryToken r2RecoveryChoice = "token"
+	r2RecoveryRetry r2RecoveryChoice = "retry"
+	r2RecoveryOther r2RecoveryChoice = "other"
+)
+
 // connect checks the account and archive-key permission before asking for
 // bucket settings. Recovery prompts run outside the request signal handler.
 func (c *r2Creator) connect() error {
@@ -227,8 +235,8 @@ func (c *r2Creator) connect() error {
 		if err != nil {
 			return err
 		}
-		switch choice {
-		case "token":
+		switch r2RecoveryChoice(choice) {
+		case r2RecoveryToken:
 			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
 			if err != nil {
 				return err
@@ -240,9 +248,9 @@ func (c *r2Creator) connect() error {
 			c.api = c.env.cloudflareAPI(token)
 			c.account, c.groupID = "", ""
 			c.tokenFromEnv = false
-		case "retry":
+		case r2RecoveryRetry:
 			continue
-		case "other":
+		case r2RecoveryOther:
 			return errChooseStorageAgain
 		default:
 			return errors.New("guided bucket creation stopped")
