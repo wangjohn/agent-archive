@@ -162,3 +162,35 @@ func TestNamedLockWaitRespectsDeadline(t *testing.T) {
 		t.Fatalf("elapsed=%v", elapsed)
 	}
 }
+
+// Staging before a lock must not recreate a folder that the lock's holder
+// deletes (uninstall's purge of the admission queue); an existing folder
+// stages as Stage does.
+func TestStageInExistingDirNeverCreatesTheDirectory(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "queue", "intent.json")
+	staged, err := StageInExistingDir(missing, map[string]int{"a": 1})
+	if !os.IsNotExist(err) || staged != nil {
+		t.Fatalf("staged into a missing folder: %v, %v", staged, err)
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !os.IsNotExist(err) {
+		t.Fatalf("the missing folder was created: %v", err)
+	}
+
+	existing := filepath.Join(t.TempDir(), "intent.json")
+	staged, err = StageInExistingDir(existing, map[string]int{"a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Discard()
+	if _, err := os.Stat(existing); !os.IsNotExist(err) {
+		t.Fatalf("staged file in place before Commit: %v", err)
+	}
+	if err := staged.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if err := Read(existing, &got); err != nil || got["a"] != 1 {
+		t.Fatalf("committed = %v, %v", got, err)
+	}
+}
