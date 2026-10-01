@@ -91,6 +91,8 @@ An interrupted setup is recovered on the next run.
                         Capture sessions with or without skills (default:
                         saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repository by repo key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one

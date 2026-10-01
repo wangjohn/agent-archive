@@ -309,6 +309,10 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
+  `--project-repo REPO_KEY` matches a unique local clone by its origin's hash,
+  independently of `--project`; ambiguous, excluded, or incomplete matches
+  are skipped. See [repository matching](../guides/multiple-machines.md#repository-matching-in-setup-commands)
+  for discovery limits.
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.

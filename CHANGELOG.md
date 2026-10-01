@@ -28,6 +28,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
+
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches
   several sessions now open the same browser as `list` and bare `show`

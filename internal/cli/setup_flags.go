@@ -44,6 +44,8 @@ type setupOptions struct {
 	region                 string
 	apps                   string
 	projects               []string
+	projectRepos           []string
+	projectMatches         *projectMatchResult
 	yes                    bool
 	verbose                bool
 	skillEvidence          string
@@ -110,7 +112,7 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
-	var projects projectList
+	var projects, projectRepos projectList
 	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
 	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
 	fs.BoolVar(&opts.requireSkillUse, "require-skill-use", false, "capture only sessions that use skills")
@@ -126,6 +128,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
+	fs.Var(&projectRepos, "project-repo", "repository key to capture (repeatable; unresolved or ambiguous keys are skipped)")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -133,6 +136,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 		return opts, false
 	}
 	opts.projects = projects
+	opts.projectRepos = projectRepos
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
@@ -153,7 +157,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -196,7 +200,14 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	var matches projectMatchResult
+	opts.projectMatches = &matches
 	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
+	// A key-only command may leave no project included. Explain its skips
+	// before returning that validation error; invalid keys are never echoed.
+	if len(opts.projectRepos) > 0 && len(matches.Roots) == len(opts.projectRepos) {
+		printProjectMatches(p, opts.projectRepos, matches)
+	}
 	if err != nil {
 		return err
 	}
@@ -342,6 +353,27 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if len(problems) == 0 {
 		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
 			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
+		}
+	}
+	if len(opts.projectRepos) > 0 {
+		requests := make([]projectMatchRequest, 0, len(opts.projectRepos))
+		for _, key := range opts.projectRepos {
+			if !archive.IsRepoKey(key) {
+				problems = append(problems, fmt.Errorf("--project-repo must be repo- followed by 16 lowercase hex digits"))
+				continue
+			}
+			requests = append(requests, projectMatchRequest{RepoKey: key})
+		}
+		matched := matchProjects(context.Background(), env, userHome, existing, requests)
+		if opts.projectMatches != nil {
+			*opts.projectMatches = matched
+		}
+		if !matched.Incomplete {
+			for _, roots := range matched.Roots {
+				if len(roots) == 1 {
+					problems = append(problems, setupProjects(&cfg, roots, userHome)...)
+				}
+			}
 		}
 	}
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)

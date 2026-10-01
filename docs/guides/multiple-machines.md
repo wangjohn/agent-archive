@@ -172,3 +172,21 @@ If you opt in on a home that several machines do mount, expect this:
   written for and which nothing here tests.
 
 Silencing the warning by removing `host_id` does not make this safe.
+
+### Repository matching in setup commands
+
+Setup's printed command uses `--project-repo REPO_KEY` for an included
+project with an origin remote, so another checkout may live at a different
+path. Repository keys are hashes; remote URLs and credentials are never
+printed. Projects without a key retain their `--project DIR` argument.
+
+`setup --yes --project-repo REPO_KEY` includes only a unique, eligible clone.
+It checks the current directory, saved project roots, and the first record
+of app history files, with a shared five-second budget, 128 distinct roots,
+four Git processes, and 250 milliseconds per Git lookup. Discovery returns
+partial results and reports timeout, cap, or unreadable files; incomplete or
+ambiguous discovery skips repository selection. Existing exclusions also
+block implicit inclusion of an overlapping root. Use an explicit
+`--project DIR` to select a path independently. There is no home-directory
+crawl or transcript-body search. Filesystem cancellation is cooperative:
+a native filesystem call already in progress can outlast the budget.
