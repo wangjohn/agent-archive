@@ -440,6 +440,10 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.CaptureDiagnostics = nil
 	}
 	view.CaptureDiagnostics = capture.IncludedDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
+	if env.copiedFromAnotherMachine(cfg) {
+		first, rest := copiedMachineWarning(home)
+		view.Warnings = append(view.Warnings, strings.Join(append([]string{first}, rest...), " "))
+	}
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {
 		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "storage-health.json"), err, "The background collector checks storage again and replaces it within a few minutes."))

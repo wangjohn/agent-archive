@@ -3,6 +3,7 @@ package setupjournal
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,8 +61,11 @@ func (p plistScheduler) Inspect(_ context.Context, site scheduler.Site, _ schedu
 	return scheduler.Status{State: scheduler.JobState(p.l.JobState(site.UserHome))}
 }
 
-func (plistScheduler) Definition(scheduler.Site, scheduler.Ref) scheduler.Status {
-	panic("unused")
+// Definition is launchd's: the plist the site names is the one path, and the
+// job is defined unless reading it finds no file.
+func (plistScheduler) Definition(site scheduler.Site, _ scheduler.Ref) scheduler.Status {
+	_, err := os.ReadFile(site.UserHome)
+	return scheduler.Status{Defined: !errors.Is(err, os.ErrNotExist), Paths: []string{site.UserHome}}
 }
 
 func (plistScheduler) Installed(context.Context, scheduler.Site, scheduler.Installation) ([]scheduler.Job, error) {
