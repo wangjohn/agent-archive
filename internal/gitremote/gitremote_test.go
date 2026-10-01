@@ -321,11 +321,11 @@ func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
 	}
 }
 
-type projectExitStatus int
+type projectExitStatusError int
 
-func (s projectExitStatus) Error() string { return "synthetic Git exit" }
+func (s projectExitStatusError) Error() string { return "synthetic Git exit" }
 
-func (s projectExitStatus) ExitCode() int { return int(s) }
+func (s projectExitStatusError) ExitCode() int { return int(s) }
 
 func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
 	t.Parallel()
@@ -336,13 +336,13 @@ func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
 		known bool
 	}{
 		{name: "portable", out: "https://user:synthetic-secret@example.test/acme/repo.git", known: true},
-		{name: "no origin", err: projectExitStatus(1), known: true},
+		{name: "no origin", err: projectExitStatusError(1), known: true},
 		{name: "empty", known: true},
 		{name: "not installed", err: exec.ErrNotFound},
-		{name: "repository failure", err: projectExitStatus(128)},
+		{name: "repository failure", err: projectExitStatusError(128)},
 		{name: "malformed", out: "invalid origin"},
 		{name: "nonportable", out: "file:///tmp/source"},
-		{name: "failed with output", out: "invalid", err: projectExitStatus(1)},
+		{name: "failed with output", out: "invalid", err: projectExitStatusError(1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
