@@ -14,11 +14,14 @@ injected repository lookup and fake object storage. Raw results are in
 phase-entry baseline; the unresolved historical timing difference means the
 proposal’s full relative performance gate is **not** declared resolved.
 
-Live integration target is `d05defabb8ee1d7f268ee854882ca98dcfc0bde5`.
+Live integration target is `4add976435af4b91d1dfbd31b3c2496316a0d3f4`.
 It includes #277's collector file reads through `transcriptio` and extracted
 `nativesessions` helpers, plus #280's native handoff discovery, bounded filtered
 previews, shared record filtering and cancellable boundary probes. It is not
 the measured current reference above.
+The native additions entered at `d05defabb8ee1d7f268ee854882ca98dcfc0bde5`;
+the latest target also includes #257's shared archived no-prompt handoff
+selection policy. Neither target was timed for this historical reference.
 The core-production equality claim below applies only to the pinned historical
 measurement at `ff6d250`, not to this newer target. Later hot-path comparisons
 must keep pinned-98 and recorded-current results and additionally measure the

@@ -28,6 +28,15 @@ ASCII/128-byte ID acceptance is a consumer restriction, not a new SessionKey
 or registration limit. Its bounded worker pools do not authorize collector
 concurrency or eager full-source filtering during discovery.
 
+Live target `4add976435af4b91d1dfbd31b3c2496316a0d3f4` also includes archived
+handoff selection (#257). Keep its shared picker/word-search policy distinct
+from native extraction: a known zero human-turn count is omitted; an unavailable
+count (text format or parse failure) is not zero. Exact/full or short archive
+IDs still name promptless sessions. A local registration may supply a prompt
+added since a promptless archive snapshot; archive-only selection retains that
+snapshot's result. Preserve this behavior when Analysis availability and the
+native/configured-archive handoff consumers move.
+
 ## Qualified identity and local migration (phase 3a)
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,

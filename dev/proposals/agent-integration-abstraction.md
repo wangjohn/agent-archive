@@ -723,6 +723,12 @@ to parse a whole source for every display row. Historical companion measurements
 are not measurements of this newer target; the companion artifacts record
 these additional obligations without changing pinned samples or hashes.
 
+Latest target `4add976435af4b91d1dfbd31b3c2496316a0d3f4` also includes archived
+handoff no-prompt selection (#257): preserve known-zero versus unavailable
+human-turn counts, local prompts newer than the archive copy, and exact-ID
+accessibility. These remain shared selection policies when the native facts
+and availability move into Analysis.
+
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |
 | Qualified identity/index migration | Keep native IDs opaque. Hash an unambiguous versioned encoding of canonical agent ID and native ID into a new qualified namespace. Adopt a legacy entry only after validating its registration; preserve archive IDs. Specify interrupted conversion, corruption recovery, retention races, and downgrade handling. | Phase 3 identity migration |
