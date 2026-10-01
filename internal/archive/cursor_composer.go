@@ -691,7 +691,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 // retain sanitizes one built record exactly as filterJSONL sanitizes a native
 // one and appends it.
 func (f *cursorComposerFilter) retain(record map[string]any) error {
-	state := sanitizeState{addGap: f.addGap, omittedKey: func(key string) { f.omit("record", key) }, deniedKey: f.denied.add}
+	state := PrivacyState{AddGap: f.addGap, OmittedKey: func(key string) { f.omit("record", key) }, DeniedKey: f.denied.add}
 	safe, keep := sanitizeObject(record, &state)
 	if !keep {
 		return nil
@@ -862,14 +862,14 @@ func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, b
 			return string(encoded), true
 		}
 	}
-	state := sanitizeState{
-		addGap: func(code string, record int, detail string) {
+	state := PrivacyState{
+		AddGap: func(code string, record int, detail string) {
 			if code != "record_without_allowed_fields_omitted" {
 				f.addGap(code, record, detail)
 			}
 		},
-		retainAllKeys: true,
-		omittedKey:    func(key string) { f.omit("toolResult", key) }, deniedKey: f.resultDenied.add,
+		RetainAllKeys: true,
+		OmittedKey:    func(key string) { f.omit("toolResult", key) }, DeniedKey: f.resultDenied.add,
 	}
 	safe, keep := sanitizeValue(raw, &state)
 	if !keep {

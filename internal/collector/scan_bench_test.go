@@ -45,7 +45,7 @@ func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *
 	}
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 		b.Fatalf("%#v %v", result, err)
 	}

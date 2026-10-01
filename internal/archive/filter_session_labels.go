@@ -166,7 +166,7 @@ func filterClaudeLabel(raw map[string]any, lineNo int, addGap func(string, int, 
 		addGap("unsupported_value_omitted", lineNo, "record omitted")
 		return nil, nil
 	}
-	state := sanitizeState{record: lineNo, addGap: addGap, extraAllowed: claudeLabelKeys, omittedKey: omit}
+	state := PrivacyState{Record: lineNo, AddGap: addGap, ExtraAllowed: claudeLabelKeys, OmittedKey: omit}
 	safe, keep := sanitizeObject(label, &state)
 	if !keep || !claudeLabelSurvived(label, safe, omit) {
 		addGap("unsupported_value_omitted", lineNo, "record omitted")

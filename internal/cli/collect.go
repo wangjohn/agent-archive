@@ -159,6 +159,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		previousScanAt = previous.LastScanAt
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+		Parsers:              registryFor(env),
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:        cfg.EffectiveSkillEvidence(),

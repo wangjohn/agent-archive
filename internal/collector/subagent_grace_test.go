@@ -56,7 +56,7 @@ func writeChildTranscript(t *testing.T, path string) {
 
 func runPassAt(t *testing.T, local *state.Store, remote storage.ObjectStore, at time.Time) Result {
 	t.Helper()
-	result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return at }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+	result, err := Run(context.Background(), local, remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return at }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,11 @@ func TestPhantomSubagentWaitsThenIsRejected(t *testing.T) {
 func TestPhantomSubagentRejectionIsRecordedOnTheParent(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
-	outcome := materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(subagentTranscriptGrace-time.Second))
+	outcome := materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(subagentTranscriptGrace-time.Second))
 	if len(outcome.errors) != 0 || len(outcome.rejected) != 0 || !slices.Equal(outcome.waiting, []string{"child"}) {
 		t.Fatalf("just inside the grace: %+v", outcome)
 	}
-	outcome = materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(subagentTranscriptGrace))
+	outcome = materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(subagentTranscriptGrace))
 	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || len(outcome.rejected) != 1 || outcome.rejected["child"] != "subagent_transcript_never_written" {
 		t.Fatalf("at the end of the grace: %+v", outcome)
 	}
@@ -231,11 +231,11 @@ func TestSubagentRejectionCodesAreClassified(t *testing.T) {
 func TestFutureSubagentStopIsRejected(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
-	outcome := materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(-subagentTranscriptGrace))
+	outcome := materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(-subagentTranscriptGrace))
 	if len(outcome.errors) != 0 || len(outcome.rejected) != 0 || len(outcome.waiting) != 1 {
 		t.Fatalf("a grace ahead: %+v", outcome)
 	}
-	outcome = materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(-subagentTranscriptGrace-time.Second))
+	outcome = materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(-subagentTranscriptGrace-time.Second))
 	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || outcome.rejected["child"] != "subagent_transcript_never_written" {
 		t.Fatalf("more than a grace ahead: %+v", outcome)
 	}
@@ -273,7 +273,7 @@ func TestUnreadableSubagentTranscriptIsRejectedAsAFailure(t *testing.T) {
 func TestImportedSubagentWithoutTranscriptIsRejectedAtOnce(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginImport)
-	outcome := materializeSubagentCandidates(context.Background(), local, Options{}, stopAt)
+	outcome := materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt)
 	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || len(outcome.rejected) != 1 || outcome.rejected["child"] != "subagent_transcript_unavailable" {
 		t.Fatalf("outcome=%+v", outcome)
 	}
@@ -344,7 +344,7 @@ func TestNeverWrittenSubagentLeavesItsParentACaptureGap(t *testing.T) {
 			if tc.agentType != "" {
 				typeSubagentCandidate(t, local, tc.agentType)
 			}
-			outcome := materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(subagentTranscriptGrace))
+			outcome := materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(subagentTranscriptGrace))
 			if len(outcome.errors) != 0 || outcome.rejected["child"] != subagentNeverWritten {
 				t.Fatalf("outcome=%+v", outcome)
 			}
@@ -405,7 +405,7 @@ func TestOnlyNeverWrittenSubagentsLeaveTheGap(t *testing.T) {
 	if err := os.Mkdir(childPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	outcome := materializeSubagentCandidates(context.Background(), local, Options{}, stopAt.Add(time.Minute))
+	outcome := materializeSubagentCandidates(context.Background(), local, Options{Parsers: testParsers}, stopAt.Add(time.Minute))
 	if outcome.rejected["child"] != "subagent_transcript_unreadable" || len(outcome.expired) != 0 {
 		t.Fatalf("outcome=%+v", outcome)
 	}

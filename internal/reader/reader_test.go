@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -36,7 +37,8 @@ func fixture(t *testing.T) (archive.Metadata, archive.SourceBundle, *storagetest
 	if err = store.Put(ctx, key, packed.Bytes); err != nil {
 		t.Fatal(err)
 	}
-	metadata, err := archive.BuildMetadata(bundle, "machine", reg.SessionStartedAt, time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{})
+	analysis, parseErr := nativecodec.ParseCodex(context.Background(), bundle)
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "machine", reg.SessionStartedAt, time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

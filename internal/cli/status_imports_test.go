@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	saveImportedSession(t, store, now, "published", project)
-	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil || len(result.Published) != 1 {
+	if result, err := collector.Run(context.Background(), store, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	if summary, err := verifyPublications(home, cfg, testEnv(t, home, now), store, remote); err != nil || summary.Verified != 1 {
@@ -122,7 +123,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveImportedSession(t, store, now, "failing", project)
-	if _, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
+	if _, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
 		t.Fatal(err)
 	}
 	if _, blocked, err := store.LoadBlocked("gone"); err != nil || !blocked {

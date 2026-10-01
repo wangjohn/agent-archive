@@ -690,8 +690,9 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		return 1
 	}
 	pruneHandoffs(home, env.now())
+	analysis, parseErr := analyzeSource(ctx, parsersFor(env), bundle)
 	if opts.json {
-		normalizedView, err := archive.ParseNormalized(bundle)
+		normalizedView, err := analysis.View, parseErr
 		stopShow()
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
@@ -716,7 +717,12 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		terminal.Print(stdout, string(data))
 		return 0
 	}
-	t, err := buildTranscript(bundle)
+	var t archive.Transcript
+	if parseErr != nil {
+		err = parseErr
+	} else {
+		t, err = archive.BuildTranscriptWithAnalysis(bundle, analysis, archive.HandoffOptions{ToolResultLines: transcriptResultLines, ToolResultBytes: transcriptResultBytes})
+	}
 	stopShow()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)

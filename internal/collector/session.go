@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"time"
 
@@ -58,14 +59,16 @@ import (
 // saves it through this one copy rather than decoding published/<id>.json
 // again (it holds whole source bundles).
 type sessionScan struct {
-	ctx       context.Context
-	local     *state.Store
-	remote    storage.ObjectStore
-	opts      Options
-	now       time.Time
-	reg       archive.SessionRegistration
-	req       state.Request
-	published *state.Published
+	parser         agentapi.TranscriptParser
+	parserResolved bool
+	ctx            context.Context
+	local          *state.Store
+	remote         storage.ObjectStore
+	opts           Options
+	now            time.Time
+	reg            archive.SessionRegistration
+	req            state.Request
+	published      *state.Published
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
@@ -518,7 +521,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
 func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
-	rendered, err := renderPublication(candidate, s.reg, s.now, s.opts, s.priorRepoKey)
+	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -577,7 +580,7 @@ type renderedPublication struct {
 
 // renderPublication compresses candidate, derives its object keys, and
 // builds its metadata document.
-func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
+func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, parserVersion string, candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
 	compressed, err := archive.BuildCompressedSource(candidate)
 	if err != nil {
 		return renderedPublication{}, fmt.Errorf("compress source bundle: %w", err)
@@ -591,7 +594,8 @@ func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegist
 		return renderedPublication{}, fmt.Errorf("derive metadata key: %w", err)
 	}
 	source := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-	metadata, buildErr := archive.BuildMetadata(candidate, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: opts.parserVersion()})
+	analysis, parseErr := agentapi.Analyze(ctx, parser, candidate)
+	metadata, buildErr := archive.BuildMetadataWithAnalysis(candidate, analysis, parseErr, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: parserVersion})
 	metadata.ApplyRegistrationProvenance(reg)
 	metadata.ApplyProjectName(reg.ProjectRoot)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))

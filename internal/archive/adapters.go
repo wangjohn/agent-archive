@@ -422,7 +422,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	if len(sections) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable visible sections"}
 	}
-	state := sanitizeState{addGap: func(code string, _ int, detail string) { addGap(code, detail) }}
+	state := PrivacyState{AddGap: func(code string, _ int, detail string) { addGap(code, detail) }}
 	retained := make([]string, 0, len(sections))
 	for _, section := range sections {
 		safe, keep := sanitizeValue(strings.Join(section, "\n"), &state)
@@ -743,7 +743,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		if stripMetaRecordText(raw) {
 			addGap("hidden_instruction_omitted", lineNo, "meta record text omitted")
 		}
-		state := sanitizeState{record: lineNo, addGap: addGap, omittedKey: omittedKeys.add, deniedKey: deniedKeys.add}
+		state := PrivacyState{Record: lineNo, AddGap: addGap, OmittedKey: omittedKeys.add, DeniedKey: deniedKeys.add}
 		safe, keep := sanitizeObject(raw, &state)
 		if !keep {
 			continue
@@ -1025,47 +1025,47 @@ func parseNativeTimestamp(record map[string]any) time.Time {
 	return time.Time{}
 }
 
-type sanitizeState struct {
-	record int
-	addGap func(string, int, string)
+type PrivacyState struct {
+	Record int
+	AddGap func(string, int, string)
 	// extraAllowed widens the key allowlist for one archive-authored payload
 	// shape. It applies at every depth of that payload, which is safe only
 	// because such payloads are flat maps this repository writes itself.
-	extraAllowed map[string]bool
+	ExtraAllowed map[string]bool
 	// retainAllKeys is set while sanitizing a tool-argument subtree, where the
 	// argument names are the tool's own vocabulary and no allowlist can
 	// anticipate them. Value sanitization is unchanged.
-	retainAllKeys bool
+	RetainAllKeys bool
 	// numericOnly is set while sanitizing a token-accounting subtree.
-	numericOnly bool
+	NumericOnly bool
 	// toolName is the name of the tool whose argument subtree is being
 	// sanitized, read from the `name` or `tool_name` beside that subtree. It
 	// decides whether typed-input arguments are denied.
-	toolName string
+	ToolName string
 	// omittedKey, when set, receives the name of each key the filter could not
 	// keep so the caller can report the distinct names once. Without it an
 	// omission falls back to the content-free unknown_field_omitted gap.
-	omittedKey func(string)
+	OmittedKey func(string)
 	// deniedKey, when set, receives the name of each tool argument dropped by
 	// the deny list. Without it the drop falls back to the content-free
 	// sensitive_or_hidden_field_omitted gap.
-	deniedKey func(string)
+	DeniedKey func(string)
 }
 
-func (s *sanitizeState) omitField(key string) {
-	if s.omittedKey != nil {
-		s.omittedKey(key)
+func (s *PrivacyState) omitField(key string) {
+	if s.OmittedKey != nil {
+		s.OmittedKey(key)
 		return
 	}
-	s.addGap("unknown_field_omitted", s.record, "field omitted")
+	s.AddGap("unknown_field_omitted", s.Record, "field omitted")
 }
 
-func (s *sanitizeState) denyArgument(key string) {
-	if s.deniedKey != nil {
-		s.deniedKey(key)
+func (s *PrivacyState) denyArgument(key string) {
+	if s.DeniedKey != nil {
+		s.DeniedKey(key)
 		return
 	}
-	s.addGap("sensitive_or_hidden_field_omitted", s.record, "field omitted")
+	s.AddGap("sensitive_or_hidden_field_omitted", s.Record, "field omitted")
 }
 
 // isHiddenObject reports whether an object is a system, developer, or
@@ -1077,17 +1077,17 @@ func isHiddenObject(in map[string]any) bool {
 	return isHiddenRole(role) || isHiddenChannel(channel) || isHiddenRole(kind)
 }
 
-func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bool) {
+func sanitizeObject(in map[string]any, state *PrivacyState) (map[string]any, bool) {
 	if isHiddenObject(in) {
-		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
+		state.AddGap("hidden_instruction_omitted", state.Record, "record omitted")
 		return nil, false
 	}
 	// Filter 9: a pasted screenshot, a PDF, or an image a tool read arrives
 	// as a content block whose data is base64. Its key names pass the
 	// allowlist (type, source), so the block is recognized by shape and
 	// dropped whole, wherever it sits, rather than kept key by key.
-	if detail, binary := binaryContentBlock(in); binary && !state.numericOnly {
-		state.addGap("binary_content_omitted", state.record, detail)
+	if detail, binary := binaryContentBlock(in); binary && !state.NumericOnly {
+		state.AddGap("binary_content_omitted", state.Record, detail)
 		return nil, false
 	}
 	out := make(map[string]any)
@@ -1100,28 +1100,28 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 	// one-time code, or card number (`{"name": "Password", "value": …}`,
 	// `{"name": "DB_PASSWORD", "value": …}`) is typed input, whatever the
 	// tool.
-	sensitiveLabelled := state.retainAllKeys && hasSensitiveLabel(in)
+	sensitiveLabelled := state.RetainAllKeys && hasSensitiveLabel(in)
 	for _, key := range keys {
 		value := in[key]
 		lower := strings.ToLower(key)
 		if blockedKeys[lower] {
-			state.addGap("sensitive_or_hidden_field_omitted", state.record, "field omitted")
+			state.AddGap("sensitive_or_hidden_field_omitted", state.Record, "field omitted")
 			continue
 		}
 		switch {
-		case state.numericOnly:
+		case state.NumericOnly:
 			if !isNumericSubtreeValue(value) {
 				state.omitField(key)
 				continue
 			}
-		case state.retainAllKeys:
+		case state.RetainAllKeys:
 			// A tool argument's own name is retained; its value is not trusted,
 			// and a typed-input or credential-named argument is dropped whole.
-			if deniedToolArgument(key, state.toolName, sensitiveLabelled) {
+			if deniedToolArgument(key, state.ToolName, sensitiveLabelled) {
 				state.denyArgument(key)
 				continue
 			}
-		case !allowedKeys[lower] && !state.extraAllowed[lower]:
+		case !allowedKeys[lower] && !state.ExtraAllowed[lower]:
 			state.omitField(key)
 			continue
 		case lower == "origin":
@@ -1149,30 +1149,30 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 				continue
 			}
 		}
-		retainAll, numericOnly, toolName := state.retainAllKeys, state.numericOnly, state.toolName
+		retainAll, numericOnly, toolName := state.RetainAllKeys, state.NumericOnly, state.ToolName
 		switch {
 		case numericSubtreeKeys[lower]:
-			state.numericOnly, state.retainAllKeys = true, false
-		case toolArgumentKeys[lower] && !state.numericOnly:
-			if !state.retainAllKeys {
-				state.toolName = firstString(in, "name", "tool_name")
+			state.NumericOnly, state.RetainAllKeys = true, false
+		case toolArgumentKeys[lower] && !state.NumericOnly:
+			if !state.RetainAllKeys {
+				state.ToolName = firstString(in, "name", "tool_name")
 			}
-			state.retainAllKeys = true
+			state.RetainAllKeys = true
 		}
 		safe, keep := sanitizeValue(value, state)
-		state.retainAllKeys, state.numericOnly, state.toolName = retainAll, numericOnly, toolName
+		state.RetainAllKeys, state.NumericOnly, state.ToolName = retainAll, numericOnly, toolName
 		if keep {
 			out[key] = safe
 		}
 	}
 	if len(out) == 0 {
-		state.addGap("record_without_allowed_fields_omitted", state.record, "record omitted")
+		state.AddGap("record_without_allowed_fields_omitted", state.Record, "record omitted")
 		return nil, false
 	}
 	for _, key := range []string{"payload", "message", "item", "event"} {
 		if _, had := in[key]; had {
 			if _, kept := out[key]; !kept {
-				state.addGap("hidden_or_unknown_nested_content_omitted", state.record, "record omitted")
+				state.AddGap("hidden_or_unknown_nested_content_omitted", state.Record, "record omitted")
 				return nil, false
 			}
 		}
@@ -1183,7 +1183,7 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 // originKindOnly reduces a Claude Code origin object to {kind: <string>},
 // reporting every other member as omitted. It keeps nothing when origin is not
 // an object or has no string kind.
-func originKindOnly(value any, state *sanitizeState) (map[string]any, bool) {
+func originKindOnly(value any, state *PrivacyState) (map[string]any, bool) {
 	origin, ok := value.(map[string]any)
 	if !ok {
 		return nil, false
@@ -1240,7 +1240,7 @@ func isNumericSubtreeValue(value any) bool {
 // escaping) only when sanitizing changed something; otherwise the string is
 // kept byte for byte. A value the sanitizer keeps nothing of becomes `{}` or
 // `[]`. ok is false when the string is not a JSON object or array.
-func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
+func sanitizeNestedJSON(v string, state *PrivacyState) (out string, ok bool) {
 	trimmed := strings.TrimSpace(v)
 	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return v, false
@@ -1257,14 +1257,14 @@ func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
 	if !nonEmptyValue(decoded) {
 		return v, true
 	}
-	retainAll, deniedKey := state.retainAllKeys, state.deniedKey
+	retainAll, deniedKey := state.RetainAllKeys, state.DeniedKey
 	if !retainAll {
 		// Outside a tool call's arguments a dropped key is not a tool
 		// argument, so it is not named as one.
-		state.retainAllKeys, state.deniedKey = true, nil
+		state.RetainAllKeys, state.DeniedKey = true, nil
 	}
 	safe, keep := sanitizeValue(decoded, state)
-	state.retainAllKeys, state.deniedKey = retainAll, deniedKey
+	state.RetainAllKeys, state.DeniedKey = retainAll, deniedKey
 	if !keep {
 		return emptyJSONContainer(trimmed[0]), true
 	}
@@ -1335,31 +1335,31 @@ const maxTextBytes = 64 * 1024
 // sanitizeStringOnce is one pass of the string rules: JSON inside the
 // string, injected instruction blocks, base64 data URLs, credential
 // redaction, and the length cap. keep is false when nothing is left.
-func sanitizeStringOnce(v string, state *sanitizeState) (string, bool) {
+func sanitizeStringOnce(v string, state *PrivacyState) (string, bool) {
 	if nested, isJSON := sanitizeNestedJSON(v, state); isJSON {
 		v = nested
 	}
 	if injected, stripped := stripInjectedInstructions(v); injected {
-		state.addGap("hidden_instruction_omitted", state.record, "injected instruction block omitted")
+		state.AddGap("hidden_instruction_omitted", state.Record, "injected instruction block omitted")
 		if stripped == "" {
 			return "", false
 		}
 		v = stripped
 	}
 	if base64DataURL.MatchString(v) {
-		state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
+		state.AddGap("binary_content_omitted", state.Record, "base64 data URL omitted")
 		v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
 	}
 	// One redaction pass: sanitizeValue repeats this function until the
 	// string is stable, which repeats the redaction as redactSensitive would.
 	if redacted, hit := redactSensitiveOnce(v); hit {
-		state.addGap("sensitive_content_redacted", state.record, "content redacted")
+		state.AddGap("sensitive_content_redacted", state.Record, "content redacted")
 		v = redacted
 	}
 	if len(v) > maxTextBytes {
 		// Cut on a character boundary, so a retained string stays valid
 		// UTF-8 (filter 8 could split a multi-byte character).
-		state.addGap("content_truncated", state.record, "content truncated")
+		state.AddGap("content_truncated", state.Record, "content truncated")
 		v = TruncateUTF8(v, maxTextBytes)
 	}
 	return v, true
@@ -1373,7 +1373,7 @@ func emptyJSONContainer(open byte) string {
 	return "{}"
 }
 
-func sanitizeValue(value any, state *sanitizeState) (any, bool) {
+func sanitizeValue(value any, state *PrivacyState) (any, bool) {
 	switch v := value.(type) {
 	case nil, bool, float64, json.Number:
 		return v, true
@@ -1400,16 +1400,16 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 	case []any:
 		// Filter 11: an argument vector's secret values (`-pS3cret` after
 		// mysql, the word after `--token`) are redacted by their position.
-		if redacted, hit := redactArgv(v); hit && !state.numericOnly {
-			state.addGap("sensitive_content_redacted", state.record, "content redacted")
+		if redacted, hit := redactArgv(v); hit && !state.NumericOnly {
+			state.AddGap("sensitive_content_redacted", state.Record, "content redacted")
 			v = redacted
 		}
 		out := make([]any, 0, len(v))
 		for _, item := range v {
 			// An array inside a numbers-only subtree is filtered per element,
 			// since only sanitizeObject sees the key that admitted it.
-			if state.numericOnly && !isNumericSubtreeValue(item) {
-				state.addGap("unsupported_value_omitted", state.record, "value omitted")
+			if state.NumericOnly && !isNumericSubtreeValue(item) {
+				state.AddGap("unsupported_value_omitted", state.Record, "value omitted")
 				continue
 			}
 			safe, keep := sanitizeValue(item, state)
@@ -1418,12 +1418,12 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 			}
 		}
 		if len(v) > 0 && len(out) == 0 {
-			state.addGap("hidden_or_unknown_nested_content_omitted", state.record, "field omitted")
+			state.AddGap("hidden_or_unknown_nested_content_omitted", state.Record, "field omitted")
 			return nil, false
 		}
 		return out, true
 	default:
-		state.addGap("unsupported_value_omitted", state.record, "value omitted")
+		state.AddGap("unsupported_value_omitted", state.Record, "value omitted")
 		return nil, false
 	}
 }
@@ -1440,3 +1440,8 @@ func isHiddenRole(value string) bool {
 func recordTypeAllowed(known map[string]bool, kind string, cursorRole bool) bool {
 	return known[kind] || cursorRole
 }
+
+// sanitizeState is the common privacy state used by legacy internal helpers.
+type sanitizeState = PrivacyState
+
+var textBlockTypes = map[string]bool{"text": true, "input_text": true, "output_text": true, "": true}

@@ -20,6 +20,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -32,6 +33,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// Parsers resolves pure derivation separately from native source access.
+	Parsers agentapi.ParsersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
 	ParserVersion string
 	AcceptSession func(archive.SessionRegistration) bool

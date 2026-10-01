@@ -88,7 +88,7 @@ func TestMissingTranscriptsCostNothingPerPass(t *testing.T) {
 		}
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return at }}
+	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}
 	if r, _ := measurePass(t, local, remote, opts); len(r.Published) != sessions {
 		t.Fatalf("%#v", r)
 	}
@@ -151,7 +151,7 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	// Settle: children publish, the parent picks up their links.
 	for range 4 {
 		now = now.Add(10 * time.Minute)
@@ -193,7 +193,7 @@ func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return at }}
+	opts := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}
 	measurePass(t, local, remote, opts)
 	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
@@ -228,7 +228,7 @@ func TestSizeLimitGapIsSkippedUntilTheLimitChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	small := Options{MachineID: "m", Now: func() time.Time { return at }, MaxTranscriptBytes: 8}
+	small := Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, MaxTranscriptBytes: 8}
 	measurePass(t, local, remote, small)
 	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
@@ -240,11 +240,11 @@ func TestSizeLimitGapIsSkippedUntilTheLimitChanges(t *testing.T) {
 	if status, _ := local.LoadStatus(); !strings.Contains(status.LastError, "size limit") {
 		t.Fatalf("status.LastError = %q, want the size-limit gap named", status.LastError)
 	}
-	if unchanged, _ := unchangedSinceLastScan(context.Background(), local, reg, Options{MachineID: "m"}); unchanged {
+	if unchanged, _ := unchangedSinceLastScan(context.Background(), local, reg, Options{Parsers: testParsers, MachineID: "m"}); unchanged {
 		t.Fatal("a raised limit left the gap skipped")
 	}
 	at = at.Add(time.Hour)
-	if r, _ := measurePass(t, local, remote, Options{MachineID: "m", Now: func() time.Time { return at }}); len(r.Published) != 1 {
+	if r, _ := measurePass(t, local, remote, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}); len(r.Published) != 1 {
 		t.Fatalf("the raised limit did not capture the session: %#v", r)
 	}
 	if status, _ := local.LoadStatus(); status.LastError != "" {

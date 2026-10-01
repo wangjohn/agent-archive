@@ -50,7 +50,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := materializeSubagentCandidate(ctx, local, state.SubagentCandidate{ArchiveSessionID: "child"}, Options{}, stopAt); !errors.Is(err, context.Canceled) {
+	if err := materializeSubagentCandidate(ctx, local, state.SubagentCandidate{ArchiveSessionID: "child"}, Options{Parsers: testParsers}, stopAt); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled materialization: %v", err)
 	}
 	if _, found, err := local.LoadRegistration("child"); err != nil || found {
@@ -62,7 +62,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
-	result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+	result, err := Run(context.Background(), local, remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Parsers: testParsers}, candidate.ObservedAt); err == nil {
 		t.Fatal("mismatched transcript was accepted")
 	}
 	if _, found, _ := local.LoadRegistration("child"); found {
@@ -154,7 +154,7 @@ func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
 				if err := local.SaveSubagentCandidate(candidate); err != nil {
 					t.Fatal(err)
 				}
-				if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err != nil {
+				if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Parsers: testParsers}, candidate.ObservedAt); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -233,7 +233,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	for pass := range 5 {
 		now := at.Add(time.Duration(pass) * time.Hour)
-		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {
+		if _, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}); err != nil {
 			t.Fatal(err)
 		}
 		request, found, err := local.LoadRequest("parent")
@@ -265,7 +265,7 @@ func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	first := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return first }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return first }}); err != nil {
 		t.Fatal(err)
 	}
 	firstMetadata := fetchMetadata(t, store, "codex", parent.ArchiveSessionID)
@@ -279,7 +279,7 @@ func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := first.Add(time.Hour)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return second }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return second }}); err != nil {
 		t.Fatal(err)
 	}
 	secondMetadata := fetchMetadata(t, store, "codex", parent.ArchiveSessionID)
@@ -296,7 +296,7 @@ func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
 	if err := local.SaveRequest(parent.ArchiveSessionID, "stop", third); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return third }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return third }}); err != nil {
 		t.Fatal(err)
 	}
 	thirdMetadata := fetchMetadata(t, store, "codex", parent.ArchiveSessionID)
@@ -327,7 +327,7 @@ func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	run := func(now time.Time) {
 		t.Helper()
-		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {
+		if _, err := Run(context.Background(), local, store, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -420,7 +420,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	if err := store.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(context.Background(), store, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), store, candidate, Options{Parsers: testParsers}, candidate.ObservedAt); err == nil {
 		t.Fatal("expected pending transcript error")
 	}
 	candidates, err := store.LoadSubagentCandidates()
@@ -470,7 +470,7 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 	}
 	// Child source cannot be republished in this pass. The durable publication
 	// must still repair its parent notification before any live transcript read.
-	_, err = Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "machine", Now: func() time.Time { return at.Add(time.Minute) }, AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == "child" }})
+	_, err = Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return at.Add(time.Minute) }, AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == "child" }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func (f *resumedSubagentFixture) stop(minutes int) {
 func (f *resumedSubagentFixture) run(minutes int) Result {
 	f.t.Helper()
 	now := f.start.Add(time.Duration(minutes) * time.Minute)
-	result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+	result, err := Run(context.Background(), f.local, f.remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 		f.stop(3)
 		f.run(4)
 		f.write(60)
-		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		result, err := Run(context.Background(), f.local, f.remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -734,7 +734,7 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 		f.write(2)
 		f.stop(3)
 		f.write(60)
-		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		result, err := Run(context.Background(), f.local, f.remote, Options{Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 		if err != nil {
 			t.Fatal(err)
 		}

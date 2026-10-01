@@ -211,7 +211,7 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	db.chat("chat-1", 1000, "b1", "b2")
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 
 	reg := cursorRegistration("cursor-session", "chat-1")
 	if err := local.SaveRegistration(reg); err != nil {
@@ -315,7 +315,7 @@ func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Parsers: testParsers, MachineID: "m", CursorDatabase: db.path}
 	for i := range 4 {
 		id := fmt.Sprintf("chat-%d", i)
 		db.chat(id, 1, "m")
@@ -375,7 +375,7 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 			if err := local.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
-			opts := Options{MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
+			opts := Options{Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
 			for pass := range 3 {
 				result, copies := run(t, local, storagetest.NewMemoryStore(), opts, passes)
 				want := 0
@@ -402,7 +402,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Parsers: testParsers, MachineID: "m", CursorDatabase: db.path}
 	settleCursorSession(t, local, reg, opts)
 	root, err := cursorstore.SnapshotRoot()
 	if err != nil {

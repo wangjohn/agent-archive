@@ -30,7 +30,7 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	}
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "0.13.0", Now: func() time.Time { return now }}
+	opts := Options{Parsers: testParsers, MachineID: "machine", ParserVersion: "0.13.0", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}

@@ -16,6 +16,8 @@ import (
 type Integration struct {
 	Descriptor agentmeta.Descriptor
 	Launcher   agentapi.Launcher
+	Parser     agentapi.TranscriptParser
+	Preview    agentapi.RecordPreviewer
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -47,6 +49,15 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
 		}
 		d.Operations = []agentmeta.Operation{agentmeta.Launch}
+		if b.Parser != nil {
+			if nilImplementation(b.Parser) {
+				return nil, fmt.Errorf("agent %s has typed-nil parser", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.Parse)
+		}
+		if b.Preview != nil && nilImplementation(b.Preview) {
+			return nil, fmt.Errorf("agent %s has typed-nil preview", d.ID)
+		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
 	}
@@ -57,7 +68,9 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
-		r.supporting[agentmeta.Launch] = append(r.supporting[agentmeta.Launch], b)
+		for _, op := range b.Descriptor.Operations {
+			r.supporting[op] = append(r.supporting[op], b)
+		}
 	}
 	var err error
 	r.catalog, err = agentmeta.New(ds)
@@ -103,12 +116,24 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Parser: claude.Parser{}, Preview: claude.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Parser: codex.Parser{}, Preview: codex.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Parser: cursor.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	return r
+}
+
+// LookupParser resolves only the parser needed by retained-source derivation.
+func (r *Registry) LookupParser(name string) (agentapi.TranscriptParser, bool) {
+	b, ok := r.Lookup(name)
+	return b.Parser, ok && b.Parser != nil
+}
+
+// LookupPreview resolves a bounded safe-record preview decoder.
+func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
+	b, ok := r.Lookup(name)
+	return b.Preview, ok && b.Preview != nil
 }

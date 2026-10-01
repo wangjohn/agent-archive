@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -92,6 +93,7 @@ func nativeCommandContext(env sessionBrowserDependencies) (context.Context, <-ch
 }
 
 type nativePreviewCatalog struct {
+	previews   agentapi.PreviewsLookup
 	ctx        context.Context
 	files      nativesessions.FileSystem
 	candidates []nativesessions.Candidate
@@ -135,7 +137,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	for range 2 {
 		workers.Go(func() {
 			for j := range jobs {
-				p, err := previewNativeCandidate(n.ctx, n.files, j.c)
+				p, err := previewNativeCandidate(n.ctx, n.files, j.c, n.previews)
 				a := answer{index: j.index, p: p, err: err}
 				select {
 				case results <- a:
@@ -373,38 +375,18 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	if !nativeBundleIdentityMatches(bundle, c) {
+	target, err := analyzeTarget(ctx, parsersFor(clock), handoffTarget{bundle: bundle, source: "local", native: &c, startedAt: c.StartedAt, lastActivityAt: s.Stamp().ModifiedAt})
+	if err != nil {
+		return handoffTarget{}, err
+	}
+	if target.analysis.Facts.IdentityConflict {
 		return handoffTarget{}, errors.New("selected local transcript has conflicting native identity; use --file PATH --harness NAME to inspect it explicitly")
 	}
-	return handoffTarget{bundle: bundle, source: "local", native: &c, startedAt: c.StartedAt, lastActivityAt: s.Stamp().ModifiedAt}, nil
+	return target, nil
 }
 
 // Native headers are bounded; the complete selected record must not introduce
 // another top-level identity beyond that inspected window.
-func nativeBundleIdentityMatches(bundle archive.SourceBundle, c nativesessions.Candidate) bool {
-	for _, record := range bundle.NativeRecords {
-		if sidechain, _ := record["isSidechain"].(bool); sidechain {
-			continue
-		}
-		if sidechain, _ := record["is_sidechain"].(bool); sidechain {
-			continue
-		}
-		for _, key := range []string{"sessionId", "session_id"} {
-			if id, _ := record[key].(string); id != "" && id != c.NativeID {
-				return false
-			}
-		}
-		if kind, _ := record["type"].(string); c.Ref.Harness == archive.HarnessCodex && kind == "session_meta" {
-			payload, _ := record["payload"].(map[string]any)
-			id, _ := payload["id"].(string)
-			alias, _ := payload["session_id"].(string)
-			if id != c.NativeID || alias != "" && alias != c.NativeID {
-				return false
-			}
-		}
-	}
-	return true
-}
 
 func selectKnownNative(opts handoffOptions, result nativesessions.Result, interactive bool, env currentSessionDependencies) (*nativesessions.Candidate, error) {
 	candidates := result.Candidates
@@ -447,7 +429,7 @@ func isCurrentNative(c nativesessions.Candidate, env currentSessionDependencies)
 func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativesessions.Result, interactive bool, signals <-chan os.Signal, input *typedInput, stdout, stderr io.Writer, env nativeHandoffDependencies) (*nativesessions.Candidate, bool, int, error) {
 	candidates := result.Candidates
 	var selected *nativesessions.Candidate
-	n := &nativePreviewCatalog{ctx: ctx, files: env.nativeFiles(), candidates: candidates, reserved: result.Coverage.ReservedBytes, stderr: stderr, now: env.now()}
+	n := &nativePreviewCatalog{previews: previewsFor(env), ctx: ctx, files: env.nativeFiles(), candidates: candidates, reserved: result.Coverage.ReservedBytes, stderr: stderr, now: env.now()}
 	more, e := n.load()
 	if e != nil {
 		return nil, false, 1, e
@@ -506,7 +488,7 @@ func chooseNativePreviews(ctx context.Context, opts handoffOptions, result nativ
 	return selected, true, 0, nil
 }
 
-func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate) (collector.TranscriptPreview, error) {
+func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem, c nativesessions.Candidate, previews agentapi.PreviewsLookup) (collector.TranscriptPreview, error) {
 	s, err := transcriptio.Open(files, c.Ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true, Root: c.Ref.Store})
 	if err != nil {
 		return collector.TranscriptPreview{}, err
@@ -515,5 +497,12 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 	if !c.Stamp.SameFile(s.Stamp()) || s.Stamp().Size != c.Stamp.Size {
 		return collector.TranscriptPreview{}, transcriptio.ErrChanged
 	}
-	return collector.PreviewTranscript(ctx, s, c.Ref.Harness, collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
+	if previews == nil {
+		return collector.TranscriptPreview{}, errors.New("preview unavailable")
+	}
+	preview, ok := previews.LookupPreview(c.Ref.Harness)
+	if !ok {
+		return collector.TranscriptPreview{}, errors.New("preview unavailable")
+	}
+	return collector.PreviewTranscript(ctx, s, preview, collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
 }

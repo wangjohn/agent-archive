@@ -369,7 +369,7 @@ func (b *sessionBrowser) renderTranscript(ctx context.Context, row listRow) ([]b
 	if err != nil {
 		return nil, err
 	}
-	t, err := buildTranscript(bundle)
+	t, err := buildTranscript(ctx, b.env, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("normalized view unavailable: %w", err)
 	}

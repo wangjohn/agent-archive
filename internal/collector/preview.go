@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"time"
@@ -27,11 +28,18 @@ type TranscriptPreview struct {
 }
 
 // PreviewTranscript reads bounded complete head/tail records on the verified handle.
-func PreviewTranscript(ctx context.Context, snapshot *transcriptio.Snapshot, harness string, limits PreviewLimits) (TranscriptPreview, error) {
+func PreviewTranscript(ctx context.Context, snapshot *transcriptio.Snapshot, preview agentapi.RecordPreviewer, limits PreviewLimits) (TranscriptPreview, error) {
 	var recordErr error
 	var accumulator archive.PreviewAccumulator
 	visit := func(first bool) func([]byte) bool {
-		return func(record []byte) bool { recordErr = accumulator.Add(harness, record, first); return recordErr == nil }
+		return func(record []byte) bool {
+			var facts archive.RecordPreview
+			facts, recordErr = preview.PreviewRecord(ctx, record)
+			if recordErr == nil {
+				accumulator.AddFacts(facts, first)
+			}
+			return recordErr == nil
+		}
 	}
 	head, err := snapshot.Records(ctx, false, limits.HeadBytes, limits.RecordBytes, visit(true))
 	out := TranscriptPreview{Bytes: head.Bytes}

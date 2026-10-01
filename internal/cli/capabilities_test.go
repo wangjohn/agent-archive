@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -306,7 +307,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
+	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
 	}

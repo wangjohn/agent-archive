@@ -102,7 +102,7 @@ func subagentMetaRecord(raw map[string]any, omit func(string)) (map[string]any, 
 // then redacted again, as sanitizeValue repeats its own passes, until it is
 // stable. ok is false when nothing is left, or the text cannot be made stable
 // and short.
-func boundSubagentDescription(text string, state *sanitizeState) (string, bool) {
+func boundSubagentDescription(text string, state *PrivacyState) (string, bool) {
 	for range maxSanitizeStringPasses {
 		safe, keep := sanitizeValue(text, state)
 		next, isString := safe.(string)
@@ -112,7 +112,7 @@ func boundSubagentDescription(text string, state *sanitizeState) (string, bool) 
 		if len(next) <= maxSubagentDescriptionBytes {
 			return next, true
 		}
-		state.addGap("content_truncated", state.record, "content truncated")
+		state.AddGap("content_truncated", state.Record, "content truncated")
 		text = TruncateUTF8(next, maxSubagentDescriptionBytes)
 	}
 	return "", false
@@ -184,7 +184,7 @@ func filterSubagentMeta(raw map[string]any, lineNo int, addGap func(string, int,
 		addGap("unsupported_value_omitted", lineNo, "record omitted")
 		return nil, nil
 	}
-	state := sanitizeState{record: lineNo, addGap: addGap, omittedKey: omit}
+	state := PrivacyState{Record: lineNo, AddGap: addGap, OmittedKey: omit}
 	description, ok := boundSubagentDescription(label[subagentDescriptionKey].(string), &state)
 	if !ok {
 		addGap("unsupported_value_omitted", lineNo, "record omitted")

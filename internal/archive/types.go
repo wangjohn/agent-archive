@@ -407,6 +407,8 @@ type CaptureBoundary struct {
 // FilteredTranscript is the only adapter output accepted by NewSourceBundle.
 // Records retain their allowed native JSON shape and source ordering.
 type FilteredTranscript struct {
+	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
+	ObservedHarness     Harness         `json:"-"`
 	Format              string          `json:"format"`
 	Records             [][]byte        `json:"-"`
 	Boundary            CaptureBoundary `json:"boundary"`

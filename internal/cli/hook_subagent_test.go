@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,7 +63,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	collect := func() {
 		t.Helper()
-		result, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+		result, err := collector.Run(context.Background(), local, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 		if err != nil || len(result.Errors) > 0 {
 			t.Fatalf("collection: %+v %v", result, err)
 		}
@@ -129,7 +130,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 		t.Fatal("child start changed on resume")
 	}
 	// An unchanged pass does not republish either source.
-	unchanged, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+	unchanged, err := collector.Run(context.Background(), local, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 	if err != nil || len(unchanged.Errors) > 0 || len(unchanged.Published) > 0 {
 		t.Fatalf("unchanged capture: %+v %v", unchanged, err)
 	}
@@ -137,7 +138,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	if err := os.WriteFile(childPath, []byte(parentRecord), 0600); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+	failed, err := collector.Run(context.Background(), local, remote, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 	if err != nil || failed.Errors[child.ArchiveSessionID] == nil {
 		t.Fatalf("replacement not rejected: %+v %v", failed, err)
 	}

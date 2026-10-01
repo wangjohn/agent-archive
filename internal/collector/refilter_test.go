@@ -84,7 +84,7 @@ func assertRewriteGap(t *testing.T, store *state.Store, cloud *storagetest.Memor
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	before := fetchMetadata(t, cloud, "codex", "session-1").SourceBundle.SHA256
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return at }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("the pass after the gap was recorded did work: result=%#v err=%v", result, err)
 	}
@@ -102,7 +102,7 @@ func publishCodexSession(t *testing.T, store *state.Store, cloud *storagetest.Me
 	if err := store.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -129,7 +129,7 @@ func TestFilterUpgradeRefiltersTheSnapshotOfATruncatedTranscript(t *testing.T) {
 	if err := store.SaveRequest("session-1", "stop", t1); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("the refiltered snapshot should be published: result=%#v err=%v", result, err)
 	}
@@ -153,7 +153,7 @@ func TestFilterUpgradeRefiltersTheSnapshotOfARewriteGap(t *testing.T) {
 
 	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
 	t1 := t0.Add(time.Hour)
-	if result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil || len(result.Published) != 0 {
+	if result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }}); err != nil || len(result.Published) != 0 {
 		t.Fatalf("the truncation should be a gap: result=%#v err=%v", result, err)
 	}
 	if _, blocked, _ := store.LoadBlocked("session-1"); !blocked {
@@ -163,7 +163,7 @@ func TestFilterUpgradeRefiltersTheSnapshotOfARewriteGap(t *testing.T) {
 	editRetainedRecords(t, store, plantSecret)
 	simulateFilterUpgrade(t, store)
 	t2 := t1.Add(20 * 24 * time.Hour)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("the refiltered snapshot should be published: result=%#v err=%v", result, err)
 	}
@@ -186,7 +186,7 @@ func TestFilterUpgradeFallsBackWhenTheSnapshotCannotBeRefiltered(t *testing.T) {
 	simulateFilterUpgrade(t, store)
 	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
 	t1 := t0.Add(time.Hour)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("the transcript should replace the snapshot: result=%#v err=%v", result, err)
 	}
@@ -209,7 +209,7 @@ func TestFilterUpgradePublishesAGrownTranscript(t *testing.T) {
 	simulateFilterUpgrade(t, store)
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t1 := t0.Add(time.Hour)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("the grown transcript should publish: result=%#v err=%v", result, err)
 	}
@@ -267,7 +267,7 @@ func TestHeldBackRefilteredSnapshotStillEndsInARewriteGap(t *testing.T) {
 	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
 	pass := func(at time.Time) Result {
 		t.Helper()
-		result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", MinUploadInterval: time.Hour, Now: func() time.Time { return at }})
+		result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", MinUploadInterval: time.Hour, Now: func() time.Time { return at }})
 		if err != nil || len(result.Errors) != 0 {
 			t.Fatalf("pass at %s: result=%#v err=%v", at, result, err)
 		}
@@ -296,7 +296,7 @@ func TestFilterUpgradePublishesARestoredTranscript(t *testing.T) {
 
 	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
 	t1 := t0.Add(time.Hour)
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+	if _, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
 		t.Fatal(err)
 	}
 	if _, blocked, _ := store.LoadBlocked("session-1"); !blocked {
@@ -306,7 +306,7 @@ func TestFilterUpgradePublishesARestoredTranscript(t *testing.T) {
 	simulateFilterUpgrade(t, store)
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t2 := t1.Add(time.Hour)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("the restored transcript should publish: result=%#v err=%v", result, err)
 	}
@@ -332,7 +332,7 @@ func TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch(t *test
 
 	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
 	t1 := t0.Add(time.Hour)
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+	if _, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch(t *test
 	restored := codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`
 	writeTranscript(t, dir, "codex.jsonl", restored)
 	t2 := t1.Add(time.Hour)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err := Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("the refiltered snapshot should be published: result=%#v err=%v", result, err)
 	}
@@ -365,7 +365,7 @@ func TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch(t *test
 	// Later records do not end the gap either.
 	writeTranscript(t, dir, "codex.jsonl", restored+"\n"+`{"type":"response_item","id":"m3","payload":{"type":"message","role":"assistant","content":"later"}}`)
 	t3 := t2.Add(time.Hour)
-	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	result, err = Run(context.Background(), store, cloud, Options{Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t3 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("records added after the gap were published: result=%#v err=%v", result, err)
 	}

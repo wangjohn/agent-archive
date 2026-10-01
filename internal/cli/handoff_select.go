@@ -136,7 +136,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	if err == nil {
 		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
 	}
-	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
+	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
@@ -207,12 +207,23 @@ func archivedWithoutPrompt(m archive.Metadata) bool {
 	return m.Counts.Turns != nil && *m.Counts.Turns == 0
 }
 
+type localLabelKey struct {
+	sessionID string
+	active    time.Time
+}
+type localLabelResult struct {
+	metadata  archive.Metadata
+	hasPrompt bool
+}
+
 type handoffPicker struct {
-	ctx     context.Context
-	env     handoffSelectDependencies
-	home    string
-	harness string
-	source  string
+	// Shared by picker scope/search views; only small safe row facts are cached.
+	localLabels map[localLabelKey]localLabelResult
+	ctx         context.Context
+	env         handoffSelectDependencies
+	home        string
+	harness     string
+	source      string
 	// archiveRead is false when the archive could not be listed, so a
 	// session missing from it is not known to be missing.
 	archiveRead bool
@@ -319,11 +330,27 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 // from its transcript as it is now. ok is false when the transcript cannot be
 // read or holds no prompt yet.
 func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
+	key := localLabelKey{sessionID: reg.ArchiveSessionID, active: active}
+	if result, ok := p.localLabels[key]; ok {
+		return result.metadata, result.hasPrompt
+	}
+	metadata, ok := p.buildLocalMetadata(reg, active)
+	if p.localLabels != nil {
+		p.localLabels[key] = localLabelResult{metadata: metadata, hasPrompt: ok}
+	}
+	return metadata, ok
+}
+
+func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
 	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase())
 	if err != nil {
 		return archive.Metadata{}, false
 	}
-	labels, ok := archive.SessionLabels(bundle)
+	analysis, err := analyzeSource(p.ctx, parsersFor(p.env), bundle)
+	if err != nil {
+		return archive.Metadata{}, false
+	}
+	labels, ok := archive.LabelsFromAnalysis(analysis)
 	if !ok {
 		return archive.Metadata{}, false
 	}

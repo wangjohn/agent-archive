@@ -264,7 +264,7 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcript, err := buildTranscript(bundle)
+	transcript, err := buildTranscript(context.Background(), nil, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}

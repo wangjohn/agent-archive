@@ -22,6 +22,7 @@ type Operation string
 
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
+const Parse Operation = "parse"
 
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
@@ -60,7 +61,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if op != Launch || seen[op] {
+			if (op != Launch && op != Parse) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true
