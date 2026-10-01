@@ -246,7 +246,7 @@ func (e *RecoveryBlockedError) Guidance() string {
 
 // Recover puts back the setup an interrupted journal in home records,
 // if there is one. It reads the journal first, then takes the collector lock
-// (lockCollector) and fileapply.lock, so nothing runs a pass or a hook while
+// (lockCollector) and hooks.lock, so nothing runs a pass or a hook while
 // files are restored.
 func Recover(home string, backends Backends, lockCollector func() (func(), error)) error {
 	var journal Journal
@@ -265,7 +265,7 @@ func Recover(home string, backends Backends, lockCollector func() (func(), error
 		return err
 	}
 	defer unlock()
-	releaseHooks, err := local.NamedLock(home, "fileapply.lock")
+	releaseHooks, err := local.NamedLock(home, "hooks.lock")
 	if err != nil {
 		return err
 	}

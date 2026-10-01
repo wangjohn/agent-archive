@@ -2,7 +2,7 @@ package agentapi
 
 import (
 	"github.com/wangjohn/agent-archive/internal/filechange"
-	"os"
+	"io/fs"
 )
 
 // HookLocations supplies observed native environment locations without host calls.
@@ -23,7 +23,7 @@ type HookFile struct {
 	Bytes     []byte
 	Present   bool
 	ReadError error
-	Mode      os.FileMode
+	Mode      fs.FileMode
 	Regular   bool
 }
 

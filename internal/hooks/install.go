@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
 	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/filechange"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"maps"
 	"os"
 	"path/filepath"
@@ -149,9 +149,9 @@ func Validate(files Files, ports agentapi.HooksLookup) []Problem {
 		}
 		path := files[harness]
 		p := Problem{Harness: harness, Path: path, Err: err}
-		p.Line, p.Column, p.Reason = hookconfig.Problem(err)
+		p.Line, p.Column, p.Reason = jsonedit.Problem(err)
 		if p.Reason == "" {
-			p.Reason = strings.TrimPrefix(strings.TrimPrefix(err.Error(), path+": "), hookconfig.ErrInvalidConfiguration.Error()+": ")
+			p.Reason = strings.TrimPrefix(strings.TrimPrefix(err.Error(), path+": "), jsonedit.ErrInvalidConfiguration.Error()+": ")
 			var unread *readError
 			if errors.As(err, &unread) {
 				p.Reason = "the file cannot be read"
@@ -220,11 +220,19 @@ func Inspect(files Files, hook Hook, harness string) (agentapi.HookInspection, e
 	return port.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
 }
 
+// ErrChanged reports a concurrent edit after planning.
 var ErrChanged = fileapply.ErrChanged
 
-func Applied(c Change) bool     { return fileapply.Applied(c) }
-func Unapplied(c Change) bool   { return fileapply.Unapplied(c) }
-func Apply(c []Change) error    { return fileapply.Apply(c) }
+// Applied reports whether a file retains the planned result.
+func Applied(c Change) bool { return fileapply.Applied(c) }
+
+// Unapplied reports whether a file retains the original observation.
+func Unapplied(c Change) bool { return fileapply.Unapplied(c) }
+
+// Apply applies generic byte plans with rollback on failure.
+func Apply(c []Change) error { return fileapply.Apply(c) }
+
+// Rollback restores generic plans in reverse order.
 func Rollback(c []Change) error { return fileapply.Rollback(c) }
 func apply(c []Change, target func(string) (string, error)) error {
 	return fileapply.ApplyWithTarget(c, target)

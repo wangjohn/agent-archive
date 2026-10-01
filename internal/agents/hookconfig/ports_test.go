@@ -100,3 +100,13 @@ func FuzzDecoderNativeShapes(f *testing.F) {
 		}
 	})
 }
+
+func TestInspectionReportsUnrelatedSettingsAsAbsent(t *testing.T) {
+	t.Parallel()
+	port := Configurator{Spec: Spec{Name: "synthetic", Owner: "agent-archive lifecycle capture", Events: []string{"begin"}}}
+	in := agentapi.HookInspectionRequest{File: agentapi.HookFile{Path: "/synthetic/settings", Bytes: []byte(`{"unrelated":true}`), Present: true}, Owner: agentapi.HookOwner{Executable: "/synthetic/bin"}}
+	result, err := port.Inspect(in)
+	if err != nil || result.State != agentapi.HookAbsent || result.Installed {
+		t.Fatalf("inspection %+v %v", result, err)
+	}
+}
