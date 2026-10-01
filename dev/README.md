@@ -43,6 +43,7 @@ implemented design records live in `proposals/implemented/`.
 | [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
 | [Adding a machine: pairing, per-machine keys, and revocation](proposals/machine-pairing.md) | Proposed; not implemented. |
 | [First local handoff before bucket setup](proposals/local-handoff-before-setup.md) | Proposed; on-demand utility, no persistent local archive. |
+| [Coding-agent integration abstraction](proposals/agent-integration-abstraction.md) | Proposed; interfaces and migration plan for adding fully archived agents. |
 
 ## Maintainers
 
