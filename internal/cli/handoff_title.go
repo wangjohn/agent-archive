@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"slices"
 	"strings"
@@ -93,7 +94,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env}
+	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env, knownAgents: agentmeta.Names(catalogFor(env))}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -112,8 +113,9 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 }
 
 type handoffQueryResolver struct {
-	opts  *handoffOptions
-	query string
+	knownAgents []string
+	opts        *handoffOptions
+	query       string
 	// q is the query's words, and labels the configured project names the
 	// matcher reads.
 	q           sessionQuery
@@ -312,7 +314,7 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (harness
 		r.archiveErr = err
 		return "", false
 	}
-	harnesses := reader.Harnesses
+	harnesses := r.knownAgents
 	if r.opts.harness != "" {
 		harnesses = []string{r.opts.harness}
 	}

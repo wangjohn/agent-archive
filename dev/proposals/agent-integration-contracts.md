@@ -339,3 +339,29 @@ Cursor remains explicit-file input. Phase 2 launch/runtime migration must retain
 native, configured-archive and explicit-file consumers; phase 5 must migrate
 safe preview facts together with full parsing, without turning previews into
 whole-transcript analyses or forcing a parser dependency into identity discovery.
+
+
+## Phase 1 implementation boundary
+
+Phase 1 introduces `agentmeta` identities/catalog and immutable operational
+composition. Its only operation is launch argv construction, exercised by both
+handoff launch and installed destination discovery. Native launch argument rules
+moved into Claude/Codex/Cursor integration packages with this first real caller;
+phase 2 completes runtime detection and child environment cleanup. The launcher
+accepts project, prompt, handoff path and extra argv; executable resolution stays
+with shared CLI code because current native argv rules do not consume it.
+
+Identity-only legacy configuration/reader entry points delegate to `agentmeta`;
+CLI composes the operation registry once. Injected catalogs reach configuration,
+reader probes and CLI flags/launch. Known-agent probe lists are cached outside
+session scans. Setup presentation derives Codex-first order from the single
+identity catalog; reader and handoff preserve catalog order Claude/Codex/Cursor.
+Unknown archived agents remain visible through general listings and direct-read
+fallback. Alias ingress is canonicalized, including handoff config map keys;
+conflicting alias/canonical keys are rejected rather than chosen by map order.
+
+No lifecycle, source, filter, parser, discovery or skills interfaces or capability
+promises are introduced here. Existing native store roots, preview dispatch and
+current-session runtime facts remain implementation-specific until their assigned
+phases. Launch implementation support does not claim native discovery, complete
+capture/backfill support, installed-version verification or observed host health.

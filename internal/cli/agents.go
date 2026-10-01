@@ -1,0 +1,34 @@
+package cli
+
+import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"slices"
+)
+
+// Production composition happens once, without filesystem or runtime probes.
+var productionAgents = builtin.NewBuiltins()
+
+func (e Env) agentRegistry() *builtin.Registry {
+	if e.Agents != nil {
+		return e.Agents
+	}
+	return productionAgents
+}
+
+func registryFor(deps interface{}) *builtin.Registry {
+	if d, ok := deps.(interface{ agentRegistry() *builtin.Registry }); ok {
+		return d.agentRegistry()
+	}
+	return productionAgents
+}
+
+func catalogFor(deps interface{}) agentmeta.Catalog { return registryFor(deps).Catalog() }
+
+func launchSupported(c agentmeta.Catalog, name string) bool {
+	d, ok := c.Lookup(name)
+	if !ok {
+		return false
+	}
+	return slices.Contains(d.Operations, agentmeta.Launch)
+}

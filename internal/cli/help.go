@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"regexp"
 	"slices"
@@ -606,7 +607,8 @@ func isHelpFlag(arg string) bool {
 // user.
 type commandFlags struct {
 	*flag.FlagSet
-	errOut io.Writer
+	errOut  io.Writer
+	catalog agentmeta.Catalog
 }
 
 // newCommandFlags returns the flag set of command, named as the user types
@@ -615,7 +617,7 @@ func (e Env) newCommandFlags(command string, errOut io.Writer) *commandFlags {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	flags := &commandFlags{FlagSet: fs, errOut: errOut}
+	flags := &commandFlags{FlagSet: fs, errOut: errOut, catalog: e.agentRegistry().Catalog()}
 	if e.observeFlags != nil {
 		e.observeFlags(flags)
 	}

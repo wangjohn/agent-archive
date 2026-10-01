@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -167,14 +168,11 @@ type HandoffConfig struct {
 	DefaultTo map[string]string `json:"default_to,omitempty"`
 }
 
-// handoffAgents are the agents a handoff can come from or go to.
-var handoffAgents = []string{"claude", "codex", "cursor"}
-
 // validate rejects names handoff would not recognize, so a typo in a
 // hand-edited file is reported rather than silently ignored.
-func (h HandoffConfig) validate() error {
+func (h HandoffConfig) validateWithCatalog(c agentmeta.Catalog) error {
 	for agent, args := range h.Args {
-		if !slices.Contains(handoffAgents, agent) {
+		if !knownAgent(c, agent) {
 			return fmt.Errorf("handoff.args: unknown agent %q; use claude, codex, or cursor", agent)
 		}
 		for _, arg := range args {
@@ -186,10 +184,10 @@ func (h HandoffConfig) validate() error {
 		}
 	}
 	for source, dest := range h.DefaultTo {
-		if !slices.Contains(handoffAgents, source) {
+		if !knownAgent(c, source) {
 			return fmt.Errorf("handoff.default_to: unknown harness %q; use claude, codex, or cursor", source)
 		}
-		if !slices.Contains(handoffAgents, dest) {
+		if !knownAgent(c, dest) {
 			return fmt.Errorf("handoff.default_to.%s: unknown agent %q; use claude, codex, or cursor", source, dest)
 		}
 	}
@@ -202,7 +200,10 @@ func path(home string) string { return filepath.Join(home, "config.json") }
 // when setup has never run. An error names the file, and for one that no
 // longer decodes, the way out: every command needs it, so nothing else can
 // say which file stopped it.
-func Load(home string) (cfg Config, found bool, err error) {
+func Load(home string) (Config, bool, error) { return LoadWithCatalog(home, agentmeta.Builtins()) }
+
+// LoadWithCatalog reads configuration using the caller's supported identities.
+func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, err error) {
 	defer trace.Start("load config").End()
 	err = local.Read(path(home), &cfg)
 	if errors.Is(err, os.ErrNotExist) {
@@ -219,7 +220,7 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
-	if err := cfg.Handoff.validate(); err != nil {
+	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
 	return cfg, true, nil
@@ -229,11 +230,14 @@ func Load(home string) (cfg Config, found bool, err error) {
 var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
-func Save(home string, cfg Config) error {
+func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, agentmeta.Builtins()) }
+
+// SaveWithCatalog validates and writes configuration with injected identities.
+func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
 	}
-	if err := cfg.Handoff.validate(); err != nil {
+	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
 		return err
 	}
 	if cfg.SchemaVersion == 0 {
@@ -339,4 +343,35 @@ func (c Config) acceptsHarness(r archive.SessionRegistration) bool {
 		return true
 	}
 	return r.Imported() && slices.Contains(c.ImportedHarnesses, r.Harness.Name)
+}
+
+func knownAgent(c agentmeta.Catalog, name string) bool { _, ok := c.Lookup(name); return ok }
+
+func normalizeHandoff(h *HandoffConfig, c agentmeta.Catalog) error {
+	if err := h.validateWithCatalog(c); err != nil {
+		return err
+	}
+	args := make(map[string][]string, len(h.Args))
+	for name, words := range h.Args {
+		id := agentmeta.Canonical(c, name)
+		if _, ok := args[id]; ok {
+			return fmt.Errorf("handoff.args: duplicate agent %q", id)
+		}
+		args[id] = slices.Clone(words)
+	}
+	defaults := make(map[string]string, len(h.DefaultTo))
+	for name, dest := range h.DefaultTo {
+		id := agentmeta.Canonical(c, name)
+		if _, ok := defaults[id]; ok {
+			return fmt.Errorf("handoff.default_to: duplicate harness %q", id)
+		}
+		defaults[id] = agentmeta.Canonical(c, dest)
+	}
+	if h.Args != nil {
+		h.Args = args
+	}
+	if h.DefaultTo != nil {
+		h.DefaultTo = defaults
+	}
+	return nil
 }

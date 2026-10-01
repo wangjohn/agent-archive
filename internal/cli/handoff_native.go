@@ -285,7 +285,10 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 	if err != nil {
 		return fail(err)
 	}
-	apps := map[string]string{archive.HarnessClaude: "Claude Code", archive.HarnessCodex: "Codex"}[opts.harness]
+	apps := ""
+	if d, ok := catalogFor(env).Lookup(opts.harness); ok {
+		apps = d.DisplayName
+	}
 	if apps == "" {
 		apps = "Claude Code and Codex"
 	}
