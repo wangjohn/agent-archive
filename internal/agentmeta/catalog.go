@@ -23,6 +23,9 @@ type Operation string
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
 
+// Runtime means an integration implements native runtime observation.
+const Runtime Operation = "runtime"
+
 // ManagedHooks means pure hook planning and inspection are implemented.
 const ManagedHooks Operation = "managed-hooks"
 
@@ -66,7 +69,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != ManagedHooks && op != LifecycleHooks) || seen[op] {
+			if (op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

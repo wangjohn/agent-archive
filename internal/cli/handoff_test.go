@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,12 +25,12 @@ func TestArchiveHandoffCandidatesPreservesOrderAndSkipsEmptySessions(t *testing.
 	one := 1
 	sessions := []archive.Metadata{
 		{SessionID: "other-project", ProjectID: "other"},
-		{SessionID: "current", ProjectID: "project", NativeSessionID: "running"},
+		{SessionID: "current", ProjectID: "project", NativeSessionID: "running", Harness: archive.Harness{Name: "codex"}},
 		{SessionID: "empty", ProjectID: "project", Counts: archive.Counts{Turns: &zero}},
 		{SessionID: "unknown-count", ProjectID: "project"},
 		{SessionID: "one-turn", ProjectID: "project", Counts: archive.Counts{Turns: &one}},
 	}
-	got, _ := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, "", map[string]bool{"running": true})
+	got, _ := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, "", map[agentmeta.SessionKey]bool{{Agent: agentmeta.Codex, NativeID: "running"}: true})
 	if len(got) != 2 || got[0].SessionID != "unknown-count" || got[1].SessionID != "one-turn" {
 		t.Fatalf("candidates = %#v", got)
 	}
@@ -428,7 +429,7 @@ func TestHandoffLatestSkipsTheCallingAgentSession(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, true)
 	f.env.LookupEnv = func(key string) (string, bool) {
-		if key == "CLAUDE_CODE_SESSION_ID" {
+		if key == "CODEX_THREAD_ID" {
 			return "native-1", true
 		}
 		return "", false
@@ -530,5 +531,24 @@ func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("data directory created: %v", err)
+	}
+}
+
+func TestQualifiedCurrentSessionSkipPreservesCollidingAgent(t *testing.T) {
+	t.Parallel()
+	skip := currentSessions(sessionStub{})
+	one := 1
+	sessions := []archive.Metadata{
+		{SessionID: "current-codex", NativeSessionID: "current-session", Harness: archive.Harness{Name: "codex"}, ProjectID: "p", Counts: archive.Counts{Turns: &one}},
+		{SessionID: "colliding-claude", NativeSessionID: "current-session", Harness: archive.Harness{Name: "claude-code"}, ProjectID: "p", Counts: archive.Counts{Turns: &one}},
+	}
+	rows, _ := archiveHandoffCandidates(sessions, map[string]bool{"p": true}, "", skip)
+	if len(rows) != 1 || rows[0].SessionID != "colliding-claude" {
+		t.Fatalf("cross-agent skip %#v", rows)
+	}
+	resolver := handoffQueryResolver{q: parseSessionQuery("colliding-claude"), skip: skip}
+	matches := resolver.exactID([]handoffPickerRow{{metadata: sessions[0]}, {metadata: sessions[1]}})
+	if len(matches) != 1 || matches[0].metadata.SessionID != "colliding-claude" {
+		t.Fatalf("title exact ID skipped other agent %#v", matches)
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"time"
@@ -127,6 +128,7 @@ type handoffFileDependencies interface {
 }
 
 type currentSessionDependencies interface {
+	runtimeLookup() agentapi.RuntimeLookup
 	lookupEnv(string) (string, bool)
 }
 
@@ -167,6 +169,8 @@ type handoffCommandDependencies interface {
 }
 
 type launchSpecDependencies interface {
+	launcherLookup() agentapi.LauncherLookup
+	runtimeLookup() agentapi.RuntimeLookup
 	lookPath(string) (string, error)
 	environ() []string
 }

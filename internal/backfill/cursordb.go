@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"unicode/utf8"
 )
 
 // CursorDatabaseChat is what the plan lists of one Cursor chat in Cursor's
@@ -490,6 +491,10 @@ func selectCursorDatabaseChats(chats []CursorDatabaseChat, candidates []Candidat
 			continue
 		}
 		var reason SkipReason
+		if !utf8.ValidString(chat.ID) {
+			w.unsafe = true
+			continue
+		}
 		if strings.TrimSpace(chat.ID) != "" {
 			reason, err = state.Classify("cursor", chat.ID)
 			if err != nil {

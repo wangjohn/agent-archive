@@ -31,7 +31,7 @@ type worktreeDependencies interface {
 	readHome() (string, error)
 	now() time.Time
 	interactive(any) bool
-	lookupEnv(string) (string, bool)
+	currentSessionDependencies
 	runGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 }
 
@@ -130,12 +130,12 @@ func sourceRegistration(env worktreeDependencies, id string) (archive.SessionReg
 // Cursor session.
 func isCallingAgent(env currentSessionDependencies, reg archive.SessionRegistration) bool {
 	harness := archive.CanonicalHarness(reg.Harness.Name)
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && v.harness == harness && strings.TrimSpace(value) == reg.NativeSessionID {
+	for _, observation := range runtimeObservations(env) {
+		if observation.NativeID != "" && string(observation.Agent) == harness && observation.NativeID == reg.NativeSessionID {
 			return true
 		}
 	}
-	return harness == archive.HarnessCursor && inCursorAgent(env)
+	return projectRuntime(env, harness) != ""
 }
 
 // createHandoffWorktree adds a worktree on a new branch at HEAD beside dir's

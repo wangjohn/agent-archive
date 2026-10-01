@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 	"github.com/wangjohn/agent-archive/internal/testutil/importgraph"
 )
 
@@ -87,5 +88,15 @@ func TestCanonicalDoesNotCopyDescriptors(t *testing.T) {
 		if allocs := testing.AllocsPerRun(100, func() { Canonical(Builtins(), name) }); allocs != 0 {
 			t.Fatalf("canonical %s allocates %g", name, allocs)
 		}
+	}
+}
+
+func TestNativeLaunchRuntimeHaveNoHostDependencies(t *testing.T) {
+	t.Parallel()
+	prefix := "github.com/wangjohn/agent-archive/internal/"
+	for _, pkg := range []string{"agentapi", "agents/claude", "agents/codex", "agents/cursor"} {
+		direct, all := importgraph.Imports(t, prefix+pkg)
+		importgraph.Forbid(t, pkg, direct, "os")
+		importgraph.Forbid(t, pkg, all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
 	}
 }

@@ -58,7 +58,7 @@ func (s *Store) subagentCandidatePath(id string) string {
 // a later event to replace the path or ownership established by the first.
 // AgentType is not part of ownership: the first non-empty one is kept.
 func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
-	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
+	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || !safeFileComponent(candidate.ParentArchiveSessionID) || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
 	if _, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID); err != nil {

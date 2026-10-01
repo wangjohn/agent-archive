@@ -52,7 +52,7 @@ func queryLabel(query string) string {
 
 // skippedSessions is the calling agent's own session, which a title never
 // offers: the person names another. A direct handoff (--to) starts from it.
-func skippedSessions(opts *handoffOptions, env currentSessionDependencies) map[string]bool {
+func skippedSessions(opts *handoffOptions, env currentSessionDependencies) map[agentmeta.SessionKey]bool {
 	if opts.to != "" {
 		return nil
 	}
@@ -128,9 +128,9 @@ type handoffQueryResolver struct {
 	stderr      io.Writer
 	env         handoffCommandDependencies
 
-	// skip holds the native IDs of the agent session running the command,
+	// skip holds the qualified identities of the agent session running the command,
 	// which a title does not offer (as --latest passes over it).
-	skip  map[string]bool
+	skip  map[agentmeta.SessionKey]bool
 	store storage.ObjectStore
 	// scope is where the title looks first.
 	scope sessionScope
@@ -259,7 +259,9 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 		return nil
 	}
 	exact := func(rows []handoffPickerRow) []handoffPickerRow {
-		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return r.skip[row.metadata.NativeSessionID] })
+		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
+			return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)]
+		})
 		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields { return sessionFields{SessionID: row.metadata.SessionID} })
 	}
 	if found := exact(local); len(found) > 0 {
@@ -280,12 +282,12 @@ func (r *handoffQueryResolver) within(rows []handoffPickerRow) []handoffPickerRo
 }
 
 // match keeps the rows the query matches, in order, leaving out the sessions
-// whose native ID is in skip and archived ones with no prompt, which the
+// whose qualified identity is in skip and archived ones with no prompt, which the
 // picker does not offer either (an ID still names those: exactID). An exact
 // ID wins outright.
 func (r *handoffQueryResolver) match(rows []handoffPickerRow) []handoffPickerRow {
 	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
-		return r.skip[row.metadata.NativeSessionID] || archivedWithoutPrompt(row.metadata)
+		return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)] || archivedWithoutPrompt(row.metadata)
 	})
 	return matchPool(rows, r.q, func(row handoffPickerRow) sessionFields {
 		return fieldsOf(row.metadata, sessionProjectName(row.metadata, r.labels))

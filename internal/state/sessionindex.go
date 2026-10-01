@@ -207,33 +207,9 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 		// A committed registration disappeared; its old ID must not be revived.
 	}
 	if !found {
-		legacy, adopted, err := s.legacySessionID(key)
-		if err != nil {
-			return "", false, err
-		}
-		if adopted {
-			err := s.writeIndexUnderRequestLock(legacy, qualifiedSessionIndexPath(s.home, key), func() error {
-				valid, err := s.matchingRegistration(key, legacy)
-				if err != nil {
-					return err
-				}
-				if !valid {
-					return errIndexMoved
-				}
-				return nil
-			}, func(current fileSnapshot) (any, bool, error) {
-				if current.found {
-					return nil, false, errIndexMoved
-				}
-				return indexEntry(key, legacy), true, nil
-			})
-			if err != nil {
-				return "", false, err
-			}
-			if err := s.indexStep("adoption"); err != nil {
-				return "", false, err
-			}
-			return legacy, false, nil
+		legacy, adopted, err := s.adoptLegacySessionIndex(key)
+		if err != nil || adopted {
+			return legacy, false, err
 		}
 	}
 	if err := s.sessionIndexMissAllowed(); err != nil {
@@ -374,4 +350,36 @@ func (s *Store) writeIndexUnderRequestLock(id, path string, check func() error, 
 	indexStore := *s
 	indexStore.onWriteSync = s.onIndexSync
 	return indexStore.writeUnderRequestLock(id, path, check, change)
+}
+
+func (s *Store) adoptLegacySessionIndex(key agentmeta.SessionKey) (string, bool, error) {
+	legacy, adopted, err := s.legacySessionID(key)
+	if err != nil {
+		return "", false, err
+	}
+	if adopted {
+		err := s.writeIndexUnderRequestLock(legacy, qualifiedSessionIndexPath(s.home, key), func() error {
+			valid, err := s.matchingRegistration(key, legacy)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return errIndexMoved
+			}
+			return nil
+		}, func(current fileSnapshot) (any, bool, error) {
+			if current.found {
+				return nil, false, errIndexMoved
+			}
+			return indexEntry(key, legacy), true, nil
+		})
+		if err != nil {
+			return "", false, err
+		}
+		if err := s.indexStep("adoption"); err != nil {
+			return "", false, err
+		}
+		return legacy, true, nil
+	}
+	return "", false, nil
 }
