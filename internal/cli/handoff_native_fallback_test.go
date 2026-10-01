@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -135,6 +136,15 @@ func TestIncompleteLatestRecipesKeepCandidateCheckout(t *testing.T) {
 	if err := os.Mkdir(f.cwd, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	checkoutLink := filepath.Join(t.TempDir(), "checkout-link")
+	if err := os.Symlink(f.cwd, checkoutLink); err != nil {
+		t.Fatal(err)
+	}
+	f.cwd = checkoutLink
+	canonical, err := filepath.EvalSymlinks(f.cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.add(t, "claude", "native-known", "Other checkout work", 0)
 	bad := f.add(t, "claude", "native-bad", "Malformed", 0)
 	if err := os.WriteFile(bad, []byte("{}\n"), 0o600); err != nil {
@@ -143,10 +153,10 @@ func TestIncompleteLatestRecipesKeepCandidateCheckout(t *testing.T) {
 	elsewhere := t.TempDir()
 	f.env.WorkingDir = func() (string, error) { return elsewhere, nil }
 	_, stderr, code := runHandoff(t, f.env, "--latest", "--project", f.cwd)
-	if code != 1 || !strings.Contains(stderr, "--source local --project "+shellQuote(f.cwd)) {
+	if code != 1 || !strings.Contains(stderr, "--source local --project "+shellQuote(canonical)) {
 		t.Fatalf("recipe lost candidate checkout: code=%d stderr=%s", code, stderr)
 	}
-	out, stderr, code := runHandoff(t, f.env, "native-known", "--harness", "claude", "--source", "local", "--project", f.cwd)
+	out, stderr, code := runHandoff(t, f.env, "native-known", "--harness", "claude", "--source", "local", "--project", canonical)
 	if code != 0 || !strings.Contains(out, "Other checkout work") {
 		t.Fatalf("recipe cannot resolve candidate: code=%d stderr=%s", code, stderr)
 	}
