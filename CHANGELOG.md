@@ -307,11 +307,47 @@ follow [Semantic Versioning](https://semver.org/).
   redaction as your prompts; the link is kept
   only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
   that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
-  `last-prompt` records are still dropped. `list`, `show`, and `handoff` do
-  not show the new fields yet. The next sync re-reads and republishes each
-  session whose transcript is still on the Mac, so it can carry them. See the
+  `last-prompt` records are still dropped. The next sync re-reads and
+  republishes each session whose transcript is still on the Mac, so it can
+  carry them; `list`, `show`, and the handoff picker show them as described
+  below. See the
   [filter changelog](dev/specs/privacy-filter-changelog.md) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list`, `show`, and `handoff` start from the repository you are in.**
+  Run inside a project, `agent-archive list` and `list --json` now return
+  that repository's sessions (every checkout and worktree of it, and its
+  sessions from other Macs) where they returned all of them. Scripts that
+  read every session pass `--all-projects`. The text listing and the
+  handoff picker carry a heading that names what is shown, and on a terminal
+  `a`, typed alone, switches between the repository and all projects. When
+  the repository has no sessions they open on all projects and say so.
+  `--project DIR|NAME` (new for `list`, and now for every `handoff`
+  selection, not only `--latest`) picks another project by directory or by
+  name. `handoff "<title>"` looks in the repository first and says how many
+  more match in other projects. Outside any project nothing changes.
+  `list --json` gains an optional `scope` object
+  (`{"label", "all_projects", "fell_back", "outside_matches"}`) and keeps
+  `schema_version` 4.
+- The session table and the handoff picker leave out a HARNESS or PROJECT
+  column every row shares and name the value in the heading, add a PR column
+  (the last pull request the session linked or created) when a row has one, dim the ID
+  in the picker, and mark a session active in the last 2 minutes with a dot.
+- **Rows and `show` now show the name you gave the session in your agent, its
+  branch, and its linked pull requests.** A row in `list`, the handoff picker,
+  and the browser shows the session's name (the one in Claude Code's sidebar,
+  set from your prompt or by `/rename`, or a Cursor chat's name) where it
+  showed a preview of your first prompt, and still shows the preview for a
+  session with no name. `show`'s summary uses the name as its heading, with
+  the first prompt as a `Prompt` row, and gains `Branch` and `PRs` rows (the
+  last git branch the session recorded, and the pull requests it was linked
+  to). Metadata from parser `0.17.0` carries them as the optional `name`,
+  `branch`, and `pull_requests` fields (see
+  [JSON output](docs/reference/json-output.md#show)), so the collector
+  refreshes every published session's metadata once, from what is already
+  archived; a session gets its name only if it was published by filter 13, which
+  the next sync does for sessions whose transcript is still on the Mac. The
+  handoff picker's rows for sessions not yet uploaded are cut to 72
+  characters like published ones, not by display width.
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
@@ -417,6 +453,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- On a busy Mac, setup no longer warns "Could not prune capture diagnostics
+  for excluded projects", leaving a project it had just excluded named in the
+  local diagnostics file, when a hook recorded a diagnostic at the same time.
+  Hooks that fire together are also far less likely to drop each other's
+  diagnostics.
+  Each writer held the diagnostics lock through its write's disk syncs, which
+  could outlast setup's two-second wait for that lock and a hook's 50 ms one.
+  Writers now sync before taking the lock and hold it only to reread, check
+  and rename the file, and setup waits up to ten seconds for it, since a
+  rename alone can stall for over a second while other programs sync.
 - The `handoff` picker no longer offers archived subagent sessions. They
   filled the first screen under their orchestrator (one had 45 of them) and
   were counted in "Showing 50 of 659", though only top-level sessions can be
@@ -455,6 +501,14 @@ follow [Semantic Versioning](https://semver.org/).
   now stays on one line whenever it fits. And the path of a page saved with
   `h` is printed after a signal ends the interactive screen too, as it is
   after a quit.
+- A hook no longer fails with "another collector or setup is running", and
+  loses that turn's evidence, when the collector, an import, or
+  `agent-archive feedback` writes to the same session at the same moment on a
+  busy Mac. Those writers held the session's lock, which a hook waits only a
+  second for, through the write's disk syncs, which can take longer; they now
+  sync first and hold the lock only to check and rename the file. Subagent
+  records are written the same way. Forgetting a session also no longer
+  waits, under that lock, for a subagent record another process is writing.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

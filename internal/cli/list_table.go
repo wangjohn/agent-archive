@@ -2,6 +2,8 @@ package cli
 
 import (
 	"io"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -126,11 +128,71 @@ func printSessionHeader(tw *tabwriter.Writer, opts listFormatOptions) {
 		terminal.Println(tw, "TITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
 		return
 	}
+	terminal.Println(tw, strings.Join(tableHeader(opts), "\t"))
+}
+
+// tableHeader is the column names of the plain table, left out where opts
+// hides a column.
+func tableHeader(opts listFormatOptions) []string {
+	var cols []string
 	if opts.Numbered {
-		terminal.Println(tw, "#\tTITLE\tWHEN\tHARNESS\tPROJECT\tID")
-		return
+		cols = append(cols, "#")
 	}
-	terminal.Println(tw, "TITLE\tWHEN\tHARNESS\tPROJECT\tID")
+	cols = append(cols, "TITLE")
+	if opts.ShowPR {
+		cols = append(cols, "PR")
+	}
+	cols = append(cols, "WHEN")
+	if !opts.HideHarness {
+		cols = append(cols, "HARNESS")
+	}
+	if !opts.HideProject {
+		cols = append(cols, "PROJECT")
+	}
+	return append(cols, "ID")
+}
+
+// liveMark leads the title of a session active right now.
+const liveMark = "●"
+
+// tableCells is one row of the plain table, in tableHeader's columns.
+func tableCells(r listRow, opts listFormatOptions) []string {
+	title := r.Title
+	if opts.LiveMarks {
+		// Room for the dot on every row, so titles stay aligned.
+		if r.Live {
+			title = liveMark + " " + title
+		} else {
+			title = "  " + title
+		}
+	}
+	if r.SkillHint != "" {
+		if opts.Style.color {
+			title += opts.Style.dim(r.SkillHint)
+		} else {
+			title += r.SkillHint
+		}
+	}
+	id := archive.DisplayLine(r.ShortID)
+	if opts.DimID && opts.Style.color {
+		id = opts.Style.dim(id)
+	}
+	var cells []string
+	if opts.Numbered {
+		cells = append(cells, strconv.Itoa(r.Index))
+	}
+	cells = append(cells, title)
+	if opts.ShowPR {
+		cells = append(cells, r.PR)
+	}
+	cells = append(cells, r.When)
+	if !opts.HideHarness {
+		cells = append(cells, r.Harness)
+	}
+	if !opts.HideProject {
+		cells = append(cells, r.Project)
+	}
+	return append(cells, id)
 }
 
 func printSessionRow(tw *tabwriter.Writer, r listRow, opts listFormatOptions) {
@@ -144,19 +206,5 @@ func printSessionRow(tw *tabwriter.Writer, r listRow, opts listFormatOptions) {
 			r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
 		return
 	}
-	title := r.Title
-	if r.SkillHint != "" {
-		if opts.Style.color {
-			title += opts.Style.dim(r.SkillHint)
-		} else {
-			title += r.SkillHint
-		}
-	}
-	if opts.Numbered {
-		terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
-			r.Index, title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
-		return
-	}
-	terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\n",
-		title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
+	terminal.Println(tw, strings.Join(tableCells(r, opts), "\t"))
 }

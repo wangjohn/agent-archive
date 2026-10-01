@@ -107,10 +107,11 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	}
 }
 
-// summaryTitle is the session's title as one display line, or its short ID
-// when it has none.
+// summaryTitle is the session's display title (the name its agent gave it,
+// else the first prompt) as one display line, or its short ID when it has
+// neither.
 func summaryTitle(m archive.Metadata) string {
-	if title := strings.TrimSpace(archive.DisplayLine(m.Title)); title != "" {
+	if title := strings.TrimSpace(archive.DisplayLine(archive.DisplayTitle(m))); title != "" {
 		return title
 	}
 	return archive.DisplayLine(shortSessionID(m.SessionID))
@@ -134,6 +135,11 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 			rows = append(rows, summaryRow{label: label, values: values})
 		}
 	}
+	// The heading is the name when the session has one, so the first prompt,
+	// which was the heading before, is a row of its own.
+	if m.Name != "" {
+		add("Prompt", archive.DisplayLine(m.Title))
+	}
 	add("When", summaryWhen(m, opts))
 	agent := appName(archive.DisplayLine(m.Harness.Name))
 	if v := archive.DisplayLine(m.Harness.Version); v != "" {
@@ -143,7 +149,9 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	add("Model", summaryModels(m.Models)...)
 	add("Activity", wrapList(summaryActivity(m.Counts), " · ", width)...)
 	add("Tools", wrapList(summaryTools(m.ToolsUsed), " · ", width)...)
+	add("Branch", archive.DisplayLine(m.Branch))
 	add("Git", wrapList(summaryGit(m), " · ", width)...)
+	add("PRs", wrapList(summaryLinkedPRs(m.PullRequests), " · ", width)...)
 	add("Skills", wrapList(displayAll(skillNames(m)), ", ", width)...)
 	add("Subagents", summarySubagents(m, view.LinkedAvailability))
 	if m.ParentSessionID != "" {
@@ -400,6 +408,16 @@ func summaryGit(m archive.Metadata) []string {
 	}
 	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRCreated, m.Counts.PRsCreated, "opened")...)
 	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRMerged, m.Counts.PRsMerged, "merged")...)
+	return items
+}
+
+// summaryLinkedPRs is owner/repo#n for each pull request the session was
+// linked to, as many as the metadata holds.
+func summaryLinkedPRs(links []archive.PullRequestLink) []string {
+	items := make([]string, 0, len(links))
+	for _, link := range links {
+		items = append(items, fmt.Sprintf("%s#%d", archive.DisplayLine(link.Repository), link.Number))
+	}
 	return items
 }
 
