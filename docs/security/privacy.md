@@ -2,7 +2,7 @@
 
 agent-archive copies your coding-agent sessions to a bucket you own. This
 page says what that copy contains, what is kept out of it, what the tool
-changes on your Mac, and where its protections stop. The per-version history
+changes on your machine, and where its protections stop. The per-version history
 of the filter is in the [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
 ## Threat model
@@ -22,7 +22,7 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   customer's personal data, or proprietary source code in a tool result is
   archived as it appears. Treat the archive as being as sensitive as your
   terminal history and your repositories.
-- **Where it runs.** Only on a Mac you set it up on, only for projects you
+- **Where it runs.** Only on a machine you set it up on, only for projects you
   include, and only for sessions that start after a project is included
   (or that you import with `backfill`, after reviewing the plan). Nothing is
   sent anywhere but your bucket: there is no hosted service and no
@@ -33,7 +33,7 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   for a coding agent, so a planted or altered session is text another agent
   will read: readers check each source's SHA-256 against its metadata,
   which catches corruption but not someone who can write both. Give write
-  access only to Macs you trust, and treat a handoff from a shared bucket
+  access only to machines you trust, and treat a handoff from a shared bucket
   like any other text you paste into an agent (see
   [handoff](../guides/handoff.md#what-the-receiving-agent-is-told)).
 - **The recorded agent runs as you.** The coding agent whose session is
@@ -55,8 +55,10 @@ For each captured session, two objects (see
 [bucket layout](../reference/bucket-layout.md)): the source bundle, which
 holds the filtered transcript, skill evidence, and hook observations, and
 the metadata sidecar. The sidecar's optional `title` is a short, truncated
-preview of the first filtered human prompt (for `list`); it is still
-filter-derived text stored in the bucket, not a separate redaction pass.
+preview of the first filtered human prompt, and its optional `name` the
+session's name as the filtered transcript holds it (the last Claude Code
+session name, or Cursor's chat name), cut the same way (for `list`); both
+are filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
   replies; tool calls with their arguments (Edit bodies, shell commands,
@@ -94,7 +96,7 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   pending work rebuilt under the new mode, but does not remove copies already
   on disk or in the bucket. Older source objects can remain after replacement;
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
-- **Metadata**: the machine ID of the Mac that captured it (random, made at
+- **Metadata**: the machine ID of the machine that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
   a repository key (below), the app and its version, the app's own session ID, capture times and the
   session's last record time, counts (including how many distinct files were
@@ -103,7 +105,9 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   called and how often, token counts (in total and per model), the git work
   the session's tool calls confirmed (commit SHAs, branch names, `owner/repo`,
   pull request numbers and links; never commit messages, pull request text,
-  or commands), and the
+  or commands), the last Git branch the transcript recorded, the pull
+  requests a Claude Code session linked (`owner/repo`, number, and GitHub
+  link), and the
   capture gaps the filter recorded (the names of omitted fields, never their
   values).
 - **Repository key** (`repo_key`, in the metadata): when a project is a git
@@ -133,7 +137,7 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
 
-agent-archive adds nothing else about your Mac: no hostname, username, or
+agent-archive adds nothing else about your machine: no hostname, username, or
 IP address, beyond what already appears in the transcript (a working
 directory usually contains your username). Your storage provider sees each
 connection, as it would for any upload.
@@ -161,8 +165,9 @@ and uploaded with the session.
   kept.
 - **Your credentials.** On macOS, R2 secrets are in the Keychain; S3
   credentials stay in your AWS profile. Neither appears in files, arguments,
-  logs, or the bucket. See [Where credentials are kept](#where-credentials-are-kept)
-  for a build with no Keychain.
+  logs, or the bucket. On Linux, which has no Keychain, an R2 secret is in a
+  private file (not encrypted) in the data directory, never in arguments,
+  logs, or the bucket. See [Where credentials are kept](#where-credentials-are-kept).
 
 Recognizable secrets inside kept text are replaced with `[REDACTED]` (see
 [value-level redaction](../../dev/specs/privacy-filter.md#value-level-redaction)). Each omission and
@@ -177,7 +182,7 @@ still uses an older filter. It writes a private, expiring plan under the local
 data directory. `agent-archive purge plan --mode old-filter --before-filter 13`
 narrows deletion candidates to unreferenced sources made by older filter
 versions; replace `13` with the version you are upgrading to. Review the
-printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
+printed bucket, prefix, keys, sizes, and digest. Pause **every** machine uploading
 to the prefix, then run `agent-archive purge apply PLAN` within five minutes
 and enter the digest prefix, or pass `--yes` for a noninteractive run. The
 command rereads all metadata before each source deletion and writes a report
@@ -193,8 +198,8 @@ A new filter version (see the [filter changelog](../../dev/specs/privacy-filter-
 applies to what is uploaded from then on. It does not clean what is already
 in the bucket:
 
-- **Sessions whose transcript is still on the capturing Mac** are refiltered
-  and republished automatically on that Mac's next passes. The copy made
+- **Sessions whose transcript is still on the capturing machine** are refiltered
+  and republished automatically on that machine's next passes. The copy made
   with the old filter becomes a privacy-sensitive predecessor. After the new
   publication passes metadata and source read-back verification, retention
   removes the old copy after the 24-hour reader grace interval. A failed
@@ -209,7 +214,7 @@ in the bucket:
   from the old one (a new redaction label, say), the collector cannot tell
   the restored file from a rewritten one: the archived copy is kept, and
   records added to that transcript afterwards are not archived.
-- **Sessions whose transcript is gone** (deleted, or on a Mac that no longer
+- **Sessions whose transcript is gone** (deleted, or on a machine that no longer
   runs agent-archive) are never refiltered: their current copy stays as the
   old filter made it until the session expires.
 - **Sessions in an earlier destination** (after you changed storage) are
@@ -217,11 +222,11 @@ in the bucket:
 
 `show` prints a session's filter version (`filter_version` in `show --json`). To remove the older copies now,
 delete from the bucket the source objects no session's metadata points at.
-Pause every Mac that uploads to the bucket first, so no publication is in
+Pause every machine that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.
 This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
 credentials that can list, read, and delete under the prefix. Keep **every**
-uploading Mac paused until the plan has been applied. Run the following blocks
+uploading machine paused until the plan has been applied. Run the following blocks
 in the **same bash or zsh shell**; a plan expires after five minutes and can
 only be applied once. If anything fails, start again with a new plan. External
 writers can still race a shell recipe, so these commands cannot provide an
@@ -231,7 +236,7 @@ First, list what would be deleted:
 
 <!-- purge-recipe:list (scripts/test_purge_recipe.py runs the three blocks below) -->
 ```sh
-agent-archive pause            # on every Mac that uploads to this bucket
+agent-archive pause            # on every machine that uploads to this bucket
 
 bucket=my-archive-bucket       # your bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty
@@ -414,10 +419,10 @@ within five minutes in that shell.
 purge_prepare old 10
 ```
 
-When you are done, run `agent-archive resume` on every Mac you paused.
+When you are done, run `agent-archive resume` on every machine you paused.
 
 A session deleted this way is gone from `list`; if its transcript is still
-on the capturing Mac and changes again, that Mac publishes it anew. On an S3
+on the capturing machine and changes again, that machine publishes it anew. On an S3
 bucket with versioning turned on, a delete only hides the object: remove
 the noncurrent versions too, or add a lifecycle rule that expires them.
 
@@ -427,13 +432,13 @@ Setup also installs an [`agent-archive` skill](../guides/agent-skills.md) in
 each app, so that a coding agent can pull in a past session when you ask. It
 reads through the same commands you run: `handoff`, `list`, `show`, and
 `status`. That is the filtered content the [archive holds](#what-is-uploaded)
-(a session found on this Mac is filtered the same way before it is printed),
+(a session found on this machine is filtered the same way before it is printed),
 cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
 nothing broader: no bucket credentials, no raw transcript files, no files of
 your projects. `status` adds your setup's summary: the storage destination,
 the included project folders, and the state of capture. `list` shows titles
-(each is the session's first prompt) across all your projects. Three things
-follow.
+(each is the session's name, else its first prompt) across all your
+projects. Three things follow.
 
 - **It is shown to that agent's provider.** A pulled-in session becomes part
   of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and
@@ -457,24 +462,30 @@ follow.
   skill; it does not stop an agent you have given a shell from running
   `agent-archive`.
 
-## What changes on your Mac
+## What changes on your machine
 
-The `hooks` entry of each included app's settings file, one LaunchAgent, two
+The `hooks` entry of each included app's settings file, one background job (a
+LaunchAgent on macOS; on Linux a systemd user timer and service in
+`~/.config/systemd/user`), two
 agent skill files per app location (`agent-archive` and `/handoff`, marked so
 uninstall removes only setup's), local state private to your account
-(transcripts are read in place, not copied), and, for R2, one Keychain item (a
-credentials file on a build without a Keychain: [below](#where-credentials-are-kept)). The full list, and what uninstall
-removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-mac).
+(transcripts are read in place, not copied), and, for R2, one Keychain item on
+macOS or a credentials file on Linux ([below](#where-credentials-are-kept)).
+When it reads a Cursor chat database it works from a temporary copy, which
+holds every Cursor chat, including those of projects you did not include, and
+is deleted when the read ends (an abandoned one by the next read): on macOS in your per-user temporary
+folder, on Linux in `~/.cache/agent-archive/cursor-snapshots` (or under
+`XDG_CACHE_HOME`; mode 0700, never `/tmp`, and tagged so backup tools that
+honor `CACHEDIR.TAG` skip it). The full list, and what uninstall
+removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-machine).
 
 ## Where credentials are kept
 
-What follows is how the code stores an R2 secret; it is not a statement about
-which platforms are supported.
+What follows is how the code stores an R2 secret on each platform.
 
-- **macOS build:** the login Keychain, under the service `agent-archive`. The
+- **macOS:** the login Keychain, under the service `agent-archive`. The
   secret is never written to a file.
-- **A build for another platform (Linux), which has no Keychain:** the secret
-  is stored **on disk**, in a file per credential, `<data directory>/credentials/<reference>.json`,
+- **Linux, which has no Keychain:** the secret is stored **on disk**, in a file per credential, `<data directory>/credentials/<reference>.json`,
   created with mode 0600 in a folder with mode 0700 (the data directory is
   `~/.local/share/agent-archive` or `AGENT_ARCHIVE_HOME`). It is written to a
   temporary file that is created 0600 and renamed into place, so it is never
@@ -489,8 +500,8 @@ which platforms are supported.
   `uninstall --delete-local-data`.
 - **Better on Linux: an S3 profile.** S3 credentials stay in your AWS
   shared credentials or SSO configuration, which can be short-lived or
-  role-based, and agent-archive stores no secret of its own. Prefer it to the
-  credentials file where you can.
+  role-based, and agent-archive stores no secret of its own. We recommend an
+  S3 profile on Linux over the credentials file wherever you can use one.
 - **Containers and services: environment variables.** Where no credentials
   file exists for the reference, agent-archive reads the R2 key from
   `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`

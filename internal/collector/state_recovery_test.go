@@ -18,6 +18,7 @@ import (
 // A well-formed file of an unexpected shape, as a newer version might leave
 // behind before a downgrade, is reported but never moved aside.
 func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	if err := os.WriteFile(registrationPath(local, "newer"), []byte(`{"archive_session_id":["not","a","string"]}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -34,6 +35,7 @@ func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 // A file corrupted again after an earlier quarantine is moved aside next to
 // the first copy, never over it.
 func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	for range 2 {
 		corruptFile(t, requestPath(local, "orphan"))
@@ -49,6 +51,7 @@ func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
 // A registration that cannot be read at all (here: no permission) is
 // counted as outstanding work.
 func TestUnreadableRegistrationCountsAsPending(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -104,8 +107,10 @@ func uploadedByAnotherBuild(t *testing.T, local *state.Store, store storage.Obje
 // source is published and supersedes the old one, whether or not the old one
 // is still in storage. The pass after that has nothing left to do.
 func TestParserUpgradeRepublishesSourceThisBuildBuildsDifferently(t *testing.T) {
+	t.Parallel()
 	for _, oldSourceGone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "old source present", true: "old source missing"}[oldSourceGone], func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			store := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
@@ -174,8 +179,10 @@ func (s *sourceReadCounter) Stat(ctx context.Context, key string) (storage.Objec
 // this parser cannot do: later passes neither retry it nor read the source
 // again, and status counts it.
 func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
+	t.Parallel()
 	for _, damage := range []string{"missing", "different"} {
 		t.Run(damage, func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			memory := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
@@ -250,6 +257,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 // recorded rather than retried on every pass, counted in status, and the
 // record is dropped once the session publishes again.
 func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -308,6 +316,7 @@ func (s *blockingPutStore) Put(ctx context.Context, key string, data []byte) err
 // A session cut off by the pass's deadline mid-upload is not a failure: its
 // publication stays pending for the next pass.
 func TestSessionCutOffByPassDeadlineIsNotAFailure(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := &blockingPutStore{MemoryStore: storagetest.NewMemoryStore(), started: make(chan struct{}, 1)}
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {

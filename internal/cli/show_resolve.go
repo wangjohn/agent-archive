@@ -69,7 +69,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	if !browseInteractive(env, stdin, stdout) {
 		terminal.Printf(stderr, "agent-archive: show: %q matches %d sessions; pass a SESSION_ID or run show on a terminal to pick one\n", archive.DisplayLine(query), len(matches))
 		for _, m := range matches {
-			label := m.Title
+			label := archive.DisplayTitle(m)
 			if label == "" {
 				label = m.SessionID
 			}

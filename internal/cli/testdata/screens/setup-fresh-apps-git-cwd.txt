@@ -50,7 +50,7 @@ Step 3 of 3 · Ready to start
 
   Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Start archiving?
   1) Yes, start archiving
@@ -73,6 +73,6 @@ Check progress with agent-archive status.
 
 Looking for past sessions in these projects… none to import.
 
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app
 [exit 0]

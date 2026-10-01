@@ -16,6 +16,7 @@ import (
 // nothing in status. It now applies to what the filter keeps; the raw file
 // may be rawSizeFactor times larger. Here the limit is scaled down to 64 KiB.
 func TestSizeLimitAppliesToTheFilteredTranscript(t *testing.T) {
+	t.Parallel()
 	const limit = 64 << 10
 	transcript := func(results int) string {
 		var b strings.Builder
@@ -55,6 +56,7 @@ func TestSizeLimitAppliesToTheFilteredTranscript(t *testing.T) {
 // What the filter keeps is itself limited: a transcript that is all
 // retained text past the limit is the same gap.
 func TestFilteredTranscriptOverTheLimitIsAGap(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	var b strings.Builder

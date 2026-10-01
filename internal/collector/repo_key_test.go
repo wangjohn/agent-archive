@@ -53,6 +53,7 @@ var (
 )
 
 func TestPublicationCarriesTheRegistrationsRepoKeyWithoutAskingGit(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = widgetKey
@@ -68,6 +69,7 @@ func TestPublicationCarriesTheRegistrationsRepoKeyWithoutAskingGit(t *testing.T)
 }
 
 func TestPublicationDerivesTheRepoKeyFromTheProjectRootWhenTheRegistrationHasNone(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
@@ -82,6 +84,7 @@ func TestPublicationDerivesTheRepoKeyFromTheProjectRootWhenTheRegistrationHasNon
 }
 
 func TestPublicationWithoutARepoKeyOmitsTheField(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
@@ -100,6 +103,7 @@ func TestPublicationWithoutARepoKeyOmitsTheField(t *testing.T) {
 // Only a hash may reach the sidecar, whatever a lookup or a registration
 // hands the collector.
 func TestPublicationNeverCarriesAnythingButARepoKey(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = "https://user:synthetic-token@example.test/acme/widget.git"
@@ -119,8 +123,12 @@ func TestPublicationNeverCarriesAnythingButARepoKey(t *testing.T) {
 // A sidecar from any earlier parser gains repo_key, once: 0.13.0 predates the
 // token fields, 0.15.0 is the last parser before repo_key.
 func TestParserUpgradeGivesAnOldSidecarItsRepoKeyOnce(t *testing.T) {
+	t.Parallel()
 	for _, oldVersion := range []string{"0.13.0", "0.15.0"} {
-		t.Run(oldVersion, func(t *testing.T) { checkOldSidecarGainsRepoKey(t, oldVersion) })
+		t.Run(oldVersion, func(t *testing.T) {
+			t.Parallel()
+			checkOldSidecarGainsRepoKey(t, oldVersion)
+		})
 	}
 }
 
@@ -177,6 +185,7 @@ func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
 }
 
 func TestRefreshSweepAsksGitOncePerProjectRoot(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)

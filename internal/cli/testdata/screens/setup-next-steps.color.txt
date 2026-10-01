@@ -56,7 +56,7 @@ Checking your storage connection…
   \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mStart archiving?\e[0m
   1) Yes, start archiving
@@ -79,6 +79,6 @@ Check progress with \e[36magent-archive status\e[0m.
 
 Looking for past sessions in these projects… none to import.
 
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app\e[0m
 [exit 0]

@@ -218,7 +218,8 @@ func TestCursorSQLiteMetadataRegeneration(t *testing.T) {
 
 // TestCursorSQLiteReadLocalBundle: `handoff --source local` reads a Cursor
 // database chat as a pass would, and its last activity is the chat's
-// lastUpdatedAt; a chat Cursor deleted is ErrNoTranscript.
+// lastUpdatedAt; a chat Cursor deleted is ErrNoTranscript. Not parallel: it
+// checks the snapshot folder is empty after the read.
 func TestCursorSQLiteReadLocalBundle(t *testing.T) {
 	home := t.TempDir()
 	db := newCursorDB(t, true)

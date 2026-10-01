@@ -440,6 +440,10 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.CaptureDiagnostics = nil
 	}
 	view.CaptureDiagnostics = capture.IncludedDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
+	if env.copiedFromAnotherMachine(cfg) {
+		first, rest := copiedMachineWarning(home)
+		view.Warnings = append(view.Warnings, strings.Join(append([]string{first}, rest...), " "))
+	}
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {
 		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "storage-health.json"), err, "The background collector checks storage again and replaces it within a few minutes."))
@@ -1773,7 +1777,7 @@ func pairProgress(pair projectCaptureStatus) string {
 func (sc statusScreen) readBackFailure(failure verificationEvidence) string {
 	text := "Read-back failed"
 	if failure.Outcome == verificationOutcomeMismatch {
-		text = "Read-back doesn't match what this Mac uploaded"
+		text = "Read-back doesn't match what this machine uploaded"
 	}
 	if failure.LastError != "" {
 		text += ": " + failure.LastError
@@ -2061,7 +2065,7 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 }
 
 // shortPrivacyReason is why bucket privacy isn't verified, in a few words,
-// for the short status. Only when this Mac can't inspect the bucket at all
+// for the short status. Only when this machine can't inspect the bucket at all
 // does the provider's guidance (checking public access by hand) fix it, so
 // only then is its link added; --verbose always has it.
 func (sc statusScreen) shortPrivacyReason(report storage.PrivacyReport) string {
@@ -2482,7 +2486,7 @@ func printAppDetails(out io.Writer, app appStatus) {
 	}
 	terminal.Printf(out, "  %s: %s (%s; %d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Code, app.Sessions, gaps, app.Hooks)
 	if app.Trust == "unknown" {
-		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
+		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.")
 	}
 	terminal.Printf(out, "    Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
 	if app.Capabilities.FreshStart.State == capabilityUnavailable {

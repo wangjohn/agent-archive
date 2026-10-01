@@ -19,6 +19,6 @@ Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
 
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
 [exit 0]

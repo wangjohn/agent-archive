@@ -17,7 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// handoffTitleScanLimit is how many of this Mac's sessions, newest activity
+// handoffTitleScanLimit is how many of this machine's sessions, newest activity
 // first, a title search reads. A local session's title is its first prompt,
 // which takes reading its transcript, so the search is bounded as the picker
 // is; a session past it that was uploaded is found in the archive instead.
@@ -70,11 +70,16 @@ const handoffCandidateLimit = 20
 // matches as show does (a title substring, a short ID or an ID prefix, an
 // exact ID winning) over titles and metadata, never transcript content:
 //
-//  1. a session ID registered on this Mac (a subagent's too, as handoff
+//  1. a session ID registered on this machine (a subagent's too, as handoff
 //     always took), then, for a full ID, the archive (one read), which a
 //     title match may not shadow;
-//  2. this Mac's sessions, which need no network;
+//  2. this machine's sessions, which need no network;
 //  3. only when none of those match, the archive's.
+//
+// Inside a repository (or with --project), a title looks at that scope's
+// sessions first: this machine's, then the archive's, and only when none match
+// there, everywhere. A note on stderr says how many more match outside the
+// scope.
 //
 // Several matches print the candidates to stderr and exit 1 without a
 // terminal, and open the handoff picker limited to them with one. done is set
@@ -121,6 +126,11 @@ type handoffQueryResolver struct {
 	// which a title does not offer (as --latest passes over it).
 	skip  map[string]bool
 	store storage.ObjectStore
+	// scope is where the title looks first.
+	scope sessionScope
+	// archive is the archive's top-level sessions, read once (archiveRead).
+	archive     []handoffPickerRow
+	archiveRead bool
 	// archiveErr is why the archive could not be read, for the no-match
 	// message.
 	archiveErr error
@@ -133,7 +143,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	if opts.source != "archive" {
 		var err error
 		if regs, err = state.OpenReadOnly(r.home).LoadRegistrations(); err != nil {
-			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this Mac's sessions, searching the archive only: %v\n", err)
+			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
 		for _, reg := range regs {
 			if reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
@@ -148,27 +158,78 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			return 0, false
 		}
 	}
+	// Only a title needs the scope, and looking it up can run git.
+	var err error
+	if r.scope, err = scopeFor(r.env, opts.project, opts.allProjects); err != nil {
+		terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
+		return 1, true
+	}
 	scanned := false
+	var local []handoffPickerRow
 	if opts.source != "archive" {
 		stop := startActivity(r.stdout, "Finding sessions…")
 		picker := handoffPicker{ctx: ctx, env: r.env, home: r.home, harness: opts.harness, source: "local"}
 		rows, _, truncated := picker.rows(regs, nil, handoffTitleScanLimit)
 		stop()
-		scanned = truncated
-		if matches := matchHandoffRows(rows, r.query, r.skip); len(matches) > 0 {
+		local, scanned = rows, truncated
+	}
+	if r.scope.narrowed() {
+		if code, done, found := r.inScope(local); found {
+			return code, done
+		}
+	}
+	if opts.source != "archive" {
+		if matches := matchHandoffRows(local, r.query, r.skip); len(matches) > 0 {
 			return r.choose(matches)
 		}
 	}
 	if opts.source != "local" {
-		matches, err := r.archiveMatches()
-		if err != nil {
-			r.archiveErr = err
-		} else if len(matches) > 0 {
+		if matches := matchHandoffRows(r.archiveRows(), r.query, r.skip); len(matches) > 0 {
 			return r.choose(matches)
 		}
 	}
 	terminal.Println(r.stderr, r.noMatchMessage(scanned))
 	return 1, true
+}
+
+// inScope settles on the matches in the scope, this machine's before the
+// archive's, and says how many more match outside it. found is false when
+// nothing in the scope matches, and the search goes on everywhere; otherwise
+// code and done are choose's.
+func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done, found bool) {
+	within := func(rows []handoffPickerRow) []handoffPickerRow {
+		return slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return !r.scope.contains(row.metadata, row.reg) })
+	}
+	matches := matchHandoffRows(within(local), r.query, r.skip)
+	if len(matches) == 0 && r.opts.source != "local" {
+		matches = matchHandoffRows(within(r.archiveRows()), r.query, r.skip)
+	}
+	if len(matches) == 0 {
+		return 0, false, false
+	}
+	// The count covers what was searched. A title answered on this machine did not
+	// ask the archive, which needs the network, so its other matches are not in it.
+	seen := map[string]bool{}
+	outside := 0
+	for _, rows := range [][]handoffPickerRow{local, r.archive} {
+		for _, row := range matchHandoffRows(rows, r.query, r.skip) {
+			key := handoffRowKey(row.metadata)
+			if !seen[key] && !r.scope.contains(row.metadata, row.reg) {
+				outside++
+			}
+			seen[key] = true
+		}
+	}
+	if outside > 0 {
+		noun := "matches"
+		if len(matches) == 1 {
+			noun = "match"
+		}
+		terminal.Printf(r.stderr, "%d %s in %s (%d more in other projects: --all-projects or a project name finds them)\n",
+			len(matches), noun, archive.DisplayLine(r.scope.Label), outside)
+	}
+	code, done = r.choose(matches)
+	return code, done, true
 }
 
 // openArchive opens the archive's store once.
@@ -220,24 +281,30 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (harness
 	return found[0], true
 }
 
-// archiveMatches lists the archive's top-level sessions and matches the query
-// against their titles and IDs.
-func (r *handoffQueryResolver) archiveMatches() ([]handoffPickerRow, error) {
+// archiveRows is the archive's top-level sessions, read once. An archive
+// that cannot be read is none, with the reason kept for the no-match message
+// (or that of r.opts.source "local", which never reads it).
+func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
+	if r.archiveRead || r.opts.source == "local" {
+		return r.archive
+	}
+	r.archiveRead = true
 	store, err := r.openArchive()
 	if err != nil {
-		return nil, err
+		r.archiveErr = err
+		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, _, _, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
-		return nil, err
+		r.archiveErr = err
+		return nil
 	}
-	rows := make([]handoffPickerRow, 0, len(sessions))
 	for _, m := range topLevelSessions(sessions) {
-		rows = append(rows, handoffPickerRow{metadata: m, active: m.CapturedAt})
+		r.archive = append(r.archive, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
-	return matchHandoffRows(rows, r.query, r.skip), nil
+	return r.archive
 }
 
 // matchHandoffRows keeps the rows matchSessionsByQuery matches, in order,
@@ -319,19 +386,19 @@ func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, forma
 }
 
 func (r *handoffQueryResolver) noMatchMessage(scanLimited bool) string {
-	where, ok := map[string]string{"local": "on this Mac", "archive": "in the archive"}[r.opts.source]
+	where, ok := map[string]string{"local": "on this machine", "archive": "in the archive"}[r.opts.source]
 	if !ok {
-		where = "on this Mac or in the archive"
+		where = "on this machine or in the archive"
 	}
 	message := fmt.Sprintf("agent-archive: handoff: no session matches %q %s (see `agent-archive list`)", queryLabel(r.query), where)
 	if r.opts.harness != "" {
 		message += " for " + r.opts.harness
 	}
 	if scanLimited {
-		message += fmt.Sprintf("; only this Mac's %d most recently active sessions were searched", handoffTitleScanLimit)
+		message += fmt.Sprintf("; only this machine's %d most recently active sessions were searched", handoffTitleScanLimit)
 	}
 	if r.archiveErr != nil {
-		message += fmt.Sprintf("\nagent-archive: handoff: note: the archive could not be read, so only this Mac's sessions were searched: %v", r.archiveErr)
+		message += fmt.Sprintf("\nagent-archive: handoff: note: the archive could not be read, so only this machine's sessions were searched: %v", r.archiveErr)
 	}
 	return message
 }

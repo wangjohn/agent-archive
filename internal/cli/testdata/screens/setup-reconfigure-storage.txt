@@ -48,7 +48,7 @@ Review your changes
   ✓ Hook file is valid      ~/.codex/hooks.json
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
