@@ -312,6 +312,25 @@ follow [Semantic Versioning](https://semver.org/).
   session whose transcript is still on the Mac, so it can carry them. See the
   [filter changelog](dev/specs/privacy-filter-changelog.md) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list`, `show`, and `handoff` start from the repository you are in.**
+  Run inside a project, `agent-archive list` and `list --json` now return
+  that repository's sessions (every checkout and worktree of it, and its
+  sessions from other Macs) where they returned all of them. Scripts that
+  read every session pass `--all-projects`. The text listing and the
+  handoff picker carry a heading that names what is shown, and on a terminal
+  `a`, typed alone, switches between the repository and all projects. When
+  the repository has no sessions they open on all projects and say so.
+  `--project DIR|NAME` (new for `list`, and now for every `handoff`
+  selection, not only `--latest`) picks another project by directory or by
+  name. `handoff "<title>"` looks in the repository first and says how many
+  more match in other projects. Outside any project nothing changes.
+  `list --json` gains an optional `scope` object
+  (`{"label", "all_projects", "fell_back", "outside_matches"}`) and keeps
+  `schema_version` 4.
+- The session table and the handoff picker leave out a HARNESS or PROJECT
+  column every row shares and name the value in the heading, add a PR column
+  (the last pull request the session created) when a row has one, dim the ID
+  in the picker, and mark a session active in the last 2 minutes with a dot.
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
