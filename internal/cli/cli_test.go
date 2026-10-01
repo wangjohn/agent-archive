@@ -42,6 +42,8 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
 		OS: platform.Darwin,
+		// Nor this machine's ID: a Linux test that means a machine sets it.
+		HostFingerprint: func() string { return "" },
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
@@ -55,7 +57,10 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")
 		},
-		WorkingDir:           func() (string, error) { return "", errors.New("no working directory in this test") },
+		WorkingDir: func() (string, error) { return "", errors.New("no working directory in this test") },
+		// Tests never run git to find a directory's repository key: no
+		// directory has an origin remote unless a test says so.
+		repoKey:              func(string) string { return "" },
 		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },

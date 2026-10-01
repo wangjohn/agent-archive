@@ -109,6 +109,15 @@ type Config struct {
 	// changes and a binary that rewrites this file without the field cannot
 	// change what it means.
 	BackgroundBackend string `json:"background_backend,omitempty"`
+	// HostID is a digest of the Linux machine ID (local.HostFingerprint) of
+	// the machine that set this data directory up, recorded next to MachineID
+	// the first time setup runs there. Status and setup compare it with the
+	// machine they run on: a different one means the data directory was
+	// copied, typically with a cloned VM or container image, and the two
+	// machines now claim the same sessions. Empty on macOS (never recorded),
+	// and on a Linux system with no machine ID to read. It is local: it is
+	// not in any published file.
+	HostID string `json:"host_id,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this

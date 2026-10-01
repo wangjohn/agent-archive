@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
@@ -37,13 +38,19 @@ const stateTimeout = 3 * time.Second
 // that sets none: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin, with
 // /sbin:/bin after them (systemd.exec(5), $PATH; the last two are the
 // default of a build for a system whose /bin and /sbin are not links into
-// /usr, and harmless on one where they are). The user manager passes its
-// own environment to its services except for PATH, which it replaces with
-// its build's user PATH (by default this same value; a distribution may
-// configure another, and an environment.d file may set one), so this is the
-// value the collector's environment can rely on and no more. It is taken
-// from the documentation and systemd's source, not read from a live
-// manager; the Linux job environment work (5c) revisits it.
+// /usr, and harmless on one where they are).
+//
+// What a user manager's services actually get is its own PATH, which a
+// distribution may extend: a service started by the user manager of Ubuntu
+// 24.04 (systemd 255), run to see it, had
+// /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin,
+// this value followed by what /etc/environment adds. It is never the login
+// shell's: nothing in ~/.profile or ~/.bashrc reaches it, so no directory
+// under the home (~/.local/bin, where aws-vault, 1Password's op and pipx
+// installs go, or ~/go/bin, ~/.cargo/bin) is on it. This value is therefore
+// what the collector's environment can rely on and no more, and the job's
+// PATH is this shell's usable entries followed by it (cli's collectorPath),
+// which is how a helper under the home is found.
 const DefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 // collectorRef is the unit name (without .service or .timer) of the default
@@ -135,6 +142,39 @@ func (s Scheduler) timerPath(site scheduler.Site, ref scheduler.Ref) string {
 	return filepath.Join(s.UnitDir(site), string(ref)+".timer")
 }
 
+// timersWantsDir is the directory in the unit directory where `systemctl
+// enable` links a timer whose [Install] says WantedBy=timers.target.
+const timersWantsDir = "timers.target.wants"
+
+// enableLink is the symbolic link `systemctl --user enable` makes for the
+// job's timer, and the third thing a job is on disk besides its two unit
+// files: <unit directory>/timers.target.wants/<ref>.timer, pointing at the
+// timer's file. Unload's `disable` removes it; one is left when the unit files
+// were deleted without it (uninstall --skip-scheduler, or a rollback after
+// the manager could not be asked), and then it dangles, which systemd reports
+// at every start of the manager.
+//
+// ownEnableLink is its path when it exists and is this job's own: a symbolic
+// link whose target is the job's timer file (its absolute path, or a relative
+// one resolved against the directory the link is in, each compared as a
+// location, so a dangling one counts). Anything else at that path (a file, a
+// directory, a link that points at another home's timer or at some other
+// unit) is not ours to remove, and it is not returned.
+func (s Scheduler) ownEnableLink(site scheduler.Site, ref scheduler.Ref) (string, bool) {
+	link := filepath.Join(s.UnitDir(site), timersWantsDir, string(ref)+".timer")
+	target, err := os.Readlink(link)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(link), target)
+	}
+	if !local.SameLocation(target, s.timerPath(site, ref)) {
+		return "", false
+	}
+	return link, true
+}
+
 // Locate is the site and the job of a unit file path, the service's or the
 // timer's: <home>/.config/systemd/user/<ref>.service or .timer, the inverse
 // of UnitDir. A path no Plan could have written is refused rather than taken
@@ -203,6 +243,9 @@ func (s Scheduler) Definition(site scheduler.Site, ref scheduler.Ref) scheduler.
 	}
 	servicePath, timerPath := s.servicePath(site, ref), s.timerPath(site, ref)
 	status := scheduler.Status{Paths: []string{servicePath, timerPath}}
+	if link, ok := s.ownEnableLink(site, ref); ok {
+		status.Paths = append(status.Paths, link)
+	}
 	data, err := os.ReadFile(servicePath)
 	_, timerErr := os.Stat(timerPath)
 	serviceAbsent := errors.Is(err, os.ErrNotExist)

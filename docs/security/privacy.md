@@ -55,8 +55,10 @@ For each captured session, two objects (see
 [bucket layout](../reference/bucket-layout.md)): the source bundle, which
 holds the filtered transcript, skill evidence, and hook observations, and
 the metadata sidecar. The sidecar's optional `title` is a short, truncated
-preview of the first filtered human prompt (for `list`); it is still
-filter-derived text stored in the bucket, not a separate redaction pass.
+preview of the first filtered human prompt, and its optional `name` the
+session's name as the filtered transcript holds it (the last Claude Code
+session name, or Cursor's chat name), cut the same way (for `list`); both
+are filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
   replies; tool calls with their arguments (Edit bodies, shell commands,
@@ -103,7 +105,9 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   called and how often, token counts (in total and per model), the git work
   the session's tool calls confirmed (commit SHAs, branch names, `owner/repo`,
   pull request numbers and links; never commit messages, pull request text,
-  or commands), and the
+  or commands), the last Git branch the transcript recorded, the pull
+  requests a Claude Code session linked (`owner/repo`, number, and GitHub
+  link), and the
   capture gaps the filter recorded (the names of omitted fields, never their
   values).
 - **Repository key** (`repo_key`, in the metadata): when a project is a git
@@ -432,8 +436,8 @@ cut to roughly 120 KB a session (`handoff`'s bound is best effort), and
 nothing broader: no bucket credentials, no raw transcript files, no files of
 your projects. `status` adds your setup's summary: the storage destination,
 the included project folders, and the state of capture. `list` shows titles
-(each is the session's first prompt) across all your projects. Three things
-follow.
+(each is the session's name, else its first prompt) across all your
+projects. Three things follow.
 
 - **It is shown to that agent's provider.** A pulled-in session becomes part
   of the receiving agent's conversation, so Claude Code, Codex, or Cursor (and

@@ -43,6 +43,9 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+      # Static and fake-Docker checks of the Linux live acceptance scripts;
+      # the live run itself needs privileged Docker and is not run in CI.
+      - run: python3 scripts/test_linux_acceptance.py
 
   cross-build:
     # What the two platform legs above cannot see: the ubuntu leg builds only

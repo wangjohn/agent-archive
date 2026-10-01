@@ -235,15 +235,24 @@ Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON outp
 Usage: agent-archive list [options]
 
 Find sessions using metadata; does not download conversation content.
-Default text columns: TITLE (first filtered prompt preview, or a short
-SESSION_ID prefix when none), relative capture time, harness, project,
-and a short SESSION_ID. On a terminal with an interactive stdin, list a
-numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
-wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
-never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
-is inside coding agents (see the configuration reference). On a terminal
-without interactive stdin, text is paged through $PAGER unless --no-pager.
+Run inside a project, it lists that repository's sessions (every checkout and
+worktree of it, and its sessions from other Macs), with a heading naming the
+repository; when there are none, it lists all projects and says so. --project
+lists another project's, and --all-projects every project's. Outside any
+project it lists every session, grouped by project. On a terminal, the a key,
+typed alone, switches between the repository and all projects.
+Default text columns: TITLE (the name the session's agent gave it, else a
+preview of its first filtered prompt, else a short SESSION_ID prefix), PR (the
+last pull request the session linked or created, when any row has one),
+relative capture time, harness, project, and a short SESSION_ID. A harness or
+project every row shares is left out of the table and named in the heading.
+On a terminal with an interactive stdin, list a numbered table and pick a
+session to show its summary, then t for its transcript, Enter or b to go
+back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
+scroll. Piped or --json output is never interactive, nor is any run with
+AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
+configuration reference). On a terminal without interactive stdin, text is
+paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -262,6 +271,15 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --project DIR|NAME             List this project's sessions: the
+                                 repository of a directory, or a project
+                                 name (matched to project_name and the
+                                 configured project labels, exactly, ignoring
+                                 case). Default: the current directory's
+                                 repository
+  --all-projects                 List every project's sessions. Scripts that
+                                 read every session pass this, since list
+                                 run inside a project now lists only its own
   --rebuild-index                Rebuild the listing index from live metadata;
                                  scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
@@ -273,13 +291,18 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;
-                                 each session is live metadata. Usage errors
-                                 print no JSON. Never paged or interactive.
+                                 each session is live metadata. "scope"
+                                 ({"label", "all_projects", "fell_back",
+                                 "outside_matches"}) appears when the
+                                 listing looked at a project's sessions
+                                 first. Usage errors print no JSON. Never
+                                 paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all-projects` | no value | — |
 | `--complete` | no value | — |
 | `--harness` | a value | — |
 | `--hook-captured` | no value | — |
@@ -289,6 +312,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--project` | a value | — |
 | `--rebuild-index` | no value | — |
 | `--since` | a value | — |
 | `--skill` | a value | — |
@@ -579,13 +603,23 @@ agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
 A TITLE substring or short SESSION_ID matches as it does for show, in this
 Mac's sessions first (no network), then the archive's; a full SESSION_ID
-wins. Quote a title of several words. Several matches on a terminal open the
+wins. Quote a title of several words. Inside a project, the picker and a
+TITLE look at that repository's sessions first (every checkout and worktree
+of it), then everywhere; a note says how many more match in other projects.
+On the picker, the a key, typed alone, switches between the repository and
+all projects. The heading names what is shown, and a dot marks a session active
+in the last 2 minutes. Several matches on a terminal open the
 picker on them; without one, or inside a coding agent, they are listed on
 stderr and the command exits 1, never guessing. A title skips the agent
 session running the command, unless --to is given.
   --latest              The most recent session for the project
-  --project DIR         Project for --latest, and where the agent starts
-                        (default: current directory)
+  --project DIR|NAME    The project to pick from and search, in place of
+                        the current directory's repository: a directory, or
+                        a project name (matched to project_name and the
+                        configured project labels, exactly, ignoring case).
+                        With --latest, the directory it searches, and where
+                        the agent starts
+  --all-projects        Pick from and search every project
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
@@ -632,6 +666,7 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all-projects` | no value | — |
 | `--branch` | a value | — |
 | `--file` | a value | — |
 | `--force` | no value | — |

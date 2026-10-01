@@ -122,24 +122,33 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", regErr)
 		return "", "", false, 1
 	}
+	scope, scopeErr := scopeFor(env, opts.project, opts.allProjects)
+	if scopeErr != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", scopeErr)
+		return "", "", false, 1
+	}
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
-		archived, _, _, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
+		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
 	}
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
-	rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true,
+		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
+	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
+		picker.scope = s
+		rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
+		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated}
+	})
 	stop()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", err)
 	}
-	if len(rows) == 0 {
+	if len(choices.shown().rows) == 0 {
 		terminal.Println(stdout, "No sessions match.")
 		return "", "", false, 0
 	}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true,
-		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	row, selected, err := pickBrowseRow(env, newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
+	row, selected, err := (&sessionPicker{env: env}).pickScoped(newPrompter(stdin, stdout), stdout, choices, "hand off")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1
@@ -158,6 +167,8 @@ type handoffPickerRow struct {
 	unbuilt *archive.SessionRegistration
 	// notUploaded is set when the archive was read and lacks the session.
 	notUploaded bool
+	// reg is the session's registration on this machine, when it has one.
+	reg *archive.SessionRegistration
 }
 
 type handoffPicker struct {
@@ -169,6 +180,9 @@ type handoffPicker struct {
 	// archiveRead is false when the archive could not be listed, so a
 	// session missing from it is not known to be missing.
 	archiveRead bool
+	// scope limits the rows to one repository's or project's sessions; the
+	// zero value offers every session.
+	scope sessionScope
 }
 
 // rows merges registrations with archived sessions, joined on the archive
@@ -182,14 +196,33 @@ type handoffPicker struct {
 // past the limit were not read to tell; truncated is set when any are left
 // out.
 func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) (rows []handoffPickerRow, total int, truncated bool) {
+	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
+		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
+	})
+	registered := make(map[string]*archive.SessionRegistration, len(regs))
+	for i := range regs {
+		registered[regs[i].ArchiveSessionID] = &regs[i]
+	}
 	all := make([]handoffPickerRow, 0, len(archived)+len(regs))
 	index := map[string]int{}
+	// uploaded holds every archived session, in scope or not: a registered
+	// session the archive has is not one it lacks.
+	uploaded := map[string]bool{}
 	for _, m := range topLevelSessions(archived) {
+		uploaded[m.SessionID] = true
+		if !p.scope.contains(m, registered[m.SessionID]) {
+			continue
+		}
 		index[m.SessionID] = len(all)
 		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
+	// A copy, which leaves registered pointing at the registrations as they were.
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
-		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
+		if uploaded[reg.ArchiveSessionID] {
+			_, inScope := index[reg.ArchiveSessionID]
+			return !inScope
+		}
+		return !p.scope.contains(registrationMetadata(reg), &reg)
 	})
 	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase())
 	for _, reg := range regs {
@@ -199,11 +232,11 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			continue
 		}
 		if i, found := index[reg.ArchiveSessionID]; found {
-			all[i].active, all[i].registered = active, true
+			all[i].active, all[i].registered, all[i].reg = active, true, &reg
 			continue
 		}
 		if p.source != "archive" {
-			all = append(all, handoffPickerRow{active: active, registered: true, unbuilt: &reg, notUploaded: p.archiveRead})
+			all = append(all, handoffPickerRow{active: active, registered: true, reg: &reg, unbuilt: &reg, notUploaded: p.archiveRead})
 		}
 	}
 	if p.source == "local" {
@@ -241,7 +274,7 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 	if err != nil {
 		return archive.Metadata{}, false
 	}
-	title, ok := firstPrompt(bundle)
+	labels, ok := archive.SessionLabels(bundle)
 	if !ok {
 		return archive.Metadata{}, false
 	}
@@ -250,11 +283,31 @@ func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active tim
 		project = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
 	return archive.Metadata{SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID,
-		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Title: title, Origin: reg.Origin}, true
+		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Name: labels.Name, Title: labels.Title,
+		Branch: labels.Branch, PullRequests: labels.PullRequests, Origin: reg.Origin, RepoKey: reg.RepoKey}, true
+}
+
+// registrationMetadata is the part of a registered session's metadata that
+// says which project it belongs to, for a scope to decide on before its
+// transcript is read.
+func registrationMetadata(reg archive.SessionRegistration) archive.Metadata {
+	name := ""
+	if reg.ProjectRoot != "" {
+		name = filepath.Base(filepath.Clean(reg.ProjectRoot))
+	}
+	return archive.Metadata{ProjectID: reg.ProjectID, RepoKey: reg.RepoKey, ProjectName: name}
+}
+
+// activeNow reports whether a session was last active within
+// activeSourceWindow of now: the test that makes handoff ask about a shared
+// checkout, and puts a dot on the row.
+func activeNow(now, active time.Time) bool {
+	return !active.IsZero() && now.Sub(active).Abs() <= activeSourceWindow
 }
 
 // formatHandoffRows is formatSessionRows with each row's time taken from its
-// latest activity and a mark on sessions the archive does not have yet.
+// latest activity, a mark on sessions the archive does not have yet, and a
+// dot on those active now.
 func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []listRow {
 	sessions := make([]archive.Metadata, len(rows))
 	for i, row := range rows {
@@ -266,6 +319,7 @@ func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []list
 		if row.notUploaded {
 			out[i].SkillHint = notUploadedHint
 		}
+		out[i].Live = row.registered && activeNow(format.Now, row.active)
 	}
 	return out
 }

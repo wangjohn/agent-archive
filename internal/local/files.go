@@ -103,17 +103,26 @@ func ResolveExistingSymlinks(path string) (string, error) {
 // Write stores value as indented JSON with a trailing newline, atomically,
 // as WriteBytes does.
 func Write(path string, value any) error {
-	b, e := json.MarshalIndent(value, "", "  ")
+	write, e := indentedJSON(value)
 	if e != nil {
 		return e
 	}
-	return writeAtomic(path, func(w io.Writer) error {
+	return writeAtomic(path, write)
+}
+
+// indentedJSON encodes value as Write stores it.
+func indentedJSON(value any) (func(io.Writer) error, error) {
+	b, e := json.MarshalIndent(value, "", "  ")
+	if e != nil {
+		return nil, e
+	}
+	return func(w io.Writer) error {
 		if _, e := w.Write(b); e != nil {
 			return e
 		}
 		_, e := w.Write([]byte{'\n'})
 		return e
-	})
+	}, nil
 }
 
 // WriteCompact stores value as compact JSON (json.Marshal's bytes) with a
@@ -143,15 +152,49 @@ func WriteBytes(path string, b []byte) error {
 // report any failure to write it: nothing is renamed over path unless it
 // returns nil.
 func writeAtomic(path string, write func(io.Writer) error) error {
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
-		return e
-	}
-	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
+	staged, e := stage(path, write)
 	if e != nil {
 		return e
 	}
-	// After a successful rename there is nothing left to remove.
-	defer func() { _ = os.Remove(f.Name()) }()
+	defer staged.Discard()
+	if e = staged.Commit(); e != nil {
+		return e
+	}
+	return staged.SyncDir()
+}
+
+// Staged is Write split at its rename: the new content is written and
+// synced to a temporary file beside path, but not yet in place. Commit
+// renames it over path, where readers see it at once, and SyncDir then makes
+// that rename durable. A caller that must replace path atomically with
+// respect to other holders of a lock can take the lock around Commit alone
+// and keep both disk syncs, which on macOS are F_FULLFSYNC and can take
+// seconds on a busy machine, outside it. Discard removes a temporary that
+// was never committed.
+type Staged struct {
+	path      string
+	temp      string
+	committed bool
+}
+
+// Stage writes value as Write would store it to a synced temporary file
+// beside path, for Commit to put in place.
+func Stage(path string, value any) (*Staged, error) {
+	write, e := indentedJSON(value)
+	if e != nil {
+		return nil, e
+	}
+	return stage(path, write)
+}
+
+func stage(path string, write func(io.Writer) error) (*Staged, error) {
+	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+		return nil, e
+	}
+	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
+	if e != nil {
+		return nil, e
+	}
 	if e = f.Chmod(0600); e == nil {
 		e = write(f)
 	}
@@ -159,21 +202,43 @@ func writeAtomic(path string, write func(io.Writer) error) error {
 		e = f.Sync()
 	}
 	ce := f.Close()
+	if e == nil {
+		e = ce
+	}
 	if e != nil {
+		_ = os.Remove(f.Name())
+		return nil, e
+	}
+	return &Staged{path: path, temp: f.Name()}, nil
+}
+
+// Commit renames the staged file over its path. It is not durable until
+// SyncDir returns.
+func (s *Staged) Commit() error {
+	if e := os.Rename(s.temp, s.path); e != nil {
 		return e
 	}
-	if ce != nil {
-		return ce
-	}
-	if e = os.Rename(f.Name(), path); e != nil {
-		return e
-	}
-	d, e := os.Open(filepath.Dir(path))
+	s.committed = true
+	return nil
+}
+
+// SyncDir syncs the directory of a committed file, so its rename survives a
+// crash.
+func (s *Staged) SyncDir() error {
+	d, e := os.Open(filepath.Dir(s.path))
 	if e != nil {
 		return e
 	}
 	defer func() { _ = d.Close() }()
 	return d.Sync()
+}
+
+// Discard removes the temporary file unless it was committed. A nil Staged
+// discards nothing.
+func (s *Staged) Discard() {
+	if s != nil && !s.committed {
+		_ = os.Remove(s.temp)
+	}
 }
 
 // tempPrefix names WriteBytes' temporary files. A process that dies between

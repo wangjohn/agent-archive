@@ -23,6 +23,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -45,6 +46,15 @@ import (
 // what the published source bundle itself already contains.
 type Store struct {
 	home string
+	// hook marks a Store from ForHook.
+	hook bool
+	// onWriteSync, when set by a test, runs where writeUnderLock syncs to
+	// disk outside the lock: once its temporary file is synced, and once it
+	// is renamed into place, before the directory is synced.
+	onWriteSync func()
+	// onLockWait, when set by a test, runs before any wait for a lock that
+	// can last (see namedLockWait), with the lock's name.
+	onLockWait func(name string)
 	// collectorPass marks a Store from ForCollectorPass, which may move a
 	// corrupt collector-owned file aside.
 	collectorPass bool
@@ -114,13 +124,17 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	return local.Write(s.registrationPath(reg.ArchiveSessionID), reg)
 }
 
-// UpdateRegistration changes an existing registration under the per-session
-// request lock, the lock retention holds while it forgets a session. It loads
-// the registration under that lock and reports found=false, without calling
-// update, when the registration is gone: a hook that looked the session up
-// before the lock must then treat it as never seen. Otherwise update edits the
-// loaded registration and it is saved; an error from update saves nothing and
-// is returned as is.
+// UpdateRegistration changes an existing registration atomically with respect
+// to the per-session request lock, the lock retention holds while it forgets
+// a session (see writeUnderRequestLock). It reports found=false, without
+// calling update, when the registration is gone: a hook that looked the
+// session up before the lock must then treat it as never seen. Otherwise
+// update edits the loaded registration and it is saved; an error from update
+// saves nothing and is returned as is, with found true. Any other error
+// reports found false, whatever was read: only a nil error or update's own
+// says whether the registration exists. update may run more than once, each
+// time on a freshly loaded registration, when another writer changes it
+// meanwhile.
 //
 // A plain load then SaveRegistration from a hook could write the registration
 // back after retention forgot it, leaving it without its native-session index
@@ -129,19 +143,32 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
-	unlock, err := s.lockRequest(archiveSessionID)
-	if err != nil {
+	updateFailed := false
+	err = s.writeUnderRequestLock(archiveSessionID, s.registrationPath(archiveSessionID), nil, func(current fileSnapshot) (any, bool, error) {
+		found, updateFailed = current.found, false
+		if !found {
+			return nil, false, nil
+		}
+		var reg archive.SessionRegistration
+		if err := json.Unmarshal(current.data, &reg); err != nil {
+			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
+		}
+		if err := update(&reg); err != nil {
+			updateFailed = true
+			return nil, false, err
+		}
+		if reg.ArchiveSessionID != archiveSessionID {
+			return nil, false, errors.New("a registration update cannot change its archive session ID")
+		}
+		if err := reg.Validate(); err != nil {
+			return nil, false, err
+		}
+		return reg, true, nil
+	})
+	if err != nil && !updateFailed {
 		return false, err
 	}
-	defer unlock()
-	reg, found, err := s.LoadRegistration(archiveSessionID)
-	if err != nil || !found {
-		return false, err
-	}
-	if err := update(&reg); err != nil {
-		return true, err
-	}
-	return true, s.SaveRegistration(reg)
+	return found, err
 }
 
 // RegisterNewSession assigns (or reuses) the archive session ID indexed for a
@@ -166,25 +193,47 @@ func (s *Store) RegisterNewSession(nativeSessionID string, build func(archiveSes
 	return archive.SessionRegistration{}, errors.New("session index kept changing while registering; this start was not recorded")
 }
 
+// registerUnderLock saves build's registration for id, atomically with
+// respect to the request lock (see writeUnderRequestLock), if the index
+// still maps nativeSessionID to id there; saved is false when it does not.
 func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
-	unlock, err := s.lockRequest(id)
-	if err != nil {
-		return archive.SessionRegistration{}, false, err
-	}
-	defer unlock()
-	current, found, err := s.ArchiveSessionID(nativeSessionID)
-	if err != nil || !found || current != id {
-		return archive.SessionRegistration{}, false, err
+	if !safeFileComponent(id) {
+		return archive.SessionRegistration{}, false, errors.New("archive session ID is not a safe file name component")
 	}
 	reg := build(id)
 	if reg.ArchiveSessionID != id || reg.NativeSessionID != nativeSessionID {
 		return archive.SessionRegistration{}, false, errors.New("registration does not match the session index")
 	}
-	if err := s.SaveRegistration(reg); err != nil {
+	if err := reg.Validate(); err != nil {
+		return archive.SessionRegistration{}, false, err
+	}
+	// The registration is built without reading the file, so another
+	// writer's change to it cannot overtake this one.
+	err := s.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return s.lockRequest(id) },
+		path: s.registrationPath(id),
+		check: func() error {
+			current, found, err := s.ArchiveSessionID(nativeSessionID)
+			if err == nil && (!found || current != id) {
+				return errIndexMoved
+			}
+			return err
+		},
+		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
+		blind:  true,
+	})
+	if errors.Is(err, errIndexMoved) {
+		return archive.SessionRegistration{}, false, nil
+	}
+	if err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
 	return reg, true, nil
 }
+
+// errIndexMoved is registerUnderLock's check failing: the native session's
+// index entry no longer names the archive ID being registered.
+var errIndexMoved = errors.New("the session index no longer maps this session to that archive ID")
 
 func (s *Store) registrationPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "registrations", archiveSessionID+".json")
@@ -285,7 +334,10 @@ var ErrSessionNotRegistered = errors.New("session is no longer registered")
 
 // lockRequest takes the per-session request lock. Hooks writing a request,
 // the collector acknowledging one, and retention forgetting the session all
-// hold it, so none of them can interleave with another.
+// hold it, so none of them can interleave with another. It waits a second,
+// which hooks can afford inside their harness's budget, so nothing may sync
+// to disk while holding it: a write of a file it guards goes through
+// writeUnderRequestLock.
 func (s *Store) lockRequest(archiveSessionID string) (func(), error) {
 	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
 	if err != nil {
@@ -311,28 +363,39 @@ func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Ti
 	if requestedAt.IsZero() {
 		return errors.New("requested_at is required")
 	}
-	unlock, err := s.lockRequest(archiveSessionID)
-	if err != nil {
-		return err
+	// Retention forgets a session under the request lock, and this check
+	// runs under it right before the write (see writeUnderRequestLock). A
+	// caller that looked the registration up before may be writing for a
+	// session that is gone now; its request would be an orphan nothing ever
+	// reads.
+	registered := func() error {
+		if _, err := os.Stat(s.registrationPath(archiveSessionID)); errors.Is(err, os.ErrNotExist) {
+			// Taking the lock created its file; a session that is not
+			// registered must not keep one (a rejected subagent notifying a
+			// forgotten parent did). Unlinking it while held is safe
+			// (local.NamedLock).
+			_ = os.Remove(filepath.Join(s.home, requestLockName(archiveSessionID)))
+			return ErrSessionNotRegistered
+		} else if err != nil {
+			return fmt.Errorf("check registration %q: %w", archiveSessionID, err)
+		}
+		return nil
 	}
-	defer unlock()
-	// Retention forgets a session under this same lock. A caller that looked
-	// the registration up before taking the lock may be writing for a session
-	// that is gone now; its request would be an orphan nothing ever reads.
-	if _, err := os.Stat(s.registrationPath(archiveSessionID)); errors.Is(err, os.ErrNotExist) {
-		// Taking the lock created its file; a session that is not registered
-		// must not keep one (a rejected subagent notifying a forgotten
-		// parent did). Unlinking it while held is safe (local.NamedLock).
-		_ = os.Remove(filepath.Join(s.home, requestLockName(archiveSessionID)))
-		return ErrSessionNotRegistered
-	} else if err != nil {
-		return fmt.Errorf("check registration %q: %w", archiveSessionID, err)
+	return s.writeUnderRequestLock(archiveSessionID, s.requestPath(archiveSessionID), registered, func(current fileSnapshot) (any, bool, error) {
+		return mergeRequest(archiveSessionID, current, reason, requestedAt, deferred, evidence)
+	})
+}
+
+// mergeRequest is saveRequest's new request, computed from the one current
+// holds; write is false when nothing would change.
+func mergeRequest(archiveSessionID string, current fileSnapshot, reason string, requestedAt time.Time, deferred bool, evidence []archive.SupplementalEvidence) (merged Request, write bool, err error) {
+	existing, found := Request{}, current.found
+	if found {
+		if err := json.Unmarshal(current.data, &existing); err != nil {
+			return Request{}, false, fmt.Errorf("read request %q: %w", archiveSessionID, err)
+		}
 	}
-	existing, found, err := s.LoadRequest(archiveSessionID)
-	if err != nil {
-		return err
-	}
-	merged := Request{ArchiveSessionID: archiveSessionID, RequestedAt: requestedAt, Deferred: deferred}
+	merged = Request{ArchiveSessionID: archiveSessionID, RequestedAt: requestedAt, Deferred: deferred}
 	urgencyChanged := false
 	if found {
 		merged = existing
@@ -346,7 +409,7 @@ func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Ti
 	}
 	merged.Token, err = local.ID()
 	if err != nil {
-		return fmt.Errorf("generate request token: %w", err)
+		return Request{}, false, fmt.Errorf("generate request token: %w", err)
 	}
 	reasonAlready := true
 	if reason != "" && !slices.Contains(merged.Reasons, reason) {
@@ -367,9 +430,9 @@ func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Ti
 	// otherwise append an identical evidence item on every pass and grow the
 	// request file without bound.
 	if found && existing.Token != "" && added == 0 && reasonAlready && !urgencyChanged && !requestedAt.After(existing.RequestedAt) {
-		return nil
+		return Request{}, false, nil
 	}
-	return local.Write(s.requestPath(archiveSessionID), merged)
+	return merged, true, nil
 }
 
 func requestHasEvidence(have []archive.SupplementalEvidence, candidate archive.SupplementalEvidence) bool {
@@ -400,27 +463,36 @@ func (s *Store) LoadRequest(archiveSessionID string) (Request, bool, error) {
 }
 
 // EnsureRequestToken upgrades a request written by an older collector. The
-// token is assigned under the same lock used by hooks and acknowledgements so
-// migration cannot overwrite a concurrent hook update. found is false when
-// the request disappeared between listing and upgrade.
-func (s *Store) EnsureRequestToken(archiveSessionID string) (Request, bool, error) {
-	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
+// token is assigned atomically with respect to the request lock hooks and
+// acknowledgements hold (see writeUnderRequestLock), so migration cannot
+// overwrite a concurrent hook update. found is false when the request
+// disappeared between listing and upgrade.
+func (s *Store) EnsureRequestToken(archiveSessionID string) (request Request, found bool, err error) {
+	if !safeFileComponent(archiveSessionID) {
+		return Request{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	err = s.writeUnderRequestLock(archiveSessionID, s.requestPath(archiveSessionID), nil, func(current fileSnapshot) (any, bool, error) {
+		request, found = Request{}, current.found
+		if !found {
+			return nil, false, nil
+		}
+		if err := json.Unmarshal(current.data, &request); err != nil {
+			return nil, false, fmt.Errorf("read request %q: %w", archiveSessionID, err)
+		}
+		if request.Token != "" {
+			return nil, false, nil
+		}
+		token, err := local.ID()
+		if err != nil {
+			return nil, false, fmt.Errorf("generate request token: %w", err)
+		}
+		request.Token = token
+		return request, true, nil
+	})
 	if err != nil {
-		return Request{}, false, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
-	}
-	defer unlock()
-	request, found, err := s.LoadRequest(archiveSessionID)
-	if err != nil || !found || request.Token != "" {
-		return request, found, err
-	}
-	request.Token, err = local.ID()
-	if err != nil {
-		return Request{}, false, fmt.Errorf("generate request token: %w", err)
-	}
-	if err := local.Write(s.requestPath(archiveSessionID), request); err != nil {
 		return Request{}, false, fmt.Errorf("upgrade request %q: %w", archiveSessionID, err)
 	}
-	return request, true, nil
+	return request, found, nil
 }
 
 // LoadRequests returns every pending request, sorted by archive session ID.
