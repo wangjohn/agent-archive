@@ -838,7 +838,13 @@ width, and file it before merging PR 8.
   will not start Codex itself: it pulls the session in as context, or tells you
   the command to run (`agent-archive handoff <ID> --to codex`). That is not a
   failure. Asking "which of these?" over several candidates when "flaky
-  retention" matches exactly one is. Check what the words match:
+  retention" matches exactly one is. So is `--harness codex` on any command
+  it runs: Codex is where you want to continue, not the agent the session was
+  in, and the skill adds `--harness` only for the latter. With it, `handoff`
+  searches Codex's sessions only and prints `no session matches "flaky
+  retention" … for codex`. If you see a miss, record the exact commands the
+  agent ran (Claude Code shows each one) and what they printed. Check what the
+  words match:
 
   ```sh
   agent-archive list "flaky retention" --json | jq '.sessions | length'
