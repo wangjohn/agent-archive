@@ -48,6 +48,9 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+      # real-systemd's name and pinned runner image, which branch protection
+      # and its validation depend on.
+      - run: python3 scripts/test_ci_workflow.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
@@ -133,7 +136,7 @@ jobs:
 
   real-systemd:
     # The systemd scheduler adapter against a real systemd user manager
-    # (dev/contributing/testing.md): ubuntu-latest is a virtual machine with
+    # (dev/contributing/testing.md): the runner is a virtual machine with
     # systemd, where lingering starts the runner user's own manager. It runs
     # the scheduler conformance suite over that manager (the states the suite
     # puts a job in are real ones) and a setup-level smoke: the real setup
@@ -142,12 +145,15 @@ jobs:
     # they run only when AGENT_ARCHIVE_REAL_SYSTEMD=1, and refuse a machine
     # that already has agent-archive units.
     #
-    # It depends on the runner image (logind, the user bus, a minute of timer)
-    # and so is not meant to block a merge on its own: it is a check of its own
-    # that is not among the branch's required ones, bounded by timeout-minutes.
-    # A failure is real information about the adapter, never to be ignored, but a
-    # broken runner image should not stop unrelated pull requests.
-    runs-on: ubuntu-latest
+    # It depends on the runner image (logind, the user bus, a minute of timer),
+    # so the image is pinned: ubuntu-24.04 (systemd 255) is the one it has been
+    # validated on, and ubuntu-latest would change systemd version and defaults
+    # under a required check without a change here. Bump the pin deliberately
+    # and re-validate on the new image first (scripts/acceptance/linux). The job
+    # name must stay real-systemd: branch protection matches the required check
+    # by name. It is bounded by timeout-minutes. A failure is real information
+    # about the adapter, never to be ignored.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

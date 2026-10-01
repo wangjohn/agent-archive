@@ -61,8 +61,12 @@ func deriveLabels(bundle SourceBundle, view NormalizedView) Labels {
 
 // deriveSessionName is the last custom-title a Claude Code transcript holds
 // (the person can rename a session, and every name is kept), or a Cursor
-// chat's name from its session record, collapsed like a title. "" when there
-// is none.
+// chat's name from its session record, collapsed like a title. A Claude Code
+// subagent has no name of its own: its name is the description its parent
+// gave the task, from the subagent-meta record filter 14 writes first. A
+// custom-title, which a subagent transcript does not normally hold, comes
+// later in the records and so wins over it, as a later name always does.
+// "" when there is none.
 func deriveSessionName(bundle SourceBundle) string {
 	name := ""
 	for _, record := range bundle.NativeRecords {
@@ -70,6 +74,10 @@ func deriveSessionName(bundle SourceBundle) string {
 		switch {
 		case claudeLabelKind(rawKind) == claudeCustomTitleType:
 			if text, _ := record["customTitle"].(string); collapseSessionTitle(text) != "" {
+				name = collapseSessionTitle(text)
+			}
+		case rawKind == subagentMetaType:
+			if text, _ := record[subagentDescriptionKey].(string); collapseSessionTitle(text) != "" {
 				name = collapseSessionTitle(text)
 			}
 		case rawKind == "session" && bundle.Capture.SourceFormat == cursorComposerFormat:

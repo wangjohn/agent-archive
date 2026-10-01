@@ -16,6 +16,7 @@ python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
+python3 scripts/test_ci_workflow.py                      # real-systemd keeps its name and pinned image
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
@@ -24,9 +25,10 @@ CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
 line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
-runs the Linux scheduler against a real systemd user manager on Ubuntu (see
-[below](#never-test-against-your-real-machine)); it is its own check, not a
-required one. `go test ./...` also checks the docs:
+runs the Linux scheduler against a real systemd user manager on Ubuntu 24.04
+(see [below](#never-test-against-your-real-machine)); it is meant to be a
+required check, and its name must stay `real-systemd`, because branch
+protection matches it by name. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -165,14 +167,20 @@ In Go tests, everything goes through injection:
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that
   already has such units. CI runs them in the `real-systemd` job on
-  `ubuntu-latest` (a virtual machine with systemd: it enables lingering for the
-  runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  `ubuntu-24.04` (a virtual machine with systemd 255: it enables lingering for
+  the runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
   waits up to two and a half minutes for the timer's first run). That job is
-  its own check and is not among the branch's required ones, so a change to the
-  runner image does not stop unrelated pull requests; a failure in it is a real
-  finding about the adapter. To run it yourself, never on your own machine or
-  login, use a disposable Linux container with systemd as PID 1 (Docker on
-  macOS runs it in a Linux VM) and a non-root user (or run
+  intended to be a required check, so it is pinned to the image it was
+  validated on rather than `ubuntu-latest`, whose move to a new image would
+  change the systemd version and defaults under a required check. Bump the pin
+  deliberately, re-validating on the new image with
+  `scripts/acceptance/linux` first. The job's name must stay `real-systemd`,
+  because branch protection matches the required check by name
+  (`scripts/test_ci_workflow.py` fails on a rename or an unpinned image). A
+  failure in it is a real finding about the adapter. To run it yourself, never
+  on your own machine or login, use a disposable Linux container with
+  systemd as PID 1 (Docker on macOS runs it in a Linux VM) and a non-root
+  user (or run
   `scripts/acceptance/linux/host.sh`, which does all of this and more; see
   [the Linux live acceptance run](#the-linux-live-acceptance-run)):
 
@@ -642,6 +650,8 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
 | `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
+| `FuzzSubagentMeta` | any `.meta.json` bytes beside a subagent transcript | no failure; at most one `subagent-meta` record, first, holding only a bounded string of valid UTF-8; the transcript's own records unchanged; the output refilters unchanged |
+| `FuzzSubagentMetaDropsSecrets` | a secret in a description, among filler so the cap can fall in or beside it | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
