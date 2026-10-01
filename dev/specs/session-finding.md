@@ -1,8 +1,8 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PRs 1 to 7 merged, PR 8 (docs and live check) open until the owner's
-[live check](#live-check-pr-8).
+PRs 1 to 8 merged (the last on 2026-10-01); the owner's
+[live check](#live-check-pr-8) is not recorded yet.
 Where this plan and the code differ once packages merge, the code is the
 reference and differences go under Deviations.
 
@@ -652,11 +652,11 @@ fakes and never touch a real Mac, so this is the one place the whole feature
 meets real sessions and a real terminal. It takes about 30 minutes. Tick each
 box when what you see matches the line that starts `Expect`. A step that does not
 match is a finding: write down the command, what you saw, and the screen
-width, and file it before merging PR 8.
+width, and file it.
 
 ### Before you start
 
-- [ ] **Build and install `main`** (PRs 1 to 7 merged), then refresh setup, which
+- [ ] **Build and install `main`** (PRs 1 to 8 merged), then refresh setup, which
   brings the hooks, skills, and background job up to date for the new binary.
   `--replace-current` puts it where `agent-archive` already is on `PATH`, so
   the hooks and skills keep pointing at a real path:
@@ -878,15 +878,13 @@ the answer goes into the guide.
   three or four more prompts, `/exit`, and run the `f=$(ls -t …)` line and the
   two `grep` commands again (the `f=` line first, in case the resumed session
   wrote a new `.jsonl`), since a name may arrive only after several turns.
-- [ ] **Record what you saw in the guide, on PR 8's branch.** The placeholder
-  is not on `main`, so check out the branch first (`git checkout
-  claude/session-finding-pr8-docs && git pull`). In
+- [ ] **Record what you saw in the guide.** On a branch from `main`, in
   `docs/guides/list-and-show.md`, find the comment `OWNER, live check` under the
   paragraph about names, replace the sentence above it with what you saw
   (for example: "The Claude Code CLI wrote a `custom-title` after the second
   prompt, with no `/rename`" or "The CLI wrote none until `/rename`, so its
-  sessions are listed by their first prompt"), delete the comment, then commit
-  and push to that branch.
+  sessions are listed by their first prompt"), and delete the comment. Commit
+  it there for the pull request below.
 
 ### 8. What only a real terminal can show
 
@@ -926,7 +924,7 @@ the answer goes into the guide.
 - [ ] Every box above is ticked, or each miss is filed. The `OWNER` placeholder
   in `docs/guides/list-and-show.md` is replaced. On the same branch, change the
   Status line at the top of this plan to "PRs 1 to 8 merged and live-checked",
-  push, then merge PR 8.
+  then open a pull request with both changes and merge it.
 
 ## Later
 
