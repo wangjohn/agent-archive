@@ -127,14 +127,14 @@ session's summary replace each other instead of piling up:
   bottom takes the words, and the rows narrow with each character. The words
   are the ones `list "<words>"` takes: every word must appear in a session's
   name, title, branch, project, app, or the start of its ID, and `#212` or
-  `212` also matches a pull request number. The first row is marked `▸`, ↑ and
-  ↓ move the mark, and Enter shows the marked session (and `b` brings back
-  the filtered list). Esc clears the filter and closes the line, and
+  `212` also matches a pull request number. The first session that matches
+  is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
+  (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
   Backspace on an empty one does too. Rows keep the numbers they have
   unfiltered. A subagent session that matches is shown indented under its
   parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
-  when it does not match; a subagent has no number, so choose it with the
-  mark. `list "<words>"` and a `show` query that matches several sessions
+  when it does not match (the mark starts on the subagent, not the parent);
+  a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
   open the browser with the words already in the filter, and the rest of the
   archive is one Esc away.
 - In the summary, `t` opens its transcript through the pager (quit the pager

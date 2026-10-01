@@ -26,6 +26,10 @@ type pickerView struct {
 	// table down, which is where the highlight counts from.
 	rows  []listRow
 	order []listRow
+	// first is the position in order of the first row the words match, where
+	// the highlight starts: a parent shown only for a subagent under it is
+	// not what Enter acts on unless the highlight is moved there.
+	first int
 	// matched is how many sessions match the filter's words.
 	matched int
 	groups  []sessionTableGroup
@@ -39,10 +43,10 @@ type pickerView struct {
 func (l *sessionPicker) words() string { return strings.Join(strings.Fields(l.filter), " ") }
 
 // setFilter narrows the table to the words in text. The table starts again at
-// its top, with the first row highlighted.
+// its top, with the first row that matches highlighted.
 func (l *sessionPicker) setFilter(text string) {
 	l.filter = text
-	l.cursor, l.start, l.bottom, l.cache, l.memo = 0, 0, nil, nil, nil
+	l.cursor, l.moved, l.start, l.bottom, l.cache, l.memo = 0, false, 0, nil, nil, nil
 }
 
 // closeFilter clears the filter and puts the filter line away.
@@ -61,11 +65,12 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 		return m
 	}
 	shown, matched, laid := rows, len(rows), format
+	q := parseSessionQuery(words)
 	var footer bytes.Buffer
 	if words == "" {
 		printListFooter(&footer, len(rows), totalMatched, truncated, format)
 	} else {
-		shown, matched = filterRows(l.universe(rows), parseSessionQuery(words))
+		shown, matched = filterRows(l.universe(rows), q)
 		laid = filteredFormat(format, shown)
 		footer.WriteString(l.filterFooter(matched, words))
 	}
@@ -77,11 +82,15 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	for _, group := range groups {
 		order = append(order, group.rows...)
 	}
+	first := 0
+	if words != "" {
+		first = max(slices.IndexFunc(order, func(r listRow) bool { return q.matches(r.fields) }), 0)
+	}
 	heading := l.heading
 	if l.headingFor != nil {
 		heading = l.headingFor(words, matched)
 	}
-	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
+	v := &pickerView{words: words, filtering: l.filtering, rows: shown, order: order, first: first, matched: matched, groups: groups, format: laid, heading: heading, footer: footer.String()}
 	l.memo = v
 	return v
 }
@@ -224,17 +233,17 @@ func (l *sessionPicker) filterKey(k key, screen listScreen, v *pickerView) listK
 			return listQuit
 		}
 	case keyUp:
-		l.cursor = max(l.cursor-1, 0)
+		l.cursor, l.moved = max(l.cursor-1, 0), true
 	case keyDown:
-		l.cursor = min(l.cursor+1, last)
+		l.cursor, l.moved = min(l.cursor+1, last), true
 	case keyPageUp:
-		l.cursor = max(l.cursor-page, 0)
+		l.cursor, l.moved = max(l.cursor-page, 0), true
 	case keyPageDown:
-		l.cursor = min(l.cursor+page, last)
+		l.cursor, l.moved = min(l.cursor+page, last), true
 	case keyHome:
-		l.cursor = 0
+		l.cursor, l.moved = 0, true
 	case keyEnd:
-		l.cursor = last
+		l.cursor, l.moved = last, true
 	case keyRune:
 		if unicode.IsPrint(k.r) && len(l.filter) < maxFilterText {
 			l.setFilter(l.filter + string(k.r))
@@ -257,6 +266,9 @@ func (l *sessionPicker) filterScreen(stdout io.Writer, v *pickerView, prompt str
 	s := measure()
 	if !l.filtering || len(v.order) == 0 {
 		return s
+	}
+	if !l.moved {
+		l.cursor = v.first
 	}
 	l.cursor = min(max(l.cursor, 0), len(v.order)-1)
 	s.cursor = l.cursor

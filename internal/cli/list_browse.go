@@ -438,6 +438,9 @@ type sessionPicker struct {
 	filter    string
 	filtering bool
 	cursor    int
+	// moved is set once a key moved the highlight; until then it is on the
+	// first row the filter's words match.
+	moved bool
 	// search, when set, lists every session of the table's scope for the
 	// filter to search, which the table's rows alone would not (a limit cut
 	// them, and they leave out subagents); searched holds what it returned.

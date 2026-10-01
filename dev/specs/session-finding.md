@@ -963,7 +963,9 @@ guide. Live check on the owner's Mac:
   line mode `a` still switches the scope with a filter on, and keeps it.
 - PR 6: the `/ filter` hint is on the key-mode status line, not in the
   heading as §5's picture has it, so a `list` outside any project (which has
-  no heading) names it too. The heading while filtering is `<verb> · <scope>
+  no heading) names it too. The highlight starts on the first row the words
+  match, not the first row shown, as §5's `/208` picture has it: a parent
+  shown only for its subagent is not what Enter acts on until ↑ moves there. The heading while filtering is `<verb> · <scope>
   · "words" matches N · … · Esc clear` and the marked row has `▸` before its
   live dot (`listFormatOptions.Cursor`); a subagent is `  ↳ title`, indented
   two spaces, with no `· subagent of` hint, and the parent keeps its `· N

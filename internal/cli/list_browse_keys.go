@@ -222,7 +222,7 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
 	case typed == "" && r == '/':
-		l.filtering, l.cursor = true, 0
+		l.filtering, l.cursor, l.moved = true, 0, false
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.scroll(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):

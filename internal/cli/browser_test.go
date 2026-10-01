@@ -383,7 +383,8 @@ func atoi(s string) int {
 
 // A subagent that matches is shown indented under its parent, and the parent
 // is shown though it does not match; a subagent has no number, and can be
-// picked like any row.
+// picked like any row. The highlight starts on the subagent, the row that
+// matches, not on the parent shown for it.
 func TestASubagentMatchShowsItsParent(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
@@ -393,8 +394,8 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 	a.add(t, "other001", "A lone task", a.label)
 
 	// list "208" opens with the words in the filter: the parent, then the one
-	// subagent that matches, and the highlight moves onto it with ↓.
-	fake := newFakeKeys("\x1b[B", "\r", "q")
+	// subagent that matches, highlighted, which Enter opens.
+	fake := newFakeKeys("\r", "q")
 	out, errOut, code := runOnTerminal(t, a.env, fake, "", "list", "208")
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
@@ -410,7 +411,7 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 			lines = append(lines, line)
 		}
 	}
-	if len(lines) != 2 || !strings.Contains(lines[0], "Orchestrate the release") || !strings.Contains(lines[1], "    ↳ Review and fix PR #208 (5b-1b)") {
+	if len(lines) != 2 || !strings.Contains(lines[0], "Orchestrate the release") || !strings.Contains(lines[1], "↳ Review and fix PR #208 (5b-1b)") {
 		t.Fatalf("rows:\n%s", opening)
 	}
 	// The parent keeps its number; the subagent has none, and the hint that
@@ -418,14 +419,17 @@ func TestASubagentMatchShowsItsParent(t *testing.T) {
 	if fields := strings.Fields(lines[1]); fields[0] != "↳" && fields[0] != cursorMark {
 		t.Fatalf("a subagent row starts with %q, want no number:\n%s", fields[0], lines[1])
 	}
-	if !strings.Contains(lines[0], "· 2 subagents") || highlighted(opening) != "Orchestrate the release · 2 subagents" {
+	if !strings.Contains(lines[0], "· 2 subagents") || highlighted(opening) != "↳ Review and fix PR #208 (5b-1b)" {
 		t.Fatalf("parent row %q, highlighted %q", lines[0], highlighted(opening))
 	}
-	if got := highlighted(screens[2]); got != "↳ Review and fix PR #208 (5b-1b)" {
-		t.Fatalf("highlight after ↓ on %q:\n%s", got, screens[2])
+	if !strings.Contains(screens[2], "ID child001") {
+		t.Fatalf("Enter did not open the subagent:\n%s", screens[2])
 	}
-	if !strings.Contains(screens[3], "ID child001") {
-		t.Fatalf("Enter did not open the subagent:\n%s", screens[3])
+	// ↑ moves the highlight onto the parent, which Enter then opens.
+	out, _, code = runOnTerminal(t, a.env, newFakeKeys("\x1b[A", "\r", "q"), "", "list", "208")
+	screens = strings.Split(out, clearScreenSequence)
+	if code != 0 || len(screens) < 4 || highlighted(screens[2]) != "Orchestrate the release · 2 subagents" || !strings.Contains(screens[3], "ID parent01") {
+		t.Fatalf("code=%d after ↑ and Enter:\n%s", code, out)
 	}
 
 	// Typed at the filter of the plain list, the same words find the same rows.
@@ -608,12 +612,13 @@ func TestKeysListFilteredGolden(t *testing.T) {
 	scope := sessionScope{Label: "agent-archive", RepoKey: scopeKey, Dir: "/w/agent-archive", ProjectIDs: []string{"project-agent-archive"}}
 	format := listFormatOptions{Now: pickerNow, GroupByProject: true, Numbered: true}
 	choices := newScopeChoices(scope, format, false, archiveRows(sessions, defaultListLimit, format))
-	// /208 narrows to the PR-208 reviewer under its parent; ↓ highlights it.
-	screens := keyScreens(t, &sessionPicker{env: fixedTerminal{100, 30}}, choices, "show", "/", "208", "\x1b[B")
-	if len(screens) != 4 {
+	// /208 narrows to the PR-208 reviewer under its parent, and highlights it,
+	// the row that matches.
+	screens := keyScreens(t, &sessionPicker{env: fixedTerminal{100, 30}}, choices, "show", "/", "208")
+	if len(screens) != 3 {
 		t.Fatalf("%d screens", len(screens))
 	}
-	golden.Check(t, filepath.Join("testdata", "browse", "keys-list-filtered.txt"), []byte(screens[3]))
+	golden.Check(t, filepath.Join("testdata", "browse", "keys-list-filtered.txt"), []byte(screens[2]))
 }
 
 // Regenerate with `go test ./internal/cli -run TestKeysHandoffFilteredGolden -update`

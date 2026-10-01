@@ -35,8 +35,10 @@ var browserRunners = map[string]bool{
 
 // browserLoops are the functions that read a person's choice of a session,
 // as a screen of rows with a prompt (the key browser and its line-mode
-// fallback). Only the browser's files call them.
-var browserLoops = map[string]bool{"pickScoped": true, "pickRows": true, "pickKeys": true, "pick": true}
+// fallback), and matchBrowseRow, which turns a typed answer into one of the
+// rows: a chooser of its own, reading lines, would reuse it. Only the
+// browser's files call them.
+var browserLoops = map[string]bool{"pickScoped": true, "pickRows": true, "pickKeys": true, "pick": true, "matchBrowseRow": true}
 
 // funcCalls is, for each function of the package that is not a test, the
 // names it calls, by "Receiver.name" for a method and "name" for a function,
