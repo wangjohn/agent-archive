@@ -376,7 +376,8 @@ func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, forma
 	for _, row := range formatHandoffRows(shown, format) {
 		// The table is built in memory, where writes cannot fail. The ID is
 		// stored data, like the title, and may hold control characters.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(row.ShortID), row.Harness, row.Project, row.When, row.Title)
+		// Nothing is left long or invisible either: an agent reads this.
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", cappedLine(row.ShortID, 12), cappedLine(row.Harness, 20), cappedLine(row.Project, 30), row.When, cappedLine(row.Title, matchFieldWidth))
 	}
 	_ = tw.Flush()
 	if len(shown) < len(matches) {

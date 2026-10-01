@@ -29,7 +29,7 @@ func TestArchiveHandoffCandidatesPreservesOrderAndSkipsEmptySessions(t *testing.
 		{SessionID: "unknown-count", ProjectID: "project"},
 		{SessionID: "one-turn", ProjectID: "project", Counts: archive.Counts{Turns: &one}},
 	}
-	got := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, map[string]bool{"running": true})
+	got, _ := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, "", map[string]bool{"running": true})
 	if len(got) != 2 || got[0].SessionID != "unknown-count" || got[1].SessionID != "one-turn" {
 		t.Fatalf("candidates = %#v", got)
 	}
@@ -58,10 +58,17 @@ type handoffFixture struct {
 // an upload.
 func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 	t.Helper()
+	return newHandoffFixtureFor(t, sync, "codex", handoffTranscript)
+}
+
+// newHandoffFixtureFor is newHandoffFixture for another harness and
+// transcript, whose PROJECT is replaced by the project directory.
+func newHandoffFixtureFor(t *testing.T, sync bool, harness, transcriptTemplate string) handoffFixture {
+	t.Helper()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	transcript := filepath.Join(project, "codex.jsonl")
-	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(handoffTranscript, "PROJECT", project)), 0o600); err != nil {
+	transcript := filepath.Join(project, harness+".jsonl")
+	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(transcriptTemplate, "PROJECT", project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
@@ -70,10 +77,10 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, harness, payload, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(handoffTranscript, "PROJECT", project)), 0o600); err != nil {
+	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(transcriptTemplate, "PROJECT", project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	mem := storagetest.NewMemoryStore()

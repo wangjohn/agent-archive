@@ -16,10 +16,13 @@ hooks, collector, and local state.
   they see every machine's sessions. Each session's metadata records the
   `machine_id` that captured it.
 - **Handoff across machines.** `agent-archive handoff --latest` on another
-  machine downloads the session from the archive. It matches the project only
-  when the repository is checked out at the same path; otherwise use a session
-  ID from `list`. Push your branch first: uncommitted changes stay on the
-  machine that made them. See [handoff](handoff.md).
+  machine downloads the session from the archive. It finds it by the
+  repository's `origin` remote, so the repository can be at a different path
+  on each machine (a directory with no `origin` still needs the same path, or
+  a session ID from `list`). Because a repository chooses its own remote,
+  `handoff` names a session it found this way and asks before using it. Push
+  your branch first: uncommitted changes stay on the machine that made them.
+  See [handoff](handoff.md#finding-a-session-by-repository).
 - **Retention is per machine too.** Each machine's retention setting applies
   to the sessions it owns. Set the same value on every machine if you want one
   policy.

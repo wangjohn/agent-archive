@@ -106,6 +106,9 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// currentBranch, set only by tests, replaces the git lookup of the
+	// branch checked out in a directory (see gitBranch).
+	currentBranch func(dir string) string
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults
