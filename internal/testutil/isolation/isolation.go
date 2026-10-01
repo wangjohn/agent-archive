@@ -22,7 +22,7 @@ import (
 
 // Variables names the environment variables that move a data, app, or AWS
 // configuration directory. Process unsets them all.
-var Variables = []string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME"}
+var Variables = []string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
 
 // Process isolates the test process, before any test runs:
 //

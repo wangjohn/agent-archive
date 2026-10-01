@@ -93,6 +93,9 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 		}
 		screen := l.screen(stdout, groups, format, len(rows), footer.String(), question+typed)
 		var frame bytes.Buffer
+		if l.heading != "" {
+			frame.WriteString(oneRow(l.heading, screen.width) + "\n")
+		}
 		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), format); err != nil {
 			return listRow{}, false, err
 		}
@@ -120,6 +123,9 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 			switch result {
 			case listQuit:
 				return listRow{}, false, nil
+			case listToggle:
+				l.toggled = true
+				return listRow{}, false, nil
 			case listSubmit:
 				if row, ok := matchBrowseRow(typed, rows); ok {
 					return row, true, nil
@@ -143,11 +149,13 @@ const (
 	listQuit
 	// listSubmit asks for the row typed.
 	listSubmit
+	// listToggle asks for the other scope.
+	listToggle
 )
 
 // listKey applies one key to the list drawn as screen: it scrolls (moving
-// l.start) or edits what is typed. n, p, and q act only when nothing is
-// typed.
+// l.start) or edits what is typed. a (when the scope can change), n, p, and
+// q act only when nothing is typed.
 func (l *sessionPicker) listKey(k key, screen listScreen, typed string) (string, listKeyResult) {
 	if move, ok := scrollKeys[k.kind]; ok {
 		l.scroll(move, screen)
@@ -183,6 +191,8 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		l.scroll(scrollPageDown, screen)
 	case typed == "" && (r == 'q' || r == 'Q'):
 		return "", listQuit
+	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
+		return "", listToggle
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.scroll(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
@@ -225,7 +235,7 @@ func (l *sessionPicker) screen(stdout io.Writer, groups []sessionTableGroup, for
 	s.width = width
 	// Below the table: the footer, the status line, the message line (or a
 	// blank one), and the prompt with what is typed.
-	chrome := displayLines(footer, width) + 1 + 1 + displayLines(prompt, width)
+	chrome := l.headRows() + displayLines(footer, width) + 1 + 1 + displayLines(prompt, width)
 	s.budget = max(height-chrome, minPickerPageRows)
 	s.bottom = l.lastScreen(s)
 	s.start = min(l.start, s.bottom)

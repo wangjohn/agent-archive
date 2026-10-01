@@ -42,7 +42,7 @@ func TestStatsScreenOnARealTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "resize", "suspend", "save"} {
+	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "sigquit", "savequit", "resize", "suspend", "save"} {
 		dir := t.TempDir()
 		out, err := runPTYScript(t, python, statsPTYScript, binary, mode, dir)
 		if err != nil {
@@ -187,6 +187,28 @@ try:
     elif mode == 'hup':
         p.send_signal(signal.SIGHUP)
         finish(129)
+        check_restored()
+    elif mode == 'sigquit':
+        # From outside (Ctrl-\ is off in key mode): handled like the others,
+        # no goroutine dump, the terminal given back, the shell's status.
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
+        check_restored()
+    elif mode == 'savequit':
+        # A page saved with h, then a signal from outside: the terminal is
+        # given back first, and then the path is printed on the normal screen,
+        # as after a quit.
+        os.write(master, b'h'); n = wait_frame('Save redacted HTML as', n, 'Esc cancels): ')
+        os.write(master, b'saved.html\r'); n = wait_frame('Saved ', n, 'names replaced)')
+        assert os.path.exists(os.path.join(cwd, 'saved.html'))
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
+        wait_for(b'saved.html\r\n', output.rindex(LEAVE))
+        assert re.search(rb'\x1b\[\?25h\x1b\[\?1049lWrote [^\n]*saved\.html\r?\n$', output), output[-300:]
+        assert output.count(b'Wrote ') == 1, output[-300:]
+        assert os.listdir(cwd) == ['saved.html'], os.listdir(cwd)
         check_restored()
     elif mode == 'resize':
         resize(12, 60)

@@ -80,11 +80,15 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the numbers")
+	all := fs.Bool("all", false, "with --json, list every project, skill and MCP server instead of the top five of each")
 	htmlFlags := addStatsHTMLFlags(fs)
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	if code := htmlFlags.validate(fs, *jsonOut, env.isTerminal(stdout)); code != 0 {
+		return code
+	}
+	if code := checkStatsAll(fs, *all, *jsonOut); code != 0 {
 		return code
 	}
 	daysSet := false
@@ -148,11 +152,11 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
 	// A page lists every project and skill and lets the screen cut them. The
-	// JSON and the web page keep the engine's default lists: the top few
-	// projects by spend.
+	// JSON and the web page keep the engine's default lists, the top few by
+	// spend or use, unless --json --all asks for every row.
 	textPage := !*jsonOut && !htmlFlags.html
 	computed := stats.Compute(sessions, stats.Options{
-		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage,
+		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage || *all,
 	})
 	filters := statsFiltersOf(opts)
 	if *jsonOut {
@@ -189,9 +193,19 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	return 0
 }
 
+// checkStatsAll reports a usage error for --all without --json. The web page
+// keeps its top lists by design, and the screens list what they can already:
+// only the JSON has a short default to lift.
+func checkStatsAll(fs *commandFlags, all, jsonOut bool) int {
+	if all && !jsonOut {
+		return fs.usageError("--all applies only to --json")
+	}
+	return 0
+}
+
 // readStatsSessions reads the sessions stats counts. On a terminal it shows
 // a spinner with how many sidecars are read, since the first run downloads
-// and caches every one. Ctrl-C (or SIGTERM or SIGHUP) stops the read at
+// and caches every one. Ctrl-C (or SIGTERM, SIGHUP or SIGQUIT) stops the read at
 // once, leaves nothing on the screen and exits as the signal would have;
 // the cache is only ever written by atomic renames, so an interrupted read
 // leaves nothing damaged. A non-zero code is the command's exit code.
