@@ -31,7 +31,7 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 	issuer := strings.Repeat("b", 32)
 	slot := strings.Repeat("c", 32)
 	cfg := config.Config{MachineID: recipient, MachineName: "laptop", Storage: credentials.Config{Provider: credentials.ProviderR2, R2AccountID: cloudflaretest.AccountID, Bucket: "test-bucket"}, CloudflareTokenCommand: []string{"must-not-execute"}}
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: "r2_own", AccessKeyID: key, RecipientID: recipient, IssuerID: issuer, SlotID: slot}
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Own, AccessKeyID: key, RecipientID: recipient, IssuerID: issuer, SlotID: slot}
 	must(t, config.Save(home, cfg))
 	store := storagetest.NewMemoryStore()
 	record, err := machines.Build(cfg, "linux/amd64", "dev", "", now)
@@ -133,7 +133,7 @@ func TestProviderBindingStatesDoNotInferIdentityFromNameAlone(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	recipient, issuer, slot := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
-	binding := machines.CredentialBinding{Kind: "r2_own", RecipientID: recipient, IssuerID: issuer, SlotID: slot}
+	binding := machines.CredentialBinding{Kind: config.MachineAssignmentR2Own, RecipientID: recipient, IssuerID: issuer, SlotID: slot}
 	bucket := cloudflare.BucketRef{Name: "test-bucket"}
 	resource, err := cloudflare.BucketResource(cloudflaretest.AccountID, bucket)
 	must(t, err)

@@ -227,7 +227,7 @@ func providerBindingState(token cloudflare.TokenMetadata, found bool, binding ma
 	if !providerTokenActive(token, now) {
 		return observationInactive, false
 	}
-	if binding.Kind != "r2_own" {
+	if binding.Kind != config.MachineAssignmentR2Own {
 		return observationLegacy, true
 	}
 	id, known := cloudflare.ParseProviderName(token.Name)
