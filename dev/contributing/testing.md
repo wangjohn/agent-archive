@@ -307,8 +307,9 @@ scripts/acceptance/linux/host.sh            # the whole run
 scripts/acceptance/linux/host.sh --dry-run  # what it would create; no Docker needed
 ```
 
-It needs only Docker (colima or Docker Desktop on a Mac) and Go to cross-build
-(`BUILD_IN_DOCKER=1` builds in a `golang` container instead). It builds `linux`
+It needs only Docker (colima or Docker Desktop on a Mac; with a Linux Docker the
+privileged machine shares your own kernel, so use a VM there) and Go to
+cross-build (`BUILD_IN_DOCKER=1` builds in a `golang` container instead). It builds `linux`
 binaries of your working tree, starts a privileged Ubuntu 24.04 container with
 systemd as PID 1 and a MinIO container on a network of their own, runs
 `guest.sh` in the machine as root, prints each check as `PASS` or `FAIL`, and

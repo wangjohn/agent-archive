@@ -6,13 +6,15 @@
 set -u
 
 # Refuse to run outside the machine host.sh made: host.sh tells it the run's
-# name prefix, and a Mac or a developer's own Linux login has neither the
-# marker nor the staged files.
+# name prefix, only the image built from the Dockerfile beside this script has
+# the marker file, and host.sh stages the binary in /acceptance. A Mac or a
+# developer's own Linux login, even as root, has none of the three.
 case ${AA_ACCEPT_GUEST:-} in
   aa-accept-*) ;;
   *) echo "guest.sh runs only inside the disposable machine host.sh makes; run scripts/acceptance/linux/host.sh" >&2; exit 2 ;;
 esac
-{ [ "$(uname -s)" = Linux ] && [ "$(id -u)" = 0 ] && [ -d /acceptance ]; } || { echo "not the disposable acceptance machine" >&2; exit 2; }
+{ [ "$(uname -s)" = Linux ] && [ "$(id -u)" = 0 ] && [ -f /etc/agent-archive-acceptance-machine ] && [ -x /acceptance/agent-archive ]; } ||
+  { echo "not the disposable acceptance machine" >&2; exit 2; }
 : "${ENDPOINT:?}" "${ACCESS_KEY:?}" "${SECRET_KEY:?}" "${BUCKET:?}"
 pass=0
 fail=0
@@ -163,7 +165,7 @@ send Stop ',"stop_hook_active":false'
 send SessionEnd ',"reason":"other"'
 EOF
 HOOKED=$(date +%s)
-check_out "status sees the session waiting for its first upload" 'session' aa_xdg status
+check_out "status counts the session the hooks registered" 'Claude Code.* hooks on +1 session' aa_xdg status
 echo "   (not running sync: the timer's collector must publish it)"
 wait_for "the timer-started collector published the session (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list | grep -q "file the bugs"'
 check_out "list shows the session" 'file the bugs and run the tests.*claude.*widget' aa list
@@ -176,7 +178,7 @@ echo "== 4. Cursor: a backfill from the shell reads the chat from a copy under X
 check "no cache directory exists before the first copy" test ! -e $XDG_CACHE/agent-archive
 out=$(aa_xdg backfill --harness cursor --project $PROJECT --yes 2>&1)
 echo "$out" | tail -8
-check_out "backfill imported the Cursor chat (1 session)" '[Ii]mport|registered|1 session' echo "$out"
+check_out "backfill imported the Cursor chat (1 session)" '^Registered 1 session as import ' echo "$out"
 check "the cache directory has a CACHEDIR.TAG" test -f $XDG_CACHE/agent-archive/CACHEDIR.TAG
 check_out "the tag starts with the specification's signature" '^Signature: 8a477f597d28d172789f06886806bc55' cat $XDG_CACHE/agent-archive/CACHEDIR.TAG
 check "the snapshot root is 0700 and ada's" test "$(stat -c '%a %U' $XDG_CACHE/agent-archive/cursor-snapshots)" = "700 ada"
@@ -184,7 +186,9 @@ check "the cache directory is ada's and not writable by others" test "$(stat -c 
 check "no copy of Cursor's chats is left behind" test -z "$(ls -A $XDG_CACHE/agent-archive/cursor-snapshots)"
 check "nothing was made under /tmp" test -z "$(ls -d /tmp/agent-archive-cursor-* 2>/dev/null)"
 check "nothing was made in the default cache directory" test ! -e /home/ada/.cache/agent-archive
-wait_for "the timer-started collector published the Cursor chat (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list --harness cursor | grep -q "synthetic cursor question"'
+# backfill uploads what it imports, so this is normally there at once; the wait
+# covers an upload left for the collector.
+wait_for "the imported Cursor chat is in the bucket (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list --harness cursor | grep -q "synthetic cursor question"'
 check_out "status shows the imported Cursor chat, uploaded, collector on" 'Cursor +hooks on +no sessions yet .* 1 imported' aa_xdg status
 pkill -u ada sqlite3 || true
 
@@ -307,7 +311,7 @@ out=$(nobus_uninstall --skip-scheduler)
 if grep -q 'Not verified stopped' <<<"$out"; then ok "--skip-scheduler says the job was not verified stopped"; else bad "--skip-scheduler: $out"; fi
 check "--skip-scheduler removed the unit files" test ! -e $UNITS/$REF.service -a ! -e $UNITS/$REF.timer
 check "--skip-scheduler left no dangling enable link" test ! -L $UNITS/timers.target.wants/$REF.timer
-check_out "the manager still runs the timer, as the summary warned" 'active' as_ada systemctl --user is-active $REF.timer
+check_out "the manager still runs the timer, as the summary warned" '^active$' as_ada systemctl --user is-active $REF.timer
 as_ada systemctl --user stop $REF.timer $REF.service
 check_not_out "the printed manual stop command stops it" '^active' as_ada systemctl --user is-active $REF.timer
 
@@ -321,14 +325,49 @@ BOB_ENV=(XDG_RUNTIME_DIR=/run/user/1101 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/
 out=$(cd /home/bob && timeout 660 sudo -u bob -H env "${BOB_ENV[@]}" ./cli.test -test.run 'TestRealSystemd' -test.v -test.timeout 10m 2>&1)
 status=$?
 grep -E '^(--- |PASS|FAIL|ok)' <<<"$out" | sed 's/^/   /'
-if [ $status -eq 0 ]; then ok "the real-manager tests of the commands pass"; else bad "the real-manager tests of the commands"; echo "$out" | tail -20; fi
-out=$(cd /home/bob/systemd && timeout 660 sudo -u bob -H env "${BOB_ENV[@]}" ./systemd.test -test.run 'Real' -test.timeout 10m 2>&1)
+# passed OUTPUT TEST...: go test -v's OUTPUT says each TEST passed at the top
+# level, so a pattern that matched no test, or a gate that skipped one, is not
+# taken for a pass (go test exits 0 for both).
+passed() {
+  local out=$1 t
+  shift
+  for t; do grep -q "^--- PASS: $t " <<<"$out" || return 1; done
+}
+if [ $status -eq 0 ] && passed "$out" TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob; then
+  ok "the real-manager tests of the commands pass"
+else
+  bad "the real-manager tests of the commands (exit $status, or one did not run)"
+  echo "$out" | tail -20
+fi
+out=$(cd /home/bob/systemd && timeout 660 sudo -u bob -H env "${BOB_ENV[@]}" ./systemd.test -test.run 'Real' -test.v -test.timeout 10m 2>&1)
 status=$?
-echo "$out" | tail -3 | sed 's/^/   /'
-if [ $status -eq 0 ]; then ok "the adapter's conformance run over the real manager passes"; else bad "the adapter's conformance run over the real manager"; echo "$out" | tail -30; fi
+grep -E '^(--- |PASS|FAIL|ok)' <<<"$out" | sed 's/^/   /'
+if [ $status -eq 0 ] && passed "$out" TestRealUserManagerConformance TestRealSystemctlVersionParsesWhateverTheTerminalSays; then
+  ok "the adapter's conformance run over the real manager passes"
+else
+  bad "the adapter's conformance run over the real manager (exit $status, or it did not run)"
+  echo "$out" | tail -30
+fi
 
 echo "== 13. the Cursor snapshot and platform tests on a real Linux account (the account's home, not \$HOME)"
-if (cd /home/bob && sudo -u bob -H env HOME=/home/bob /acceptance/cursorstore.test -test.run 'Snapshot|CacheDirectory' -test.timeout 5m >/dev/null 2>&1); then ok "cursorstore's snapshot tests pass on Linux"; else bad "cursorstore's snapshot tests on Linux"; fi
+out=$(cd /home/bob && sudo -u bob -H env HOME=/home/bob /acceptance/cursorstore.test -test.run 'Snapshot|CacheDirectory' -test.v -test.timeout 5m 2>&1)
+status=$?
+if [ $status -eq 0 ] && passed "$out" TestSnapshotRootIsTheSystemsOwn TestLinuxSnapshotRootIsMadeUnderTheCacheDirectoryWithATag; then
+  ok "cursorstore's snapshot tests pass on Linux"
+else
+  bad "cursorstore's snapshot tests on Linux (exit $status, or the Linux ones did not run)"
+  echo "$out" | tail -20
+fi
+# The one that needs root to give a directory to another account (it skips as
+# bob), run as the machine's root.
+out=$(cd /tmp && /acceptance/cursorstore.test -test.run '^TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused$' -test.v -test.timeout 5m 2>&1)
+status=$?
+if [ $status -eq 0 ] && passed "$out" TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused; then
+  ok "a cache directory or snapshot root another account owns is refused (as root)"
+else
+  bad "the snapshot root owned by another account (as root; exit $status, or it did not run)"
+  echo "$out" | tail -20
+fi
 
 echo
 echo "acceptance: $pass passed, $fail failed"

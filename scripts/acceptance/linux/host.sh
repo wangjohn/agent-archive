@@ -17,8 +17,10 @@
 # say). The exit status is 0 only if every check passed. Only synthetic content
 # is used (the repository's fixture transcript and a hand-made Cursor database)
 # and the only credentials are a MinIO user and password made up for the run.
-# Nothing Linux runs on the machine this is run from: it is only Docker's client
-# and, to cross-build, Go.
+# The product never runs on the machine this is run from: only Docker's client
+# and, to cross-build, Go do. (On a Mac the containers run in Docker's Linux VM;
+# with a Linux Docker the privileged machine shares your own kernel, so use a
+# VM there.)
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -51,6 +53,8 @@ net=$prefix-net
 image=$prefix-image
 volume=$prefix-build
 builder=$prefix-builder
+mc_bucket=$prefix-mc-bucket
+mc_list=$prefix-mc-list
 access=acc$suffix
 secret=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 bucket=acceptance-archive
@@ -70,7 +74,7 @@ Docker would be asked to make, and to remove when the run ends:
   container  $builder (golang, only when BUILD_IN_DOCKER=1)
   container  $host (ubuntu:24.04 with systemd as PID 1, privileged, from image $image)
   volume     $volume (only when BUILD_IN_DOCKER=1)
-and to run $mc_image once to make the bucket $bucket, and once more to list it.
+and to run $mc_image as $mc_bucket to make the bucket $bucket, and as $mc_list to list it.
 It would build ./cmd/agent-archive and the cli, systemd and cursorstore test binaries for
 linux/<Docker's architecture> from $root, copy them with guest.sh and the fixture
 internal/archive/testdata/claude-model-tokens.jsonl into $host:/acceptance, and run guest.sh there.
@@ -87,7 +91,7 @@ cleanup() {
     echo "kept: containers $host and $minio, network $net, image $image, volume $volume"
     echo "  remove them with: docker rm -f $host $minio; docker network rm $net; docker rmi $image; docker volume rm $volume"
   else
-    for c in "$host" "$minio" "$builder"; do own "$c" && docker rm -f "$c" >/dev/null 2>&1 || true; done
+    for c in "$host" "$minio" "$builder" "$mc_bucket" "$mc_list"; do own "$c" && docker rm -f "$c" >/dev/null 2>&1 || true; done
     own "$net" && docker network rm "$net" >/dev/null 2>&1 || true
     own "$image" && docker rmi "$image" >/dev/null 2>&1 || true
     own "$volume" && docker volume rm "$volume" >/dev/null 2>&1 || true
@@ -161,7 +165,7 @@ echo "systemd is $state"
 case $state in running | degraded) ;; *) echo "the machine's systemd did not come up" >&2; exit 1 ;; esac
 
 # The bucket, made with MinIO's client from a container on the same network.
-docker run --rm --network "$net" --entrypoint /bin/sh "$mc_image" -c \
+docker run --rm --name "$mc_bucket" --network "$net" --entrypoint /bin/sh "$mc_image" -c \
   "for i in \$(seq 1 90); do mc alias set local http://$minio:9000 $access $secret >/dev/null 2>&1 && break; sleep 1; done; mc mb --ignore-existing local/$bucket" ||
   { echo "could not make the bucket; MinIO says:" >&2; docker logs --tail 20 "$minio" >&2; exit 1; }
 
@@ -183,7 +187,7 @@ docker exec \
 wait $! || status=$?
 
 echo "== what the bucket holds (from outside the machine)"
-docker run --rm --network "$net" --entrypoint /bin/sh "$mc_image" -c \
+docker run --rm --name "$mc_list" --network "$net" --entrypoint /bin/sh "$mc_image" -c \
   "mc alias set local http://$minio:9000 $access $secret >/dev/null && mc ls --recursive local/$bucket | head -30" || true
 machine=$(docker exec "$host" sh -c '. /etc/os-release && echo "$PRETTY_NAME, $(systemctl --version | head -1)"' 2>/dev/null || echo "unknown (the machine is gone)")
 echo "== the machine: linux/$goarch, $machine"

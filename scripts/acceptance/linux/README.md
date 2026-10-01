@@ -51,8 +51,8 @@ Its sections:
 | 9 | the enable-link cleanup when a setup's start fails after `systemctl enable` made the link (a `systemctl` wrapper in `ada`'s `PATH` enables without starting, then fails): setup fails, the rollback leaves no files and no link (not even a dangling one) and no running timer; the next setup works |
 | 10 | `uninstall --skip-scheduler` from a session that reaches the manager: stops the job, removes the files and the link |
 | 11 | `uninstall` from a session with no user bus refuses and names the flag and the manual stop command; with `--skip-scheduler` it says the job was not verified stopped, removes the files and leaves **no dangling enable link**; the manager still runs the timer until the printed stop command is run, which stops it |
-| 12 | the real-manager Go tests (`TestRealSystemd...`, the adapter's conformance run over the real manager) as `bob`, a second lingering user |
-| 13 | `cursorstore`'s snapshot tests on a real Linux account (the account's home, not `$HOME`) |
+| 12 | the real-manager Go tests (`TestRealSystemd...`, the adapter's conformance run over the real manager) as `bob`, a second lingering user; each named test must report `PASS`, so a test that matched nothing or skipped is a failure |
+| 13 | `cursorstore`'s snapshot tests on a real Linux account (the account's home, not `$HOME`), and, as root, the one that refuses a cache directory another account owns |
 
 The enable-link cleanup is therefore checked on every path that removes a job:
 uninstall with a manager (8), `--skip-scheduler` with a manager (10),
@@ -60,8 +60,9 @@ uninstall with a manager (8), `--skip-scheduler` with a manager (10),
 
 ## Safety
 
-- Everything it makes is named `aa-accept-<random>-*` (the network, the two
-  containers, the image, and a build volume when `BUILD_IN_DOCKER=1`). Cleanup
+- Everything it makes is named `aa-accept-<random>-*` (the network, the machine
+  and MinIO containers, the two short-lived `mc` containers, the image, and a
+  build container and volume when `BUILD_IN_DOCKER=1`). Cleanup
   (an `EXIT`, `INT` and `TERM` trap) removes names with that prefix only, and
   refuses any other. It never lists, stops or removes another container,
   including a MinIO of your own such as `agent-archive-minio`; MinIO publishes no
@@ -74,7 +75,14 @@ uninstall with a manager (8), `--skip-scheduler` with a manager (10),
 - The only credentials are a MinIO user and password generated per run, passed
   to the container and gone with it. Content is synthetic: the repository's
   fixture transcript and a Cursor database the script writes. Nothing of yours
-  reaches the container, and nothing Linux runs on your machine.
+  reaches the container, and the product never runs on your machine.
+- On a Mac the containers run in Docker's Linux VM. With a Linux Docker the
+  machine is a privileged container on your own kernel (with the host's cgroup
+  tree mounted, which systemd as PID 1 needs), so run it in a VM there.
+- `guest.sh` runs only where `AA_ACCEPT_GUEST` names a run, the machine's
+  image left its marker file (`/etc/agent-archive-acceptance-machine`, written
+  by the `Dockerfile`), and `host.sh` staged the binary in `/acceptance`; it
+  refuses anywhere else, root or not.
 
 ## When it fails
 
@@ -83,8 +91,10 @@ A failed check prints the output it looked at. `KEEP=1` leaves the machine up:
 `sudo -u ada -H env XDG_RUNTIME_DIR=/run/user/1100 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1100/bus bash`
 to be `ada` with her manager. A failure in a section after the first is often
 the first one's leftover state, so read from the top. A check that waits on a
-timer (sections 3 and 7) allows 240 and 150 seconds; the timer's first run is
-`OnBootSec=60s` and it then repeats every few minutes.
+timer allows 240 seconds (section 3) or 150 (section 7), printing
+progress as it waits; the timer's first run is a minute after the machine
+boots (`OnBootSec=60s`, or at once when it is started later than that) and it
+then repeats a minute after each run (`OnUnitActiveSec=60s`).
 
 ## Maintaining it
 

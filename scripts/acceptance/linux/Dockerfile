@@ -12,5 +12,7 @@ RUN apt-get update \
 RUN useradd -m -s /bin/bash -u 1100 ada && useradd -m -s /bin/bash -u 1101 bob \
  && mkdir -p /var/lib/systemd/linger \
  && touch /var/lib/systemd/linger/ada /var/lib/systemd/linger/bob
+# guest.sh refuses to run where this file is not: only this image has it.
+RUN echo "the disposable machine of scripts/acceptance/linux/host.sh; guest.sh runs only where this file is" >/etc/agent-archive-acceptance-machine
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

@@ -99,6 +99,12 @@ class AcceptanceScriptsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("not the disposable acceptance machine", result.stderr)
 
+    def test_guest_requires_the_marker_only_the_dockerfile_writes(self):
+        marker = "/etc/agent-archive-acceptance-machine"
+        self.assertIn(f"[ -f {marker} ]", GUEST.read_text())
+        self.assertRegex((DIR / "Dockerfile").read_text(), rf"(?m)^RUN .*>{re.escape(marker)}$")
+        self.assertNotIn(marker, HOST.read_text(), "host.sh must not make the marker: only the image has it")
+
     def test_scripts_never_name_anyone_elses_container(self):
         for script in (HOST, GUEST, DIR / "Dockerfile", DIR / "README.md"):
             text = script.read_text()
@@ -154,7 +160,8 @@ class FakeDockerRunTest(unittest.TestCase):
         self.assertEqual(
             sorted(removed),
             sorted(
-                f"{prefix.group(1)}-{what}" for what in ("machine", "minio", "builder", "net", "image", "build")
+                f"{prefix.group(1)}-{what}"
+                for what in ("machine", "minio", "builder", "mc-bucket", "mc-list", "net", "image", "build")
             ),
         )
         self.assertNotIn("agent-archive-minio", " ".join(self.calls()))
