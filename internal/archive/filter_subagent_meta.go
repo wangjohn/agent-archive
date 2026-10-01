@@ -36,6 +36,10 @@ const MaxSubagentMetaBytes = 16 * 1024
 // may be, and a longer one is cut on a character boundary.
 const maxSubagentDescriptionBytes = 512
 
+// subagentMetaKeys are the keys a subagent-meta record may hold, which
+// subagentMetaRecord rebuilds from typed values: its type and its description.
+var subagentMetaKeys = map[string]bool{"type": true, subagentDescriptionKey: true}
+
 // SubagentMetaPath is the .meta.json beside a Claude Code subagent
 // transcript: agent-<id>.jsonl names agent-<id>.meta.json in the same
 // directory. ok is false for any other file name, which is not a subagent
@@ -81,7 +85,7 @@ func subagentMetaLead(metaJSON []byte) (map[string]any, bool) {
 // the record is not part of the transcript.
 func subagentMetaRecord(raw map[string]any, omit func(string)) (map[string]any, bool) {
 	for _, key := range sortedKeys(raw) {
-		if key != "type" && key != subagentDescriptionKey {
+		if !subagentMetaKeys[key] {
 			omit(key)
 		}
 	}
@@ -112,6 +116,22 @@ func boundSubagentDescription(text string, state *sanitizeState) (string, bool) 
 		text = TruncateUTF8(next, maxSubagentDescriptionBytes)
 	}
 	return "", false
+}
+
+// subagentMetaSlot admits one subagent-meta record to a transcript: the first
+// it is given. A later one is dropped with an unsupported_value_omitted gap,
+// which carries no content.
+type subagentMetaSlot struct{ taken bool }
+
+// filter is filterSubagentMeta for the first record the slot is given, and
+// drops every later one.
+func (s *subagentMetaSlot) filter(raw map[string]any, lineNo int, addGap func(string, int, string), omit func(string)) ([]byte, error) {
+	if s.taken {
+		addGap("unsupported_value_omitted", lineNo, "record omitted")
+		return nil, nil
+	}
+	s.taken = true
+	return filterSubagentMeta(raw, lineNo, addGap, omit)
 }
 
 // filterSubagentMeta filters one subagent-meta record and returns its

@@ -668,15 +668,14 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	}
 	// A transcript holds one subagent-meta record: the lead when there is one,
 	// else the first the transcript itself holds (a retained snapshot filtered
-	// again). Any further one is dropped.
+	// again).
+	var meta subagentMetaSlot
 	var leadRecord []byte
-	metaSeen := false
 	if lead != nil && format == "claude-jsonl" {
-		encoded, err := filterSubagentMeta(lead, 0, addGap, omittedKeys.add)
-		if err != nil {
+		var err error
+		if leadRecord, err = meta.filter(lead, 0, addGap, omittedKeys.add); err != nil {
 			return FilteredTranscript{}, err
 		}
-		leadRecord, metaSeen = encoded, encoded != nil
 	}
 	for scanner.Scan() {
 		lineNo++
@@ -702,9 +701,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			if err != nil {
 				return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
 			}
-			result.Records = append(result.Records, encoded)
-			result.Boundary.RetainedRecords++
-			result.Boundary.RetainedBytes += len(encoded)
+			result.retain(encoded)
 			continue
 		}
 		if format == "claude-jsonl" && isClaudeLabelType(kind) {
@@ -713,29 +710,16 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			if err != nil {
 				return FilteredTranscript{}, err
 			}
-			if encoded != nil {
-				result.Records = append(result.Records, encoded)
-				result.Boundary.RetainedRecords++
-				result.Boundary.RetainedBytes += len(encoded)
-			}
+			result.retain(encoded)
 			continue
 		}
 		if format == "claude-jsonl" && kind == subagentMetaType {
 			recognized++
-			if metaSeen {
-				addGap("unsupported_value_omitted", lineNo, "record omitted")
-				continue
-			}
-			metaSeen = true
-			encoded, err := filterSubagentMeta(raw, lineNo, addGap, omittedKeys.add)
+			encoded, err := meta.filter(raw, lineNo, addGap, omittedKeys.add)
 			if err != nil {
 				return FilteredTranscript{}, err
 			}
-			if encoded != nil {
-				result.Records = append(result.Records, encoded)
-				result.Boundary.RetainedRecords++
-				result.Boundary.RetainedBytes += len(encoded)
-			}
+			result.retain(encoded)
 			continue
 		}
 		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
@@ -756,9 +740,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 		if err != nil {
 			return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
 		}
-		result.Records = append(result.Records, encoded)
-		result.Boundary.RetainedRecords++
-		result.Boundary.RetainedBytes += len(encoded)
+		result.retain(encoded)
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
@@ -769,11 +751,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat
 	}
-	if leadRecord != nil && len(result.Records) > 0 {
-		result.Records = slices.Insert(result.Records, 0, leadRecord)
-		result.Boundary.RetainedRecords++
-		result.Boundary.RetainedBytes += len(leadRecord)
-	}
+	result.retainFirst(leadRecord)
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}
@@ -782,6 +760,29 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+// retain appends one encoded record to the retained records and counts it;
+// nil, a record the filter dropped, retains nothing.
+func (t *FilteredTranscript) retain(encoded []byte) {
+	if encoded == nil {
+		return
+	}
+	t.Records = append(t.Records, encoded)
+	t.Boundary.RetainedRecords++
+	t.Boundary.RetainedBytes += len(encoded)
+}
+
+// retainFirst is retain at the front of the records, and only when there are
+// records already: a record that is no part of what was read, such as a
+// subagent's description, never makes a transcript with none look captured.
+func (t *FilteredTranscript) retainFirst(encoded []byte) {
+	if encoded == nil || len(t.Records) == 0 {
+		return
+	}
+	t.Records = slices.Insert(t.Records, 0, encoded)
+	t.Boundary.RetainedRecords++
+	t.Boundary.RetainedBytes += len(encoded)
 }
 
 // noteRecordTime folds one native record's timestamp into the transcript's

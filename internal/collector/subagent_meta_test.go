@@ -307,19 +307,19 @@ func TestUnusableMetaFileLeavesTheFilteredTranscriptUnchanged(t *testing.T) {
 func TestNativeEvidenceExtendsIgnoresTheSubagentDescription(t *testing.T) {
 	t.Parallel()
 	bundle := func(records ...map[string]any) archive.SourceBundle {
-		var b archive.SourceBundle
-		b.Capture.SourceFormat = "claude-jsonl"
-		b.Capture.FilterVersion, b.Capture.AdapterVersion = "14", "0.14.0"
-		b.NativeRecords = records
-		return b
+		return archive.SourceBundle{
+			Capture:       archive.SourceCapture{SourceFormat: "claude-jsonl", FilterVersion: "14", AdapterVersion: "0.14.0"},
+			NativeRecords: records,
+		}
 	}
 	first := map[string]any{"type": "user", "uuid": "u1"}
 	second := map[string]any{"type": "assistant", "uuid": "a1"}
 	named := map[string]any{"type": "subagent-meta", "description": "One"}
 	renamed := map[string]any{"type": "subagent-meta", "description": "Two"}
 	for name, c := range map[string]struct {
-		previous, candidate archive.SourceBundle
-		want                bool
+		previous  archive.SourceBundle
+		candidate archive.SourceBundle
+		want      bool
 	}{
 		"gained a description":  {bundle(first), bundle(named, first, second), true},
 		"changed description":   {bundle(named, first), bundle(renamed, first, second), true},

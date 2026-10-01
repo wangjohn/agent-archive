@@ -3,6 +3,7 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -278,7 +279,7 @@ func TestFilterV14MetaFileAloneNeverMakesATranscript(t *testing.T) {
 	if err != nil || len(empty.Records) != 0 || empty.Boundary.RetainedRecords != 0 {
 		t.Fatalf("empty transcript: %+v, %v", empty, err)
 	}
-	if _, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"nothing-we-know"}`+"\n"), meta); err != ErrUnsafeSourceFormat {
+	if _, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"nothing-we-know"}`+"\n"), meta); !errors.Is(err, ErrUnsafeSourceFormat) {
 		t.Fatalf("unrecognized transcript: err = %v, want ErrUnsafeSourceFormat", err)
 	}
 	// Records that are all dropped leave no records to put it before.
