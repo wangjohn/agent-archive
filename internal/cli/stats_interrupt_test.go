@@ -48,7 +48,7 @@ func TestStatsInterruptStopsTheReadQuietly(t *testing.T) {
 	for _, tc := range []struct {
 		sig  os.Signal
 		code int
-	}{{os.Interrupt, 130}, {syscall.SIGTERM, 143}} {
+	}{{os.Interrupt, 130}, {syscall.SIGTERM, 143}, {syscall.SIGHUP, 129}, {syscall.SIGQUIT, 131}} {
 		env, mem := statsEnv(t)
 		publishStatsFixture(t, mem)
 		store := &slowStore{MemoryStore: mem, started: make(chan struct{})}

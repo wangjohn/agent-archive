@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -114,6 +115,10 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
 	if old.MachineID == "" {
 		return nil
+	}
+	if env.copiedFromAnotherMachine(old) {
+		first, rest := copiedMachineWarning(home)
+		p.warn(first, rest...)
 	}
 	if !destinationEqual(old.Storage, next.Storage) {
 		// A session still waiting for its transcript has nothing a sync could
@@ -318,6 +323,11 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			return err
 		}
 	}
+	// The machine this data directory was set up on, recorded once beside the
+	// machine ID and kept when it differs from this one's (see
+	// copiedFromAnotherMachine), so the warning does not go away by running
+	// setup again on a copy. Linux only: nothing is recorded elsewhere.
+	next.HostID = cmp.Or(old.HostID, env.hostFingerprint())
 	next.SchemaVersion = config.SchemaVersion
 	next.Paused = old.Paused
 	next.Archive.Enabled = true

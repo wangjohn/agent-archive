@@ -81,7 +81,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	}
 
 	// Ctrl-C from here on stops between registration holds, or before the
-	// next session uploads. A second one, or SIGTERM or SIGHUP, quits at
+	// next session uploads. A second one, or SIGTERM, SIGHUP or SIGQUIT, quits at
 	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
 	var activity activityStop

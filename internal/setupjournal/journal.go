@@ -193,6 +193,9 @@ func Restore(home string, journal Journal, backends Backends) error {
 	if err := hooks.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
+	if err := collector.removeStranded(journal.Changes); err != nil {
+		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("what the failed setup left of the background collector's definition could not be removed (%v)", err)}
+	}
 	// A job another installation runs from its own definition is not this
 	// one's to restart: the scheduler refuses to load over it, and stopping
 	// it is not ours to do. The files are back and the record is removed

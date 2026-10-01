@@ -23,7 +23,7 @@ Ctrl-C while the plan is being made stops it and changes nothing. Ctrl-C
 during registration or upload stops after the session in flight; run
 `backfill` again with the same options to finish the import, or let the
 background collector upload what is registered. Each says at once that it is
-stopping. A second Ctrl-C, or closing the terminal (SIGHUP) or SIGTERM,
+stopping. A second Ctrl-C, or closing the terminal (SIGHUP), SIGTERM or SIGQUIT,
 quits at once, after removing the private copy of Cursor's database backfill
 may have made; a copy a killed backfill leaves is removed by the next
 `backfill` command of any kind.

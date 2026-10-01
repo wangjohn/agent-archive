@@ -5,7 +5,8 @@ summary of the last 30 days: what it cost, how many sessions, how many tokens,
 which agents did the work, what each day cost, where it went by project and
 model, the skills and MCP servers used most, and anything worth a second
 look. More is one flag away: `--detail` for the full breakdown, and
-`--view projects`, `models` or `agents` to list every one. On a terminal it
+`--view projects`, `models` or `agents` to list them (up to 500 projects or
+models, then `+ N more`). On a terminal it
 opens as an [interactive screen](#the-interactive-screen) with a key for each
 of these. It is read-only,
 like `list`: it reads only the metadata of your archived sessions, so it
@@ -15,13 +16,14 @@ never prompts, transcript text or file paths.
 ```sh
 agent-archive stats                        # the summary of the last 30 days
 agent-archive stats --detail               # every number, and what they rest on
-agent-archive stats --view projects        # every project, by spend (also models, agents)
+agent-archive stats --view projects        # up to 500 projects, by spend (also models, agents)
 agent-archive stats --days 7               # the last 7 days
 agent-archive stats --since 2026-09-01     # from that local day through today
 agent-archive stats --by week              # the detail screen, plus a table by week
 agent-archive stats --harness claude       # one agent only
 agent-archive stats --prices my-prices.json   # your own prices, see below
 agent-archive stats --json                 # for scripts: see JSON output
+agent-archive stats --json --all           # ... with every project, skill and MCP server
 agent-archive stats --html --output stats.html   # a web page you can share
 ```
 
@@ -241,20 +243,22 @@ Cache hit is cache reads over all input-side tokens.
 Estimated at list price, not a bill.   --view overview
 ```
 
-The projects and models screens are cut at 500 rows, and say how many more
-there are and where they all are: `+ 40 more (all in --json --by project)`
-under projects (`--json` alone keeps only the top five, so it does not have
-them), `+ 40 more (all in --json)` under models (`models` is never cut). The
-detail screen's `--by day`, `--by week` and `--by month` tables keep the
-newest 60 rows, and say `12 earlier rows not shown (all in --json --by day)`.
-Add the options it names to the command you ran, so the window and filters
-stay the same. On the interactive screen, which takes no command, the line
-says to quit first and names the window on show: `+ 40 more (quit, then run
-agent-archive stats --days 90 --json --by project)`, with `, with the same
-filters` when the screen was started with `--harness`, `--model`, `--imported`
-or `--hook-captured`. The skills and MCP servers are cut at 40 in the detail
-screen and at a few in the overview, and say `+ 3 more`; `--json` has only the
-top five of each, so past 40 no command lists every one.
+The projects and models screens list up to 500 rows, then say how many more
+there are and where they all are: `+ 40 more (all in --json --all)` under
+projects (`--json` alone keeps only the top five, so it does not have them),
+`+ 40 more (all in --json)` under models (`models` is never cut). The skills
+and MCP servers are cut at 40 in the detail screen and at a few in the
+overview, and say `+ 3 more (all in --json --all)`. The tables of the detail
+screen for `--by day`, `--by week` and `--by month` keep the newest 60 rows,
+and say `12 earlier rows not shown (all in --json --by day)`. Add the options
+a hint names to the command you ran, so the window and filters stay the same
+(and drop `--view` and `--detail`, which `--json` does not take). On the
+interactive screen, which takes no command, the line says to quit first and
+names the window on show: `+ 40 more (quit, then run agent-archive stats
+--days 90 --json --all)`, with `, with the same filters` when the screen was
+started with `--harness`, `--model`, `--imported` or `--hook-captured`. A hint
+that names a command is never broken in the middle when it fits a line, and a
+skill or server stays on a line with its count.
 
 ### Narrow terminals
 
@@ -294,8 +298,8 @@ sonnet         ███                               $320
 + 2 more
 
 MOST USED
-Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide
-        2 sessions
+Skills  code-review 10 · review-pr 4 · docs 3 ·
+        cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor
         only)
 
@@ -336,8 +340,10 @@ A view taller than the terminal is cut to fit and scrolls (the overview can
 need over 30 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
 below), a percentage or `End` where it can. On a narrow terminal the bar shortens its
 labels and then drops keys (`q` last) rather than wrap. Resizing the window
-redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP` and
-Ctrl-Z, the terminal gets its echo, cursor and screen back.
+redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP`,
+`SIGQUIT` (a `kill -QUIT` from outside exits 131, with no goroutine dump; Ctrl-\
+is turned off while the screen reads keys) and Ctrl-Z, the terminal gets its
+echo, cursor and screen back.
 
 `--days` and `--since` set the window the screen starts in: 7, 30 and 90
 days are the usual ones, and any other window (say `--days 14`) is added to
@@ -359,7 +365,7 @@ names on, so a page saved here is safe to share; run
 `agent-archive stats --html --include-names --output FILE` for the real
 names. It never replaces a file, and refuses a folder, a symbolic link or a
 missing folder, saying why on the bottom row; the path of a saved page shows
-there and is printed again when you quit.
+there and is printed again when you quit, or when a signal ends the screen.
 
 The screen opens only when standard input and output are both terminals,
 interaction is on (`AGENT_ARCHIVE_NONINTERACTIVE` is not set, as it is inside
@@ -378,7 +384,12 @@ cache reads, and `heads_up` lists up to three things worth a second look
 or more of your spend when the window has more than one session, sessions with no token data, a low cache-hit rate) as
 data, in that order of priority. A skill that a plugin provides is listed once
 as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
-and `skills` keeps the recorded names. Every field, rule and threshold is in
+and `skills` keeps the recorded names. `--json` lists the top five projects,
+skills and MCP servers, with `total_projects`, `total_skills`,
+`total_display_skills` and `mcp.total_servers` counting every one; add `--all`
+(only with `--json`: the screens list what they can, and the web page keeps its
+top lists) for every row, in the same order, with the same totals and nothing
+else changed. Every field, rule and threshold is in
 [JSON output](../reference/json-output.md#stats---json).
 
 ## Share it as a web page
