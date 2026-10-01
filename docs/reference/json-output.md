@@ -156,10 +156,14 @@ say what to call the session:
   to 128 characters from parser `0.17.1` (72 in older metadata), like `title`.
   For Claude Code it is the session name in its sidebar (set from your prompt,
   or by `/rename`; the last one wins), and for Cursor the chat's name. Codex
-  titles are not captured yet. `title` keeps its meaning, a preview of the
-  first prompt. Absent when the session has no name, including one whose
-  transcript is gone and so could not be re-read after the privacy filter
-  began keeping names (filter 13).
+  titles are not captured yet. From parser `0.18.0` a Claude Code subagent's
+  name is the description its parent gave the task, which Claude Code keeps
+  beside the subagent's transcript and the privacy filter keeps since
+  filter 14 (a `custom-title`, which a subagent does not normally have, wins
+  over it). `title` keeps its meaning, a preview of the first prompt. Absent
+  when the session has no name, including one whose transcript is gone and so
+  could not be re-read after the privacy filter began keeping names (filter
+  13, or 14 for a subagent).
 - `branch`: the last git branch the transcript recorded. Absent when none was
   recorded, or it is `HEAD` (a detached checkout).
 - `pull_requests`: up to 20 pull requests the session was linked to (Claude

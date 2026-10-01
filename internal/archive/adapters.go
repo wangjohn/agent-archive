@@ -55,7 +55,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.13.0"
+const adapterVersion = "0.14.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -64,7 +64,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.17.1"
+const DefaultParserVersion = "0.18.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -96,7 +96,7 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
 		"event_msg": true, "message": true, "token_usage_record": true,
-	})
+	}, nil)
 }
 
 // ClaudeAdapter handles a small, explicit subset of Claude Code JSONL event
@@ -112,10 +112,30 @@ func (ClaudeAdapter) Version() string { return adapterVersion }
 // FilterJSONL keeps only the Claude Code record types this adapter recognizes,
 // through the shared privacy filter, and labels the result claude-jsonl.
 func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
+	return filterClaudeJSONL(r, nil)
+}
+
+// FilterSubagentJSONL is FilterJSONL for a Claude Code subagent's transcript
+// with the contents of its sibling agent-<id>.meta.json (see
+// SubagentMetaPath). The description in it, redacted and bounded as prompt
+// text is, becomes one subagent-meta record at the front of the filtered
+// records; nothing else of the file is kept. metaJSON that is empty,
+// oversized, not a JSON object, or without a non-blank string description
+// changes nothing and records no gap: the file is optional. The record is
+// written only when the transcript has records of its own, so a transcript
+// that is still empty stays empty, and it never makes an unrecognized
+// transcript acceptable.
+func (ClaudeAdapter) FilterSubagentJSONL(r io.Reader, metaJSON []byte) (FilteredTranscript, error) {
+	return filterClaudeJSONL(r, subagentMetaLead(metaJSON))
+}
+
+// filterClaudeJSONL is the Claude Code filter, with lead, when not nil, a
+// subagent-meta record to write first.
+func filterClaudeJSONL(r io.Reader, lead map[string]any) (FilteredTranscript, error) {
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
 		"message": true, "summary": true,
-	})
+	}, lead)
 }
 
 // CursorAdapter filters hook-provided JSONL records, a hook-provided text
@@ -136,7 +156,7 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
 		"event": true, "turn_ended": true,
-	})
+	}, nil)
 }
 
 // textRole is the lower-case role name of a Cursor text transcript section
@@ -614,7 +634,11 @@ var blockedKeys = map[string]bool{
 	"image": true, "images": true, "audio": true, "binary": true, "attachment": true,
 }
 
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (FilteredTranscript, error) {
+// filterJSONL is the shared JSONL filter. lead, only for a claude-jsonl
+// transcript, is a subagent-meta record to write at the front of the retained
+// records (see ClaudeAdapter.FilterSubagentJSONL); it is not part of what was
+// read, so it counts toward no recognition, timestamp, or identity.
+func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any) (FilteredTranscript, error) {
 	result := FilteredTranscript{Format: format, NativeStartComplete: true}
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
@@ -641,6 +665,17 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			result.Gaps = append(result.Gaps, CaptureGap{Code: code, Detail: detail})
 		}
 	}
+	// A transcript holds one subagent-meta record: the lead when there is one,
+	// else the first the transcript itself holds (a retained snapshot filtered
+	// again).
+	var meta subagentMetaSlot
+	var filteredLead subagentLead
+	if lead != nil && format == "claude-jsonl" {
+		var err error
+		if filteredLead, err = meta.lead(lead); err != nil {
+			return FilteredTranscript{}, err
+		}
+	}
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Bytes()
@@ -665,9 +700,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			if err != nil {
 				return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
 			}
-			result.Records = append(result.Records, encoded)
-			result.Boundary.RetainedRecords++
-			result.Boundary.RetainedBytes += len(encoded)
+			result.retain(encoded)
 			continue
 		}
 		if format == "claude-jsonl" && isClaudeLabelType(kind) {
@@ -676,11 +709,16 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			if err != nil {
 				return FilteredTranscript{}, err
 			}
-			if encoded != nil {
-				result.Records = append(result.Records, encoded)
-				result.Boundary.RetainedRecords++
-				result.Boundary.RetainedBytes += len(encoded)
+			result.retain(encoded)
+			continue
+		}
+		if format == "claude-jsonl" && kind == subagentMetaType {
+			recognized++
+			encoded, err := meta.filter(raw, lineNo, addGap, omittedKeys.add)
+			if err != nil {
+				return FilteredTranscript{}, err
 			}
+			result.retain(encoded)
 			continue
 		}
 		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
@@ -701,9 +739,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 		if err != nil {
 			return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
 		}
-		result.Records = append(result.Records, encoded)
-		result.Boundary.RetainedRecords++
-		result.Boundary.RetainedBytes += len(encoded)
+		result.retain(encoded)
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
@@ -714,6 +750,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat
 	}
+	filteredLead.writeTo(&result, addGap, omittedKeys.add)
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}
@@ -722,6 +759,29 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+// retain appends one encoded record to the retained records and counts it;
+// nil, a record the filter dropped, retains nothing.
+func (t *FilteredTranscript) retain(encoded []byte) {
+	if encoded == nil {
+		return
+	}
+	t.Records = append(t.Records, encoded)
+	t.Boundary.RetainedRecords++
+	t.Boundary.RetainedBytes += len(encoded)
+}
+
+// retainFirst is retain at the front of the records, and only when there are
+// records already: a record that is no part of what was read, such as a
+// subagent's description, never makes a transcript with none look captured.
+func (t *FilteredTranscript) retainFirst(encoded []byte) {
+	if encoded == nil || len(t.Records) == 0 {
+		return
+	}
+	t.Records = slices.Insert(t.Records, 0, encoded)
+	t.Boundary.RetainedRecords++
+	t.Boundary.RetainedBytes += len(encoded)
 }
 
 // noteRecordTime folds one native record's timestamp into the transcript's

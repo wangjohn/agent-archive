@@ -151,7 +151,10 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 // nativeEvidenceExtends reports whether candidate carries everything previous
 // did, record for record, so replacing previous loses no retained evidence.
 // A Cursor chat's name is not such evidence: a chat Cursor names or the
-// person renames still extends its earlier snapshot (archive.SameNativeRecord).
+// person renames still extends its earlier snapshot (archive.SameNativeRecord),
+// and neither is a subagent's description, the record filter 14 writes first
+// (archive.WithoutSubagentMeta): a subagent captured before its .meta.json
+// existed, or whose description changed, still extends its earlier snapshot.
 // It compares filtered output, so it is only meaningful when both were
 // filtered the same way: a new filter or adapter version legitimately changes
 // what earlier records look like, and must not read as a rewrite. A rewrite
@@ -160,11 +163,17 @@ func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
 	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion {
 		return true
 	}
-	if previous.Capture.SourceFormat != candidate.Capture.SourceFormat || len(candidate.NativeRecords) < len(previous.NativeRecords) || len(candidate.NativeText) < len(previous.NativeText) {
+	if previous.Capture.SourceFormat != candidate.Capture.SourceFormat {
 		return false
 	}
-	for i := range previous.NativeRecords {
-		if !archive.SameNativeRecord(previous.Capture.SourceFormat, previous.NativeRecords[i], candidate.NativeRecords[i]) {
+	format := previous.Capture.SourceFormat
+	previousRecords := archive.WithoutSubagentMeta(format, previous.NativeRecords)
+	candidateRecords := archive.WithoutSubagentMeta(format, candidate.NativeRecords)
+	if len(candidateRecords) < len(previousRecords) || len(candidate.NativeText) < len(previous.NativeText) {
+		return false
+	}
+	for i := range previousRecords {
+		if !archive.SameNativeRecord(format, previousRecords[i], candidateRecords[i]) {
 			return false
 		}
 	}

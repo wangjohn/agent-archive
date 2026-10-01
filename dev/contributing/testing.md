@@ -638,6 +638,8 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
 | `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
+| `FuzzSubagentMeta` | any `.meta.json` bytes beside a subagent transcript | no failure; at most one `subagent-meta` record, first, holding only a bounded string of valid UTF-8; the transcript's own records unchanged; the output refilters unchanged |
+| `FuzzSubagentMetaDropsSecrets` | a secret in a description, among filler so the cap can fall in or beside it | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
