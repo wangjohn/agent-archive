@@ -122,7 +122,7 @@ func TestSessionLabelsSkipsMalformedPullRequestLinks(t *testing.T) {
 		{"type": "pr-link", "prNumber": 1.5, "prRepository": "example-org/widget-tools"},
 		{"type": "pr-link", "prRepository": "example-org/widget-tools"},
 		{"type": "pr-link", "prNumber": float64(7), "prRepository": "example-org/widget-tools", "prUrl": "https://evil.test/x"},
-		{"type": "pr-link", "prNumber": 8, "prRepository": "example-org/widget-tools"},
+		{"type": "pr-link", "prNumber": float64(8), "prRepository": "example-org/widget-tools"},
 	}...)
 	want := []PullRequestLink{
 		{Repository: "example-org/widget-tools", Number: 7},

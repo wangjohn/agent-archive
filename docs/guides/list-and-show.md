@@ -8,7 +8,8 @@ a session.
 # Newest archived sessions matching the filters (at most 50 by default):
 # title (the name your agent gave the session, else a preview of the first
 # filtered prompt), relative time, harness, project, and short ID. Metadata
-# only, never full transcript text. On an interactive terminal, pick a numbered row to see that session's summary (see below).
+# only, never full transcript text. On an interactive terminal, pick a
+# numbered row to see that session's summary (see below).
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
 # use --no-pager to print directly.
 agent-archive list

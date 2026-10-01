@@ -1,9 +1,6 @@
 package archive
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "strings"
 
 // MaxPullRequests is the most pull requests Metadata.PullRequests holds, the
 // first ones a session linked. The schema's pull_requests maxItems matches it.
@@ -110,7 +107,7 @@ func derivePullRequests(bundle SourceBundle) []PullRequestLink {
 		}
 		repository, _ := record["prRepository"].(string)
 		owner, name, ok := splitRepository(repository)
-		number, numberOK := recordedPRNumber(record["prNumber"])
+		number, numberOK := claudePRNumber(record["prNumber"])
 		if !ok || !numberOK {
 			continue
 		}
@@ -128,18 +125,6 @@ func derivePullRequests(bundle SourceBundle) []PullRequestLink {
 		}
 	}
 	return links
-}
-
-// recordedPRNumber reads a pr-link's number as filter 13 writes it (a JSON
-// integer), and also as Claude Code does (a string of digits).
-func recordedPRNumber(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, v >= 1 && v <= maxPRNumber
-	case json.Number:
-		return parsePRNumber(v.String())
-	}
-	return claudePRNumber(value)
 }
 
 // DisplayTitle is what a row shows for a session: the name its harness gave

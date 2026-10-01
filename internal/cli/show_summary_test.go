@@ -511,8 +511,6 @@ func TestRoutineGapsAreKnownCodes(t *testing.T) {
 	}
 }
 
-// The Git row counts commits and pushes and names each pull request, or
-// counts pull requests the capped event list does not hold.
 // The heading is the name the session's agent gave it, else the first prompt.
 // With a name, the prompt is a row of its own, and the branch and the linked
 // pull requests are rows; a session with none of them has no such rows.
@@ -546,6 +544,8 @@ func TestSessionSummaryShowsNameBranchAndLinkedPullRequests(t *testing.T) {
 	}
 }
 
+// The Git row counts commits and pushes and names each pull request, or
+// counts pull requests the capped event list does not hold.
 func TestSummaryGit(t *testing.T) {
 	t.Parallel()
 	m := summaryFixture().Metadata
