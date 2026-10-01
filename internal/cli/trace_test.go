@@ -58,6 +58,7 @@ func TestTraceWritesTheTimingTreeToStderr(t *testing.T) {
 
 // A value that is not a switch leaves tracing off without failing the
 // command, and the hook's internal commands never trace.
+// Not parallel: a trace it failed to suppress would start the process-wide recorder.
 func TestTraceOffForInvalidValuesAndInternalCommands(t *testing.T) {
 	env, _, _ := publishedFixture(t)
 	var out, errOut bytes.Buffer
@@ -81,6 +82,7 @@ func TestTraceOffForInvalidValuesAndInternalCommands(t *testing.T) {
 
 // Only known commands trace, so the root span carries a command's own name,
 // never a word from the command line; help and version print no tree.
+// Not parallel: a trace it failed to suppress would start the process-wide recorder.
 func TestTraceOnlyKnownCommands(t *testing.T) {
 	env, _, _ := publishedFixture(t)
 	for _, args := range [][]string{{"frobnicate-private-word"}, {"--version"}, {"help"}} {
@@ -139,6 +141,7 @@ func TestTracedCommandsMatchRunsSwitch(t *testing.T) {
 
 // A handoff that launches an agent in this terminal writes its trace first,
 // once, and the agent does not inherit the switch.
+// Not parallel: it starts the process-wide recorder.
 func TestTraceFinishesBeforeALaunchedAgent(t *testing.T) {
 	var errOut bytes.Buffer
 	finish := startTrace("handoff", &errOut, withTrace(Env{}, "1"))
