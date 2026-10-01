@@ -49,6 +49,17 @@ type listRow struct {
 	// Parent is the short ID of the session a subagent belongs to; empty for
 	// a top-level session.
 	Parent string
+	// Depth is how far the row is indented under its parent: 1 for a subagent
+	// the filter shows under a parent that is on screen, 0 for every other
+	// row.
+	Depth int
+	// Highlight marks the row Enter acts on while the browser filters.
+	Highlight bool
+	// parentID is the full ID of the session a subagent belongs to, which
+	// the filter joins to a row on screen; empty for a top-level session.
+	parentID string
+	// fields is what the filter matches the row's words against.
+	fields sessionFields
 }
 
 // listFormatOptions controls how session rows are built and printed.
@@ -75,6 +86,7 @@ type listFormatOptions struct {
 	HideHarness bool // every row has the same harness, which the heading names
 	HideProject bool // every row has the same project, which the heading names
 	LiveMarks   bool // some row is live: each title leaves room for the dot
+	Cursor      bool // the filter highlights a row: each title leaves room for the mark
 	DimID       bool // the ID is for copying, not for choosing: draw it dim
 }
 
@@ -123,6 +135,8 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			PR:         prLabel(m),
 			Children:   opts.Children[childKey(m.Harness.Name, m.SessionID)],
 			Parent:     parent,
+			parentID:   m.ParentSessionID,
+			fields:     fieldsOf(m, sessionProjectName(m, opts.Projects)),
 			Index:      i + 1,
 			SessionID:  m.SessionID,
 			ShortID:    shorts[i],

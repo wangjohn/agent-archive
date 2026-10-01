@@ -8,6 +8,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The handoff picker, `show --json` with no ID, and the pickers for an
+  ambiguous `show` or `handoff` query open the browser's alternate screen on a
+  terminal, so their list is gone once you choose, as `list`'s is.
+  `show "<words>"` with several matches on a terminal browses them (and shows
+  the details itself) unless `--json` or `--transcript` asks for one session
+  to print. The picker lists every match of an ambiguous query, not the first
+  20 (a pipe or an agent still gets 20 and a count). The line-mode prompt says
+  words filter, and an answer that is not a row number, an ID, or a command (`q`,
+  `n`, `p`, `a`) no longer reports a bad answer but filters.
 - `list`, `show`, and handoff keep up to 128 characters of a session's saved
   name or first-prompt preview, instead of 72. Parser `0.17.1` refreshes
   existing metadata from retained source bundles on the next collector scan;
@@ -15,6 +24,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **One session browser, with a filter you type into.** The handoff picker,
+  `show --json` with no ID, and a `show` or `handoff` query that matches
+  several sessions now open the same browser as `list` and bare `show`
+  (`agent-archive list`, `show`, `handoff`), instead of a numbered list you
+  answer with a line. Press `/` to narrow the rows as you type, with the words
+  `list "<words>"` takes (a topic, a PR number, a branch, a project name):
+  the first match is marked `▸`, ↑ and ↓ move the mark, Enter acts on it (shows
+  it in `list` and `show`, hands it off in `handoff`), and Esc clears the
+  filter. Rows keep their numbers while filtered, and a subagent session that
+  matches is shown under its parent. `list "<words>"` and an ambiguous query
+  open the browser with the words already in the filter. Where keys cannot be
+  read, an answer that is not a row number, an ID, or a command is words to filter
+  by, and an empty answer clears them. A handoff picked with the keys still
+  reads an answer typed ahead for the `Continue in:` question.
 - **Linux is supported for persistent capture** (x86-64 and arm64), on a
   machine with systemd 240 or newer and a user manager (RHEL 8 and its
   rebuilds from 8.3). macOS behavior, its plist, Keychain items and
@@ -616,6 +639,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pager startup failure preserves the complete direct-output fallback, even
+  when the pager consumed its input; regression coverage checks partial and
+  complete reads and reports output write failures.
+
 - `setup`'s hidden prompt for a secret access key no longer spins at full
   CPU forever on macOS when its terminal goes away without a hangup signal
   (a closed pseudo-terminal, for example). It now ends as every other prompt
@@ -743,12 +770,13 @@ follow [Semantic Versioning](https://semver.org/).
   its lock for an instant; it could take a new snapshot's lock just before
   the read did. A read's lock file now appears already locked, so the
   sweep sees it in use and leaves it alone.
-- The `handoff` picker, and `handoff "<words>"`, no longer offer an archived
-  session with no prompt, which has nothing to hand off: one uploaded before
-  its first prompt showed as an untitled row and was counted in the footer.
-  They already passed over such a session on this machine; one archived
-  before its first prompt is offered again once its transcript here has one.
-  Its session ID still names it, and `list` and `show` are unchanged.
+- The `handoff` picker, its filter, and `handoff "<words>"` no longer offer
+  an archived session with no prompt, which has nothing to hand off: one
+  uploaded before its first prompt showed as an untitled row and was counted
+  in the footer. They already passed over such a session on this machine;
+  one archived before its first prompt is offered again once its transcript
+  here has one. Its session ID still names it, and `list` and `show` are
+  unchanged.
 
 ### Changed
 

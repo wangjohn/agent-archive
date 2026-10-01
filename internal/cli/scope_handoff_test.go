@@ -79,14 +79,17 @@ func (f pickerFixture) addEmptyProject(t *testing.T, name string) string {
 }
 
 // pickerHeadings are the heading lines of a line-mode picker's output: the
-// ones that name a scope.
+// ones that name a scope, as the picker words them, without the verb that
+// leads them and the screen's control sequences.
 func pickerHeadings(out string) []string {
 	var headings []string
+	out = strings.NewReplacer(enterAltScreenSequence, "", clearScreenSequence, "").Replace(out)
 	for line := range strings.SplitSeq(out, "\n") {
 		// The prompt before it is answered from input, so it has no newline.
 		if _, after, ok := strings.Cut(line, "or q to quit: "); ok {
 			line = after
 		}
+		line = strings.TrimPrefix(line, "Hand off · ")
 		if strings.Contains(line, " sessions · ") || strings.HasPrefix(line, "Nothing in ") {
 			headings = append(headings, line)
 		}
@@ -213,7 +216,7 @@ func TestHandoffTitleSearchesTheScopeFirst(t *testing.T) {
 			change(&opts)
 		}
 		var out, errBuf bytes.Buffer
-		code, done = resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errBuf, f.env)
+		code, done = resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errBuf, f.env)
 		return opts, errBuf.String(), code, done
 	}
 
@@ -254,7 +257,7 @@ func TestHandoffTitleNoteCountsSeveralMatches(t *testing.T) {
 	f.addArchived(t, "beta0001", "Shared words beta", "billing")
 	opts := handoffOptions{sessionID: "shared words", source: "auto"}
 	var out, errOut bytes.Buffer
-	code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+	code, done := resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 	note := "2 matches in " + label + " (1 more in other projects: --all-projects or a project name finds them)"
 	if !done || code != 1 || !strings.HasPrefix(errOut.String(), note+"\n") || !strings.Contains(errOut.String(), `"shared words" matches 2 sessions`) {
 		t.Fatalf("code %d done %v, stderr %q", code, done, errOut.String())

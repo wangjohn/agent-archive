@@ -58,8 +58,8 @@ func skippedSessions(opts *handoffOptions, env currentSessionDependencies) map[s
 	return currentSessions(env)
 }
 
-// handoffCandidateLimit is how many matching sessions a title lists, on stderr
-// or in the picker, before saying how many more there are. The caller may be
+// handoffCandidateLimit is how many matching sessions a title lists on stderr
+// before saying how many more there are. The caller may be
 // an agent, whose context a title as common as "fix" must not flood.
 const handoffCandidateLimit = 20
 
@@ -84,7 +84,7 @@ const handoffCandidateLimit = 20
 // Several matches print the candidates to stderr and exit 1 without a
 // terminal, and open the handoff picker limited to them with one. done is set
 // when the command should exit with code instead of handing off.
-func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) (code int, done bool) {
+func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in *typedInput, stdout, stderr io.Writer, env handoffCommandDependencies) (code int, done bool) {
 	// Titles are stored as one line of single spaces, so a query with a
 	// newline or a doubled space is matched as that line.
 	query := strings.Join(strings.Fields(opts.sessionID), " ")
@@ -93,7 +93,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, st
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
+	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -121,7 +121,7 @@ type handoffQueryResolver struct {
 	home        string
 	cfg         config.Config
 	interactive bool
-	stdin       io.Reader
+	in          *typedInput
 	stdout      io.Writer
 	stderr      io.Writer
 	env         handoffCommandDependencies
@@ -390,19 +390,15 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			return 1, true
 		}
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
-		format.NarrowHint = "Narrow with more words, a PR number, or --harness, or name a session: agent-archive handoff SESSION_ID."
-		shown := matches[:min(len(matches), handoffCandidateLimit)]
-		rows := formatHandoffRows(shown, format)
-		format.ShowPR = slices.ContainsFunc(rows, func(row listRow) bool { return row.PR != "" })
-		picked, selected, err := pickBrowseRow(r.env, newPrompter(r.stdin, r.stdout), r.stdout, rows, len(matches), len(shown) < len(matches), format, "hand off")
-		if err != nil {
-			terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
-			return 1, true
+		rows := formatHandoffRows(matches, format)
+		picked, selected, code := runBrowser(context.Background(), r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
+		if code != 0 {
+			return code, true
 		}
 		if !selected {
 			return 0, true
 		}
-		i := slices.IndexFunc(shown, func(m handoffPickerRow) bool {
+		i := slices.IndexFunc(matches, func(m handoffPickerRow) bool {
 			return m.metadata.SessionID == picked.SessionID && m.metadata.Harness.Name == picked.HarnessKey
 		})
 		if i < 0 {
@@ -410,7 +406,7 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			terminal.Println(r.stderr, "agent-archive: handoff: the picked session is not one of those listed")
 			return 1, true
 		}
-		row = shown[i]
+		row = matches[i]
 	}
 	r.opts.sessionID, r.opts.harness = row.metadata.SessionID, row.metadata.Harness.Name
 	return 0, false

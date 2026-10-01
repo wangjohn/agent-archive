@@ -446,7 +446,7 @@ func TestBrowserCutDetailsGolden(t *testing.T) {
 	summary := renderSummaryText(summaryFixture(), summaryOptions{Now: summaryNow, Location: time.UTC})
 	hint := b.transcriptHint()
 	rest, notice, redraw := b.drawDetails(summary, hint, browseNotice{})
-	if action, _, err := b.detailsPrompt(listRow{}, []byte(summary), rest, hint, notice, redraw); err != nil || action != browseQuit || rest == "" {
+	if action, _, err := b.detailsPrompt(context.Background(), listRow{}, []byte(summary), rest, hint, notice, redraw); err != nil || action != browseQuit || rest == "" {
 		t.Fatalf("action %v, err %v, rest %q", action, err, rest)
 	}
 	if n := displayLines(out.String(), 80); n != 14 {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -128,10 +129,13 @@ const maxCarry = 16
 // only when the queue is empty, so a burst is applied before one redraw.
 // It is safe to close from the interrupt handler while the browser reads.
 type keyInput struct {
-	term    keyTerminal
-	mu      sync.Mutex
-	on      bool
-	closed  bool
+	term   keyTerminal
+	mu     sync.Mutex
+	on     bool
+	closed bool
+	// keep is set when closing leaves the input not read yet at the
+	// terminal for the prompts after the browser (see handBack).
+	keep    bool
 	pending []key
 	// failed is an error that came after keys still pending, returned once
 	// they are handled.
@@ -187,8 +191,9 @@ func (k *keyInput) suspend() {
 }
 
 // close restores line input for good, discarding keys not read yet (the
-// rest of a wheel's momentum, say) so the shell does not get them. It may
-// be called more than once.
+// rest of a wheel's momentum, say) so the shell does not get them, unless
+// handBack kept them for the prompts after the browser. It may be called more
+// than once.
 func (k *keyInput) close() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -196,12 +201,65 @@ func (k *keyInput) close() {
 		return
 	}
 	k.closed = true
-	k.term.flush()
+	if !k.keep {
+		k.term.flush()
+	}
 	if k.on {
 		k.on = false
 		k.term.lines()
 	}
 	k.term.release()
+}
+
+// handBack gives the prompts after the browser what the person typed ahead of
+// them: the typed text that was read with the key that ended the browser, and
+// what is still waiting at the terminal, which close then leaves there. It
+// reads the keys' input only: a key that moves, scrolls, or acts is dropped,
+// so a wheel's momentum is not typed into the next prompt. Backspace takes
+// back the character before it, as the terminal's own line editing would, and
+// Enter ends a line.
+func (k *keyInput) handBack(give func([]byte)) {
+	rest := k.unused()
+	k.mu.Lock()
+	k.keep = true
+	k.mu.Unlock()
+	if len(rest) > 0 {
+		give(rest)
+	}
+}
+
+// unused is the text typed into the keys' input that has not been used: the
+// keys read already, and whatever else has arrived at the terminal.
+func (k *keyInput) unused() []byte {
+	data := k.carry
+	k.carry = nil
+	buf := make([]byte, 256)
+	for len(data) < maxBurst {
+		n, err := k.term.read(buf, 0)
+		data = append(data, buf[:n]...)
+		if n == 0 || err != nil {
+			break
+		}
+	}
+	keys := slices.Concat(k.pending, k.decode(data))
+	k.pending = nil
+	var text []byte
+	for _, key := range keys {
+		switch key.kind {
+		case keyRune:
+			text = utf8.AppendRune(text, key.r)
+		case keyEnter:
+			text = append(text, '\n')
+		case keyBackspace:
+			if n := len(text); n > 0 && text[n-1] != '\n' {
+				_, size := utf8.DecodeLastRune(text)
+				text = text[:n-size]
+			}
+		case keyEscape, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyEndOfInput, keyResize:
+			// Not typed text.
+		}
+	}
+	return text
 }
 
 // page gives a pager the terminal: line input back, and Ctrl-Z answered

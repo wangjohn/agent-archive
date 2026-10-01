@@ -120,9 +120,25 @@ session's summary replace each other instead of piling up:
   row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
   the top and bottom. A status line below it says where you are (`Top`, a
   percentage, `Bottom`, or `All` when the whole list fits), for example
-  `Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit`. A
+  `Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit`. A
   project scrolled into keeps its heading at the top, marked
-  `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
+  `(continued)`. `a`, `n`, `p`, `q`, and `/` act only when nothing is typed.
+- Press `/` to filter the rows as you type, as in `less`: a line at the
+  bottom takes the words, and the rows narrow with each character. The words
+  are the ones `list "<words>"` takes: every word must appear in a session's
+  name, title, branch, project, app, or the start of its ID, and `#212` or
+  `212` also matches a pull request number. The first session that matches
+  is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
+  (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
+  Backspace on an empty one does too. Rows keep the numbers they have
+  unfiltered; a session the filter finds past the list's limit is numbered
+  on from its last row, and is chosen with the mark (after Esc only the
+  list's own numbers choose). A subagent session that matches is shown indented under its
+  parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
+  when it does not match (the mark starts on the subagent, not the parent);
+  a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
+  open the browser with the words already in the filter, and the rest of the
+  archive is one Esc away.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
@@ -134,20 +150,26 @@ session's summary replace each other instead of piling up:
   anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
-- Wherever else a session is picked from a list (the handoff picker, bare
-  `show --json`, and a `show` query that matches more than one session),
-  you type an answer and press Enter. A list taller than the window is
-  shown a page at a time there, with a line such as
-  `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p` move
-  between pages, and a project whose sessions started on the previous page
-  is headed again, marked `(continued)`. The browser reads lines the same
-  way when its input is not a terminal; there, a summary taller than the
-  window is cut with `… N more lines`, and without a pager `m` prints the
-  lines left out.
+- Every place a session is picked from a list is this one browser: `list`,
+  bare `show`, bare `show --json` (a heading `Show ·`, and Enter prints the
+  chosen sidecar instead of opening its summary), a `show` query that
+  matches more than one session (the heading says `"words" matches 3`), and
+  the [handoff picker](handoff.md#where-the-session-comes-from).
+- When the terminal's input cannot be read a key at a time, the browser reads
+  lines. A list taller than the window is shown a page at a time, with a line
+  such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p`
+  move between pages, and a project whose sessions started on the previous
+  page is headed again, marked `(continued)`. Type a row number or short
+  SESSION_ID to choose; any other answer is words to filter by, the table is
+  drawn again with the sessions that match (`3 sessions match "flaky" · a
+  number, more words, or Enter for all`), and more words narrow it further.
+  An empty answer clears the filter, and quits when there is none. A summary
+  taller than the window is cut with `… N more lines`, and without a pager
+  `m` prints the lines left out.
 
 Bare `show --transcript` is a usage error: pick a session with `show` and
-press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker
-and prints the chosen sidecar.
+press `t`, or give a SESSION_ID. Bare `show --json` picks one session in the
+browser and prints its sidecar.
 
 On an interactive terminal, bare `agent-archive` (no command) opens the
 same session browser as `list` when capture is already set up.

@@ -260,8 +260,8 @@ archive.
 
 One match is handed off, and then everything else applies to it: `--to`,
 `--worktree`, the `Continue in:` question on a terminal. Several matches are
-never guessed between. On a terminal the picker opens with just those
-sessions. Without one, and inside a coding agent (where nothing is asked),
+never guessed between. On a terminal the picker opens on those sessions,
+with the words already in its filter. Without one, and inside a coding agent (where nothing is asked),
 they are printed to standard error, each with its short ID, app, project
 (when they span several), age, pull request (when one has any), and title,
 followed by the exact command to run next (`Next: agent-archive handoff
@@ -285,6 +285,16 @@ archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing. Quit with `q` without producing a
 handoff. In a script or pipeline, pass a session ID or words, `--latest`, or
 `--file`.
+
+The picker is the browser that `list` and `show` open (see
+[browsing on a terminal](list-and-show.md#browsing-on-a-terminal)), so it has
+the same keys: type a number and Enter, or press `/` to type a few words and
+narrow the rows as you type, with `▸` marking the row Enter hands off and ↑
+and ↓ moving it (a subagent that matches shows under its parent, and so can
+be picked). `a` switches between this repository and all projects, `Esc`
+clears a filter, and `q` quits. Where keys cannot be read, the picker reads
+lines, and words typed there filter the table. Whatever you type ahead for
+the `Continue in:` question after your pick is kept for it.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns

@@ -96,7 +96,7 @@ type showCommandDependencies interface {
 
 type showQueryDependencies interface {
 	metadataCacheDependencies
-	sessionBrowseDependencies
+	sessionBrowserDependencies
 	scopeDependencies
 	now() time.Time
 }
@@ -148,7 +148,7 @@ type handoffCommandDependencies interface {
 	handoffTargetDependencies
 	handoffCheckoutDependencies
 	scopeDependencies
-	sessionBrowseDependencies
+	sessionBrowserDependencies
 	handoffLaunchDependencies
 	handoffDestinationDependencies
 }
