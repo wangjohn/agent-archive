@@ -522,3 +522,35 @@ func TestSetupCaptureAnswerFlagsNeedYesEvenWithExplicitZeroValues(t *testing.T) 
 		}
 	}
 }
+
+func TestSetupYesPrefixOnlyKeepsR2DestinationAndKey(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
+	before, _, err := config.Load(home)
+	must(t, err)
+	if before.RetentionDays != 90 || before.RequireSkillUse || before.NoSkills || before.Storage.Prefix != defaultPrefix {
+		t.Fatalf("fresh defaults: %+v", before)
+	}
+	setupYes(t, env, "", 0, "--yes", "--prefix", "team/", "--retention-days", "1", "--no-require-skill-use=false")
+	after, _, err := config.Load(home)
+	must(t, err)
+	wantStorage := before.Storage
+	wantStorage.Prefix = "team/"
+	if after.Storage != wantStorage || after.MachineID != before.MachineID || after.RetentionDays != 1 || !after.RequireSkillUse {
+		t.Fatalf("reconfigured: %+v", after)
+	}
+	secret, err := kc.Load(context.Background(), after.Storage.R2CredentialRef)
+	must(t, err)
+	if secret.AccessKeyID != "KEY" || secret.SecretAccessKey != "private-secret" {
+		t.Fatal("prefix change replaced the saved key")
+	}
+	setupYes(t, env, "", 0, "--yes", "--require-skill-use=false")
+	after, _, err = config.Load(home)
+	must(t, err)
+	if after.RequireSkillUse {
+		t.Fatal("explicit false did not clear the saved capture rule")
+	}
+}
