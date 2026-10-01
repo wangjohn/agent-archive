@@ -87,6 +87,34 @@ func RepoKey(ctx context.Context, root string, run Runner) string {
 	return archive.RepoKey(OriginURL(ctx, root, run))
 }
 
+// ProjectKey returns the origin's repository key and whether Git established
+// its identity or absence. Unlike RepoKey, failed or nonportable origins are
+// unknown: they cannot authorize an automatic path fallback. A missing config
+// entry (Git exit 1 with no output) establishes no origin. run is nil for
+// ExecRunner; it must respect ctx. Remote URLs never leave this function.
+func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return "", false
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "config", "--get", "remote.origin.url")
+	if ctx.Err() != nil {
+		return "", false
+	}
+	if err != nil {
+		var status interface{ ExitCode() int }
+		missing := errors.As(err, &status) && status.ExitCode() == 1 && len(out) == 0
+		return "", missing
+	}
+	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	key := archive.RepoKey(raw)
+	return key, raw == "" || key != ""
+}
+
 // Resolver derives repository keys and remembers each project root's answer,
 // so a sweep over many sessions of one project asks git once. It is safe for
 // concurrent use. The zero value runs the real git.
