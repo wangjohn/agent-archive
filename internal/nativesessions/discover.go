@@ -73,7 +73,7 @@ var errSubagent = errors.New("native subagent-only transcript")
 
 // InspectNative requires transcript content to establish the selected identity.
 // Import's compatibility parser deliberately retains its separate semantics.
-func InspectNative(ctx context.Context, s *transcriptio.Snapshot, ref Ref, window, record int64) (Header, transcriptio.RecordWindow, error) {
+func InspectNative(ctx context.Context, s transcriptio.Input, ref Ref, window, record int64) (Header, transcriptio.RecordWindow, error) {
 	if ref.Harness == "codex" {
 		var w transcriptio.RecordWindow
 		var subagent bool

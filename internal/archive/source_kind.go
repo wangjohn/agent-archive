@@ -48,6 +48,17 @@ func (r SessionRegistration) validateSource() error {
 		}
 		return nil
 	default:
-		return errors.New("unknown session source kind")
+		if len(r.SourceKind) > 64 || !strings.Contains(string(r.SourceKind), "/") || strings.HasPrefix(string(r.SourceKind), "/") || strings.HasSuffix(string(r.SourceKind), "/") || strings.Contains(string(r.SourceKind), "//") {
+			return errors.New("source kind must be provider-qualified")
+		}
+		for _, c := range r.SourceKind {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-/_", c)) {
+				return errors.New("invalid source kind")
+			}
+		}
+		if strings.TrimSpace(r.SourceKey) == "" && r.TranscriptPath == "" {
+			return errors.New("source locator is required")
+		}
+		return nil
 	}
 }

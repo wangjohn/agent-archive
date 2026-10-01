@@ -4,6 +4,7 @@ package builtin
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -16,13 +17,16 @@ import (
 type Integration struct {
 	Descriptor agentmeta.Descriptor
 	Launcher   agentapi.Launcher
+	Sources    agentapi.SourceProvider
+	Filter     agentapi.TranscriptFilter
 }
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
-	catalog    agentmeta.Catalog
-	bindings   map[agentmeta.ID]Integration
-	supporting map[agentmeta.Operation][]Integration
+	catalog        agentmeta.Catalog
+	bindings       map[agentmeta.ID]Integration
+	sourceBindings map[string]Integration
+	supporting     map[agentmeta.Operation][]Integration
 }
 
 // New binds each identity exactly once and derives operations from actual ports.
@@ -30,7 +34,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 	if identities == nil || nilImplementation(identities) {
 		return nil, fmt.Errorf("missing identity catalog")
 	}
-	r := &Registry{bindings: make(map[agentmeta.ID]Integration), supporting: make(map[agentmeta.Operation][]Integration)}
+	r := &Registry{bindings: make(map[agentmeta.ID]Integration), sourceBindings: map[string]Integration{}, supporting: make(map[agentmeta.Operation][]Integration)}
 	for _, b := range bindings {
 		d, ok := identities.Lookup(string(b.Descriptor.ID))
 		if !ok || d.ID != b.Descriptor.ID {
@@ -47,8 +51,17 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
 		}
 		d.Operations = []agentmeta.Operation{agentmeta.Launch}
+		if b.Sources != nil || b.Filter != nil {
+			if b.Sources == nil || b.Filter == nil || nilImplementation(b.Sources) || nilImplementation(b.Filter) {
+				return nil, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.Source)
+		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
+		for _, name := range append([]string{string(d.ID)}, d.Aliases...) {
+			r.sourceBindings[name] = b
+		}
 	}
 	ds := identities.All()
 	for i, d := range ds {
@@ -57,7 +70,9 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
-		r.supporting[agentmeta.Launch] = append(r.supporting[agentmeta.Launch], b)
+		for _, op := range b.Descriptor.Operations {
+			r.supporting[op] = append(r.supporting[op], b)
+		}
 	}
 	var err error
 	r.catalog, err = agentmeta.New(ds)
@@ -103,12 +118,27 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	return r
+}
+
+// LookupSources resolves only source and filter ports.
+func (r *Registry) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Sources, b.Filter, ok && b.Sources != nil && b.Filter != nil
+}
+
+// SweepSources invokes only provider-declared abandoned-resource cleanup.
+func (r *Registry) SweepSources() {
+	for _, b := range r.bindings {
+		if p, ok := b.Sources.(interface{ Sweep() }); ok {
+			p.Sweep()
+		}
+	}
 }

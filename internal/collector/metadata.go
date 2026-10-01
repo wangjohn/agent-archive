@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -229,7 +230,7 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		// cost a full read of each.
 		return false
 	}
-	adapter, err := archive.NewAdapter(s.reg.Harness.Name)
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return false
 	}
@@ -248,7 +249,11 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil || same {
 		return false
 	}
-	if s.reg.SourceKind == archive.SourceKindCursorSQLite {
+	semantics, err := sourceSemantics(s.opts.Sources, s.reg)
+	if err != nil {
+		return false
+	}
+	if semantics.Mutation == agentapi.ReplaceableSnapshot {
 		return true
 	}
 	guard := cached
