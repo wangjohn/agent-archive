@@ -72,6 +72,15 @@
     "slot_id": {
       "type": "string",
       "pattern": "^[a-f0-9]{32}$"
+    },
+    "observed_machine_ids": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      }
     }
   },
   "required": [

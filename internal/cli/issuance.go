@@ -53,6 +53,9 @@ func (i *keyIssuer) create(origin issuance.Origin) (issuance.Slot, credentials.R
 // createWithIntent binds a chosen recipient before the immutable provider name
 // is journaled, and lets an owning transaction persist that exact slot before API.
 func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string, beforeProvider func(issuance.Slot) error) (issuance.Slot, credentials.R2Credentials, error) {
+	if recipientID == i.cfg.MachineID && beforeProvider == nil {
+		return issuance.Slot{}, credentials.R2Credentials{}, errors.New("own-key creation requires durable transaction intent callback")
+	}
 	s, err := issuance.New(i.cfg.MachineID, i.cfg.DestinationID(), i.account, i.bucket, i.group, origin, i.env.now())
 	if err != nil {
 		return s, credentials.R2Credentials{}, err
@@ -119,6 +122,9 @@ func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string,
 		return s, credentials.R2Credentials{}, errors.New("cannot stage dedicated key; cleanup tracked")
 	}
 	s.State = issuance.Spare
+	if recipientID != "" && recipientID == i.cfg.MachineID {
+		s.State = issuance.OwnIntent
+	}
 	if err = issuance.Save(i.home, s); err != nil {
 		i.cleanup(&s)
 		return s, credentials.R2Credentials{}, err
@@ -129,7 +135,7 @@ func (i *keyIssuer) createWithIntent(origin issuance.Origin, recipientID string,
 // cleanup is used only for keys whose ledger proves no delivery was attempted.
 // A lost reply is matched by the whole immutable name and exact resource policy.
 func (i *keyIssuer) cleanup(s *issuance.Slot) {
-	if s.State == issuance.DeliveryIntent || s.State == issuance.Delivered || s.State == issuance.Own {
+	if s.State == issuance.Deleted || s.State == issuance.DeliveryIntent || s.State == issuance.Delivered || s.State == issuance.Own || s.State == issuance.OwnIntent {
 		return
 	}
 	s.State = issuance.CleanupPending
@@ -341,7 +347,7 @@ func dedicatedWarnings(home string) []string {
 	}
 	var warnings []string
 	for _, s := range slots {
-		if s.State == issuance.CreationIntent || s.State == issuance.SecretIntent || s.State == issuance.Reserved || s.State == issuance.CleanupPending || s.SecretRemovalPending {
+		if s.State == issuance.CreationIntent || s.State == issuance.SecretIntent || s.State == issuance.Reserved || s.State == issuance.OwnIntent || s.State == issuance.CleanupPending || s.SecretRemovalPending {
 			warnings = append(warnings, fmt.Sprintf("Dedicated slot %s: cleanup pending; provider access may remain.", s.SlotID))
 		}
 	}
@@ -485,4 +491,44 @@ func setDedicatedPayload(payload *pairing.Payload, slot issuance.Slot, key crede
 	payload.Kind = config.MachineAssignmentR2Own
 	payload.AccessKeyID = key.AccessKeyID
 	payload.SecretAccessKey = key.SecretAccessKey
+}
+
+// cleanupUncommittedOwnIntent is only for an owning transaction whose durable
+// journal proves this slot was never exposed before its config commit. The
+// caller holds issued.lock and serializes config writers with collector.lock.
+func (i *keyIssuer) cleanupUncommittedOwnIntent(s *issuance.Slot) error {
+	if s.State != issuance.OwnIntent {
+		return errors.New("own transaction cleanup requires own-intent")
+	}
+	cfg, found, err := config.Load(i.home)
+	if err != nil || !found || cfg.MachineID != s.IssuerID {
+		return errors.New("committed ownership unavailable; own-key cleanup pending")
+	}
+	if cfg.Storage.R2CredentialRef == s.SecretRef || (cfg.MachineAssignment != nil && cfg.MachineAssignment.AccessKeyID == s.ProviderID) {
+		return errors.New("committed own-key binding retained; cleanup refused")
+	}
+	if cfg.Storage.Provider != credentials.ProviderR2 || cfg.Storage.R2CredentialRef == "" {
+		return errors.New("active credential binding unavailable; own-key cleanup pending")
+	}
+	kc, err := i.env.credentialStore()
+	if err != nil {
+		return errors.New("active credential unavailable; own-key cleanup pending")
+	}
+	active, err := credentials.LoadStored(context.Background(), kc, cfg.Storage.R2CredentialRef)
+	if err != nil {
+		return errors.New("active credential unavailable; own-key cleanup pending")
+	}
+	if active.AccessKeyID == s.ProviderID {
+		return errors.New("active own-key binding retained; cleanup refused")
+	}
+	s.State = issuance.CleanupPending
+	s.CleanupReason = "uncommitted-own-transaction"
+	if err = issuance.Save(i.home, *s); err != nil {
+		return err
+	}
+	i.cleanup(s)
+	if s.State != issuance.Deleted {
+		return errors.New("own-key cleanup pending; provider access may remain")
+	}
+	return nil
 }

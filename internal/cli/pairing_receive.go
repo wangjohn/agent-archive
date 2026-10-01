@@ -166,7 +166,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, offerImport: !opts.yes, skills: skills}); err != nil {
 		return err
 	}
-	terminal.Printf(out, "Paired with %s. This machine is %s. Shared R2 access cannot be revoked independently.\n", payload.IssuerName, payload.Name)
+	terminal.Printf(out, "Paired with %s. This machine is %s. %s.\n", payload.IssuerName, payload.Name, pairingCredentialDescription(payload))
 	return nil
 }
 
@@ -208,7 +208,7 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 			return cfg, fmt.Errorf("paired R2 endpoint is invalid")
 		}
 	}
-	terminal.Printf(p.out, "Shared-key beta from %s. Proposed machine: %s.\nSessions will upload to %s bucket %s, folder %s, account %s, endpoint %s.\n", payload.IssuerName, payload.Name, cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint)
+	terminal.Printf(p.out, "%s from %s. Proposed machine: %s.\nSessions will upload to %s bucket %s, folder %s, account %s, endpoint %s.\n", pairingCredentialDescription(payload), payload.IssuerName, payload.Name, cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint)
 	if found {
 		terminal.Printf(p.out, "Prior destination: %s bucket %s, folder %s.\n", existing.Storage.Provider, existing.Storage.Bucket, existing.Storage.Prefix)
 	}
@@ -412,4 +412,14 @@ func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env
 		p.now = env.now
 	}
 	return p, bundle, noClose, nil
+}
+
+func pairingCredentialDescription(payload pairing.Payload) string {
+	if payload.Storage.Provider != credentials.ProviderR2 {
+		return "AWS profile/settings transfer"
+	}
+	if payload.Kind == config.MachineAssignmentR2Own {
+		return "Dedicated R2 key draft; live revocation acceptance pending"
+	}
+	return "Shared-key R2 beta; recipient cannot be revoked independently"
 }

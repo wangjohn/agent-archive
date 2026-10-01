@@ -15,6 +15,7 @@ func TestLedgerRejectsCorruptAndSymlinkedSlots(t *testing.T) {
 	t.Parallel()
 	for _, symlink := range []bool{false, true} {
 		t.Run(map[bool]string{false: "corrupt", true: "symlink"}[symlink], func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			if err := os.Mkdir(filepath.Join(home, "issued"), 0700); err != nil {
 				t.Fatal(err)

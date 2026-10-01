@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/pairing"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -156,10 +157,10 @@ func TestDedicatedUnknownCleanupRemainsPending(t *testing.T) {
 func TestDedicatedAddFreshThenSpareAndUncertainDelivery(t *testing.T) {
 	env, home, cf, kc := dedicatedFixture(t)
 	env.LookupEnv = func(key string) (string, bool) {
-		switch key {
-		case "CLOUDFLARE_API_TOKEN":
+		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
-		case "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS":
+		}
+		if key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" {
 			return "1", true
 		}
 		return "", false
@@ -171,16 +172,7 @@ func TestDedicatedAddFreshThenSpareAndUncertainDelivery(t *testing.T) {
 	if len(cf.Tokens()) != 3 || len(kc.items) != 3 {
 		t.Fatalf("fresh+two spares, secrets %d tokens %d", len(kc.items), len(cf.Tokens()))
 	}
-	lines := strings.Split(out.String(), "\n")
-	var bundle, code string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "aa-pair1:") {
-			bundle = line
-		}
-		if strings.HasPrefix(line, "Pairing code (deliver separately): ") {
-			code = strings.TrimPrefix(line, "Pairing code (deliver separately): ")
-		}
-	}
+	bundle, code := pairingPieces(out.String())
 	payload, err := pairing.Open(bundle, code, env.now())
 	must(t, err)
 	if payload.Kind != config.MachineAssignmentR2Own || !pairing.ValidID(payload.SlotID) {
@@ -317,12 +309,12 @@ func TestDedicatedRefillFailureKeepsDeliveredBundleValid(t *testing.T) {
 }
 
 func pairingPieces(output string) (bundle, code string) {
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		if strings.HasPrefix(line, "aa-pair1:") {
 			bundle = line
 		}
-		if strings.HasPrefix(line, "Pairing code (deliver separately): ") {
-			code = strings.TrimPrefix(line, "Pairing code (deliver separately): ")
+		if value, ok := strings.CutPrefix(line, "Pairing code (deliver separately): "); ok {
+			code = value
 		}
 	}
 	return bundle, code
@@ -484,5 +476,128 @@ func TestDedicatedCreateWithIntentCallbackFailureAndInvalidRecipient(t *testing.
 	must(t, err)
 	if len(slots) != 1 {
 		t.Fatal("invalid recipient persisted")
+	}
+}
+
+func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) {
+	source, _, _, _ := dedicatedFixture(t)
+	source.LookupEnv = func(key string) (string, bool) {
+		if key == "CLOUDFLARE_API_TOKEN" {
+			return bootstrapCanary, true
+		}
+		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+	}
+	var out bytes.Buffer
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop", "--spares=0"}, strings.NewReader(""), &out, &out, source) != 0 {
+		t.Fatal("source failed")
+	}
+	bundle, code := pairingPieces(out.String())
+	payload, err := pairing.Open(bundle, code, source.now())
+	must(t, err)
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := setupTestEnv(t, home, userHome, kc, source.now())
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	env.LookupEnv = func(key string) (string, bool) { return code, key == "AGENT_ARCHIVE_PAIRING_CODE" }
+	env.OpenStore = source.OpenStore
+	existing := config.Config{MachineID: strings.Repeat("d", 32), Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: payload.Storage.Bucket, Prefix: payload.Storage.Prefix, R2AccountID: payload.Storage.R2Account}}
+	must(t, config.Save(home, existing))
+	out.Reset()
+	if result := Run([]string{"setup", "--pair-file", "-", "--yes", "--project", project}, strings.NewReader(bundle), &out, &out, env); result != 0 {
+		t.Fatalf("receiver %d %s", result, &out)
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	if cfg.MachineID != existing.MachineID || cfg.MachineAssignment == nil || cfg.MachineAssignment.Kind != config.MachineAssignmentR2Own || cfg.MachineAssignment.SlotID != payload.SlotID || cfg.MachineAssignment.RecipientID != payload.RecipientID || cfg.MachineAssignment.SharedWith != "" {
+		t.Fatal("own-key provenance or local identity lost")
+	}
+	if !strings.Contains(out.String(), "Dedicated R2 key draft") || strings.Contains(out.String(), "Shared-key R2") {
+		t.Fatal("dedicated receiver mislabeled shared")
+	}
+}
+
+func TestDedicatedDistinctBucketClaimsRemainInformational(t *testing.T) {
+	env, home, _, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	s, _, err := i.create(issuance.Precreated)
+	must(t, err)
+	s, _, err = reserveSpare(home, i.cfg, strings.Repeat("b", 32), "laptop", env.now().Add(time.Hour), env)
+	must(t, err)
+	s.State = issuance.DeliveryIntent
+	must(t, issuance.Save(home, s))
+	ledger := pairingLedger{Version: 1, SlotID: s.SlotID, PairingID: s.PairingID, RecipientID: s.RecipientID, IssuerID: s.IssuerID, Name: s.Label, DestinationID: s.DestinationID, Kind: pairingOwnR2, AccessKeyID: s.ProviderID, CredentialRef: s.SecretRef, State: pairingDeliveryIntent, CreatedAt: s.CreatedAt, ExpiresAt: s.ExpiresAt}
+	must(t, savePairingLedger(home, ledger))
+	result := machines.ListResult{}
+	for _, id := range []string{strings.Repeat("c", 32), strings.Repeat("d", 32)} {
+		result.Records = append(result.Records, machines.Record{MachineID: id, PairingID: s.PairingID, PairedFrom: s.IssuerID, Credential: machines.CredentialBinding{Kind: config.MachineAssignmentR2Own, AccessKeyID: s.ProviderID, RecipientID: s.RecipientID, IssuerID: s.IssuerID, SlotID: s.SlotID}})
+	}
+	observePairingClaims(home, s.DestinationID, result, env.now())
+	observePairingClaims(home, s.DestinationID, result, env.now())
+	ledgers, err := readPairingLedgers(home)
+	must(t, err)
+	if len(ledgers[0].ObservedMachineIDs) != 2 || !strings.Contains(strings.Join(pairingWarnings(home, env.now()), " "), "untrusted") {
+		t.Fatal("distinct informational claims lost")
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	if slots[0].State != issuance.DeliveryIntent || slots[0].ProviderID != s.ProviderID {
+		t.Fatal("bucket claims mutated authoritative slot")
+	}
+}
+
+func TestDedicatedOwnIntentNeverEntersSparePool(t *testing.T) {
+	env, home, cf, _ := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	s, _, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
+	must(t, err)
+	if s.State != issuance.OwnIntent {
+		t.Fatal("own transaction entered spare pool")
+	}
+	none, _, err := reserveSpare(home, i.cfg, strings.Repeat("b", 32), "laptop", env.now().Add(time.Hour), env)
+	must(t, err)
+	if none.SlotID != "" {
+		t.Fatal("own staged key handed out")
+	}
+	must(t, i.reconcile())
+	i.cleanup(&s)
+	if s.State != issuance.OwnIntent || len(cf.Live()) != 1 {
+		t.Fatal("ordinary source cleanup touched own transaction")
+	}
+	must(t, i.cleanupUncommittedOwnIntent(&s))
+	if s.State != issuance.Deleted || len(cf.Live()) != 0 {
+		t.Fatal("uncommitted own transaction was not cleaned")
+	}
+}
+
+func TestDedicatedOwnIntentCleanupPreservesCommittedOrUnknownBindings(t *testing.T) {
+	env, home, cf, kc := dedicatedFixture(t)
+	i := fixtureIssuer(t, env, home)
+	s, key, err := i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
+	must(t, err)
+	cfg := i.cfg
+	cfg.Storage.R2CredentialRef = s.SecretRef
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Own, AccessKeyID: s.ProviderID, RecipientID: s.RecipientID, IssuerID: s.IssuerID, SlotID: s.SlotID}
+	must(t, config.Save(home, cfg))
+	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 1 {
+		t.Fatal("committed key deleted")
+	}
+	s.State = issuance.Own
+	must(t, issuance.Save(home, s))
+	i.cleanup(&s)
+	if len(cf.Live()) != 1 {
+		t.Fatal("committed own key cleaned automatically")
+	}
+	// A different reference may still load the same active provider key.
+	s, key, err = i.createWithIntent(issuance.Fresh, i.cfg.MachineID, func(issuance.Slot) error { return nil })
+	must(t, err)
+	cfg = i.cfg
+	must(t, kc.Save(context.Background(), "main", key))
+	must(t, config.Save(home, cfg))
+	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 2 {
+		t.Fatal("aliased active key deleted")
+	}
+	must(t, kc.Delete(context.Background(), "main"))
+	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 2 {
+		t.Fatal("unknown active binding deleted")
 	}
 }

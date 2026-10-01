@@ -27,6 +27,7 @@ const (
 	Reserved       State = "reserved"
 	DeliveryIntent State = "delivery-intent"
 	Delivered      State = "delivered"
+	OwnIntent      State = "own-intent"
 	Own            State = "own"
 	CleanupPending State = "cleanup-pending"
 	Deleted        State = "deleted"
@@ -102,7 +103,7 @@ func (s Slot) Validate() error {
 	}
 	switch s.State {
 	case CreationIntent, CleanupPending, Deleted:
-	case SecretIntent, Spare, Reserved, DeliveryIntent, Delivered, Own:
+	case SecretIntent, Spare, Reserved, DeliveryIntent, Delivered, OwnIntent, Own:
 		if s.ProviderID == "" {
 			return bad
 		}
@@ -185,7 +186,7 @@ func allowedTransition(a, b Slot) bool {
 	case CreationIntent:
 		return b.State == SecretIntent || b.State == CleanupPending || b.State == Deleted
 	case SecretIntent:
-		return b.State == Spare || b.State == Own || b.State == CleanupPending || b.State == Deleted
+		return b.State == Spare || b.State == OwnIntent || b.State == Own || b.State == CleanupPending || b.State == Deleted
 	case Spare:
 		return b.State == Reserved || b.State == CleanupPending
 	case Reserved:
@@ -194,6 +195,8 @@ func allowedTransition(a, b Slot) bool {
 		return b.State == Delivered || b.State == CleanupPending
 	case Delivered:
 		return b.State == CleanupPending
+	case OwnIntent:
+		return b.State == Own || b.State == CleanupPending || b.State == Deleted
 	case Own:
 		return b.State == CleanupPending || b.State == Deleted
 	case CleanupPending:
@@ -211,7 +214,7 @@ func (s Slot) validateBinding() error {
 			return bad
 		}
 	}
-	if s.Version != 1 || len(s.DestinationID) != 64 || strings.Trim(s.DestinationID, "0123456789abcdef") != "" || s.CreatedAt.IsZero() || (s.SecretRef != "issued-"+s.SlotID && !(s.Origin == Guided && strings.HasPrefix(s.SecretRef, "setup-") && config.ValidMachineID(strings.TrimPrefix(s.SecretRef, "setup-")))) || s.ProviderName != ProviderName(s.RecipientID, s.IssuerID, s.SlotID) {
+	if s.Version != 1 || len(s.DestinationID) != 64 || strings.Trim(s.DestinationID, "0123456789abcdef") != "" || s.CreatedAt.IsZero() || !s.validReference() || s.ProviderName != ProviderName(s.RecipientID, s.IssuerID, s.SlotID) {
 		return bad
 	}
 	if cloudflare.ValidateBucketName(s.Bucket) != nil || (s.Jurisdiction != "" && !cloudflare.ValidJurisdiction(s.Jurisdiction)) {
@@ -225,4 +228,12 @@ func (s Slot) validateBinding() error {
 	}
 
 	return nil
+}
+
+func (s Slot) validReference() bool {
+	if s.SecretRef == "issued-"+s.SlotID {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(s.SecretRef, "setup-")
+	return s.Origin == Guided && ok && config.ValidMachineID(suffix)
 }
