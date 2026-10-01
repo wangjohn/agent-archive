@@ -25,7 +25,7 @@ import (
 // -wal and -shm files exist and every chat read needs a snapshot; closed,
 // each write opens and closes the database, leaving no side file.
 type cursorDB struct {
-	t    *testing.T
+	t    testing.TB
 	path string
 	held *sql.DB
 }
@@ -36,7 +36,7 @@ type cursorDB struct {
 // parallel tests: every pass sweeps it, and a sweep's probe of a copy's lock
 // file, landing between a new read creating that file and locking it, fails
 // the read ("lock a Cursor database snapshot directory").
-func newCursorDB(t *testing.T, running bool) *cursorDB {
+func newCursorDB(t testing.TB, running bool) *cursorDB {
 	t.Helper()
 	ownSnapshotFolder(t)
 	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
@@ -58,7 +58,7 @@ func newCursorDB(t *testing.T, running bool) *cursorDB {
 // that reads Cursor's database, checks what is in the folder, or checks what
 // a sweep of it did. It assigns cursorstore.SnapshotTempDirForTesting, so the
 // test must not be parallel.
-func ownSnapshotFolder(t *testing.T) {
+func ownSnapshotFolder(t testing.TB) {
 	t.Helper()
 	previous := cursorstore.SnapshotTempDirForTesting
 	cursorstore.SnapshotTempDirForTesting = t.TempDir()
