@@ -84,11 +84,6 @@ func Run(ctx context.Context, store *state.Store, cfg config.Config, o Options) 
 	return runWithAdapters(ctx, store, cfg, o, registeredAdapters())
 }
 
-// run's contract seam is private: only synthetic tests may inject support.
-func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, supported func(sourcefacts.CodexMeta) bool) (Health, error) {
-	return runWithAdapters(ctx, store, cfg, o, []SourceAdapter{codexAdapter{supported: supported}})
-}
-
 func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapters []SourceAdapter) (Health, error) {
 	adapter := findAdapter(adapters, "codex")
 	if adapter == nil {

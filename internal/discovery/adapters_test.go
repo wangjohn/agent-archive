@@ -10,6 +10,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // A fake source adapter deliberately reports usable evidence; only shared
@@ -158,4 +160,9 @@ func TestDelayedFirstTaskUsesNativeSessionStartForConsent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// run's contract seam is private: only synthetic tests may inject support.
+func run(ctx context.Context, store *state.Store, cfg config.Config, o Options, supported func(sourcefacts.CodexMeta) bool) (Health, error) {
+	return runWithAdapters(ctx, store, cfg, o, []SourceAdapter{codexAdapter{supported: supported}})
 }
