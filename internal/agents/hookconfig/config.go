@@ -75,18 +75,18 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 		return nil, err
 	}
 	if app.Version {
-		v, ok := doc.root.get("version")
+		v, ok := doc.Root.Get("version")
 		if ok && !isOne(v) {
 			return nil, errors.New("unsupported Cursor hook configuration version")
 		}
 		if !ok {
 			// Where Cursor's own files have it: before "hooks".
-			if err = doc.setBefore("hooks", "version", json.Number("1")); err != nil {
+			if err = doc.SetBefore("hooks", "version", json.Number("1")); err != nil {
 				return nil, err
 			}
 		}
 	}
-	hs, err := hooksObject(doc.root)
+	hs, err := hooksObject(doc.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -100,25 +100,25 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 	for event, empty := range emptied {
 		// An event an earlier release installed and this one no longer uses.
 		if empty && !slices.Contains(names, event) {
-			hs.remove(event, 0)
+			hs.Remove(event, 0)
 		}
 	}
 	for _, event := range names {
 		// Keys in the order earlier releases wrote them (sorted), so rerunning
 		// setup over an existing installation changes nothing.
-		handler := &object{members: []member{{"command", command}, {"timeout", json.Number("2")}}}
+		handler := &object{Members: []member{{"command", command}, {"timeout", json.Number("2")}}}
 		var entry any = handler
 		if !app.Flat {
-			handler = &object{members: []member{{"command", command}, {"statusMessage", spec.Owner}, {"timeout", json.Number("2")}, {"type", "command"}}}
-			entry = &object{members: []member{{"hooks", []any{handler}}}}
+			handler = &object{Members: []member{{"command", command}, {"statusMessage", spec.Owner}, {"timeout", json.Number("2")}, {"type", "command"}}}
+			entry = &object{Members: []member{{"hooks", []any{handler}}}}
 		}
 		list, _ := getList(hs, event)
-		hs.set(event, append(list, entry))
+		hs.Set(event, append(list, entry))
 	}
-	if err = doc.set("hooks", hs); err != nil {
+	if err = doc.Set("hooks", hs); err != nil {
 		return nil, err
 	}
-	return doc.bytes(), nil
+	return doc.Bytes(), nil
 }
 
 // Remove strips every handler hook's installation installed for harness
@@ -138,7 +138,7 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	hs, err := hooksObject(doc.root)
+	hs, err := hooksObject(doc.Root)
 	if err != nil {
 		return nil, false, err
 	}
@@ -154,21 +154,21 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 	}
 	for event, empty := range emptied {
 		if empty {
-			hs.remove(event, 0)
+			hs.Remove(event, 0)
 		}
 	}
-	if len(hs.members) == 0 {
-		doc.remove("hooks")
+	if len(hs.Members) == 0 {
+		doc.Remove("hooks")
 		// Setup adds Cursor's "version" beside the hooks it installs; with
 		// no hooks left and nothing else in the file, it goes too, and the
 		// file is left as setup would have found an empty one.
-		if v, ok := doc.root.get("version"); spec.Version && ok && isOne(v) && len(doc.root.members) == 1 {
-			doc.clear()
+		if v, ok := doc.Root.Get("version"); spec.Version && ok && isOne(v) && len(doc.Root.Members) == 1 {
+			doc.Clear()
 		}
-	} else if err = doc.set("hooks", hs); err != nil {
+	} else if err = doc.Set("hooks", hs); err != nil {
 		return nil, false, err
 	}
-	return doc.bytes(), true, nil
+	return doc.Bytes(), true, nil
 }
 
 // Empty reports whether data is a hook file with nothing in it: no settings
@@ -179,13 +179,13 @@ func Empty(data []byte) bool {
 		return true
 	}
 	doc, err := parseDocument(data)
-	return err == nil && len(doc.root.members) == 0
+	return err == nil && len(doc.Root.Members) == 0
 }
 
 // hooksObject returns the "hooks" member, or nil when there is none (or it
 // is null).
 func hooksObject(root *object) (*object, error) {
-	raw, ok := root.get("hooks")
+	raw, ok := root.Get("hooks")
 	if !ok || raw == nil {
 		return nil, nil
 	}
@@ -208,14 +208,14 @@ func duplicateKey(value any, where string) (at, key string, found bool) {
 	switch v := value.(type) {
 	case *object:
 		seen := map[string]bool{}
-		for _, m := range v.members {
-			if seen[m.key] {
-				return where, m.key, true
+		for _, m := range v.Members {
+			if seen[m.Key] {
+				return where, m.Key, true
 			}
-			seen[m.key] = true
+			seen[m.Key] = true
 		}
-		for _, m := range v.members {
-			if at, key, found = duplicateKey(m.value, fmt.Sprintf("%s.%q", where, m.key)); found {
+		for _, m := range v.Members {
+			if at, key, found = duplicateKey(m.Value, fmt.Sprintf("%s.%q", where, m.Key)); found {
 				return at, key, true
 			}
 		}
@@ -230,7 +230,7 @@ func duplicateKey(value any, where string) (at, key string, found bool) {
 }
 
 func getList(hs *object, event string) ([]any, error) {
-	raw, _ := hs.get(event)
+	raw, _ := hs.Get(event)
 	list, ok := raw.([]any)
 	if !ok && raw != nil {
 		return nil, fmt.Errorf("invalid hook list for %s", event)
@@ -267,14 +267,14 @@ const (
 // directory the handler's command runs with ("" for the default one), or,
 // when that cannot be read from the command, the command in unreadable.
 func classify(handler *object, app Spec, hook Hook) (kind handlerKind, dataHome, unreadable string) {
-	command, _ := handler.get("command")
+	command, _ := handler.Get("command")
 	text, _ := command.(string)
 	if app.Flat {
 		if !strings.HasSuffix(text, " # "+app.Owner) {
 			return kindUnrelated, "", ""
 		}
 	} else {
-		status, _ := handler.get("statusMessage")
+		status, _ := handler.Get("statusMessage")
 		if app.PrototypeOwner != "" && status == app.PrototypeOwner {
 			return kindPrototype, "", ""
 		}
@@ -361,7 +361,7 @@ func handlerList(groups []any, app Spec) ([]*object, error) {
 			out = append(out, g)
 			continue
 		}
-		raw, _ := g.get("hooks")
+		raw, _ := g.Get("hooks")
 		handlers, ok := raw.([]any)
 		if !ok {
 			return nil, errors.New("invalid hook handlers")
@@ -393,10 +393,10 @@ func (h Hook) replaces(kind handlerKind) bool {
 // from, mapped to whether that left the event empty.
 func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 	changed := map[string]bool{}
-	for i, m := range hs.members {
-		groups, ok := m.value.([]any)
+	for i, m := range hs.Members {
+		groups, ok := m.Value.([]any)
 		if !ok {
-			return nil, fmt.Errorf("invalid hook list for %s", m.key)
+			return nil, fmt.Errorf("invalid hook list for %s", m.Key)
 		}
 		// Checks the shape of the whole list before anything is changed, so
 		// the type assertions below cannot fail.
@@ -415,7 +415,7 @@ func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 				kept = append(kept, g)
 				continue
 			}
-			rawHandlers, _ := g.get("hooks")
+			rawHandlers, _ := g.Get("hooks")
 			handlers, _ := rawHandlers.([]any)
 			remaining := []any{}
 			for _, h := range handlers {
@@ -429,13 +429,13 @@ func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 			if len(remaining) == len(handlers) {
 				kept = append(kept, g)
 			} else if len(remaining) > 0 {
-				g.set("hooks", remaining)
+				g.Set("hooks", remaining)
 				kept = append(kept, g)
 			}
 		}
 		if removed {
-			hs.members[i].value = kept
-			changed[m.key] = len(kept) == 0
+			hs.Members[i].Value = kept
+			changed[m.Key] = len(kept) == 0
 		}
 	}
 	return changed, nil

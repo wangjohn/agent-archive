@@ -75,8 +75,16 @@ func (c Configurator) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookIn
 	if err != nil {
 		return agentapi.HookInspection{State: agentapi.HookUnreadable, Reason: "settings_invalid"}, err
 	}
-	state := agentapi.HookOwned
-	reason := "hooks_stale"
+	_, owned, err := remove(r.File.Bytes, c.Spec, Hook(r.Owner))
+	if err != nil {
+		return agentapi.HookInspection{State: agentapi.HookUnreadable, Reason: "settings_invalid"}, err
+	}
+	state := agentapi.HookAbsent
+	reason := "hooks_absent"
+	if owned {
+		state = agentapi.HookOwned
+		reason = "hooks_stale"
+	}
 	if healthy {
 		reason = "hooks_installed"
 	}
@@ -90,15 +98,6 @@ func (c Configurator) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookIn
 // Command builds the owned command with the integration's declared native name.
 func (c Configurator) Command(owner agentapi.HookOwner) (string, error) {
 	return Hook(owner).command(c.Spec)
-}
-
-// Problem extracts structured editor refusal details for shared preflight UI.
-func Problem(err error) (line, column int, reason string) {
-	var e *configError
-	if errors.As(err, &e) {
-		return e.line, e.column, e.reason
-	}
-	return 0, 0, ""
 }
 
 // EnvironmentKeys declares native root overrides to the observation caller.

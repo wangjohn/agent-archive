@@ -96,6 +96,14 @@ func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 	if err != nil || !found || reg.NativeSessionID != id || reg.TranscriptPath != "/synthetic/source" || reg.ProjectRoot != project || reg.DestinationID == "" {
 		t.Fatalf("registration %+v %v", reg, err)
 	}
+	// A built-in conversation carrying identical opaque bytes has another owner.
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": id, "cwd": project}, at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	builtinID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: id})
+	if err != nil || !found || builtinID == archiveID {
+		t.Fatalf("colliding native owners %q %q %v", builtinID, archiveID, err)
+	}
 	if err := HandleEvent(home, "synthetic", syntheticPayload("child", id, project, "/synthetic/child"), at, WithDecoders(ports)); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +115,13 @@ func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests, err := store.LoadRequests()
-	if err != nil || len(requests) != 1 || !requests[0].Urgent() {
+	urgent := false
+	for _, request := range requests {
+		if request.ArchiveSessionID == archiveID && request.Urgent() {
+			urgent = true
+		}
+	}
+	if err != nil || !urgent {
 		t.Fatalf("requests %+v %v", requests, err)
 	}
 }

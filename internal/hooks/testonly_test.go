@@ -44,3 +44,5 @@ func PlanRemoval(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	}
 	return changes, nil
 }
+
+func CommandDataHome(command string) (string, bool) { return hookconfig.CommandDataHome(command) }

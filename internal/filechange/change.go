@@ -1,7 +1,7 @@
 // Package filechange holds value-only plans for shared atomic file application.
 package filechange
 
-import "os"
+import "io/fs"
 
 // Change describes expected prior bytes and the replacement of one local file.
 // Native integrations prepare values; shared orchestration owns every I/O effect.
@@ -10,6 +10,6 @@ type Change struct {
 	Before  []byte
 	After   []byte
 	Existed bool
-	Mode    os.FileMode
+	Mode    fs.FileMode
 	Delete  bool `json:",omitempty"`
 }

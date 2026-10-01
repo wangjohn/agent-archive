@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
 	"os"
@@ -92,10 +92,10 @@ func Remove(existing []byte, name string, h Hook) ([]byte, bool, error) {
 }
 
 // Empty is the shared JSON editor's empty-document predicate.
-func Empty(data []byte) bool { return hookconfig.Empty(data) }
-
-// CommandDataHome decodes the common owned command environment prefix.
-func CommandDataHome(command string) (string, bool) { return hookconfig.CommandDataHome(command) }
+func Empty(data []byte) bool {
+	d, err := jsonedit.Parse(data)
+	return err == nil && len(d.Root.Members) == 0
+}
 
 const maxHookSettingsBytes = 8 << 20
 
