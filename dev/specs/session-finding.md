@@ -803,10 +803,10 @@ guide. Live check on the owner's Mac:
   browser, which names the toggle in its heading, prints the same line.
   `scope.outside_matches` counts the sessions of the answering tier outside
   the scope (top-level ones, or subagents when those answered).
-- PR 5: the footer's hidden count reads `42 session(s) (318 subagent sessions
-  hidden; search to find one).`, keeping the existing `session(s)` wording;
-  the same parenthesis follows `Showing N of M session(s)` when `--limit` cut
-  the list. A query hides nothing: subagents are a tier, not hidden.
+- PR 5: the footer's hidden count reads as §1 has it, ending in a period:
+  `42 sessions (318 subagent sessions hidden; search to find one).`; when
+  `--limit` cut the list, the same parenthesis follows the existing `Showing
+  N of M session(s)`. A query hides nothing: subagents are a tier, not hidden.
 - PR 5: `show "<words>"` has no `--all-projects` or `--project`, so it always
   searches from the working directory's scope, and prints the "N more in other
   projects" note on stderr too, where the plan names only `handoff` and

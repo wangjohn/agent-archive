@@ -347,9 +347,11 @@ follow [Semantic Versioning](https://semver.org/).
   a project or with `--all-projects`.
 - `handoff "<words>"` and `show "<words>"` match words across a session's
   fields (above) where they matched the whole text as a substring of the title
-  or the start of an ID. A title that was found before is still found by the
-  same words; the table printed for several matches is the one described
-  above.
+  or the start of an ID. Words that matched a title before still match it,
+  except a `#N` that was only the start of a longer number (`#21` no longer
+  finds `PR #213`). `show "<words>"` now offers a subagent session only when
+  no top-level session matches, where it listed both. The table printed for
+  several matches is the one described above.
 - **`list`, `show`, and `handoff` start from the repository you are in.**
   Run inside a project, `agent-archive list` and `list --json` now return
   that repository's sessions (every checkout and worktree of it, and its

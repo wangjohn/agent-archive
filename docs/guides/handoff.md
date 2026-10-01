@@ -243,13 +243,18 @@ session, that session is not offered for a title (as `--latest` passes over
 it), unless `--to` is set, which hands off a session the caller names.
 
 The search looks at this Mac's sessions first, which needs no network and no
-upload (a session's title, its first prompt, is read from its transcript file
-on this Mac, and only the title is matched, never the rest of the
-conversation), and goes on to the archive's sessions only when none of this
-Mac's match, so an archive that cannot be reached does not fail words this
-Mac can answer. `--source local` or `--source archive` limits it to one. Only
-the 50 most recently active sessions on this Mac that have a prompt are
-searched by title; an older one that was uploaded is found in the archive.
+upload: a session's name, title (its first prompt), branch, and linked pull
+requests are read from its transcript file on this Mac, and only those, its
+project name, and its app are matched, never the rest of the conversation.
+It goes on to the archive's sessions when none of this Mac's match (inside a
+repository, the repository's archived sessions come before this Mac's
+sessions in other projects), and a single word of 8 hexadecimal characters
+that is not the short ID of one of this Mac's sessions is also looked up in
+the archive as a short ID first. An archive that cannot be reached does not
+fail words this Mac can answer. `--source local` or `--source archive` limits
+it to one. Only the 50 most recently active sessions on this Mac that have a
+prompt are searched by words; an older one that was uploaded is found in the
+archive.
 
 One match is handed off, and then everything else applies to it: `--to`,
 `--worktree`, the `Continue in:` question on a terminal. Several matches are
