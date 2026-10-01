@@ -92,9 +92,9 @@ func TestTableLeavesOutHiddenColumns(t *testing.T) {
 	}
 }
 
-// The PR column is the last pull request the session created, from
-// git_activity.
-func TestPRColumnIsTheLastCreatedPullRequest(t *testing.T) {
+// The PR column is the last pull request the session linked, else the last it
+// created (git_activity).
+func TestPRColumnIsTheLastLinkedOrCreatedPullRequest(t *testing.T) {
 	t.Parallel()
 	at := func(kind archive.GitEventKind, n int) archive.GitEvent {
 		return archive.GitEvent{Kind: kind, PRNumber: n}
@@ -102,15 +102,19 @@ func TestPRColumnIsTheLastCreatedPullRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		events []archive.GitEvent
+		linked []archive.PullRequestLink
 		want   string
 	}{
-		{"none", nil, ""},
-		{"a commit and a push", []archive.GitEvent{{Kind: archive.GitEventCommit}, {Kind: archive.GitEventPush}}, ""},
-		{"one created", []archive.GitEvent{at(archive.GitEventPRCreated, 213)}, "#213"},
-		{"the last created wins", []archive.GitEvent{at(archive.GitEventPRCreated, 7), at(archive.GitEventCommit, 0), at(archive.GitEventPRCreated, 213)}, "#213"},
-		{"a merge is not a creation", []archive.GitEvent{at(archive.GitEventPRCreated, 7), at(archive.GitEventPRMerged, 9)}, "#7"},
+		{"none", nil, nil, ""},
+		{"a commit and a push", []archive.GitEvent{{Kind: archive.GitEventCommit}, {Kind: archive.GitEventPush}}, nil, ""},
+		{"one created", []archive.GitEvent{at(archive.GitEventPRCreated, 213)}, nil, "#213"},
+		{"the last created wins", []archive.GitEvent{at(archive.GitEventPRCreated, 7), at(archive.GitEventCommit, 0), at(archive.GitEventPRCreated, 213)}, nil, "#213"},
+		{"a merge is not a creation", []archive.GitEvent{at(archive.GitEventPRCreated, 7), at(archive.GitEventPRMerged, 9)}, nil, "#7"},
+		{"a linked one", nil, []archive.PullRequestLink{{Repository: "o/r", Number: 41}}, "#41"},
+		{"the last linked wins", nil, []archive.PullRequestLink{{Repository: "o/r", Number: 41}, {Repository: "o/r", Number: 52}}, "#52"},
+		{"a linked one beats a created one", []archive.GitEvent{at(archive.GitEventPRCreated, 213)}, []archive.PullRequestLink{{Repository: "o/r", Number: 41}}, "#41"},
 	} {
-		m := archive.Metadata{SessionID: "pr000001", GitActivity: tc.events}
+		m := archive.Metadata{SessionID: "pr000001", GitActivity: tc.events, PullRequests: tc.linked}
 		if got := formattedRows([]archive.Metadata{m}, listFormatOptions{})[0].PR; got != tc.want {
 			t.Errorf("%s: PR %q, want %q", tc.name, got, tc.want)
 		}

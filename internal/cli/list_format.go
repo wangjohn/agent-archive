@@ -26,7 +26,7 @@ type listRow struct {
 	ShortID    string
 	HarnessKey string // raw harness name for show / locateMetadataKey
 	ProjectID  string // raw identity; display names can collide
-	Title      string // display title (metadata title, else short ID)
+	Title      string // display title (archive.DisplayTitle, else short ID)
 	When       string
 	CapturedAt string
 	Harness    string
@@ -98,11 +98,11 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			}
 		}
 		title := shorts[i]
-		if strings.TrimSpace(m.Title) != "" {
-			title = archive.DisplayLine(m.Title)
+		if display := archive.DisplayTitle(m); strings.TrimSpace(display) != "" {
+			title = archive.DisplayLine(display)
 		}
 		rows[i] = listRow{
-			PR:         createdPRLabel(m),
+			PR:         prLabel(m),
 			Index:      i + 1,
 			SessionID:  m.SessionID,
 			ShortID:    shorts[i],
@@ -215,13 +215,11 @@ func printListTable(w io.Writer, c *scopeChoice) error {
 	return nil
 }
 
-// createdPRLabel is the pull request a session created last, as "#213", or ""
-// when it created none.
-func createdPRLabel(m archive.Metadata) string {
-	for i := len(m.GitActivity) - 1; i >= 0; i-- {
-		if e := m.GitActivity[i]; e.Kind == archive.GitEventPRCreated && e.PRNumber > 0 {
-			return "#" + strconv.Itoa(e.PRNumber)
-		}
+// prLabel is the session's last pull request (archive.LatestPR) as "#213", or
+// "" when it has none.
+func prLabel(m archive.Metadata) string {
+	if pr, ok := archive.LatestPR(m); ok && pr.Number > 0 {
+		return "#" + strconv.Itoa(pr.Number)
 	}
 	return ""
 }

@@ -149,6 +149,29 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
+From parser `0.17.0` a sidecar may also carry three optional fields that
+say what to call the session:
+
+- `name`: the title the agent gave the session, collapsed to one line and cut
+  to 72 characters like `title`. For Claude Code it is the session name in
+  its sidebar (set from your prompt, or by `/rename`; the last one wins), and
+  for Cursor the chat's name. `title` keeps its meaning, a preview of the
+  first prompt. Absent when the session has no name, including one whose
+  transcript is gone and so could not be re-read after the privacy filter
+  began keeping names (filter 13).
+- `branch`: the last git branch the transcript recorded. Absent when none was
+  recorded, or it is `HEAD` (a detached checkout).
+- `pull_requests`: up to 20 pull requests the session was linked to (Claude
+  Code's `pr-link` records), in the order first linked and each once, as
+  `{"repository", "number", "url"}`. `repository` is `owner/repo`; `url` is
+  the GitHub address, present only when it is exactly
+  `https://github.com/<owner>/<repo>/pull/<number>`. Unlike `git_activity`,
+  which records the pull requests the session's own commands created or
+  merged, these are the ones the agent linked.
+
+`list` and `show` show `name` where they showed `title` (and `title` when
+there is no `name`).
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output

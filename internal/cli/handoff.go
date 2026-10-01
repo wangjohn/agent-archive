@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -324,32 +325,17 @@ func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTa
 }
 
 // hasPrompt reports whether a bundle holds anything the person said, so
-// `--latest` passes over a session that has only just started.
+// `--latest` passes over a session that has only just started. It is
+// archive.SessionLabels's second result, without deriving the labels.
 func hasPrompt(bundle archive.SourceBundle) bool {
-	_, ok := firstPrompt(bundle)
-	return ok
-}
-
-// sessionTitleWidth is how many columns firstPrompt keeps, as the archive's
-// metadata title does.
-const sessionTitleWidth = 72
-
-// firstPrompt is hasPrompt with a one-line preview of the first prompt, when
-// the transcript's structure shows one (a Cursor text transcript's does not).
-func firstPrompt(bundle archive.SourceBundle) (title string, ok bool) {
 	if len(bundle.NativeText) > 0 {
-		return "", true
+		return true
 	}
 	view, err := archive.ParseNormalized(bundle)
 	if err != nil {
-		return "", false
+		return false
 	}
-	for _, turn := range view.Turns {
-		if turn.Kind == archive.TurnKindHumanPrompt {
-			return ellipsize(strings.Join(strings.Fields(turn.Text), " "), sessionTitleWidth), true
-		}
-	}
-	return "", false
+	return slices.ContainsFunc(view.Turns, func(turn archive.NormalizedTurn) bool { return turn.Kind == archive.TurnKindHumanPrompt })
 }
 
 type handoffResolver struct {

@@ -1,7 +1,7 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PR 1 and PR 2 merged; PR 4 in review; the rest not started. Where this
+PRs 1, 2 and 4 merged, PR 3 (parser 0.17.0) in review, the rest not started. Where this
 plan and the code differ once packages merge, the code is the reference and
 differences go under Deviations.
 
@@ -713,8 +713,9 @@ guide. Live check on the owner's Mac:
 - PR 4: `listScope.label` is the scope's name even when it is turned off
   (`all_projects` says so); `outside_matches` counts the sessions outside the
   scope that match the same filters. The object is omitted outside a project.
-- PR 4: the PR column reads the last `pr_created` event of `git_activity`
-  (`createdPRLabel`); PR 3's `LatestPR` replaces it. `listRow.Live` (owned by
+- PR 4: the PR column first read the last `pr_created` event of
+  `git_activity` (`createdPRLabel`); PR 3 replaced that with `LatestPR`
+  (the last linked pull request, else the last created). `listRow.Live` (owned by
   PR 6 in the shared-names table) is added here for the dot; local rows only
   (the archive says nothing about what is running here).
 - PR 4: HARNESS and PROJECT are left out only for two or more rows (one row
@@ -731,3 +732,35 @@ guide. Live check on the owner's Mac:
   switches the scope, so a short ID that starts with `a` (IDs are hex) is
   picked by its row number there; `n`, `p`, and `q` never met this, as they
   are not hex digits.
+- PR 3: `SessionLabels` is the one place the four labels are derived, but
+  `BuildMetadata` reaches it through `deriveLabels(bundle, view)`, which takes
+  the normalized view it has already parsed, so a transcript is not parsed
+  twice. `SessionLabels(bundle)` parses and calls the same `deriveLabels`; the
+  picker's `localMetadata` calls it. Its `ok` is what `firstPrompt`'s was:
+  whether the transcript holds a prompt (a Cursor text transcript counts).
+- PR 3: `firstPrompt` is gone rather than kept: with the title coming from
+  `SessionLabels`, `hasPrompt` is all that was left of it, so it reads the
+  prompt test directly. The picker's local titles are now derived as
+  published ones are (runes, and a Cursor text transcript now has a title
+  where the local row had none).
+- PR 3: `show`'s summary heading is `DisplayTitle`. Rather than a `Name` row
+  that would repeat the heading, a session with a name gets a `Prompt` row
+  holding its first prompt (which was the heading before), so `show` loses
+  nothing; `Branch` and `PRs` rows are added, `PRs` being the linked pull
+  requests as `owner/repo#n`, beside the existing `Git` row of the ones its
+  commands opened or merged.
+- PR 3: `PullRequestLink.URL` is `omitempty` (a `pr-link` may carry no
+  `prUrl`), and the parser keeps a URL only when it is exactly the GitHub
+  address rebuilt from the repository and number, as the filter does; it does
+  not rebuild one the record lacked, since a GitHub Enterprise link is dropped
+  by the filter and the host is not known. A `pr-link` whose repository or
+  number is out of shape is skipped.
+- PR 3: `branch` reads the last record's `gitBranch` through the same helper
+  handoff uses (`recordedBranch`), then applies `validBranch`; a last value
+  that is malformed or `HEAD` gives no branch, rather than falling back to an
+  earlier record's.
+- PR 3: `TestFilterV13NewRecordsDoNotChangeDerivedMetadata` (PR 2) asserted
+  that the parser ignored the new records; it is now
+  `TestFilterV13NewRecordsChangeOnlyNameAndPullRequests`, asserting that they
+  change `name` and `pull_requests` and nothing else. The non-interactive
+  ambiguous-`show` list also prints `DisplayTitle`.
