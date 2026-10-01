@@ -197,6 +197,17 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	return c.storageConfig(), key, true, nil
 }
 
+// connectChoice is what the person chose after the token could not reach the
+// account or the archive-key permission.
+type connectChoice string
+
+const (
+	connectToken connectChoice = "token"
+	connectRetry connectChoice = "retry"
+	connectOther connectChoice = "other"
+	connectStop  connectChoice = "stop"
+)
+
 // connect checks the account and archive-key permission before asking for
 // bucket settings. Recovery prompts run outside the request signal handler.
 func (c *r2Creator) connect() error {
@@ -219,16 +230,16 @@ func (c *r2Creator) connect() error {
 		if !errors.Is(err, errChooseStorageAgain) && err != nil && c.account == "" {
 			return err
 		}
-		choice, err := c.p.menu("What next?", "token",
-			option{"token", "Paste a different token"},
-			option{"retry", "Retry after updating permissions"},
-			option{"other", "Back"},
-			option{"stop", "Stop setup"})
+		choice, err := c.p.menu("What next?", string(connectToken),
+			option{string(connectToken), "Paste a different token"},
+			option{string(connectRetry), "Retry after updating permissions"},
+			option{string(connectOther), "Back"},
+			option{string(connectStop), "Stop setup"})
 		if err != nil {
 			return err
 		}
-		switch choice {
-		case "token":
+		switch connectChoice(choice) {
+		case connectToken:
 			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
 			if err != nil {
 				return err
@@ -240,10 +251,12 @@ func (c *r2Creator) connect() error {
 			c.api = c.env.cloudflareAPI(token)
 			c.account, c.groupID = "", ""
 			c.tokenFromEnv = false
-		case "retry":
+		case connectRetry:
 			continue
-		case "other":
+		case connectOther:
 			return errChooseStorageAgain
+		case connectStop:
+			return errors.New("guided bucket creation stopped")
 		default:
 			return errors.New("guided bucket creation stopped")
 		}
