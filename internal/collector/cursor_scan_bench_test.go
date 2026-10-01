@@ -27,7 +27,8 @@ func BenchmarkScanChangedCursorChats(b *testing.B) {
 		}
 	}
 	copies := 0
-	opts := Options{MachineID: "synthetic", CursorDatabase: db.path, afterCursorPass: func(n int) { copies = n }, Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }}
+	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	opts := Options{MachineID: "synthetic", CursorDatabase: db.path, afterCursorPass: func(n int) { copies = n }, Now: func() time.Time { return now }}
 	remote := storagetest.NewMemoryStore()
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 100 || copies != 1 {
@@ -41,8 +42,13 @@ func BenchmarkScanChangedCursorChats(b *testing.B) {
 		for j := range i + 1 {
 			ids = append(ids, fmt.Sprintf("next-%d", j))
 		}
+		now = now.Add(time.Hour)
 		for j := range 100 {
-			db.chat(fmt.Sprintf("chat-%03d", j), int64(i+2), ids...)
+			id := fmt.Sprintf("chat-%03d", j)
+			db.chat(id, int64(i+2), ids...)
+			if err := local.SaveRequest("session-"+id, "stop", now); err != nil {
+				b.Fatal(err)
+			}
 		}
 		b.StartTimer()
 		result, err := Run(context.Background(), local, remote, opts)

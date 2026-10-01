@@ -111,6 +111,10 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 	if err := os.WriteFile(changed, []byte(content+`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"new"}}`+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(time.Hour)
+	if err := local.SaveRequest("session-0", "stop", now); err != nil {
+		t.Fatal(err)
+	}
 	filters, reads := transcriptFilters.Load(), remote.reads
 	result, err = Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 || len(result.Skipped) != 31 {
