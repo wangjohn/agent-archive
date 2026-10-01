@@ -24,10 +24,11 @@ const (
 
 // Header is a content-free, bounded observation of one Codex source.
 type Header struct {
-	Meta    CodexMeta
-	Started time.Time
-	Outcome string
-	Bytes   int64
+	Meta        CodexMeta
+	Started     time.Time
+	FirstTaskAt time.Time
+	Outcome     string
+	Bytes       int64
 }
 
 // OpenRegular opens within an approved root without blocking on FIFOs or
@@ -131,7 +132,8 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 			continue
 		}
 		if seen, native := NativeFirstTask(line); seen {
-			if !native || FirstTaskAt(line).Before(h.Started.Add(-time.Second)) || FirstTaskAt(line).After(h.Started.Add(2*time.Minute)) {
+			h.FirstTaskAt = FirstTaskAt(line)
+			if !native || h.FirstTaskAt.Before(h.Started.Add(-time.Second)) {
 				h.Outcome = "inherited_history"
 			} else {
 				h.Outcome = "native_format"

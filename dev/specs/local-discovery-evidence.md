@@ -104,8 +104,12 @@ Historical import and native handoff retain their own policy while sharing
 Codex metadata decoding through nativesessions. Discovery and collector use
 context-aware verified transcriptio snapshots; discovery retains its strict
 root-descriptor confinement, first-start and bounded header requirements.
-First-start timestamp checks permit one second of negative quantization and
-at most two minutes after header creation. Current date and adjacent UTC date
+First-task timestamp checks permit one second of negative quantization relative
+to header creation. The CLI can idle indefinitely before the first task, so
+elapsed time between those records has no upper bound. Both native session
+start and first-task timestamps reject more than two minutes of future skew
+against the scan clock. Session creation still governs consent; a new prompt
+does not make a session created before consent eligible. Current date and adjacent UTC date
 directories are bounded scheduling hints, with 64 header probes/1,024 entries
 reserved for priority and the remaining budget for fair backlog. Header time,
 identity, source support and authorization still decide eligibility. The flat
@@ -116,3 +120,54 @@ without a new generation granting earlier start eligibility. A current active
 source is preferred over an archived source, and a missing locator can be
 repaired. Native identity, original start/cwd, admission, destination and
 provenance remain immutable; publication revalidates the selected snapshot.
+
+
+## Optional settled-index scheduling
+
+Discovery additionally tries `state_5.sqlite` in each persisted Codex home as
+an optional scheduling hint. Two constant queries use the released creation
+and update indexes, return at most 32 locators each, and refuse missing or
+incompatible indexes requiring a temporary sort. A locator passes the same
+approved-root, regular-file, bounded-header, native-start, project and source
+support checks as enumeration. SQLite timestamps never authorize admission;
+reconstructed/copied index rows remain insufficient local-origin evidence.
+
+The read-only Go SQLite VFS has no native write path. It opens only the
+expected DB through confined regular-file reads, with a 100 ms context and
+4 MiB page-read limit per root, and does not copy raw databases or create
+native side files. Database replacement/change and any WAL/SHM/journal before
+or after reading discard the hints. Live WAL is deliberately an optional miss:
+using an immutable ordinary SQLite open there would ignore fresh rows, while
+ordinary live read-only SQLite can race into creating a native WAL file.
+Missing, corrupt, locked, unsupported, relocated/custom SQLite homes and live
+WAL retain fair filesystem enumeration. Hint success never marks reconciliation
+complete; newest-only hints also cannot promise coverage of arbitrary bursts.
+
+Scan health separately reports `index_queries`, `index_locators`, and
+`index_bytes_read`; `bytes_read` remains rollout-header bytes. Both hint lanes
+share the 64-header/1,024-entry priority allowance, preserving the remaining
+filesystem budget. Synthetic indexed flat/same-day benchmarks are recorded
+separately from the prior filesystem-only results. Live-WAL and missing-index
+warm latency, historic-header cache eviction, actual released desktop and
+release-platform acceptance remain open.
+
+The initial repaired synthetic benchmark run (Go 1.27.1, ordinary-user Linux
+container, one warm burst per case, settled indexed DB) measured:
+
+| Shape | Existing files | Cold coverage passes | Fresh admission passes | Warm scan ms | Index page bytes | Header bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Flat | 1,000 | 4 | 1 | 33.10 | 36,964 | 505 |
+| Same day | 1,000 | 4 | 1 | 42.26 | 36,964 | 513 |
+| Flat | 10,000 | 40 | 1 | 172.28 | 45,156 | 129,536 |
+| Same day | 10,000 | 43 | 1 | 214.67 | 49,252 | 109,996 |
+| Flat | 100,000 | 394 | 1 | 167.19 | 49,252 | 129,792 |
+| Same day | 100,000 | 578 | 1 | 143.73 | 49,252 | 131,840 |
+
+Each case issued four bounded SQLite statements (two EXPLAIN and two locator
+queries). These initial repair measurements preceded the final adapter routing
+and delayed-first-task repair; they demonstrate the settled-index mechanism,
+not release acceptance or a frozen final-head performance guarantee. Reported
+page bytes count VFS reads, including repeated page reads, rather than logical
+row size. Warm scans still reread bounded historical headers after cache
+capacity eviction. Synthetic allocations were 16.74–125.08 MB per operation;
+CPU/RSS and concurrent release-machine acceptance remain unmeasured here.

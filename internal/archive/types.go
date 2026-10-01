@@ -345,6 +345,8 @@ type SessionRegistration struct {
 	DiscoveryRoot       string `json:"discovery_root,omitempty"`
 	DiscoveryCwd        string `json:"discovery_cwd,omitempty"`
 	DiscoveryGeneration string `json:"discovery_generation,omitempty"`
+	// DiscoverySourcePriority is an adapter scheduling hint for source preference.
+	DiscoverySourcePriority int `json:"discovery_source_priority,omitempty"`
 	// StartedAtSource says where SessionStartedAt came from.
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
 	// ImportBatch is the backfill run that registered the session. Whether

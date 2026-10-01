@@ -26,6 +26,10 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		return nil
 	}
 
+	if _, err := store.UpdateRegistration(parentID, func(r *archive.SessionRegistration) error { r.HookObservedAt = now; return nil }); err != nil {
+		return err
+	}
+
 	agentID := firstNonEmptyString(payload, "agent_id")
 	if agentID == "" {
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", "SubagentStop omitted agent_id", now)

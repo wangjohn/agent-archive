@@ -59,4 +59,8 @@ legacy ownership, preserves original origin/admission/start/destination, and
 honors automatic-admission tombstones. A registration exists before a request;
 collector registration scanning recovers a crash between these durable writes.
 Actual `HookObservedAt` is distinct from origin; imported sessions alone and
-discovery registrations alone do not establish hook execution.
+discovery registrations alone do not establish hook execution. A later actual
+hook on an import establishes observation while preserving import attribution
+and leaving fresh automatic-capture verification unproven. Hook continuations
+preserve discovery-managed locators; only validated source discovery handles
+their active/archive replacement.

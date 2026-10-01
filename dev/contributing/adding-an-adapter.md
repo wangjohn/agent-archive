@@ -74,3 +74,13 @@ and `Store.RegisterOrMerge`; do not import backfill policy into collector.
 Codex is the sole discovery adapter in this change and its production support
 registry remains empty; [source evidence](../specs/local-discovery-evidence.md)
 explains the release gate.
+
+`discovery.SourceAdapter` is the compile-time discovery contract: bounded
+`SourceBatch` enumeration with durable cookies/cancellation, private
+`SourceDescriptor` locators and fingerprints, and typed `Observation`/
+`Candidate` start/execution/producer facts. The shared scanner owns project
+resolution, authorization generations and atomic admission. Producer support
+is rechecked even on cached facts; cache contents cannot enable a withdrawn
+producer. The registry contains only Codex, whose file-specific parsing stays
+inside its adapter. Synthetic fake-adapter tests exercise shared policy rather
+than granting adapters project or destination authority.

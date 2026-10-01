@@ -593,9 +593,11 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
 				return errSessionIdentityConflict
 			}
-			// A Cursor path, once set, is never replaced by a different one,
-			// and a session read from Cursor's database never takes one.
-			if transcriptPath != "" && existing.ReadsTranscriptFile() && (!isCursor || existing.TranscriptPath == "") {
+			// Discovery owns its confined locator and validates source moves from
+			// native metadata outside this lock. Hook payloads provide lifecycle
+			// evidence, but cannot replace that locator. A Cursor path, once set,
+			// is never replaced, and database sessions never take a file path.
+			if existing.Origin != archive.SessionOriginDiscovery && transcriptPath != "" && existing.ReadsTranscriptFile() && (!isCursor || existing.TranscriptPath == "") {
 				existing.TranscriptPath = transcriptPath
 			}
 			existing.HookObservedAt = now

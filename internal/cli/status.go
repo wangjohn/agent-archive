@@ -619,9 +619,16 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			continue
 		}
 		if reg.Imported() {
-			// An import is not evidence that this app's hooks work: it
-			// never counts toward the app's sessions, hook observation,
-			// or verification, only toward its imports and uploads.
+			// Import provenance alone is not hook or automatic-capture
+			// evidence. A later actual hook is independent evidence, while
+			// the session still counts only toward imports and uploads.
+			if !reg.HookObservedAt.IsZero() {
+				app.HookObserved = true
+				project(reg.ProjectRoot).HookObserved = true
+				if app.State == "waiting for first session" {
+					app.State = "hook observed; waiting for capture"
+				}
+			}
 			// Subagents go with their parent.
 			if reg.ParentSessionID == "" {
 				app.ImportedSessions++

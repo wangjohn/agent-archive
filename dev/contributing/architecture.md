@@ -138,3 +138,15 @@ Production producer support is empty until the [evidence gate](../specs/local-di
 passes. A private test seam proves synthetic machinery without creating a
 runtime switch that bypasses this gate. Discovery never executes hooks or
 changes Codex trust.
+
+Optional settled `state_5.sqlite` creation/update indexes can prioritize source
+locators. The read-only Go VFS confines DB opens and counts bounded page reads;
+live WAL or unsupported indexes fall back to filesystem continuation. Index
+hints carry no admission, local-origin or complete-coverage authority.
+
+The compile-time `discovery.SourceAdapter` registry supplies bounded source
+batches and typed candidates/descriptors; only Codex is registered. Shared
+admission uses candidate agent/native/start/cwd facts rather than Codex header
+fields. Catalog version 1 stores these typed observations; earlier disposable
+catalogs rebuild without altering authoritative registration or permission
+state. Cached facts still pass the current adapter producer-support gate.

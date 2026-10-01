@@ -16,8 +16,8 @@ func (s scan) observeActiveHints(ctx context.Context, o Options, roots []string,
 	}
 	hints := map[string]directory{}
 	for _, root := range roots {
-		for _, delta := range []int{0, -1, 1} {
-			d := directory{Root: root, Path: filepath.Join("sessions", s.now.AddDate(0, 0, delta).Format("2006/01/02"))}
+		for _, path := range s.adapter.PriorityDirectories(s.now) {
+			d := directory{Root: root, Path: path}
 			key := filepath.Join(root, d.Path)
 			hints[key] = d
 		}
@@ -44,13 +44,17 @@ func (s scan) observeActiveHints(ctx context.Context, o Options, roots []string,
 		}
 	}
 	for _, root := range roots {
-		for _, delta := range []int{0, -1, 1} {
-			d := directory{Root: root, Path: filepath.Join("sessions", s.now.AddDate(0, 0, delta).Format("2006/01/02"))}
+		for _, path := range s.adapter.PriorityDirectories(s.now) {
+			d := directory{Root: root, Path: path}
 			key := filepath.Join(root, d.Path)
 			d.Offset = s.catalog.Priority[key]
 			for s.health.Probes < 64 && s.health.Entries < 1024 && time.Now().Before(deadline) && !scanStopped(ctx, o) {
-				names, next, finished, err := readBatch(d)
+				batch, err := s.adapter.Enumerate(ctx, d.Root, d.Path, d.Offset)
+				next, finished := batch.Continuation, batch.Complete
 				if err != nil {
+					if ctx.Err() != nil {
+						break
+					}
 					s.health.Errors = appendUnique(s.health.Errors, "priority_source_unavailable")
 					break
 				}
@@ -59,12 +63,12 @@ func (s scan) observeActiveHints(ctx context.Context, o Options, roots []string,
 					break
 				}
 				retry := false
-				for _, name := range names {
+				for _, source := range batch.Entries {
 					if s.health.Probes >= 64 || s.health.Entries >= 1024 || scanStopped(ctx, o) || time.Now().After(deadline) {
 						retry = true
 						break
 					}
-					again, stop := s.visit(d, name)
+					again, stop := s.visitEntry(d, source)
 					retry = retry || again
 					if stop {
 						break

@@ -410,3 +410,9 @@ or import alone cannot establish automatic-capture verification. Discovery
 metadata uses `origin: discovery`, no `imported_at`, and a specific
 `discovered_without_hook_evidence` gap; a later hook does not prove earlier
 lifecycle completeness.
+
+Optional settled Codex indexes add `index_queries`, `index_locators` and
+`index_bytes_read` to discovery health when nonzero; `bytes_read` counts native
+rollout-header bytes. An unavailable index is an optional scheduling miss,
+not a rejected session or successful source reconciliation. Live WAL falls
+back to ordinary bounded filesystem scans without modifying Codex state.

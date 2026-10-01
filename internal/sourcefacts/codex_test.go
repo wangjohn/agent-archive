@@ -124,11 +124,20 @@ func TestCodexMalformedPreStartAndInconsistentTaskTimesFailClosed(t *testing.T) 
 		`{"type":"event_msg","payload":{"type":[],"turn_id":"ignored"}}`,
 		`{"type":"event_msg","payload":null}`,
 		`{"type":{},"payload":{"type":"task_started"}}`,
-		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + testID + `","root_turn_id":"` + testID + `","started_at":"2999-10-01T12:00:00Z"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + testID + `","root_turn_id":"` + testID + `","started_at":"2026-10-01T11:59:00Z"}}`,
 	} {
 		h := ReadCodexHeader(strings.NewReader(meta+event+"\n"+strings.SplitN(valid, "\n", 2)[1]), "rollout-"+testID+".jsonl")
 		if h.Outcome == "native_format" {
 			t.Fatal("rejected first event repaired by later native start")
 		}
+	}
+}
+
+func TestFirstTaskAfterLongIdleRetainsSeparateNativeTimestamps(t *testing.T) {
+	t.Parallel()
+	task := map[string]any{"type": "task_started", "turn_id": testID, "root_turn_id": testID, "started_at": "2026-10-02T12:00:00Z"}
+	h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, task)), "rollout-"+testID+".jsonl")
+	if h.Outcome != "native_format" || h.FirstTaskAt.Sub(h.Started) != 24*time.Hour {
+		t.Fatalf("ordinary idle gap rejected: %#v", h)
 	}
 }

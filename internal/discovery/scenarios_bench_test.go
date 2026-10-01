@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
@@ -128,7 +129,7 @@ func BenchmarkSyntheticAdmissionLock(b *testing.B) {
 		header := headers[index]
 		generation, _ := cfg.DiscoveryGeneration("codex", project, header.Started, at.Add(2*time.Minute))
 		started := time.Now()
-		if _, _, err := admit(store, header, root, locators[index], project, generation, at.Add(2*time.Minute)); err != nil {
+		if _, _, err := admit(store, candidateFromHeader(header, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: header.Meta.ID, Root: root, Locator: locators[index]}), project, generation, at.Add(2*time.Minute)); err != nil {
 			b.Fatal(err)
 		}
 		durations[i] = time.Since(started)
@@ -136,4 +137,81 @@ func BenchmarkSyntheticAdmissionLock(b *testing.B) {
 	b.StopTimer()
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	b.ReportMetric(float64(durations[(len(durations)-1)*99/100].Microseconds())/1000, "admission-p99-ms")
+}
+
+// Settled indexed databases are optional scheduling evidence. These synthetic
+// flat/same-day cases measure machinery only; live WAL explicitly falls back.
+func BenchmarkIndexedWarmBurst(b *testing.B) {
+	for _, count := range []int{1000, 10000, 100000} {
+		for _, folder := range []string{"sessions", "sessions/2026/10/01"} {
+			b.Run(fmt.Sprintf("%d/%s", count, folder), func(b *testing.B) {
+				store, cfg, at, root := fixture(b)
+				project := cfg.Archive.Projects[0].Root
+				db := hintDatabase(b, root, false)
+				tx, err := db.Begin()
+				if err != nil {
+					b.Fatal(err)
+				}
+				statement, err := tx.Prepare("INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)")
+				if err != nil {
+					b.Fatal(err)
+				}
+				for n := 1; n <= count; n++ {
+					native := writeRollout(b, root, project, at.Add(-time.Hour), n, folder)
+					path := filepath.Join(root, folder, "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+					if _, err := statement.Exec(native, path, at.Add(-time.Hour).UnixMilli()+int64(n), at.Add(-time.Hour).UnixMilli()+int64(n)); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := statement.Close(); err != nil {
+					b.Fatal(err)
+				}
+				if err := tx.Commit(); err != nil {
+					b.Fatal(err)
+				}
+				coldPasses := 0
+				for {
+					h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+					if err != nil {
+						b.Fatal(err)
+					}
+					coldPasses++
+					if !h.Pending {
+						break
+					}
+					if coldPasses > count/64+100 {
+						b.Fatal("coverage did not converge")
+					}
+				}
+				native := writeRollout(b, root, project, at.Add(time.Minute), count+1, folder)
+				path := filepath.Join(root, folder, "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+				addHint(b, db, native, path, at.Add(time.Minute))
+				passes, queries, headerBytes, indexBytes := 0, 0, int64(0), int64(0)
+				b.ResetTimer()
+				for n := 0; n < b.N; n++ {
+					for {
+						h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+						if err != nil {
+							b.Fatal(err)
+						}
+						passes++
+						queries += h.IndexQueries
+						headerBytes += h.Bytes
+						indexBytes += h.IndexBytes
+						if n > 0 || h.Registered == 1 {
+							break
+						}
+						if passes > count/64+100 {
+							b.Fatal("indexed burst starved")
+						}
+					}
+				}
+				b.ReportMetric(float64(coldPasses), "cold-passes")
+				b.ReportMetric(float64(passes)/float64(b.N), "fresh-delay-passes")
+				b.ReportMetric(float64(queries)/float64(b.N), "index-queries/pass")
+				b.ReportMetric(float64(headerBytes)/float64(b.N), "header-bytes/pass")
+				b.ReportMetric(float64(indexBytes)/float64(b.N), "index-bytes/pass")
+			})
+		}
+	}
 }

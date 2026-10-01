@@ -85,6 +85,13 @@ the release behavior.
 
 #### Added
 
+- Optional settled Codex SQLite indexes prioritize bounded source probes
+  without changing native files or granting source/admission authority. Live
+  WAL and unavailable indexes retain filesystem fallback. Hooks preserve
+  discovery locators; status observes actual later hooks on imported sessions
+  independently of automatic-capture verification. Native session creation
+  still governs consent after an arbitrarily delayed first task; future task
+  timestamps are checked against the scan clock.
 - Bounded Codex source discovery foundations, running before storage access,
   with durable forward-only authorization intervals, a private bounded
   catalog, and separate scan health. **Automatic admission remains disabled

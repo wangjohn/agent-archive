@@ -154,7 +154,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
 	h := sourcefacts.ReadHeader(context.Background(), root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"))
 	generation, _ := cfg.DiscoveryGeneration("codex", cfg.Archive.Projects[0].Root, h.Started, at.Add(2*time.Minute))
-	reg, created, err := admit(store, h, root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"), cfg.Archive.Projects[0].Root, generation, at.Add(2*time.Minute))
+	reg, created, err := admit(store, candidateFromHeader(h, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: h.Meta.ID, Root: root, Locator: filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")}), cfg.Archive.Projects[0].Root, generation, at.Add(2*time.Minute))
 	if err != nil || !created {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	if err := store.ForgetSession(reg.ArchiveSessionID, native); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := admit(store, h, root, reg.TranscriptPath, reg.ProjectRoot, generation, at.Add(5*time.Minute)); err == nil {
+	if _, _, err := admit(store, candidateFromHeader(h, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: h.Meta.ID, Root: root, Locator: reg.TranscriptPath}), reg.ProjectRoot, generation, at.Add(5*time.Minute)); err == nil {
 		t.Fatal("removed session resurrected")
 	}
 	regs, _ := store.LoadRegistrations()
@@ -194,14 +194,14 @@ func TestAdmissionRevalidatesPauseGenerationAndSkipsContendedHooks(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := admit(store, h, root, path, cfg.Archive.Projects[0].Root, g, at.Add(2*time.Minute)); err == nil {
+	if _, _, err := admit(store, candidateFromHeader(h, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: h.Meta.ID, Root: root, Locator: path}), cfg.Archive.Projects[0].Root, g, at.Add(2*time.Minute)); err == nil {
 		t.Fatal("admission ignored hooks lock")
 	}
 	unlock()
 	if _, err := config.SetPausedAt(store.Home(), true, at.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := admit(store, h, root, path, cfg.Archive.Projects[0].Root, g, at.Add(3*time.Minute)); err == nil {
+	if _, _, err := admit(store, candidateFromHeader(h, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: h.Meta.ID, Root: root, Locator: path}), cfg.Archive.Projects[0].Root, g, at.Add(3*time.Minute)); err == nil {
 		t.Fatal("stale permission admitted")
 	}
 }
@@ -340,5 +340,48 @@ func TestNativeDateHintFindsFreshTaskAheadOfColdHistory(t *testing.T) {
 	h, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(3 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 {
 		t.Fatal("date hint became eligibility", err)
+	}
+}
+
+// Lifecycle hooks cannot switch a discovery source without the source facts
+// used for discovery's confined continuation checks.
+func TestHookContinuationPreservesValidatedDiscoveryLocator(t *testing.T) {
+	t.Parallel()
+	for _, location := range []string{"outside_root", "stale_archived"} {
+		t.Run(location, func(t *testing.T) {
+			t.Parallel()
+			store, cfg, at, root := fixture(t)
+			project := cfg.Archive.Projects[0].Root
+			native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
+			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			if err != nil || h.Registered != 1 {
+				t.Fatalf("initial discovery: %#v %v", h, err)
+			}
+			regs, _ := store.LoadRegistrations()
+			before := regs[0]
+			misleading := filepath.Join(t.TempDir(), filepath.Base(before.TranscriptPath))
+			if location == "stale_archived" {
+				misleading = filepath.Join(root, "archived_sessions", filepath.Base(before.TranscriptPath))
+			}
+			if err := os.MkdirAll(filepath.Dir(misleading), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(misleading, []byte("unrelated or stale source\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": native, "cwd": project, "transcript_path": misleading}
+			hookAt := at.Add(3 * time.Minute)
+			if err := capture.HandleEvent(store.Home(), "codex", payload, hookAt); err != nil {
+				t.Fatal(err)
+			}
+			after, found, err := store.LoadRegistration(before.ArchiveSessionID)
+			if err != nil || !found || after.TranscriptPath != before.TranscriptPath || after.DiscoveryRoot != before.DiscoveryRoot || after.DiscoveryCwd != before.DiscoveryCwd || after.DiscoveryGeneration != before.DiscoveryGeneration || after.Origin != before.Origin || after.DestinationID != before.DestinationID || !after.SessionStartedAt.Equal(before.SessionStartedAt) || !after.AdmittedAt.Equal(before.AdmittedAt) || !after.HookObservedAt.Equal(hookAt) {
+				t.Fatalf("hook replaced discovery facts: %#v %v", after, err)
+			}
+			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(4 * time.Minute) }})
+			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+				t.Fatalf("hook broke filtered publication: %#v %v", result, err)
+			}
+		})
 	}
 }
