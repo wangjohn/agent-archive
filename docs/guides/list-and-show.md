@@ -6,13 +6,14 @@ a session.
 
 ```sh
 # The most recently active archived sessions matching the filters (at most
-# 50 by default): title (the name your agent gave the session, else a
-# preview of the first filtered prompt), how long ago it was last active
+# 50 by default), top-level sessions only, from this repository when you are
+# in one: title (the name your agent gave the session, else a preview of the
+# first filtered prompt), pull request, how long ago it was last active
 # (WHEN: its latest record, so a session backfill imported is dated by when
 # it ran, not the import), harness, project, and short ID. --json keeps the
-# newest captured first. Metadata
-# only, never full transcript text. On an interactive terminal, pick a
-# numbered row to see that session's summary (see below).
+# newest captured first. Metadata only, never full transcript text. On an
+# interactive terminal, pick a numbered row to see that session's summary
+# (see below).
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
 # use --no-pager to print directly.
 agent-archive list
@@ -21,7 +22,7 @@ agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
-agent-archive list "flaky retention"  # the sessions these words find, as for show (below)
+agent-archive list "flaky retention"  # the sessions these words find (see Which sessions)
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -32,9 +33,10 @@ agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcde
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
 # For scripts: {"schema_version": 4, "sessions": [...], "limit", "returned",
-# "total_matched_known"}. "total_matched" is omitted when the indexed
-# listing stops after the limit. Never paged
-# or interactive.
+# "total_matched_known"}, and "scope" inside a project. "total_matched" is
+# omitted when the indexed listing stops after the limit. Never paged or
+# interactive. Run inside a project it lists that repository's sessions, so a
+# script that wants everything adds --all-projects.
 agent-archive list --json
 agent-archive list --json --limit 0
 agent-archive list --rebuild-index  # one-time full scan for older archives
@@ -106,6 +108,72 @@ unreadable record or a subagent whose transcript was never written, are
 listed under a warning, "Incomplete capture": each code once, with how
 often it occurs and its first detail. `show --json` has every gap.
 
+## Which sessions `list` shows
+
+**This repository first.** Run inside a git repository that has an `origin`
+remote, or inside a project you configured, `list` shows that repository's
+sessions: every checkout and worktree of it, and its sessions from your other
+machines. The heading names it and the other choice:
+
+```text
+agent-archive · 42 sessions · claude · a all projects
+```
+
+`a` (typed alone) switches to all projects in the browser, and
+`--all-projects` starts there. `--project DIR|NAME` looks at another project
+instead: a directory (its repository), or a project name, matched exactly but
+ignoring case against the project name archived with the session and the labels
+in your configuration. The two flags together are a usage error. When the
+repository has no archived session yet, `list` shows all projects and says so
+(`Nothing in agent-archive · showing all projects`). Outside any repository or
+configured project there is no scope: every session is listed, grouped by
+project (projects with one name stay apart, labeled with their ID prefixes).
+Within one project the table is not grouped, so a repository's checkouts are one
+list.
+
+**Top-level sessions only.** A subagent session is left out of the table and the
+browser, before `--limit` counts, so `--limit 50` is 50 sessions you started. The
+footer says how many were left out (`42 sessions (318 subagent sessions hidden;
+search to find one).`) and a parent carries `· 45 subagents`. Words find a
+subagent (see below). `list --json` keeps every row, subagents included; each has
+`parent_session_id`.
+
+**Columns.** TITLE, PR (the last pull request the session linked or created,
+when some row has one), WHEN, HARNESS, PROJECT, and ID. A HARNESS or PROJECT that
+every row shares is left out and named in the heading instead; `--verbose` keeps
+every column. The leading `●` that marks a session active in the last 2
+minutes is for the [handoff picker](handoff.md#the-picker): `list` reads the
+archive, which says nothing about what is running here.
+
+**Words.** `list "<words>"` shows only the sessions the words find, by the
+rules `show` and `handoff` use. Every word must appear, in any case, in some
+field of the session: its name, title, branch, project name, harness, or the
+start of its ID (4 characters or more), and `#212` or `212` also matches a pull
+request number exactly, never the start of an ID. Words may match different
+fields: `list "linux 212"` finds the session named for Linux that opened PR 212.
+The first of these that has a match answers:
+
+1. top-level sessions in the scope;
+2. top-level sessions in every project;
+3. subagent sessions, in the scope and then everywhere.
+
+A session ID, full or the 8-character short one, names that session first. When
+the scope answers, the footer says how many more match elsewhere (`1 match in
+agent-archive (3 more in other projects: --all-projects or a project name finds
+them)`). `--harness`, `--since`, and the other filters apply before this, and
+`--limit` last. A query nothing matches prints `No archived sessions match
+"<words>".` and exits 0, as an empty list does. `list "<words>" --json` prints
+the same sessions as data, which is what an agent reading candidates uses. On
+a terminal, `list "<words>"` opens the [browser](#browsing-on-a-terminal) with
+the words already in its filter, to edit.
+
+**Scripts.** The `--json` document gains an optional `scope` object when `list`
+runs inside a project or with `--project` (with `--all-projects` too, which it
+records): `{"label": "agent-archive", "all_projects": false,
+"fell_back": false, "outside_matches": 3}`. Because a `list` or `list --json`
+run inside a project now returns only its sessions, a script that reads every
+session passes `--all-projects`. See [JSON output](../reference/json-output.md).
+
 ## Browsing on a terminal
 
 When stdin and stdout are both terminals, `list` and bare `show` open a
@@ -140,8 +208,10 @@ session's summary replace each other instead of piling up:
   parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
   when it does not match (the mark starts on the subagent, not the parent);
   a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions
-  open the browser with the words already in the filter, and the rest of the
-  archive is one Esc away.
+  open the browser with the words already in the filter. Esc clears them and
+  shows the plain list: for `list`, the sessions it lists without words; for a
+  `show` query, the sessions it matched. On the filter line `a`, `n`, `p`,
+  `q`, and digits are typed text: press Esc first to use them as keys.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), `b`, Enter, or Backspace return to the list, and `q`
   quits. `less` keeps even a one-screen transcript open until you press
@@ -150,14 +220,14 @@ session's summary replace each other instead of piling up:
   as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
   summary through the pager, as `t` does the transcript.
 - `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
-  anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
+  anywhere but the filter line, and Ctrl-C quits at once. The last summary you viewed is printed
   to the normal screen as the browser closes, so its ID stays in your
   scrollback.
 - Every place a session is picked from a list is this one browser: `list`,
   bare `show`, bare `show --json` (a heading `Show ·`, and Enter prints the
   chosen sidecar instead of opening its summary), a `show` query that
   matches more than one session (the heading says `"words" matches 3`), and
-  the [handoff picker](handoff.md#where-the-session-comes-from).
+  the [handoff picker](handoff.md#the-picker).
 - When the terminal's input cannot be read a key at a time, the browser reads
   lines. A list taller than the window is shown a page at a time, with a line
   such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p`
@@ -206,6 +276,12 @@ configured project basename. The ID column is a short prefix you can pass to
 `show`; if multiple archived IDs share that prefix, use a longer ID from
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
+
+Whether the Claude Code CLI (as opposed to its desktop app) names a session
+without `/rename` has not been checked yet.
+<!-- OWNER, live check (dev/specs/session-finding.md, "Live check (PR 8)"):
+replace the sentence above with what you saw in a CLI session: whether a
+`custom-title` record appears without `/rename`, and when. -->
 
 Codex currently uses the first-prompt preview because its sidebar title is
 stored separately from the transcript. The table leaves subagent sessions
