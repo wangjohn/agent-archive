@@ -33,6 +33,16 @@ explicitly.
   true: the indexed read stopped once it found one more match than the limit.
   When true, `total_matched` is the exact match count and `truncated` is
   present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Run inside a project, `list` and `list --json` return that repository's
+  sessions, and the document gains an optional `scope` object:
+  `{"label": "agent-archive", "all_projects": false, "fell_back": false,
+  "outside_matches": 3}`. `label` names the scope; `all_projects` is true when
+  it was not applied (`--all-projects`, or the scope held nothing);
+  `fell_back` is true when it held nothing and all projects are listed;
+  `outside_matches` is how many more sessions the same filters match outside
+  it. Outside any project there is no `scope` and every session is listed.
+  Scripts that want every session pass `--all-projects`. The field is
+  additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on
   stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
   current parsers cannot prove non-use. Schema version `3` removed the
@@ -263,11 +273,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). Every project is in `groups.rows` with `--by project`, which
-  is never cut; the terminal's "all in --json --by project" points at it.
-  The JSON has no more than five skills or MCP servers (the terminal's detail
-  screen lists up to 40). `models` lists every model family (the terminal's
-  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  (see below). `--all` (only with `--json`) lifts the cut: `projects`,
+  `skills`, `display_skills` and `mcp.servers` then list every row, in the
+  same order (the top five are its first five), and the `total_*` fields say
+  the same as before; the document is otherwise the same, so it is additive
+  and `schema_version` stays 1. The terminal's "all in --json --all" points
+  at it, under the projects screen and under the skills and MCP servers of
+  the overview and detail screens. Every project is also in `groups.rows`
+  with `--by project`, which is never cut, with `--all` or without it.
+  `models` lists every model family (the terminal's "all in --json"), with
+  or without `--all`. `display_skills` is `skills` for showing to a person: a
   plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
   only the first `:` counts) and skills that then share a name are one row,
   counted in the sessions that used any of them (a session that used both
@@ -310,7 +325,7 @@ at the top level. Read the rules below before using a number:
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
-  `projects` keeps only the top few of `total_projects`.
+  `projects` keeps only the top few of `total_projects`, unless `--all`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server

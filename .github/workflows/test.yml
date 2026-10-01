@@ -230,13 +230,10 @@ jobs:
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
       # remove each as it gains a caller, and the exception once none is left).
-      # archive.LatestPR (the session-finding plan's PR 3) has no production
-      # caller until the rows' PR column reads it (PR 4/5): remove its
-      # exception then.
       - name: No unreachable production code
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
-          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/archive/session_labels\.go:[0-9]+:[0-9]+: unreachable func: LatestPR$'
+          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.

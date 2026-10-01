@@ -132,7 +132,7 @@ is stale. After changing a command's help or flags, regenerate it with
 | 0 | Success, and help. |
 | 1 | An operational failure. What a command was asked for goes to stdout; why it did not do it, or not all of it, goes to stderr. A ` + "`sync`" + ` that is paused, finds another command running, or fails for some sessions exits 1; its summary line, if it ran, stays on stdout. |
 | 2 | A usage error: an unknown command or flag, a bad flag value, or an unexpected argument. It is reported in one line on stderr before the command does anything. |
-| 128 + signal | ` + "`backfill`" + ` stopped at once by a second Ctrl-C (130), SIGHUP (129), or SIGTERM (143). |
+| 128 + signal | A command stopped by a signal exits with the shell's status for it: Ctrl-C (130), SIGHUP (129), SIGQUIT (131), or SIGTERM (143). ` + "`backfill`" + ` stops at once on a second Ctrl-C; ` + "`list`, `show` and `stats`" + ` restore the terminal first. |
 `)
 	for _, command := range referenceCommandOrder(t) {
 		guide, ok := commandGuides[command]

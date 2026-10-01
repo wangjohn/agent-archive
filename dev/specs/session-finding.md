@@ -1,7 +1,7 @@
 # Finding a session — engineering plan
 
 Status: planned 2026-09-30, [decisions](#decisions) confirmed the same day;
-PR 1 and PR 2 (filter 13) merged, PR 3 (parser 0.17.0) in review, the rest not started. Where this
+PRs 1, 2 and 4 merged, PR 3 (parser 0.17.0) in review, the rest not started. Where this
 plan and the code differ once packages merge, the code is the reference and
 differences go under Deviations.
 
@@ -686,6 +686,52 @@ guide. Live check on the owner's Mac:
   request URL has it). `pullRequestEvent` keeps its own number check, which
   also takes a leading `+` from an MCP call's argument, so `git_activity`'s
   output is unchanged.
+- PR 4: bare `show` (its browser and `show --json`'s picker) also starts in
+  the working directory's scope, with `a`, because it shares the browser and
+  `findBrowseSessions`; it has no `--all-projects` or `--project` flag yet.
+  `show "<words>"` is unchanged (PR 5 replaces its matcher).
+- PR 4: title search keeps today's matcher (`matchSessionsByQuery`) and only
+  gains the scope-first order: this Mac's in-scope sessions, then the
+  archive's in-scope, then everywhere (this Mac's, then the archive's). The
+  subagent tier is PR 5's. The "N more in other projects" count covers what
+  was searched: a title answered on this Mac does not read the archive, which
+  needs the network, so its other matches are not counted.
+- PR 4: a scope is applied before `--limit`, so a `list` that can narrow (a
+  scope, or a terminal that can switch to one) reads the whole archive
+  listing instead of the index's newest page. `list --all-projects` piped, or
+  with `--json`, keeps the index fast path. The index spec's scoped window
+  will replace this.
+- PR 4: a scope exists only inside a project: a directory with a repository
+  key, or inside a configured project root. Elsewhere the working directory
+  has no scope (every session). A directory named with `--project` is always
+  the scope, so one in no project holds nothing and falls back with the
+  heading saying so. A scope made from a directory in a git checkout is named after the
+  repository's main checkout (`repositoryName`: a worktree's `.git` file
+  points into it, and a subdirectory walks up to it), not after the directory
+  or the sessions a command happened to read, so every view, heading, title
+  note, and `--json` document names it alike, with or without the archive.
+- PR 4: `listScope.label` is the scope's name even when it is turned off
+  (`all_projects` says so); `outside_matches` counts the sessions outside the
+  scope that match the same filters. The object is omitted outside a project.
+- PR 4: the PR column first read the last `pr_created` event of
+  `git_activity` (`createdPRLabel`); PR 3 replaced that with `LatestPR`
+  (the last linked pull request, else the last created). `listRow.Live` (owned by
+  PR 6 in the shared-names table) is added here for the dot; local rows only
+  (the archive says nothing about what is running here).
+- PR 4: HARNESS and PROJECT are left out only for two or more rows (one row
+  shares its value with nothing), and the verbose table keeps every column.
+  With one project the table is not grouped, so a repository's checkouts are
+  one list.
+- PR 4: `handoff --project NAME` with `--latest` still reads its value as a
+  directory (a project that no longer exists on disk is still searched by
+  its ID). `--project` and `--all-projects` are usage errors with `--file`,
+  and `--all-projects` with `--latest`; `--project` sets where a launched agent
+  starts only with `--latest`, as before.
+- PR 4: the picker's line-mode `a` takes precedence over a short ID prefix
+  typed as `a`, as `n` and `p` do. In the key browser `a` pressed first
+  switches the scope, so a short ID that starts with `a` (IDs are hex) is
+  picked by its row number there; `n`, `p`, and `q` never met this, as they
+  are not hex digits.
 - PR 3: `SessionLabels` is the one place the four labels are derived, but
   `BuildMetadata` reaches it through `deriveLabels(bundle, view)`, which takes
   the normalized view it has already parsed, so a transcript is not parsed

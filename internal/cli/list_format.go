@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,12 @@ type listRow struct {
 	Skills     string
 	Origin     string
 	Parser     string
+	// PR is the pull request the session created last, as "#213"; empty when
+	// it created none.
+	PR string
+	// Live is set for a session this machine saw active within
+	// activeSourceWindow, which the picker marks with a dot.
+	Live bool
 }
 
 // listFormatOptions controls how session rows are built and printed.
@@ -46,6 +54,14 @@ type listFormatOptions struct {
 	Projects       map[string]string // project_id → display label (basename)
 	Style          textStyle
 	NarrowHint     string // the truncation footer's advice; "" for list's flags
+
+	// The rest lay out the human table for the rows it is given (see
+	// withColumns). Left unset, every column is shown.
+	ShowPR      bool // a PR column, for rows where some session has one
+	HideHarness bool // every row has the same harness, which the heading names
+	HideProject bool // every row has the same project, which the heading names
+	LiveMarks   bool // some row is live: each title leaves room for the dot
+	DimID       bool // the ID is for copying, not for choosing: draw it dim
 }
 
 // formatSessionRows builds display rows for sessions. Short IDs are unique
@@ -86,6 +102,7 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			title = archive.DisplayLine(display)
 		}
 		rows[i] = listRow{
+			PR:         prLabel(m),
 			Index:      i + 1,
 			SessionID:  m.SessionID,
 			ShortID:    shorts[i],
@@ -185,12 +202,58 @@ func printListFooter(w io.Writer, shown, totalMatched int, truncated bool, narro
 	terminal.Printf(w, "%d session(s).\n", shown)
 }
 
-// printListTable writes the human list table and trailing count line.
-func printListTable(w io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, opts listFormatOptions) error {
-	rows := formatSessionRows(sessions, opts)
-	if err := printSessionTable(w, rows, opts); err != nil {
+// printListTable writes the human list table: the heading that names what it
+// shows, the table, and the trailing count line.
+func printListTable(w io.Writer, c *scopeChoice) error {
+	if c.heading != "" {
+		terminal.Println(w, c.heading)
+	}
+	if err := printSessionTable(w, c.rows, c.format); err != nil {
 		return err
 	}
-	printListFooter(w, len(sessions), totalMatched, truncated, opts.NarrowHint)
+	printListFooter(w, len(c.rows), c.total, c.truncated, c.format.NarrowHint)
 	return nil
+}
+
+// prLabel is the session's last pull request (archive.LatestPR) as "#213", or
+// "" when it has none.
+func prLabel(m archive.Metadata) string {
+	if pr, ok := archive.LatestPR(m); ok && pr.Number > 0 {
+		return "#" + strconv.Itoa(pr.Number)
+	}
+	return ""
+}
+
+// withColumns returns opts laid out for rows, and the value each column that
+// is left out had, for a heading to name. A PR column appears only when a row
+// has a PR, and HARNESS and PROJECT go when every row has the same value (an
+// unknown project, "-", is not worth naming). The verbose table keeps every
+// column.
+func (opts listFormatOptions) withColumns(rows []listRow) (laid listFormatOptions, constants []string) {
+	laid = opts
+	laid.LiveMarks = slices.ContainsFunc(rows, func(r listRow) bool { return r.Live })
+	if opts.Verbose {
+		return laid, nil
+	}
+	laid.ShowPR = slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" })
+	// One row says nothing by sharing a value with itself.
+	if len(rows) < 2 {
+		return laid, nil
+	}
+	same := func(value func(listRow) string) (string, bool) {
+		first := value(rows[0])
+		return first, !slices.ContainsFunc(rows, func(r listRow) bool { return value(r) != first })
+	}
+	if project, ok := same(func(r listRow) string { return r.Project }); ok {
+		// One name is one heading, even across a repository's checkouts.
+		laid.HideProject, laid.GroupByProject = true, false
+		if project != "-" {
+			constants = append(constants, project)
+		}
+	}
+	if harness, ok := same(func(r listRow) string { return r.Harness }); ok {
+		laid.HideHarness = true
+		constants = append(constants, harness)
+	}
+	return laid, constants
 }
