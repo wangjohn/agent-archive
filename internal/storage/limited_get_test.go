@@ -21,12 +21,13 @@ func (b *streamingBody) Read(p []byte) (int, error) {
 	b.read += len(p)
 	return len(p), nil
 }
+
 func (*streamingBody) Close() error { return nil }
 
 type boundedHTTP struct{ body *streamingBody }
 
 func (h boundedHTTP) Do(*http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: h.body, ContentLength: 1 << 30}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: h.body, ContentLength: 1 << 30}, nil
 }
 
 func TestS3LimitedGetStopsBeforeLargeBodyAllocation(t *testing.T) {
