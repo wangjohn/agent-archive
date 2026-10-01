@@ -88,7 +88,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 	// Titles are stored as one line of single spaces, so a query with a
 	// newline or a doubled space is matched as that line.
 	query := strings.Join(strings.Fields(opts.sessionID), " ")
-	cfg, found, err := config.Load(home)
+	cfg, found, err := handoffConfig(home, *opts)
 	if err != nil || !found {
 		// resolveHandoffTarget reports both.
 		return 0, false

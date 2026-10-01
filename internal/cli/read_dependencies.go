@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
@@ -143,7 +144,19 @@ type workingDirDependencies interface {
 	workingDir() (string, error)
 }
 
+type nativeHandoffDependencies interface {
+	tempDir() string
+	nativeFiles() nativesessions.FileSystem
+	nativeRoots(string) ([]nativesessions.StoreRoot, error)
+	workingDirDependencies
+	currentSessionDependencies
+	sessionBrowserDependencies
+	now() time.Time
+}
+
 type handoffCommandDependencies interface {
+	loadHandoffConfig(string) (config.Config, bool, error)
+	nativeHandoffDependencies
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	handoffCheckoutDependencies

@@ -12,8 +12,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -110,7 +112,7 @@ func topLevelRegistration(reg archive.SessionRegistration) bool {
 // activity first. An archive that cannot be read leaves the local ones.
 // selected is false when nothing matches or the user quits.
 func selectHandoffSession(env handoffSelectDependencies, home string, opts handoffOptions, in *typedInput, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int) {
-	store, cfg, found, err := openReadOnlyStore(env)
+	store, cfg, found, err := handoffPickerStore(env, opts)
 	if !found {
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -354,4 +356,16 @@ func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []list
 		out[i].Live = row.registered && activeNow(format.Now, row.active)
 	}
 	return out
+}
+
+func handoffPickerStore(env readOnlyStoreDependencies, opts handoffOptions) (storage.ObjectStore, config.Config, bool, error) {
+	if opts.config == nil {
+		return openReadOnlyStore(env)
+	}
+	cfg, found := opts.config.cfg, opts.config.found
+	if !found {
+		return nil, cfg, false, nil
+	}
+	store, err := env.openStore(cfg)
+	return store, cfg, true, err
 }
