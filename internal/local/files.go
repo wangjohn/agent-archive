@@ -187,10 +187,26 @@ func Stage(path string, value any) (*Staged, error) {
 	return stage(path, write)
 }
 
+// StageInExistingDir is Stage without creating path's directory: when it
+// does not exist, the error satisfies os.IsNotExist and nothing is written.
+// It is for staging before a lock whose holder may delete that directory
+// (uninstall's purge), where recreating it would undo the delete.
+func StageInExistingDir(path string, value any) (*Staged, error) {
+	write, e := indentedJSON(value)
+	if e != nil {
+		return nil, e
+	}
+	return stageIn(path, write)
+}
+
 func stage(path string, write func(io.Writer) error) (*Staged, error) {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return nil, e
 	}
+	return stageIn(path, write)
+}
+
+func stageIn(path string, write func(io.Writer) error) (*Staged, error) {
 	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
 	if e != nil {
 		return nil, e

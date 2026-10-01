@@ -98,7 +98,7 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
-		options.HTTPClient = withTimeouts(options.HTTPClient)
+		options.HTTPClient = tracedClient{inner: withTimeouts(options.HTTPClient)}
 		options.Logger = logging.Nop{}
 		options.UsePathStyle = pathStyle
 		options.Retryer = awsretry.NewStandard(func(retryOptions *awsretry.StandardOptions) {

@@ -63,6 +63,8 @@ func TestStorageMenuNumbersAreNotHardCoded(t *testing.T) {
 		// Choosing the instructions, or a guided entry, by number.
 		"setup_prompts_test.go": {regexp.MustCompile(`"help\\n[0-9]`)},
 		"setup_trims_test.go":   {regexp.MustCompile(`"help\\n[0-9]`), regexp.MustCompile(`\{"", "[0-9]+", "2"`)},
+		// Guided R2 creation's tests choose their entry by key.
+		"setup_r2_create_test.go": {regexp.MustCompile(`"Enter 1-[0-9]+ `), regexp.MustCompile(`"help\\n[0-9]`), regexp.MustCompile(`\{"", "[0-9]+", "2"`)},
 	} {
 		data, err := os.ReadFile(file)
 		if err != nil {

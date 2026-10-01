@@ -16,6 +16,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // The terminal UI's vocabulary. Color is a role, never a meaning on its own:
@@ -370,20 +371,34 @@ func activityStyle(out io.Writer) textStyle {
 // prints nothing: the caller's result line is the only trace, matching spin.
 // Call stop before writing anything else to out.
 func startActivity(out io.Writer, label string) (stop func()) {
+	span := trace.Start(spinnerSpan)
 	sp := activityStyle(out).spin(out, label)
-	return sp.stop
+	return func() {
+		sp.stop()
+		span.End()
+	}
 }
+
+// spinnerSpan names the trace span of an activity spinner: how long a
+// command was loading before it drew anything, such as the handoff picker's
+// list, which is otherwise hard to read off a trace whose root span also
+// holds the time a person spent choosing.
+const spinnerSpan = "spinner (until first draw)"
 
 // startAnnouncedActivity is startActivity, but on a non-live stream it prints
 // label once so scripts and CI still see what is running.
 func startAnnouncedActivity(out io.Writer, label string) (stop func()) {
+	span := trace.Start(spinnerSpan)
 	style := activityStyle(out)
 	if !style.live {
 		terminal.Println(out, label)
-		return func() {}
+		return span.End
 	}
 	sp := style.spin(out, label)
-	return sp.stop
+	return func() {
+		sp.stop()
+		span.End()
+	}
 }
 
 // displayPath shows path with the home directory as ~.

@@ -543,7 +543,62 @@ Setup tests object access and inspects native bucket public-access controls sepa
 
 For AWS S3, all four bucket-level Block Public Access flags must be observed enabled before the tool reports `verified_private`. Otherwise it checks policy status and the bucket ACL for public configuration. A public policy or ACL yields `public_or_risky`; incomplete or denied checks yield `not_verified`. Account-level controls might further restrict access, so `public_or_risky` identifies configuration that needs review, not proof of anonymous object access. A private bucket policy or ACL alone is insufficient because object ACLs and access points can expose data.
 
-For R2, setup stores S3-compatible object credentials, not a Cloudflare management API token. These cannot inspect managed/custom public domains. R2 therefore remains `not_verified` and links the public-bucket settings instructions. The tool does not request another token or send object credentials to the management API.
+For R2, setup stores S3-compatible object credentials, not a Cloudflare management API token. These cannot inspect managed/custom public domains. R2 therefore remains `not_verified` and links the public-bucket settings instructions. The tool does not request another token or send object credentials to the management API. The one exception to what setup can see is a bucket it creates itself ([below](#guided-r2-bucket-creation)).
+
+### Guided R2 bucket creation
+
+This is experimental, and offered only when `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+is set. When setup creates an R2 bucket for you, you paste a Cloudflare API token with
+two permissions (Workers R2 Storage Write, and Account API Tokens Write). That
+**bootstrap token** can create buckets, and create and revoke API tokens, in
+your Cloudflare account, so it is far more powerful than the key the archive
+uses. Setup treats it accordingly:
+
+- It is used only against Cloudflare's management API, in memory, for the
+  seconds setup takes. It is never written to the setup draft, the setup
+  journal, the configuration, the Keychain, a log, or diagnostics, never put in
+  the environment of a program setup starts, and never sent to the collector or
+  the bucket. Setup drops it as soon as the key is stored, or when the flow
+  fails or stops before that. (Go cannot guarantee that no copy lingers in
+  process memory until the process exits.)
+  A `CLOUDFLARE_API_TOKEN` you set yourself is read once and then removed from
+  setup's own environment, so a program setup starts does not inherit it (if
+  that fails, setup says so). It stays in your shell, as you set it.
+- The key it stores is a separate token that can read, write, and list objects
+  in the one new bucket. The two are never used for each other's endpoint: the
+  archive's key never goes to the management API.
+- You can delete the bootstrap token in the dashboard as soon as setup ends.
+- Setup uses the token to change only what it just created: the new bucket
+  and a token for it (which it revokes again if the key fails its check or
+  can't be stored). It sets no lifecycle rule.
+- If Ctrl-C stops setup while it creates and checks the key, setup revokes
+  that token before it exits (a second Ctrl-C during the revoke is answered
+  with "still revoking"). A Ctrl-C after the key exists, while setup reads the
+  bucket's public-access settings and stores the key, is not caught: it leaves
+  that key's token in your account, and its name was printed when it was
+  created, so you can revoke it in the dashboard. The bootstrap token stays in
+  memory until the key is stored.
+- Once the key is stored, the bootstrap token is gone, so setup can no longer
+  revoke the key's token. If setup then ends without using the bucket (a
+  failed storage check, a cancelled review, an error), it prints the bucket's
+  name and the token's name, once, and how to remove them in the dashboard.
+
+**What "checked at setup" means.** With the bootstrap token, setup reads two
+things about the new bucket once: whether its public `r2.dev` URL is on, and
+whether it has custom domains. It prints what it found, such as "r2.dev public
+access: off (checked at setup)". That is a snapshot from the moment of
+creation. It is not saved as bucket privacy evidence, is not repeated, and
+does not say the bucket is private: it says nothing about signed URLs, access
+granted later in the dashboard, or copies of what you archive. The bucket
+privacy row in the review and in `status` stays "not verified" for R2. If
+either read is refused, setup says it did not check and goes on (a read that
+failed never hides what the other found). If the `r2.dev` URL is on, or a
+custom domain serves the bucket, setup stops and asks what now: check again
+(after you turn it off in the dashboard), choose another storage option, or
+continue anyway; Enter chooses another storage option. Choosing another
+revokes the key's token, which was made and checked but not stored, and says
+the empty bucket is left in your account. Turning public access off is up to
+you.
 
 Inspection covers native bucket public access. It does not assess applications that proxy authorized reads, shared signed URLs, or copies of archived data.
 

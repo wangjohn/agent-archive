@@ -631,8 +631,9 @@ func deriveEndedAt(view NormalizedView, startedAt time.Time) *time.Time {
 	return &ended
 }
 
-// sessionTitleLimit is the maximum rune length of Metadata.Title.
-const sessionTitleLimit = 72
+// sessionTitleLimit is the maximum rune length of Metadata.Title and Name.
+// Keep enough context to distinguish prompts with a shared preamble in list.
+const sessionTitleLimit = 128
 
 // deriveSessionTitle returns a one-line preview of the first human prompt:
 // from normalized JSONL turns when present, otherwise from the first user

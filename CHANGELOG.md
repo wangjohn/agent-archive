@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `list`, `show`, and handoff keep up to 128 characters of a session's saved
+  name or first-prompt preview, instead of 72. Parser `0.17.1` refreshes
+  existing metadata from retained source bundles on the next collector scan;
+  sessions whose source is unavailable keep their existing preview.
+
 ### Added
 
 - **Linux is supported for persistent capture** (x86-64 and arm64), on a
@@ -81,6 +88,21 @@ follow [Semantic Versioning](https://semver.org/).
   If setup ends without using a bucket it created, it says so. Setup does
   not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
+- **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
+  bucket for me** at the storage question, then paste one Cloudflare API token
+  (Workers R2 Storage Write and Account API Tokens Write, or set
+  `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
+  no public access by default) and a key that can read and write only that
+  bucket, checks it, and keeps the key in the Keychain. The token you pasted
+  is used during setup and then dropped, never saved, and setup revokes the
+  new key's token if it fails its check or can't be stored. It also reads
+  whether the bucket's public `r2.dev` URL or a custom domain is on, and if so
+  stops and asks: check again, choose other storage (the default, which
+  revokes the new key), or continue anyway. Not available with
+  `setup --yes`. It has not yet been run against every kind of Cloudflare
+  account, which is why it is behind the switch. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -511,6 +533,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `setup`'s hidden prompt for a secret access key no longer spins at full
+  CPU forever on macOS when its terminal goes away without a hangup signal
+  (a closed pseudo-terminal, for example). It now ends as every other prompt
+  does at the end of input, with "no more input", and so does Ctrl-D on an
+  empty answer, which the prompt used to ignore.
 - On a busy Mac, setup no longer warns "Could not prune capture diagnostics
   for excluded projects", leaving a project it had just excluded named in the
   local diagnostics file, when a hook recorded a diagnostic at the same time.
@@ -626,6 +653,13 @@ follow [Semantic Versioning](https://semver.org/).
   prototype's upload job, or a collector under an earlier label) whose label
   another installation now runs: recovery used to stop there, leaving the
   jobs after it stopped, and now puts its plist back and finishes.
+- A Cursor read no longer fails now and then with "lock a Cursor database
+  snapshot directory" when a sweep of leftover snapshots (at the start of
+  every collector pass and every backfill command) runs at the moment the
+  read starts. The sweep checks whether each snapshot is in use by taking
+  its lock for an instant; it could take a new snapshot's lock just before
+  the read did. A read's lock file now appears already locked, so the
+  sweep sees it in use and leaves it alone.
 
 ### Changed
 

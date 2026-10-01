@@ -284,6 +284,9 @@ type readerHooks struct {
 	afterSnapshot func(copyPath string)
 	// backupRetried runs before each busy retry of the backup.
 	backupRetried func()
+	// lockPlaced runs once the snapshot's lock file is in place, before the
+	// copy is written.
+	lockPlaced func(lockPath string)
 }
 
 // snapshot copies the live database src into a new private directory under
@@ -301,7 +304,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	}
 	r.snapDir = dir
 	trackSnapshot(dir)
-	if r.lock, err = lockSnapshot(dir); err != nil {
+	if r.lock, err = lockSnapshot(dir, r.hooks.lockPlaced); err != nil {
 		return errors.New("lock a Cursor database snapshot directory")
 	}
 	copyPath := filepath.Join(dir, "state.vscdb")
