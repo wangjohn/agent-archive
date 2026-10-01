@@ -105,25 +105,7 @@ func (s *Store) ReconcileIdentityIndexes(limit int, guard func() error) (bool, e
 	if err := local.Read(filepath.Join(s.home, "identity-migration.json"), &m); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	release, err := local.NamedLock(s.home, "hooks.lock")
-	if err != nil {
-		return false, err
-	}
-	if guard != nil {
-		err = guard()
-	} else {
-		err = config.ProtectIdentityWriter(s.home)
-	}
-	// The empty-state allocator can complete migration between our initial
-	// read and this lock. Completion is monotonic: never overwrite it with
-	// the stale pre-enumeration snapshot.
-	if err == nil {
-		ready, err = s.identityReady()
-	}
-	if err == nil && !ready {
-		err = local.Write(filepath.Join(s.home, "identity-migration.json"), m)
-	}
-	release()
+	ready, err = s.startIdentityMigration(m, guard)
 	if err != nil || ready {
 		return ready, err
 	}
@@ -179,6 +161,29 @@ func (s *Store) ReconcileIdentityIndexes(limit int, guard func() error) (bool, e
 		return false, err
 	}
 	return m.Complete, nil
+}
+
+// Completion is monotonic: the empty-state allocator may finish between the
+// initial snapshot read and hooks.lock, so never overwrite its completed state.
+func (s *Store) startIdentityMigration(m identityMigration, guard func() error) (bool, error) {
+	unlock, err := local.NamedLock(s.home, "hooks.lock")
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if guard != nil {
+		err = guard()
+	} else {
+		err = config.ProtectIdentityWriter(s.home)
+	}
+	if err != nil {
+		return false, err
+	}
+	ready, err := s.identityReady()
+	if err != nil || ready {
+		return ready, err
+	}
+	return false, local.Write(filepath.Join(s.home, "identity-migration.json"), m)
 }
 
 func (s *Store) saveIdentityMigration(m identityMigration, guard func() error) error {

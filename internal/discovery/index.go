@@ -20,10 +20,10 @@ import (
 
 const indexHintTimeout = 100 * time.Millisecond
 
+// HintBatch is optional bounded scheduling work, not coverage or provenance.
 // SQLite supplies scheduling locators only. Its dates, IDs and index presence
 // never authorize a source or establish local execution/complete coverage.
 // Codex may put SQLite elsewhere; unknown locations simply use enumeration.
-// HintBatch is optional bounded scheduling work, not coverage or provenance.
 type HintBatch struct {
 	Entries  []SourceEntry
 	Queries  int
