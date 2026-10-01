@@ -139,6 +139,7 @@ func FuzzInspect(f *testing.F) {
 		_, _ = Inspect(bundle)
 	})
 }
+
 func FuzzNormalizeCode(f *testing.F) {
 	f.Add("aar aba abb abd abh abi")
 	f.Fuzz(func(t *testing.T, code string) {

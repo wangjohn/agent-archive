@@ -26,12 +26,7 @@ func TestPairingAgentPresenceRefusesBeforeEveryEffect(t *testing.T) {
 	commands := [][]string{{"machines", "add", "--yes", "--name", "laptop", "--share-key"}, {"setup", "--pair", "--yes"}, {"setup", "-pair-file=-", "--yes"}, {"setup", "-pair=true"}}
 	for _, marker := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_AGENT"} {
 		for _, command := range commands {
-			env := Env{LookupEnv: func(key string) (string, bool) { return "", key == marker || key == envNonInteractive }}
-			env.Home = func() (string, error) { t.Fatal("home read"); return "", nil }
-			env.UserHomeDir = func() (string, error) { t.Fatal("user home read"); return "", nil }
-			env.Credentials = func() (credentials.CredentialStore, error) { t.Fatal("credentials opened"); return nil, nil }
-			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { t.Fatal("storage opened"); return nil, nil }
-			env.UnsetEnv = func(string) error { t.Fatal("environment changed"); return nil }
+			env := Env{LookupEnv: func(key string) (string, bool) { return "", key == marker || key == envNonInteractive }, Home: func() (string, error) { t.Fatal("home read"); return "", nil }, UserHomeDir: func() (string, error) { t.Fatal("user home read"); return "", nil }, Credentials: func() (credentials.CredentialStore, error) { t.Fatal("credentials opened"); return nil, nil }, OpenStore: func(config.Config) (storage.ObjectStore, error) { t.Fatal("storage opened"); return nil, nil }, UnsetEnv: func(string) error { t.Fatal("environment changed"); return nil }}
 			var out, errOut bytes.Buffer
 			if code := Run(command, strings.NewReader("secret"), &out, &errOut, env); code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), "separate terminal") {
 				t.Fatalf("%v %s: %d %s %s", command, marker, code, &out, &errOut)
@@ -60,9 +55,7 @@ func pairingSourceFixture(t *testing.T) (Env, string, *storagetest.MemoryStore) 
 	env.PairingRepoRoot = func(context.Context, string) (string, error) { return "", errors.New("no repository") }
 	project := filepath.Join(userHome, "src", "app")
 	must(t, os.MkdirAll(project, 0700))
-	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "studio", Storage: credentials.Config{Provider: "s3", Bucket: "synthetic", AWSProfile: "archive", Region: "us-east-1"}, Harnesses: []string{"codex"}, RetentionDays: 90, SkillEvidence: config.SkillEvidenceMetadata}
-	cfg.Archive.Enabled = true
-	cfg.Archive.Projects = []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true}}
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "studio", Storage: credentials.Config{Provider: "s3", Bucket: "synthetic", AWSProfile: "archive", Region: "us-east-1"}, Harnesses: []string{"codex"}, RetentionDays: 90, SkillEvidence: config.SkillEvidenceMetadata, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true}}}}
 	must(t, config.Save(home, cfg))
 	return env, home, store
 }
@@ -89,7 +82,7 @@ func TestPairingSourcePrecheckAndDeliveryIntentBoundary(t *testing.T) {
 	}
 	ledgers, err = readPairingLedgers(home)
 	must(t, err)
-	if len(ledgers) != 1 || ledgers[0].State != "delivery-intent" {
+	if len(ledgers) != 1 || ledgers[0].State != pairingDeliveryIntent {
 		t.Fatalf("%+v", ledgers)
 	}
 	data, err := os.ReadFile(path)
@@ -114,8 +107,8 @@ func TestPairingTwoHomesS3CommitIdentityAndSecretFreeState(t *testing.T) {
 		if strings.HasPrefix(line, "aa-pair1:") {
 			bundle = line
 		}
-		if strings.HasPrefix(line, "Pairing code (deliver separately): ") {
-			code = strings.TrimPrefix(line, "Pairing code (deliver separately): ")
+		if value, ok := strings.CutPrefix(line, "Pairing code (deliver separately): "); ok {
+			code = value
 		}
 	}
 	if bundle == "" || code == "" {
@@ -172,7 +165,7 @@ func TestPairingTwoHomesS3CommitIdentityAndSecretFreeState(t *testing.T) {
 	}
 	ledgers, err := readPairingLedgers(sourceHome)
 	must(t, err)
-	if len(ledgers) != 1 || ledgers[0].State != "claim-observed" || ledgers[0].ObservedMachineID != cfg.MachineID {
+	if len(ledgers) != 1 || ledgers[0].State != pairingClaimObserved || ledgers[0].ObservedMachineID != cfg.MachineID {
 		t.Fatalf("claim %+v listing%s", ledgers, &listing)
 	}
 	env.Now = func() time.Time { return source.now().Add(48 * time.Hour) }
@@ -218,8 +211,7 @@ func TestPairingRelocatedSubtreeAndExcludedAncestorStayRestricted(t *testing.T) 
 	env := testEnv(t, t.TempDir(), time.Now())
 	env.PairingRepoRoot = func(context.Context, string) (string, error) { return sourceRepo, nil }
 	env.repoKeyContext = func(context.Context, string) string { return "repo-0123456789abcdef" }
-	cfg := config.Config{}
-	cfg.Archive.Projects = []archive.ProjectActivation{{Root: filepath.Join(sourceRepo, "packages", "one"), Included: true}, {Root: sourceRepo, Included: false}}
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(sourceRepo, "packages", "one"), Included: true}, {Root: sourceRepo, Included: false}}}}
 	inc, exc, err := exportPairingScope(context.Background(), cfg, sourceHome, env)
 	must(t, err)
 	if len(inc) != 1 || inc[0].RepoPath != "packages/one" || len(exc) != 1 || exc[0].Path != "." {

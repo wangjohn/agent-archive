@@ -336,7 +336,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 }
 
 func stagePairingCredential(home string, cfg config.Config, payload pairing.Payload, env Env) (config.Config, error) {
-	draft, have, problem, err := readDraft(home)
+	priorDraft, have, problem, err := readDraft(home)
 	if err != nil {
 		return cfg, err
 	}
@@ -344,19 +344,16 @@ func stagePairingCredential(home string, cfg config.Config, payload pairing.Payl
 		return cfg, fmt.Errorf("unfinished setup cannot be read; finish or discard it before pairing")
 	}
 	ref := "pairing-" + payload.PairingID
-	if have && (draft.PairingID != payload.PairingID || !destinationEqual(draft.Config.Storage, cfg.Storage)) {
+	if have && (priorDraft.PairingID != payload.PairingID || !destinationEqual(priorDraft.Config.Storage, cfg.Storage)) {
 		return cfg, fmt.Errorf("another unfinished setup exists; finish or discard it before pairing")
 	}
-	draft = setupDraft{Version: draftFormat, Config: cfg, Step: 2, PairingID: payload.PairingID}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		kc, e := env.credentialStore()
 		if e != nil {
 			return cfg, openCredentialStoreError(credentialOS, e)
 		}
 		cfg.Storage.R2CredentialRef = ref
-		draft.Config = cfg
-		draft.CredentialRef = ref
-		draft.StagedRefs = []string{ref}
+		draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2, PairingID: payload.PairingID, CredentialRef: ref, StagedRefs: []string{ref}}
 		if err = local.Write(draftPath(home), draft); err != nil {
 			return cfg, err
 		}

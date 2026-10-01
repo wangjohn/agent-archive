@@ -36,6 +36,7 @@ func pairingInvocation(args []string) bool {
 	}
 	if len(args) > 0 && args[0] == "setup" {
 		for _, arg := range args[1:] {
+			//lint:ignore LV1001 These are public flag spellings rather than domain states.
 			if arg == "--pair" || arg == "-pair" || arg == "--pair-file" || arg == "-pair-file" || strings.HasPrefix(arg, "--pair=") || strings.HasPrefix(arg, "--pair-file=") || strings.HasPrefix(arg, "-pair=") || strings.HasPrefix(arg, "-pair-file=") {
 				return true
 			}
@@ -105,18 +106,19 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		return 1
 	}
 	defer release()
-	ledger := pairingLedger{Version: 1, PairingID: payload.PairingID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, Name: *name, DestinationID: config.DestinationID(cfg.Storage), Kind: "aws_profile", CreatedAt: payload.CreatedAt, ExpiresAt: payload.ExpiresAt}
+	kind := pairingAWSProfile
+	keyID, credentialRef := "", ""
 	if cfg.Storage.Provider == credentials.ProviderR2 {
-		ledger.Kind = "r2_shared"
-		ledger.AccessKeyID = payload.AccessKeyID
-		ledger.CredentialRef = cfg.Storage.R2CredentialRef
+		kind = pairingSharedR2
+		keyID = payload.AccessKeyID
+		credentialRef = cfg.Storage.R2CredentialRef
 	}
-	ledger.State = "prepared"
+	ledger := pairingLedger{Version: 1, PairingID: payload.PairingID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, Name: *name, DestinationID: config.DestinationID(cfg.Storage), Kind: kind, State: pairingPrepared, AccessKeyID: keyID, CredentialRef: credentialRef, CreatedAt: payload.CreatedAt, ExpiresAt: payload.ExpiresAt}
 	if err = savePairingLedger(home, ledger); err != nil {
 		terminal.Println(errOut, "cannot persist pairing preparation")
 		return 1
 	}
-	ledger.State = "delivery-intent"
+	ledger.State = pairingDeliveryIntent
 	if err = savePairingLedger(home, ledger); err != nil {
 		terminal.Println(errOut, "cannot persist delivery intent")
 		return 1
@@ -137,7 +139,7 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		terminal.Println(errOut, "pairing delivery failed or is uncertain; its key remains valid and tracked")
 		return 1
 	}
-	ledger.State = "delivered"
+	ledger.State = pairingDelivered
 	ledger.DeliveredAt = env.now().UTC()
 	if err = savePairingLedger(home, ledger); err != nil {
 		terminal.Println(errOut, "delivery occurred; ledger update pending (delivery intent retained)")
@@ -165,7 +167,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 			return 0
 		}
 		if choice == "cancel" {
-			ledger.State = "cancelled"
+			ledger.State = pairingCancelled
 			if err = savePairingLedger(home, ledger); err != nil {
 				terminal.Println(errOut, "cannot record cancellation")
 				return 1
@@ -193,29 +195,19 @@ func sourcePairingPayload(cfg config.Config, name, userHome string, expiry time.
 		return pairing.Payload{}, err
 	}
 	now := env.now().UTC().Truncate(time.Second)
-	p := pairing.Payload{Version: 1, PairingID: id, RecipientID: recipient, IssuerID: cfg.MachineID, IssuerName: "unnamed-" + cfg.MachineID[:4], Name: name, CreatedAt: now, ExpiresAt: now.Add(expiry), Apps: cfg.Harnesses, RetentionDays: cfg.RetentionDays, RequireSkillUse: cfg.RequireSkillUse, SkillEvidence: string(cfg.EffectiveSkillEvidence()), NoSkills: cfg.NoSkills, HandoffArgs: cfg.Handoff.Args, HandoffDefault: cfg.Handoff.DefaultTo, Storage: pairing.Storage{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix, Region: cfg.Storage.Region}}
-	if cfg.Storage.Provider == credentials.ProviderR2 {
-		p.Storage.R2Account = cfg.Storage.R2AccountID
-		p.Storage.R2Endpoint = cfg.Storage.R2Endpoint
-		kc, e := env.credentialStore()
-		if e != nil {
-			return p, errors.New("cannot read source R2 credential")
-		}
-		secret, e := credentials.LoadStored(context.Background(), kc, cfg.Storage.R2CredentialRef)
-		if e != nil {
-			return p, errors.New("cannot read source R2 credential")
-		}
-		p.AccessKeyID, p.SecretAccessKey = secret.AccessKeyID, secret.SecretAccessKey
-	} else {
-		p.Storage.AWSProfile = cfg.Storage.AWSProfile
-	}
-	if cfg.MachineName != "" {
-		p.IssuerName = cfg.MachineName
-	}
-	p.Inclusions, p.Exclusions, err = exportPairingScope(context.Background(), cfg, userHome, env)
+	storage, key, err := pairingSourceStorage(cfg, env)
 	if err != nil {
-		return p, err
+		return pairing.Payload{}, err
 	}
+	issuerName := cfg.MachineName
+	if issuerName == "" {
+		issuerName = "unnamed-" + cfg.MachineID[:4]
+	}
+	inclusions, exclusions, err := exportPairingScope(context.Background(), cfg, userHome, env)
+	if err != nil {
+		return pairing.Payload{}, err
+	}
+	p := pairing.Payload{Version: 1, PairingID: id, RecipientID: recipient, IssuerID: cfg.MachineID, IssuerName: issuerName, Name: name, CreatedAt: now, ExpiresAt: now.Add(expiry), Apps: cfg.Harnesses, RetentionDays: cfg.RetentionDays, RequireSkillUse: cfg.RequireSkillUse, SkillEvidence: string(cfg.EffectiveSkillEvidence()), NoSkills: cfg.NoSkills, HandoffArgs: cfg.Handoff.Args, HandoffDefault: cfg.Handoff.DefaultTo, Storage: storage, AccessKeyID: key.AccessKeyID, SecretAccessKey: key.SecretAccessKey, Inclusions: inclusions, Exclusions: exclusions}
 	return p, p.Validate()
 }
 
@@ -287,6 +279,7 @@ func (e Env) pairClipboardWrite(data []byte) error {
 	}
 	return nil
 }
+
 func (e Env) clearPairClipboard(bundle string) {
 	var data []byte
 	var err error
@@ -301,6 +294,7 @@ func (e Env) clearPairClipboard(bundle string) {
 		_ = e.pairClipboardWrite(nil)
 	}
 }
+
 func (e Env) pairClipboardRead() ([]byte, error) {
 	provider, _, err := e.clipboardCommand()
 	if err != nil {
@@ -308,6 +302,7 @@ func (e Env) pairClipboardRead() ([]byte, error) {
 	}
 	name := filepath.Base(provider)
 	var args []string
+	//lint:ignore LV1001 These are names of external clipboard executables selected by clipboardCommand.
 	switch name {
 	case "pbcopy":
 		name = "pbpaste"
@@ -361,6 +356,7 @@ func pairingInvocationError(args []string, env Env) error {
 	}
 	return nil
 }
+
 func runMachinesWithInput(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
 	if len(args) > 0 && args[0] == "add" {
 		return runPairingAdd(args[1:], stdin, out, errOut, env)
@@ -394,7 +390,7 @@ func preparePairingSource(name string, share bool, env Env) (config.Config, stri
 		return bad(err.Error())
 	}
 	for _, claim := range prior {
-		if claim.Name == name && claim.State != "cancelled" && claim.State != "expired" && !env.now().After(claim.ExpiresAt) {
+		if claim.Name == name && claim.State != pairingCancelled && claim.State != pairingExpired && !env.now().After(claim.ExpiresAt) {
 			return bad("that name already has an outstanding pairing; choose another name")
 		}
 	}
@@ -413,4 +409,20 @@ func preparePairingSource(name string, share bool, env Env) (config.Config, stri
 		return bad("cannot resolve project hints")
 	}
 	return cfg, home, userHome, nil
+}
+
+func pairingSourceStorage(cfg config.Config, env Env) (pairing.Storage, credentials.R2Credentials, error) {
+	storage := pairing.Storage{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix, Region: cfg.Storage.Region, R2Account: cfg.Storage.R2AccountID, R2Endpoint: cfg.Storage.R2Endpoint, AWSProfile: cfg.Storage.AWSProfile}
+	if cfg.Storage.Provider != credentials.ProviderR2 {
+		return storage, credentials.R2Credentials{}, nil
+	}
+	kc, err := env.credentialStore()
+	if err != nil {
+		return storage, credentials.R2Credentials{}, errors.New("cannot read source R2 credential")
+	}
+	key, err := credentials.LoadStored(context.Background(), kc, cfg.Storage.R2CredentialRef)
+	if err != nil {
+		return storage, key, errors.New("cannot read source R2 credential")
+	}
+	return storage, key, nil
 }
