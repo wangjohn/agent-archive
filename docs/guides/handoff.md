@@ -219,7 +219,7 @@ and continues. When an agent hands off its own session with
 `--to`, as `/handoff` does, it is active by definition; a note is printed
 and nothing is asked.
 
-## Naming a session by its title
+## Naming a session in words
 
 The argument is a session ID or words; quote several words as one argument:
 
@@ -239,7 +239,7 @@ another title mentions it. Inside a repository, its top-level sessions are
 searched first, then every project's, and subagent sessions only when no other
 session matches; a note on stderr says how many more match in other projects.
 `--harness` and `--source` narrow the search. When the command runs inside a
-Claude Code or Codex session, that session is not offered for a title (as
+Claude Code or Codex session, that session is not offered for words (as
 `--latest` passes over it), unless `--to` is set, which hands off a session the
 caller names.
 
@@ -444,7 +444,7 @@ codex "$(agent-archive handoff --latest --harness claude)"
 Other outputs:
 
 ```sh
-# A specific session, from `list` or by its title, written to a file (mode 0600)
+# A specific session, from `list` or by words, written to a file (mode 0600)
 agent-archive handoff SESSION_ID --output /tmp/handoff.md
 agent-archive handoff "fix the auth bug" --output /tmp/handoff.md
 
