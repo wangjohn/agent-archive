@@ -6,6 +6,17 @@ performance reference at `98f8bd0`. It settles representation choices; it does
 not change production behavior. The [measurement report](agent-integration-baseline.md)
 records executable gates and their limits.
 
+Target-context update: `main` at `d938fd99eb1d091388511a77484342423623e3e3`
+has extracted file reads into `transcriptio` and Claude/Codex discovery into
+`nativesessions` (#277). The historical characterization below remains pinned
+to `c85d239`; phase 4 must preserve the newer collector's context-aware reads
+and post-read `Snapshot.Check`, which rejects observable size/mtime changes
+instead of publishing that read. The fixed boundary still excludes later
+appends, and same-size/same-mtime rewrites remain undetectable. Phase 4 should
+reuse the real `transcriptio` boundary/snapshot helpers; phase 6 should consume
+the real `nativesessions` discovery/header helpers. These target changes do not
+alter the recorded historical measurement snapshots.
+
 ## Qualified identity and local migration (phase 3a)
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,

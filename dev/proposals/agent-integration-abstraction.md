@@ -706,6 +706,11 @@ historical growing-file timing difference. Phase 0 should produce a short contra
 updating these details in place before dependent implementation starts. No
 production abstraction is required to record the examples and baseline.
 
+The contract checklist also records target #277's `transcriptio` verified reads
+and `nativesessions` discovery helpers. Later source/discovery extraction must
+consume those real boundaries and preserve observable-write rejection; the
+performance report retains its earlier pinned measurement context.
+
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |
 | Qualified identity/index migration | Keep native IDs opaque. Hash an unambiguous versioned encoding of canonical agent ID and native ID into a new qualified namespace. Adopt a legacy entry only after validating its registration; preserve archive IDs. Specify interrupted conversion, corruption recovery, retention races, and downgrade handling. | Phase 3 identity migration |

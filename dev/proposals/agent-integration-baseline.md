@@ -14,6 +14,15 @@ injected repository lookup and fake object storage. Raw results are in
 phase-entry baseline; the unresolved historical timing difference means the
 proposal’s full relative performance gate is **not** declared resolved.
 
+Live integration target now includes `d938fd99eb1d091388511a77484342423623e3e3`
+(#277), which changes collector file reads through `transcriptio` and extracts
+`nativesessions` discovery. It is not the measured current reference above.
+The core-production equality claim below applies only to the pinned historical
+measurement at `ff6d250`, not to this newer target. Later hot-path comparisons
+must keep pinned-98 and recorded-current results and additionally measure the
+updated target with matching instrumentation/workload counts; no numbers here
+are relabeled as measurements of that target.
+
 ## Reproduction
 
 Create a detached checkout at the exact reference above; copy
