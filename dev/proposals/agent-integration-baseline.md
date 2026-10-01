@@ -14,14 +14,24 @@ injected repository lookup and fake object storage. Raw results are in
 phase-entry baseline; the unresolved historical timing difference means the
 proposal’s full relative performance gate is **not** declared resolved.
 
-Live integration target now includes `d938fd99eb1d091388511a77484342423623e3e3`
-(#277), which changes collector file reads through `transcriptio` and extracts
-`nativesessions` discovery. It is not the measured current reference above.
+Live integration target is `d05defabb8ee1d7f268ee854882ca98dcfc0bde5`.
+It includes #277's collector file reads through `transcriptio` and extracted
+`nativesessions` helpers, plus #280's native handoff discovery, bounded filtered
+previews, shared record filtering and cancellable boundary probes. It is not
+the measured current reference above.
 The core-production equality claim below applies only to the pinned historical
 measurement at `ff6d250`, not to this newer target. Later hot-path comparisons
 must keep pinned-98 and recorded-current results and additionally measure the
 updated target with matching instrumentation/workload counts; no numbers here
 are relabeled as measurements of that target.
+
+The native-handoff target also has distinct workloads: bounded identity discovery,
+head/tail preview batches, read-free browser filtering/redraw, and one full filter
+for a selected source. Its tests and benchmark are target-specific evidence;
+the historical analysis-consumer benchmark does not measure previews, native
+discovery or launch-file cleanup. Future affected phases must preserve counted
+read/batch/filter budgets and separately measure these real callers on the same
+host/toolchain. No new target timing comparison was run for this context update.
 
 ## Reproduction
 
@@ -181,7 +191,7 @@ require isolated reproduction and correction/justification; existing hook
 absolute lock/read budgets still apply. macOS and real-systemd checks require
 CI; this Linux reference cannot claim them locally.
 
-## Verification record and limitations
+## Historical verification record and limitations
 
 Capture/state/collector/archive/doclinks ordinary characterization suites pass.
 Final focused race run on current tree passes capture/collector/state/doclinks;

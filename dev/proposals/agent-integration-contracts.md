@@ -17,6 +17,17 @@ reuse the real `transcriptio` boundary/snapshot helpers; phase 6 should consume
 the real `nativesessions` discovery/header helpers. These target changes do not
 alter the recorded historical measurement snapshots.
 
+Live target `d05defabb8ee1d7f268ee854882ca98dcfc0bde5` additionally includes
+native handoff before setup (#280). Its read-only Claude/Codex selection uses
+`nativesessions.Discover`/`InspectNative`, bounded identity and preview windows,
+and complete selected-source filtering on a verified snapshot. Phase 6 must
+preserve both bounded native-handoff coverage and import's separate compatibility
+header rules; incomplete discovery cannot establish `--latest`, and loading
+labels cannot recover uninspected identities. The native selector's current
+ASCII/128-byte ID acceptance is a consumer restriction, not a new SessionKey
+or registration limit. Its bounded worker pools do not authorize collector
+concurrency or eager full-source filtering during discovery.
+
 ## Qualified identity and local migration (phase 3a)
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,
@@ -143,6 +154,17 @@ bytes after a newline are deferred; no-newline input is attempted whole.
 Preserve `completeJSONLBoundary`'s one-byte ordinary check, 64 KiB backward
 chunks and record-limit cap. Text uses the whole observed length.
 
+The live target's `transcriptio.Snapshot.Records` is a separate bounded preview
+operation: only newline-terminated complete records are visited; oversized
+records, tail-leading fragments and unfinished final records are skipped with
+explicit incomplete coverage. Do not substitute this excerpt framing for full
+filtering's valid final JSON acceptance or torn-tail rules. Preserve context
+checks during boundary probes and record iteration, post-read verification,
+actual read-byte accounting, cumulative discovery/preview reservations and
+explicit older batches. Browser filtering/redraw uses retained safe display
+facts; selecting a candidate filters its complete source once and revalidates
+identity/checkout, including identity conflicts beyond the bounded header.
+
 Concrete inputs:
 
 - Claude/Codex JSONL: `File{ReaderAt: section, Length: observedSize}` with framing
@@ -231,6 +253,8 @@ from retained bundle evidence; source ownership remains filter-time evidence.
 | `archive.handoff.recordedBranch`, `recordedWorkspace`, `workspaceRoot` | Native working directory, Git branch and workspace evidence | Branch validity/detached HEAD policy and current-checkout comparison |
 | `archive.metadata.structuredCounts`, `toolErrorsObservable` | Availability from actual source format and recorded filter version | Unknown versus zero; common counts and metadata schema |
 | `archive.BuildMetadata`, `SessionLabels`, `BuildTranscript`, `BuildHandoff` | Resolve parser and compute Analysis once at operation entry | Accept that same Analysis; never independently parse bundle |
+| `archive.PreviewRecord`, `PreviewAccumulator`, `collector.PreviewTranscript` | Filtered record label/branch/activity and prompt classification, including pending slash commands | Bounded safe display facts, partial/unavailable coverage and loaded-row search; no full Analysis or raw excerpt retention for each preview |
+| `nativesessions.InspectNative`, `cli.nativeBundleIdentityMatches` | Native header and complete-selected-record identity/sidechain interpretation | Verified candidate/checkout selection and conflict refusal; keep bounded discovery distinct from import compatibility |
 | `archive.filter_session_labels`, `filter_subagent_meta`, `subagent_type.SanitizeSubagentType`, composer filter | Safe retained facts, sanitized harness observations | Existing filtering/privacy/gap rules and source header assembly |
 | `collector.subagent_capture.checkSubagentProvenance`, `CheckImportedSubagent` | Local filter observations: native/agent IDs, complete identity flags, native bounds | Parent ownership, admission/time bounds, child publication links |
 | `capture` hook evidence/model/status helpers | Decode native enums/fields; sanitize via shared evidence filter | Hook/native outcome precedence, requests, debounce and replay policy |
@@ -271,6 +295,15 @@ unused stdin contract. Runtime request: injected environment getter and known
 native locations. Observation distinguishes exact ID and project-presence
 fallback; shared code handles ambiguity and session-variable cleanup.
 
+Native handoff before setup is an existing read-only consumer of these boundaries.
+Preserve its consumer-owned dependencies, config load once per invocation,
+exact current-session selection and ambiguity checks, and lack of archive-store,
+capture or setup side effects. Native launches use private temporary files in
+the dedicated local-handoff namespace, retained for the launched session with
+best-effort cleanup of owned old files; they do not create archive state. Shared
+launch orchestration continues to own argv, environment, working-directory and
+file lifecycle. Preserve the separate configured-archive and explicit-file paths.
+
 Executable/version inspection gets only a resolved executable and a typed
 probe operation for that agent, with bounded output and timeout; restrict argv
 to the implementation's declared version invocation. Capture never receives
@@ -289,3 +322,11 @@ is derived from implemented interfaces. Preserve presentation policies: setup
 orders Codex/Claude/Cursor; reader/handoff order Claude/Codex/Cursor. Derive each
 order from one catalog plus explicit presentation policy, not repeated built-in
 identity literals. Unknown archive agents stay representable and visible.
+
+The catalog audit also includes #280's native store roots, preview codec dispatch,
+native display names and current-session selection. Bind only implemented
+capabilities: automatic native discovery currently supports Claude/Codex, while
+Cursor remains explicit-file input. Phase 2 launch/runtime migration must retain
+native, configured-archive and explicit-file consumers; phase 5 must migrate
+safe preview facts together with full parsing, without turning previews into
+whole-transcript analyses or forcing a parser dependency into identity discovery.

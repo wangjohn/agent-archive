@@ -711,6 +711,18 @@ and `nativesessions` discovery helpers. Later source/discovery extraction must
 consume those real boundaries and preserve observable-write rejection; the
 performance report retains its earlier pinned measurement context.
 
+Live main at `d05defabb8ee1d7f268ee854882ca98dcfc0bde5` also includes native
+handoff before setup (#280). Later catalog/launch/runtime/source/codec/discovery
+phases must cover its existing read-only native selection, bounded filtered
+previews with explicit partial coverage, complete selected-source filtering,
+identity revalidation, and private temporary launch-file lifecycle. Reuse its
+`nativesessions.Discover` and `transcriptio.Snapshot.Records` boundaries while
+keeping preview framing distinct from full transcript filtering and import
+compatibility. Preview native facts are another phase-5 owner, not permission
+to parse a whole source for every display row. Historical companion measurements
+are not measurements of this newer target; the companion artifacts record
+these additional obligations without changing pinned samples or hashes.
+
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |
 | Qualified identity/index migration | Keep native IDs opaque. Hash an unambiguous versioned encoding of canonical agent ID and native ID into a new qualified namespace. Adopt a legacy entry only after validating its registration; preserve archive IDs. Specify interrupted conversion, corruption recovery, retention races, and downgrade handling. | Phase 3 identity migration |
