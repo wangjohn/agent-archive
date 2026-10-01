@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -36,6 +37,7 @@ const defaultRetentionDays = 90
 var allHarnesses = []string{"codex", "claude", "cursor"}
 
 type setupDraft struct {
+	GuidedSlotID  string        `json:"guided_slot_id,omitempty"`
 	PairingID     string        `json:"pairing_id,omitempty"`
 	StagedRefs    []string      `json:"staged_credential_refs,omitempty"`
 	Version       int           `json:"version"`
@@ -347,6 +349,9 @@ func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config
 	// Ordinary setup cannot introduce credential provenance. Preserve the current
 	// binding only while its destination and credential reference stay the same.
 	cfg.MachineAssignment = nil
+	if config.ValidMachineID(draft.GuidedSlotID) && draft.Config.MachineAssignment != nil && draft.Config.MachineAssignment.Kind == config.MachineAssignmentR2Own && draft.Config.MachineAssignment.SlotID == draft.GuidedSlotID && draft.Config.MachineAssignment.IssuerID == draft.Config.MachineID && draft.Config.MachineAssignment.DestinationID == cfg.DestinationID() {
+		cfg.MachineAssignment = draft.Config.MachineAssignment
+	}
 	if cfg.DestinationID() == existing.DestinationID() && cfg.Storage.R2CredentialRef == existing.Storage.R2CredentialRef {
 		cfg.MachineAssignment = existing.MachineAssignment
 	}
@@ -502,12 +507,28 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		}
 		// The storage questions asked for a failed region again.
 		draft.FailedRegion = ""
+		if p.guided != nil && p.guided.c.slot != nil {
+			s := p.guided.c.slot
+			draft.GuidedSlotID = s.SlotID
+			draft.Config.MachineID = s.IssuerID
+			draft.Config.MachineAssignment = &config.MachineAssignment{DestinationID: s.DestinationID, Kind: config.MachineAssignmentR2Own, AccessKeyID: s.ProviderID, RecipientID: s.RecipientID, IssuerID: s.IssuerID, SlotID: s.SlotID}
+		}
 		if saveSecret {
 			if e = stageStorageSecret(draft, save, env, &cfg, secret); e != nil {
 				return false, p.rollbackGuidedCreation(e)
 			}
 		}
 		draft.Config.Storage = cfg
+		if p.guided != nil && p.guided.c.slot != nil {
+			s := p.guided.c.slot
+			s.State = issuance.Own
+			s.SecretRef = cfg.R2CredentialRef
+			if e = issuance.Save(p.guided.c.home, *s); e != nil {
+				draft.Step = 1
+				_ = save()
+				return false, p.rollbackGuidedCreation(e)
+			}
+		}
 		if p.guided != nil && p.guided.c.privacy.CheckedAt != nil {
 			report := p.guided.c.privacy
 			report.ConfigurationID = privacyConfigurationID(draft.Config)
@@ -519,7 +540,7 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		}
 		// A key guided bucket creation made is staged: its bootstrap token
 		// is no longer needed.
-		p.finishGuidedCreation()
+		p.finishGuidedCreation(draft, save)
 	}
 	if err = save(); err != nil {
 		return false, err

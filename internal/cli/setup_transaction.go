@@ -316,7 +316,11 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			}
 		}
 	}
-	next.MachineID = old.MachineID
+	if old.MachineID != "" {
+		next.MachineID = old.MachineID
+	} else if !config.ValidMachineID(next.MachineID) {
+		next.MachineID = ""
+	}
 	if next.MachineID == "" {
 		next.MachineID, err = local.ID()
 		if err != nil {

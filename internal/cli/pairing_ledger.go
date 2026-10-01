@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -17,6 +18,7 @@ import (
 type pairingCredentialKind string
 
 const (
+	pairingOwnR2      pairingCredentialKind = "r2_own"
 	pairingSharedR2   pairingCredentialKind = "r2_shared"
 	pairingAWSProfile pairingCredentialKind = "aws_profile"
 )
@@ -35,6 +37,7 @@ const (
 // pairingLedger deliberately contains no code, bundle, payload, or secret.
 // A delivery-intent written before exposure stays uncertain after interruption.
 type pairingLedger struct {
+	SlotID            string                `json:"slot_id,omitempty"`
 	Version           int                   `json:"version"`
 	PairingID         string                `json:"pairing_id"`
 	RecipientID       string                `json:"recipient_id"`
@@ -52,7 +55,7 @@ type pairingLedger struct {
 }
 
 func (l pairingLedger) valid() bool {
-	return l.Version == 1 && pairing.ValidID(l.PairingID) && pairing.ValidID(l.RecipientID) && pairing.ValidID(l.IssuerID) && pairing.ValidName(l.Name) && l.DestinationID != "" && len(l.DestinationID) <= 128 && len(l.AccessKeyID) <= 128 && len(l.CredentialRef) <= 128 && slices.Contains([]pairingCredentialKind{pairingSharedR2, pairingAWSProfile}, l.Kind) && slices.Contains([]pairingDeliveryState{pairingPrepared, pairingDeliveryIntent, pairingDelivered, pairingClaimObserved, pairingExpired, pairingCancelled}, l.State) && (l.ObservedMachineID == "" || pairing.ValidID(l.ObservedMachineID))
+	return (l.Kind != pairingOwnR2 || pairing.ValidID(l.SlotID)) && l.Version == 1 && pairing.ValidID(l.PairingID) && pairing.ValidID(l.RecipientID) && pairing.ValidID(l.IssuerID) && pairing.ValidName(l.Name) && l.DestinationID != "" && len(l.DestinationID) <= 128 && len(l.AccessKeyID) <= 128 && len(l.CredentialRef) <= 128 && slices.Contains([]pairingCredentialKind{pairingSharedR2, pairingAWSProfile, pairingOwnR2}, l.Kind) && slices.Contains([]pairingDeliveryState{pairingPrepared, pairingDeliveryIntent, pairingDelivered, pairingClaimObserved, pairingExpired, pairingCancelled}, l.State) && (l.ObservedMachineID == "" || pairing.ValidID(l.ObservedMachineID))
 }
 
 func savePairingLedger(home string, l pairingLedger) error {
@@ -75,6 +78,9 @@ func readPairingLedgers(home string) ([]pairingLedger, error) {
 	}
 	var ledgers []pairingLedger
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "slot-") {
+			continue
+		}
 		if entry.IsDir() || !entry.Type().IsRegular() {
 			continue
 		}
@@ -104,14 +110,14 @@ func pairingWarnings(home string, now time.Time) []string {
 			continue
 		}
 		if now.After(l.ExpiresAt) {
-			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s expired; claim not observed. Shared access may still work; replace a shared R2 key everywhere to revoke it.", l.PairingID, l.Name))
+			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s expired; claim not observed. Access may still work; revoke a dedicated key explicitly or replace a shared R2 key everywhere.", l.PairingID, l.Name))
 		} else if l.State == pairingDeliveryIntent {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s has uncertain delivery; its key remains valid. Claim not observed.", l.PairingID, l.Name))
 		} else {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s is pending; claim not observed.", l.PairingID, l.Name))
 		}
 	}
-	return warnings
+	return append(warnings, dedicatedWarnings(home)...)
 }
 
 // Bucket claims are informational. Only matching destination, pairing and recipient
@@ -136,7 +142,7 @@ func observePairingClaims(home, destination string, result machines.ListResult, 
 		}
 		old := l.State
 		for _, record := range result.Records {
-			if record.PairingID == l.PairingID && record.Credential.RecipientID == l.RecipientID && record.Credential.IssuerID == l.IssuerID && string(record.Credential.Kind) == string(l.Kind) && record.Credential.AccessKeyID == l.AccessKeyID && record.PairedFrom == l.IssuerID {
+			if record.PairingID == l.PairingID && record.Credential.RecipientID == l.RecipientID && record.Credential.IssuerID == l.IssuerID && record.Credential.SlotID == l.SlotID && string(record.Credential.Kind) == string(l.Kind) && record.Credential.AccessKeyID == l.AccessKeyID && record.PairedFrom == l.IssuerID {
 				l.State = pairingClaimObserved
 				l.ObservedMachineID = record.MachineID
 				break

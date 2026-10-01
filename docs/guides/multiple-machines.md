@@ -324,3 +324,39 @@ current destination-bound local assignment establishes a committed local
 binding; other bucket records remain untrusted claims. Legacy/manual keys
 remain unknown. “Claim not observed” keys are candidates for inspection, never
 proof that a key is unused or safe to revoke.
+
+### Dedicated issuance draft
+
+Dedicated R2 issuance is experimental and awaits live Cloudflare acceptance and
+integrated revocation before general availability. In a reviewed development
+build, set `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1` to use `machines add` without
+`--share-key`. The configured destination must be an exact Cloudflare R2 endpoint,
+not a compatible third-party endpoint.
+
+A `CLOUDFLARE_API_TOKEN` or interactive `cloudflare_token_command` creates a fresh
+bucket-scoped key. The environment token is removed from the command's environment;
+your shell may still retain it. The management token stays in memory and is discarded
+at exit. Without a token, an eligible spare is reserved; without a spare, interactive
+use offers a hidden token prompt, explicit sharing, or cancellation. `--yes` never
+shares implicitly and never runs a token command; supply the environment token or
+use an existing spare. `--share-key` deliberately retains the shared beta behavior.
+
+`machines add --spares N` saves a target from zero through five; the default is two.
+Zero disables spare use/refill. Lowering the target does not silently delete existing
+provider keys. Guided R2 creation also prepares spares while its management token
+is available. Listing, collector activity, and revocation never create or refill keys.
+Spare refill failure is separate from pairing delivery: the delivered bundle remains
+valid even when refill or an advisory config index update fails.
+
+The private `issued/slot-<slot-id>.json` ledger owns eligibility. Its durable records
+precede creation, credential staging, reservation, and bundle exposure. Interrupted
+creation is reconciled using the exact immutable provider name and exact bucket policy;
+lost one-time token values cannot be recovered. Uncertain cleanup stays pending and
+requires explicit management access. Never edit the ledger or reuse config spare
+references as proof of eligibility. Corrupt records withhold spare use.
+
+A file, clipboard, or print error may have exposed the bundle, so its key stays reserved.
+Expiry is not key revocation. Delivered issuer-local secrets are removed at command
+exit; immutable issuance lineage remains for later verification. Local cancellation
+needs management access to delete a dedicated token; otherwise access may remain.
+No provider propagation or independent cutoff guarantee has passed live acceptance.

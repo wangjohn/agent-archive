@@ -131,9 +131,13 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		kind = config.MachineAssignmentR2Shared
 		sharedWith = payload.IssuerID
+		if payload.Kind == config.MachineAssignmentR2Own {
+			kind = payload.Kind
+			sharedWith = ""
+		}
 	}
 	cfg.MachineName = payload.Name
-	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: kind, AccessKeyID: payload.AccessKeyID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, SharedWith: sharedWith, PairingID: payload.PairingID, PairedFrom: payload.IssuerID, PairedAt: &pairedAt}
+	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: kind, SlotID: payload.SlotID, AccessKeyID: payload.AccessKeyID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, SharedWith: sharedWith, PairingID: payload.PairingID, PairedFrom: payload.IssuerID, PairedAt: &pairedAt}
 	if err = cfg.ValidateMachine(); err != nil {
 		return fmt.Errorf("invalid paired machine assignment")
 	}
