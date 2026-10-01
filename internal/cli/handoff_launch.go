@@ -31,6 +31,7 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	}
 	if here {
 		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, spec.Dir)
+		finishTraceNow()
 		if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
 			return fmt.Errorf("launch %s: %w", dest, err)
 		}

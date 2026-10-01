@@ -43,12 +43,12 @@
       "minLength": 1
     },
     "title": {
-      "description": "One-line preview of the first filtered human prompt, truncated for browsing. Omitted when no prompt text was available.",
+      "description": "One-line preview of the first filtered human prompt, cut to 72 characters through parser 0.17.0 or 128 characters from parser 0.17.1. Omitted when no prompt text was available.",
       "type": "string",
       "minLength": 1
     },
     "name": {
-      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name; from parser 0.18.0 a Claude Code subagent's name is the description its parent gave the task. Absent when the session has none.",
+      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters through parser 0.17.0 or 128 characters from parser 0.17.1, like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name; from parser 0.18.0 a Claude Code subagent's name is the description its parent gave the task. Absent when the session has none.",
       "type": "string",
       "minLength": 1
     },

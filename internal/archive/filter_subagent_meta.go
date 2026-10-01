@@ -32,7 +32,7 @@ const MaxSubagentMetaBytes = 16 * 1024
 
 // maxSubagentDescriptionBytes bounds the description a subagent-meta record
 // keeps. A task description is a few words (the parser cuts the name derived
-// from it to 72 characters), so this is far smaller than the 64 KB a prompt
+// from it to 128 characters), so this is far smaller than the 64 KB a prompt
 // may be, and a longer one is cut on a character boundary.
 const maxSubagentDescriptionBytes = 512
 

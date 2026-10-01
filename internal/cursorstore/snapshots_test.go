@@ -77,33 +77,78 @@ func TestSweepSkipsASnapshotInUse(t *testing.T) {
 // (Ctrl-C during a backfill plan) leaves a directory whose lock nobody
 // holds. It is removed as soon as its lock file is a minute old, not after
 // the hour a directory without a lock file waits; one whose lock file was
-// just created may be a read starting, and is kept.
+// just created may be a read starting, and is kept. The same holds for a
+// process killed before renaming its lock file into place, which leaves
+// only snapshotLockNewName.
 func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
+	for _, lockName := range []string{snapshotLockName, snapshotLockNewName} {
+		t.Run(lockName, func(t *testing.T) {
+			root := useTempSnapshots(t)
+			abandoned := filepath.Join(root, snapshotPrefix+"abandoned")
+			starting := filepath.Join(root, snapshotPrefix+"starting")
+			for _, d := range []string{abandoned, starting} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, lockName), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, "state.vscdb"), []byte("copy"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			twoMinutes := time.Now().Add(-2 * abandonedSnapshotAge)
+			if err := os.Chtimes(filepath.Join(abandoned, lockName), twoMinutes, twoMinutes); err != nil {
+				t.Fatal(err)
+			}
+			RemoveStaleSnapshots()
+			if _, err := os.Stat(abandoned); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("abandoned snapshot kept: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(starting, "state.vscdb")); err != nil {
+				t.Fatalf("a snapshot just starting was swept: %v", err)
+			}
+		})
+	}
+}
+
+// TestASweepNeverFailsAReadStarting: a sweep's snapshotInUse takes a lock
+// file's lock for an instant. A Reader's lock file appears already locked,
+// so a sweep probing it the moment it appears finds it in use and leaves it
+// alone; had the Reader locked the file only after creating it, the probe
+// could hold the lock just then and fail the read ("lock a Cursor database
+// snapshot directory").
+func TestASweepNeverFailsAReadStarting(t *testing.T) {
 	root := useTempSnapshots(t)
-	abandoned := filepath.Join(root, snapshotPrefix+"abandoned")
-	starting := filepath.Join(root, snapshotPrefix+"starting")
-	for _, d := range []string{abandoned, starting} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
+	path := StateDatabase(t.TempDir())
+	startWriter(t, path).put(chatRows())
+	probed, inUse := false, false
+	hooks := readerHooks{lockPlaced: func(lockPath string) {
+		probed = true
+		// A sweep's probe, stopped while it would hold the lock.
+		f, err := os.Open(lockPath)
+		if err != nil {
+			t.Errorf("open the lock file: %v", err)
+			return
 		}
-		if err := os.WriteFile(filepath.Join(d, snapshotLockName), nil, 0o600); err != nil {
-			t.Fatal(err)
+		t.Cleanup(func() { _ = f.Close() })
+		inUse = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
+		// A whole sweep now keeps the directory, however old.
+		old := time.Now().Add(-2 * staleSnapshotAge)
+		for _, p := range []string{filepath.Dir(lockPath), lockPath} {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Error(err)
+			}
 		}
-		if err := os.WriteFile(filepath.Join(d, "state.vscdb"), []byte("copy"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		RemoveStaleSnapshots()
+	}}
+	if _, _, err := readComposerWith(context.Background(), path, "c", hooks); err != nil {
+		t.Fatalf("a read with a sweep probing as it started: %v", err)
 	}
-	twoMinutes := time.Now().Add(-2 * abandonedSnapshotAge)
-	if err := os.Chtimes(filepath.Join(abandoned, snapshotLockName), twoMinutes, twoMinutes); err != nil {
-		t.Fatal(err)
+	if !probed || !inUse {
+		t.Fatalf("probed %t, found the lock file in use %t", probed, inUse)
 	}
-	RemoveStaleSnapshots()
-	if _, err := os.Stat(abandoned); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("abandoned snapshot kept: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(starting, "state.vscdb")); err != nil {
-		t.Fatalf("a snapshot just starting was swept: %v", err)
-	}
+	assertEmpty(t, root)
 }
 
 // TestSnapshotRootIsTheSystemsOwn: the snapshot root is

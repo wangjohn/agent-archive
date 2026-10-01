@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // SchemaVersion is bumped only when Config's on-disk shape changes
@@ -189,6 +190,7 @@ func path(home string) string { return filepath.Join(home, "config.json") }
 // longer decodes, the way out: every command needs it, so nothing else can
 // say which file stopped it.
 func Load(home string) (cfg Config, found bool, err error) {
+	defer trace.Start("load config").End()
 	err = local.Read(path(home), &cfg)
 	if errors.Is(err, os.ErrNotExist) {
 		return Config{}, false, nil
