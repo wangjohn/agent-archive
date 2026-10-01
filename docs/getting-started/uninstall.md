@@ -114,8 +114,10 @@ purge_prepare all
 
 Review **every printed key**. An empty prefix plans the entire bucket. If the
 plan contains exactly what you intend, run `purge_apply` within five minutes
-in the same shell. A failed listing or metadata read means zero deletions;
-rerun `purge_prepare all` after fixing it. A delete failure reports the keys
+in the same shell. A failed listing or metadata read means zero deletions.
+If preparation fails before printing a valid plan, fix the issue and rerun
+`purge_prepare all`. After a valid plan has been printed, use `purge_resume`
+with its retained directory for recovery. A delete failure reports the keys
 already removed and those still pending. There is no rollback. External
 writers can race these shell commands, so keep all uploading machines paused
 throughout.
@@ -135,8 +137,12 @@ purge_prepare machine "$machine"
 
 Review the exact keys, then run `purge_apply` in the same shell within five
 minutes. It rechecks the complete listing and every metadata object before
-the first delete; a changed object aborts the plan. On partial failure, make
-a new plan and inspect what remains. On a versioned S3 bucket, ordinary
+the first delete; a changed object aborts the plan. On partial failure or interruption, retain the printed plan directory and run
+`purge_resume /absolute/path/to/retained-plan` from the linked preparation
+helpers. Review the remaining original keys, then apply the new single-use plan
+within five minutes. Keep all writers paused through recovery. Deleting the
+local manifest removes resumability; remove retained plan directories only after
+success. On a versioned S3 bucket, ordinary
 deletion hides current versions; remove noncurrent versions separately or
 use a lifecycle rule.
 
