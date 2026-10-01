@@ -9,6 +9,18 @@ choose "Show setup instructions" at its storage question.
 
 ## Cloudflare R2 (recommended)
 
+Choose the route that matches what you need:
+
+- **A new bucket:** [let setup create it](#let-setup-create-it-experimental).
+  You provide one temporary Cloudflare API token; setup creates the bucket
+  and its archive key.
+- **An existing bucket:** start at step 2 of [the manual instructions](#create-it-by-hand),
+  then choose existing R2 storage in `agent-archive setup`.
+
+Cloudflare has two different token forms: **R2 → Manage API Tokens** creates
+R2 credentials, while **Manage account → Account API tokens** lets you choose
+custom account permissions. Automatic bucket creation below needs the latter.
+
 ### Let setup create it (experimental)
 
 `agent-archive setup` can create the bucket for you. This is **experimental**:
@@ -23,19 +35,43 @@ pricing](https://developers.cloudflare.com/r2/pricing/)).
 
 1. Open [Account API tokens in the Cloudflare
    dashboard](https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fapi-tokens), sign
-   in and select your account, then select **Create Token**. Create an account
-   token with two permissions on your account:
-   **Workers R2 Storage Write** (creates the bucket) and **Account API Tokens
-   Write** (creates the bucket's own key). Account members can grant only
-   permissions they hold themselves, so if setup is refused here, ask an
-   account administrator to create the token.
+   in and select your account. Use **Manage account → Account API tokens**,
+   rather than **R2 → Manage API Tokens**. Select **Create Token** and use
+   the custom token form. Add these two permission rows:
+
+   - **Account → Workers R2 Storage → Edit** (API name:
+     `Workers R2 Storage Write`; creates the bucket).
+   - **Account → Account API Tokens → Edit** (API name:
+     `Account API Tokens Write`; creates and revokes the bucket's own key).
+
+   Scope the token to your account only, review the summary, create it, and
+   copy the **API token value** for setup. Cloudflare's dashboard calls write
+   access **Edit**; API documentation uses **Write**. See [Cloudflare's initial
+   token instructions](https://developers.cloudflare.com/fundamentals/api/how-to/create-via-api/#generating-the-initial-token).
+
+   If you see **Create Account API token** / **Create User API token** and
+   permission choices such as **Admin Read & Write** / **Object Read & Write**,
+   you are in the R2-specific form. That form cannot grant both permissions
+   needed by automatic setup; return to **Manage account → Account API tokens**.
+   Account token creation requires API Token Provisioning capabilities or
+   Super Administrator status, and members can grant only permissions they
+   hold themselves ([Cloudflare's account token requirements](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)).
+   If the custom permissions aren't available, ask an account administrator
+   or use the manual route below.
 2. Run `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1 agent-archive setup`, choose
    **Cloudflare R2: create a new bucket for me**, and paste the token when
    asked (it is hidden). If your shell sets `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID`, as Cloudflare's own tools expect, setup uses them
    and doesn't ask.
-3. Setup asks for a bucket name (suggesting `agent-archive-` and eight random
-   characters) and lets you pick a data location if you care. It then creates
+3. Setup first looks up the archive-key permission and checks
+   that it can be granted. If this check fails, no bucket or key is created.
+   You can paste a different token, retry after updating its permissions, or
+   go back to choose other storage. Once the lookup succeeds, setup asks for
+   a bucket name (suggesting `agent-archive-` and eight random characters).
+   Storage location is automatic unless you choose to customize it.
+   Setup shows the bucket name and location before asking you to confirm.
+   This does not guarantee that Cloudflare will accept the later token-creation
+   request. After your confirmation, setup creates
    a new bucket (Cloudflare buckets have no public access by default), creates
    a second token that can read, write, and list objects in **that one bucket
    only**, checks that it works, and keeps that second key in the macOS
@@ -74,9 +110,13 @@ or if you prefer to do it by hand, follow the manual steps below.
    usage](https://developers.cloudflare.com/r2/pricing/) before enabling it;
    charges depend on storage class and usage. Leave public access off.
 2. Under **Account Details** on the R2 overview page, choose **Manage** next
-   to **API Tokens**, then create an account or user API token. Give it
-   **Object Read & Write** permission, scoped to **only that bucket**. Create
-   it, then copy the **Access Key ID** and **Secret Access Key** (the secret
+   to **API Tokens**. Select **Create Account API token** for a durable key
+   tied to the account, or **Create User API token** for personal access
+   (it becomes inactive if your user leaves the account). Give it
+   **Object Read & Write** permission, choose **Apply to specific buckets only**,
+   and select your archive bucket. Do not leave **Object Read only** or
+   **Apply to all buckets** selected. Select **Create Account API token**
+   (or **Create User API token**), then copy the **Access Key ID** and **Secret Access Key** (the secret
    is shown once). See Cloudflare's current [R2 token instructions](https://developers.cloudflare.com/r2/api/tokens/)
    if the dashboard wording changes.
 3. Copy your **Account ID** from the R2 overview page, or the bucket's S3 API
@@ -88,6 +128,12 @@ The secret is kept in the macOS Keychain, or on Linux, which has none, in a
 private credentials file that is not encrypted ([where credentials are
 kept](../security/privacy.md#where-credentials-are-kept)); on Linux an S3
 profile (below) avoids storing a secret of agent-archive's own.
+
+This route does not need **Workers R2 Storage Write** or **Account API Tokens
+Write**. Those are only needed when setup creates the bucket and its key for you.
+If you already have an Object Read & Write token for the archive bucket, you
+can use its S3 keys. Cloudflare cannot show a lost Secret Access Key again;
+create a new token if you no longer have it.
 
 ## Amazon S3
 

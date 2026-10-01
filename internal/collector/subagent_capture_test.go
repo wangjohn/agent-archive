@@ -48,6 +48,18 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	if err := local.SaveRequest("parent", "subagent-link", stopAt, link); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := materializeSubagentCandidate(ctx, local, state.SubagentCandidate{ArchiveSessionID: "child"}, Options{}, stopAt); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled materialization: %v", err)
+	}
+	if _, found, err := local.LoadRegistration("child"); err != nil || found {
+		t.Fatalf("canceled child found=%v err=%v", found, err)
+	}
+	candidates, issues, err := local.ScanSubagentCandidates()
+	if err != nil || len(issues) != 0 || len(candidates) != 1 {
+		t.Fatalf("candidates=%v issues=%v err=%v", candidates, issues, err)
+	}
 	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
 	result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
@@ -88,7 +100,7 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("mismatched transcript was accepted")
 	}
 	if _, found, _ := local.LoadRegistration("child"); found {
@@ -142,7 +154,7 @@ func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
 				if err := local.SaveSubagentCandidate(candidate); err != nil {
 					t.Fatal(err)
 				}
-				if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err != nil {
+				if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -408,7 +420,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	if err := store.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(store, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), store, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("expected pending transcript error")
 	}
 	candidates, err := store.LoadSubagentCandidates()

@@ -79,7 +79,7 @@ type listScreen struct {
 // prompt until Enter chooses the row they name.
 func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
-	if len(rows) == 0 && l.words() == "" {
+	if l.emptyWithoutAction(rows) {
 		v := l.view(rows, totalMatched, truncated, format)
 		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 			return listRow{}, false, err
@@ -128,6 +128,10 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 					return listRow{}, false, nil
 				}
 				return listRow{}, false, err
+			}
+			if l.activatesOlder(k, typed) {
+				l.loadedOlder = true
+				return listRow{}, false, nil
 			}
 			var result listKeyResult
 			if l.filtering {
@@ -607,4 +611,12 @@ func (b *sessionBrowser) transcriptKeys() (browseAction, error) {
 			return browseQuit, nil
 		}
 	}
+}
+
+func (l *sessionPicker) emptyWithoutAction(rows []listRow) bool {
+	return len(rows) == 0 && l.words() == "" && l.older == nil
+}
+
+func (l *sessionPicker) activatesOlder(k key, typed string) bool {
+	return l.older != nil && !l.filtering && typed == "" && k.kind == keyRune && unicode.ToLower(k.r) == 'o'
 }

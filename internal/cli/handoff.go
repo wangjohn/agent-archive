@@ -20,7 +20,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -41,6 +43,7 @@ const handoffFallbackRows = 5
 // handoffTarget is one resolved session: its filtered bundle, its metadata
 // when it came from the archive, and where it came from.
 type handoffTarget struct {
+	native   *nativesessions.Candidate
 	bundle   archive.SourceBundle
 	metadata *archive.Metadata
 	source   string
@@ -95,28 +98,65 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	answers := input.answers
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.
-	if opts.sessionID != "" {
-		if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
-			return code
-		}
-	}
-	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
-			return code
-		}
-	}
-	target, err := resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr))
-	if err != nil {
-		if errors.Is(err, errRepoMatchNotUsed) {
-			// The gate said why, and how to use the session.
+
+	var target handoffTarget
+	if opts.file == "" {
+		cfg, found, loadErr := env.loadHandoffConfig(home)
+		if loadErr != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: load config: %v\n", loadErr)
 			return 1
 		}
-		if errors.Is(err, errHandoffNotSetUp) {
-			terminal.Println(stderr, notSetUpMessage)
-		} else {
-			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		opts.config = &handoffConfigState{cfg, found}
+		if !found {
+			if setupjournal.TransactionPending(home) {
+				terminal.Println(stderr, "agent-archive: handoff: setup recovery is pending; run agent-archive setup")
+				return 1
+			}
+			if _, e := os.Lstat(draftPath(home)); !errors.Is(e, os.ErrNotExist) {
+				terminal.Println(stderr, "agent-archive: handoff: saved setup is pending or inaccessible; run agent-archive setup")
+				return 1
+			}
+			opts.native = true
+			var selected bool
+			var code int
+			target, selected, code = resolveNativeHandoff(opts, interactive, input, stdout, stderr, env)
+			if code != 0 || !selected {
+				return code
+			}
 		}
-		return 1
+	}
+	if opts.file != "" && (opts.to != "" || offersDestinations(opts, interactive)) {
+		cfg, found, loadErr := env.loadHandoffConfig(home)
+		if loadErr != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: load config: %v\n", loadErr)
+			return 1
+		}
+		opts.config = &handoffConfigState{cfg: cfg, found: found}
+	}
+	if !opts.native {
+		if opts.sessionID != "" {
+			if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
+				return code
+			}
+		}
+		if opts.sessionID == "" && !opts.latest && opts.file == "" {
+			if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
+				return code
+			}
+		}
+		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr))
+		if err != nil {
+			if errors.Is(err, errRepoMatchNotUsed) {
+				// The gate said why, and how to use the session.
+				return 1
+			}
+			if errors.Is(err, errHandoffNotSetUp) {
+				terminal.Println(stderr, notSetUpMessage)
+			} else {
+				terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			}
+			return 1
+		}
 	}
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
@@ -127,12 +167,21 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
+	if target.native != nil {
+		h.Session.ArchiveSessionID = ""
+	}
 	noteBranchDifference(h, stderr)
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
 		p := newPrompter(answers, stdout)
-		choice, err := askHandoffDestination(p, h, home, env)
+		var choice handoffChoice
+		var err error
+		if opts.config != nil {
+			choice, err = askHandoffDestinationConfig(p, h, opts.config.cfg, env)
+		} else {
+			choice, err = askHandoffDestination(p, h, home, env)
+		}
 		if err == nil && choice.action != handoffLaunch {
 			err = deliverHandoff(choice, p, rendered, target, opts, stdout, stderr, env)
 		}
@@ -169,7 +218,7 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 	if opts.file != "" {
 		return handoffFromFile(opts.file, opts.harness, env)
 	}
-	cfg, found, err := config.Load(home)
+	cfg, found, err := handoffConfig(home, opts)
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("load config: %w", err)
 	}
@@ -228,14 +277,16 @@ func planHandoffRendering(h archive.Handoff, bundle archive.SourceBundle, opts h
 }
 
 func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env handoffFileDependencies) []byte {
-	pruneHandoffs(home, env.now())
+	if !opts.native {
+		pruneHandoffs(home, env.now())
+	}
 	plan := planHandoffRendering(h, bundle, opts, home)
 	fitted := plan.fitted
 	if len(fitted.Elisions) > 0 {
 		// The data directory exists once setup has run. `--file` works
 		// without setup, and must not create it just to hold a copy of a
 		// transcript nobody opted in to archiving.
-		if _, statErr := os.Stat(home); statErr != nil {
+		if _, statErr := os.Stat(home); opts.native || statErr != nil {
 			terminal.Println(stderr, "agent-archive: handoff: note: output was trimmed and, without setup, the untrimmed version is not saved; use --max-bytes 0 for all of it")
 			fitted.FullRecordPath = ""
 		} else if err := local.WriteBytes(plan.fullPath, plan.full); err != nil {

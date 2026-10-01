@@ -211,11 +211,12 @@ func TestHandoffPickerWritesOnlyHandoffToOutputFile(t *testing.T) {
 }
 
 // claude "$(agent-archive handoff --latest)" must not start a session whose
-// prompt is the not-set-up message: it goes to stderr, with exit 1.
-func TestHandoffReportsNotSetUp(t *testing.T) {
+// prompt is an empty-store diagnostic: it goes to stderr, with exit 1.
+func TestHandoffBeforeSetupLatestMissIsOnlyOnStderr(t *testing.T) {
 	t.Parallel()
-	out, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "--latest")
-	if code != 1 || out != "" || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	out, errOut, code := runHandoff(t, f.env, "--latest")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }

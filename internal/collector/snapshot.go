@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/trace"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // ErrNoTranscript means a registration names no transcript file yet, or the
@@ -134,8 +135,23 @@ func FilterTranscriptFile(harness, path string, startedAt time.Time) (archive.Fi
 	if err != nil {
 		return archive.FilteredTranscript{}, nil, err
 	}
-	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: path, SessionStartedAt: startedAt}
-	filtered, _, err := filterTranscript(adapter, reg, DefaultMaxTranscriptBytes)
+	snapshot, err := transcriptio.Open(transcriptio.OS{}, path, transcriptio.OpenPolicy{})
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, err
+	}
+	defer func() { _ = snapshot.Close() }()
+	return FilterTranscriptSnapshot(context.Background(), snapshot, adapter.Name(), startedAt, DefaultMaxTranscriptBytes)
+}
+
+// FilterTranscriptSnapshot filters the verified handle without reopening its path.
+// The caller owns the handle and must close it, including on cancellation.
+func FilterTranscriptSnapshot(ctx context.Context, snapshot *transcriptio.Snapshot, harness string, startedAt time.Time, maxBytes int64) (archive.FilteredTranscript, archive.Adapter, error) {
+	adapter, err := archive.NewAdapter(harness)
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, err
+	}
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, SessionStartedAt: startedAt}
+	filtered, _, err := filterSnapshot(ctx, snapshot, adapter, reg, maxBytes)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
 		return archive.FilteredTranscript{}, nil, fmt.Errorf("%w: %w", archive.ErrRecordTooLarge, err)
 	}

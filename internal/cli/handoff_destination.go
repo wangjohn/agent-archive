@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -113,7 +111,7 @@ func defaultDestination(installed []handoffDestination, source string, cfg confi
 // agents, numbered with def first, or print, copy, write to a file, or quit.
 // Enter takes def, or print when no agent is installed. Input ending is
 // quitting, as in the session picker.
-func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error) {
+func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination, canCopy bool) (handoffChoice, error) {
 	agents := installed
 	if i := slices.Index(installed, def); i > 0 {
 		agents = slices.Concat([]handoffDestination{def}, installed[:i], installed[i+1:])
@@ -127,14 +125,21 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		terminal.Printf(p.out, "  %d) %s\n", i+1, label)
 	}
 	for _, l := range handoffLetters {
+		if l.action == handoffCopy && !canCopy {
+			continue
+		}
 		terminal.Printf(p.out, "  %s) %s\n", l.key, l.label)
 	}
-	label, defKey := "Enter p, c, w, or q", "p"
+	letters := "p, w, or q"
+	if canCopy {
+		letters = "p, c, w, or q"
+	}
+	label, defKey := "Enter "+letters, "p"
 	switch {
 	case len(agents) == 1:
-		label, defKey = "Enter 1, p, c, w, or q", "1"
+		label, defKey = "Enter 1, "+letters, "1"
 	case len(agents) > 1:
-		label, defKey = fmt.Sprintf("Enter 1-%d, p, c, w, or q", len(agents)), "1"
+		label, defKey = fmt.Sprintf("Enter 1-%d, %s", len(agents), letters), "1"
 	}
 	for {
 		answer, err := p.choose(label, defKey)
@@ -154,6 +159,9 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		}
 		// So does a letter's word.
 		for _, l := range handoffLetters {
+			if l.action == handoffCopy && !canCopy {
+				continue
+			}
 			if answer == l.key || answer == l.word {
 				return handoffChoice{action: l.action}, nil
 			}
@@ -170,8 +178,12 @@ func askHandoffDestination(p *prompter, h archive.Handoff, home string, env hand
 	if err != nil {
 		return handoffChoice{}, fmt.Errorf("load config: %w", err)
 	}
+	return askHandoffDestinationConfig(p, h, cfg, env)
+}
+
+func askHandoffDestinationConfig(p *prompter, h archive.Handoff, cfg config.Config, env handoffDestinationDependencies) (handoffChoice, error) {
 	installed := installedDestinations(env)
-	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff))
+	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff), env.clipboardAvailable())
 }
 
 // deliverHandoff carries out a choice other than launching: print it (paged
@@ -262,19 +274,4 @@ func (e Env) openTerminal(spec termlaunch.Spec) (string, error) {
 		return e.OpenTerminal(spec)
 	}
 	return termlaunch.Open(context.Background(), spec, termlaunch.DefaultEnvironment())
-}
-
-func (e Env) clipboard(data []byte) error {
-	if e.Clipboard != nil {
-		return e.Clipboard(data)
-	}
-	cmd := exec.CommandContext(context.Background(), "pbcopy")
-	cmd.Stdin = bytes.NewReader(data)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("pbcopy: %w: %s", err, msg)
-		}
-		return fmt.Errorf("pbcopy: %w", err)
-	}
-	return nil
 }
