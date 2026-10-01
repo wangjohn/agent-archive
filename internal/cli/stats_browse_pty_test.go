@@ -3,11 +3,9 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 )
 
 // This child is only launched under a pseudo-terminal by the test below: the
@@ -46,19 +44,11 @@ func TestStatsScreenOnARealTerminal(t *testing.T) {
 	// One at a time, not as parallel subtests.
 	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "sigquit", "savequit", "resize", "suspend", "save"} {
 		dir := t.TempDir()
-		out, err := runStatsPTYScript(python, binary, mode, dir)
+		out, err := runPTYScript(t, python, statsPTYScript, binary, mode, dir)
 		if err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
 	}
-}
-
-// runStatsPTYScript runs statsPTYScript for one mode in dir. The script gives
-// up after 60 seconds, before this does.
-func runStatsPTYScript(python, binary, mode, dir string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, python, "-c", statsPTYScript, binary, mode, dir).CombinedOutput()
 }
 
 const statsPTYScript = `import fcntl, os, pty, re, select, signal, struct, subprocess, sys, termios, time

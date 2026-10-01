@@ -1,7 +1,7 @@
 # Create a bucket
 
 agent-archive stores sessions in a private bucket you own. Create it once;
-every Mac you set up can share it. You need a Cloudflare or AWS account for
+every machine you set up can share it. You need a Cloudflare or AWS account for
 the bucket; there is no agent-archive account or hosted service. Cloudflare
 R2 is the quickest to set up. `agent-archive setup` links here when you
 choose "Show setup instructions" at its storage question.
@@ -27,8 +27,10 @@ choose "Show setup instructions" at its storage question.
 
 Then run `agent-archive setup`, choose `r2`, and paste the Account ID (then
 the bucket name) or the bucket's URL (which names both), and the two keys.
-The secret is kept in the macOS Keychain (on a build without a Keychain, in a
-private credentials file: [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
+The secret is kept in the macOS Keychain, or on Linux, which has none, in a
+private credentials file that is not encrypted ([where credentials are
+kept](../security/privacy.md#where-credentials-are-kept)); on Linux an S3
+profile (below) avoids storing a secret of agent-archive's own.
 
 ## Amazon S3
 
@@ -62,7 +64,7 @@ it as its own profile, and choose it at that question (or run
 
 Then run `agent-archive setup`, choose **Amazon S3**, and pick that profile.
 
-## One key per Mac
+## One key per machine
 
-Creating a separate token or access key for each Mac lets you revoke one
-without touching the others. See [multiple Macs](../guides/multiple-macs.md).
+Creating a separate token or access key for each machine lets you revoke one
+without touching the others. See [multiple machines](../guides/multiple-machines.md).

@@ -37,7 +37,7 @@ func withEnvironment(env Env, vars map[string]string) Env {
 	return env
 }
 
-// A second Mac can be set up by a script: the R2 secret comes from an
+// A second machine can be set up by a script: the R2 secret comes from an
 // environment variable or standard input, never an argument, and the same
 // storage check and transaction run.
 func TestSetupYesConfiguresR2WithoutQuestions(t *testing.T) {
@@ -94,7 +94,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 		t.Fatalf("config %+v", cfg)
 	}
 
-	// Run again on the same Mac: another project is added, and the saved
+	// Run again on the same machine: another project is added, and the saved
 	// storage and apps are kept.
 	other := t.TempDir()
 	setupYes(t, env, "", 0, "--yes", "--project", other)
@@ -117,6 +117,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 }
 
 func TestSetupYesSkillEvidenceReconfiguration(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }

@@ -9,7 +9,7 @@ start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 | Doc | For |
 | --- | --- |
 | [Architecture](contributing/architecture.md) | How the pieces fit, and the package map. |
-| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real Mac. |
+| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real machine. |
 | [Adding an adapter](contributing/adding-an-adapter.md) | Supporting another coding agent. |
 | [Session admission](contributing/session-admission.md) | How a registration's start and admission times drive each boundary check, and the guard tests. |
 

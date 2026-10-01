@@ -110,7 +110,7 @@ func runSetupRefresh(out, errOut io.Writer, env Env, verbose bool) int {
 // refreshSetup takes the locks setup takes, plans the refresh from the
 // saved configuration, and applies it in one journaled transaction.
 func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
-	// Read-only checks first, so a Mac that never ran setup gets no data
+	// Read-only checks first, so a machine that never ran setup gets no data
 	// directory from this command.
 	home, err := env.readHome()
 	if err != nil {

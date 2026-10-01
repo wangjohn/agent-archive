@@ -44,8 +44,8 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
-		// Everything below would otherwise reach this Mac itself. Reads get
-		// a harmless answer; anything that would change the Mac fails the
+		// Everything below would otherwise reach this machine itself. Reads get
+		// a harmless answer; anything that would change the machine fails the
 		// test. A test that needs one sets it (setupTestEnv sets them all).
 		Scheduler: noLaunchd(t),
 		Credentials: func() (credentials.CredentialStore, error) {

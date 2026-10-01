@@ -49,7 +49,7 @@ Checking your storage connection…
 
 \e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mStart archiving?\e[0m
   1) Yes, start archiving

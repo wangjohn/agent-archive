@@ -45,8 +45,10 @@ func (c *putCountingStore) takePuts() int {
 // reported once, and the session carries on: a lost published state or
 // pending publication as never published, a lost ledger as empty.
 func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.T) {
+	t.Parallel()
 	for _, dir := range []string{"published", "pending", "superseded"} {
 		t.Run(dir, func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			remote := &putCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 			path := claudeSession(t, local, claudePromptLine+"\n")
@@ -105,6 +107,7 @@ func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.
 // either: the publication is saved, the failure reported, and nothing is
 // uploaded again on the next pass.
 func TestUnreadableLedgerDoesNotReuploadEveryPass(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := &putCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	path := claudeSession(t, local, claudePromptLine+"\n")
@@ -141,6 +144,7 @@ func TestUnreadableLedgerDoesNotReuploadEveryPass(t *testing.T) {
 // A scan journal that no longer decodes reads as a scan still owed, which
 // the scan then rewrites; it never fails the session.
 func TestCorruptScanJournalIsRewritten(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	claudeSession(t, local, claudePromptLine+"\n")

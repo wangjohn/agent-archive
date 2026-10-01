@@ -106,6 +106,7 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 }
 
 func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
 	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
@@ -121,6 +122,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 }
 
 func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"

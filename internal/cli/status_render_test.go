@@ -197,7 +197,7 @@ func TestStatusReadBackFailureRetry(t *testing.T) {
 		want    string
 	}{
 		{verificationEvidence{Outcome: verificationOutcomeFailed, Attempts: 1, LastError: "timeout", NextRetryAt: renderNow.Add(30 * time.Second)}, "Read-back failed: timeout (retrying in under a minute, 1 attempt so far)"},
-		{verificationEvidence{Outcome: verificationOutcomeMismatch, Attempts: 3, NextRetryAt: renderNow.Add(-time.Minute)}, "Read-back doesn't match what this Mac uploaded (retrying on the next pass, 3 attempts so far)"},
+		{verificationEvidence{Outcome: verificationOutcomeMismatch, Attempts: 3, NextRetryAt: renderNow.Add(-time.Minute)}, "Read-back doesn't match what this machine uploaded (retrying on the next pass, 3 attempts so far)"},
 		{verificationEvidence{Outcome: verificationOutcomeFailed, Attempts: 4, NextRetryAt: renderNow.Add(6 * time.Hour)}, "Read-back failed (retrying in 6 hours, 4 attempts so far)"},
 	} {
 		if got := sc.readBackFailure(tc.failure); got != tc.want {

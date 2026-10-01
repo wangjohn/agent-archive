@@ -72,7 +72,7 @@ func TestSetupOffersImportAfterNextSteps(t *testing.T) {
 	saved := strings.Index(out, "Configuration saved.")
 	steps := strings.Index(out, "Check progress with agent-archive status.")
 	offer := strings.Index(out, "Import the 2 past sessions from these projects?")
-	another := strings.Index(out, "To set up another Mac with this storage")
+	another := strings.Index(out, "To set up another machine with this storage")
 	if saved < 0 || steps < saved || offer < steps || another < offer {
 		t.Fatalf("order saved=%d steps=%d offer=%d another=%d:\n%s", saved, steps, offer, another, out)
 	}

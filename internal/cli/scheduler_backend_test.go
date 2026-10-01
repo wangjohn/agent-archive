@@ -62,7 +62,8 @@ func (l *linuxInstall) rawConfig() map[string]json.RawMessage {
 // records each name it is asked for, and makes the fake user manager the
 // scheduler of "systemd" and of "" (this system's own), as on Linux; any other
 // name is refused, as a system without its manager refuses it. The env's own
-// stand-in is cleared, so a command resolves its scheduler itself.
+// stand-in is cleared, so a command resolves its scheduler itself. It sets
+// newScheduler, so a test that calls it must not be parallel.
 func (l *linuxInstall) asksFor(t *testing.T) *lookups {
 	t.Helper()
 	asked := &lookups{}
@@ -220,6 +221,7 @@ func TestInterruptedLinuxSetupIsRecoveredThroughSystemd(t *testing.T) {
 // through the backend config.json records, and never choose one: a nil
 // Env.Scheduler means the recorded name, whatever this system would pick.
 func TestCommandsAddressTheRecordedBackend(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	l.setup()
 	cfg := mustLoadConfig(t, l.home)
@@ -280,6 +282,7 @@ func TestCommandsAddressTheRecordedBackend(t *testing.T) {
 // earlier configuration recorded, and with nothing to retire through a
 // backend this system cannot reach. Every other command reads the record.
 func TestSetupChoosesThisSystemsSchedulerAndOtherCommandsTheRecordedOne(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	asked := l.asksFor(t)
 	must(t, os.MkdirAll(l.home, 0o700))
@@ -303,6 +306,7 @@ func TestSetupChoosesThisSystemsSchedulerAndOtherCommandsTheRecordedOne(t *testi
 // it asks for this system's own scheduler alone, defines and loads the job
 // through it, and overwrites the record.
 func TestSetupOverARecordThisSystemCannotUseRecordsItsOwn(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	must(t, os.MkdirAll(l.home, 0o700))
 	must(t, config.Save(l.home, config.Config{BackgroundBackend: "launchd"}))
@@ -324,6 +328,7 @@ func TestSetupOverARecordThisSystemCannotUseRecordsItsOwn(t *testing.T) {
 // by another: status reports the job unknown, and what to do; it is never
 // asked about through a scheduler that was not the job's.
 func TestARecordedBackendThisSystemCannotUseLeavesTheJobUnknown(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	l.setup()
 	cfg := mustLoadConfig(t, l.home)
@@ -351,6 +356,7 @@ func TestARecordedBackendThisSystemCannotUseLeavesTheJobUnknown(t *testing.T) {
 // Recovery resolves the backend the journal names, by name: a journal that
 // names a scheduler this system cannot use is refused before anything changes.
 func TestRecoveryResolvesTheJournalsBackendByName(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	asked := l.asksFor(t)
 	backends := l.env.backends()

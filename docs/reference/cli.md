@@ -42,7 +42,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -83,7 +83,7 @@ Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
   --refresh             After upgrading agent-archive: bring the app hooks, the
-                        background collector's plist, and the skill files up to
+                        background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
                         change nothing else. Asks nothing and needs no
                         terminal; the installer runs it. Prints "nothing to
@@ -114,7 +114,7 @@ An interrupted setup is recovered on the next run.
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
-                        saved apps, else those found on this Mac). It must
+                        saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
   --no-skills           Install no agent skills (such as /handoff), and
                         remove those setup wrote. Later setup runs keep
@@ -236,7 +236,7 @@ Usage: agent-archive list [options]
 
 Find sessions using metadata; does not download conversation content.
 Run inside a project, it lists that repository's sessions (every checkout and
-worktree of it, and its sessions from other Macs), with a heading naming the
+worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
 lists another project's, and --all-projects every project's. Outside any
 project it lists every session, grouped by project. On a terminal, the a key,
@@ -497,7 +497,7 @@ Usage: agent-archive backfill [options]
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
-Import the Claude Code, Codex, and Cursor sessions already on this Mac that
+Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
 confirm. Projects the import needs are added to capture. Prints project
@@ -544,7 +544,7 @@ Usage: agent-archive backfill history
 
 List past imports, oldest first: each import's IMPORT_ID, when it started,
 how many sessions and projects it added, and its upload state (waiting,
-uploaded, interrupted, or undone). Reads this Mac's records only.
+uploaded, interrupted, or undone). Reads this machine's records only.
 Example: agent-archive backfill history
 ```
 
@@ -559,7 +559,7 @@ Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
-sessions are deleted from the bucket and this Mac, and the projects it added
+sessions are deleted from the bucket and this machine, and the projects it added
 are excluded from capture. Shows what it will do and asks first.
 Hook-captured sessions and the apps' own files are never touched. If the
 import raised retention, undo offers to put the shorter retention back,
@@ -587,7 +587,7 @@ Guide: [Continue a session in another agent](../guides/handoff.md).
 Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
 
 Continue a session in another coding agent. On a terminal, pick a session
-(this Mac's, including ones not yet uploaded, and archived ones), then pick
+(this machine's, including ones not yet uploaded, and archived ones), then pick
 where to continue: an installed agent starts in this terminal with the
 session as its context (Enter takes handoff.default_to in config.json, else
 Codex for a Claude Code session and Claude Code for the others), or print,
@@ -595,14 +595,14 @@ copy to the clipboard, or write to a file. Inside Claude Code, /handoff codex
 runs handoff --to codex, which opens Codex in a new terminal tab or window.
 The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
-this Mac is read from its transcript now; otherwise it is downloaded from
+this machine is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
 prints without asking. Without a terminal, give a SESSION_ID or TITLE,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
 A TITLE substring or short SESSION_ID matches as it does for show, in this
-Mac's sessions first (no network), then the archive's; a full SESSION_ID
+machine's sessions first (no network), then the archive's; a full SESSION_ID
 wins. Quote a title of several words. Inside a project, the picker and a
 TITLE look at that repository's sessions first (every checkout and worktree
 of it), then everywhere; a note says how many more match in other projects.
@@ -625,7 +625,7 @@ session running the command, unless --to is given.
                         works for sessions the archive never captured
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
-                        this Mac's transcript when there is one, else the
+                        this machine's transcript when there is one, else the
                         archive; local or archive uses only that one
   --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
                         no limit. When trimmed, the full version is saved for
@@ -722,7 +722,7 @@ Usage: agent-archive purge plan [--mode unreferenced|old-filter]
 
 Create a private five-minute deletion plan, then review its exact keys.
 Plan lists still-current older-filter sessions separately and never proposes
-their current sources for deletion. Pause every Mac uploading to this prefix
+their current sources for deletion. Pause every machine uploading to this prefix
 before apply. A versioned bucket keeps noncurrent versions and delete markers.
 ```
 
@@ -735,7 +735,7 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 ```text
 Usage: agent-archive purge apply PLAN [--yes]
 
-Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Pause every uploading machine first. Confirm the plan digest or use --yes.
 Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 ```
