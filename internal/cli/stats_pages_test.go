@@ -102,6 +102,11 @@ func TestStatsPageGoldens(t *testing.T) {
 	cases = append(cases,
 		goldenCase{"realistic-overview-40", pageOverview, realisticStats(), 40, false, false},
 		goldenCase{"realistic-detail-40", pageDetail, realisticStats(), 40, false, false},
+		// Skills and MCP servers the lists cut: the hint under them.
+		goldenCase{"cut-usage-overview-80", pageOverview, cutUsageStats(), 80, false, false},
+		goldenCase{"cut-usage-overview-60", pageOverview, cutUsageStats(), 60, false, false},
+		goldenCase{"cut-usage-overview-40", pageOverview, cutUsageStats(), 40, false, false},
+		goldenCase{"cut-usage-detail-60", pageDetail, cutUsageStats(), 60, false, false},
 	)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -681,7 +686,7 @@ func TestStatsListScreensAreBounded(t *testing.T) {
 	if len(lines) > statsMaxListRows+10 {
 		t.Errorf("%d lines for %d projects", len(lines), len(s.Projects))
 	}
-	if out := strings.Join(lines, "\n"); !strings.Contains(out, "+ 40 more (all in --json --by project)") {
+	if out := strings.Join(lines, "\n"); !strings.Contains(out, "+ 40 more (all in --json --all)") {
 		t.Errorf("the screen does not say what it left out:\n%s", lines[len(lines)-4:])
 	}
 }

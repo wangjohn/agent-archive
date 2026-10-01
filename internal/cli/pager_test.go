@@ -526,6 +526,7 @@ func TestPagerKeepsCtrlCAndStopsOnSIGTERM(t *testing.T) {
 		{[]os.Signal{os.Interrupt}, -1},
 		{[]os.Signal{os.Interrupt, syscall.SIGTERM}, 128 + int(syscall.SIGTERM)},
 		{[]os.Signal{syscall.SIGHUP}, 128 + int(syscall.SIGHUP)},
+		{[]os.Signal{syscall.SIGQUIT}, 131},
 	} {
 		env := testEnv(t, t.TempDir(), time.Now())
 		var stdout bytes.Buffer

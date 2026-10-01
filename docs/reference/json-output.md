@@ -240,11 +240,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). Every project is in `groups.rows` with `--by project`, which
-  is never cut; the terminal's "all in --json --by project" points at it.
-  The JSON has no more than five skills or MCP servers (the terminal's detail
-  screen lists up to 40). `models` lists every model family (the terminal's
-  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  (see below). `--all` (only with `--json`) lifts the cut: `projects`,
+  `skills`, `display_skills` and `mcp.servers` then list every row, in the
+  same order (the top five are its first five), and the `total_*` fields say
+  the same as before; the document is otherwise the same, so it is additive
+  and `schema_version` stays 1. The terminal's "all in --json --all" points
+  at it, under the projects screen and under the skills and MCP servers of
+  the overview and detail screens. Every project is also in `groups.rows`
+  with `--by project`, which is never cut, with `--all` or without it.
+  `models` lists every model family (the terminal's "all in --json"), with
+  or without `--all`. `display_skills` is `skills` for showing to a person: a
   plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
   only the first `:` counts) and skills that then share a name are one row,
   counted in the sessions that used any of them (a session that used both
@@ -287,7 +292,7 @@ at the top level. Read the rules below before using a number:
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
-  `projects` keeps only the top few of `total_projects`.
+  `projects` keeps only the top few of `total_projects`, unless `--all`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
   (as `origin`: `hook` or `imported`); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server

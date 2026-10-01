@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -687,41 +688,57 @@ func TestKeyBrowserRestoresTheTerminal(t *testing.T) {
 }
 
 // A signal while the browser waits for a key restores the terminal's modes
-// and the screen before the process exits.
+// and the screen before the process exits, with the shell's status for the
+// signal: SIGTERM, and SIGQUIT (131), which would otherwise dump goroutines
+// and leave the terminal raw on the alternate screen. The bare show is the
+// same browser as list.
 func TestKeyBrowserSignalRestoresTheTerminal(t *testing.T) {
 	t.Parallel()
-	env, _, _ := publishedFixture(t)
-	fake := newFakeKeys("1\r", string(fakeBlock))
-	stdin := strings.NewReader("")
-	var stdout, stderr syncBuffer
-	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
-	env.openKeys = func(io.Reader) (keyTerminal, bool) { return fake, true }
-	signals := make(chan os.Signal, 1)
-	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
-	exited := make(chan int, 1)
-	env.exitProcess = func(code int) {
-		if fake.keyMode() || !strings.HasSuffix(stdout.String(), leaveAltScreenSequence) {
-			t.Errorf("exit before restoring: modes %v", fake.history())
+	for _, command := range []string{"list", "show"} {
+		for _, tc := range []struct {
+			sig  syscall.Signal
+			code int
+		}{{syscall.SIGTERM, 143}, {syscall.SIGHUP, 129}, {syscall.SIGQUIT, 131}} {
+			t.Run(fmt.Sprintf("%s %v", command, tc.sig), func(t *testing.T) {
+				t.Parallel()
+				env, _, _ := publishedFixture(t)
+				fake := newFakeKeys("1\r", string(fakeBlock))
+				stdin := strings.NewReader("")
+				var stdout, stderr syncBuffer
+				env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
+				env.openKeys = func(io.Reader) (keyTerminal, bool) { return fake, true }
+				signals := make(chan os.Signal, 1)
+				env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+				exited := make(chan int, 1)
+				env.exitProcess = func(code int) {
+					if fake.keyMode() || !strings.HasSuffix(stdout.String(), leaveAltScreenSequence) {
+						t.Errorf("exit before restoring: modes %v", fake.history())
+					}
+					exited <- code
+				}
+				done := make(chan int, 1)
+				go func() { done <- Run([]string{command}, stdin, &stdout, &stderr, env) }()
+				<-fake.blocked
+				signals <- tc.sig
+				select {
+				case code := <-exited:
+					if code != tc.code {
+						t.Fatalf("exit %d, want %d", code, tc.code)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatalf("no exit after %v", tc.sig)
+				}
+				close(fake.unblock)
+				<-done
+				// Closed once by the handler; the browser's own close does nothing.
+				if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
+					t.Fatalf("terminal modes %v", history)
+				}
+				if out := stdout.String(); strings.Count(out, enterAltScreenSequence) != 1 || strings.Count(out, leaveAltScreenSequence) != 1 {
+					t.Errorf("the alternate screen was not entered and left once: %q", out)
+				}
+			})
 		}
-		exited <- code
-	}
-	done := make(chan int, 1)
-	go func() { done <- Run([]string{"list"}, stdin, &stdout, &stderr, env) }()
-	<-fake.blocked
-	signals <- syscall.SIGTERM
-	select {
-	case code := <-exited:
-		if code != 128+int(syscall.SIGTERM) {
-			t.Fatalf("exit %d", code)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("no exit after SIGTERM")
-	}
-	close(fake.unblock)
-	<-done
-	// Closed once by the handler; the browser's own close does nothing.
-	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
-		t.Fatalf("terminal modes %v", history)
 	}
 }
 
