@@ -41,6 +41,13 @@ only at full size in a plain build, which CI does in a step of its own:
 AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
 ```
 
+A test of a timeout or budget doesn't time the whole call: `-race` on a
+loaded runner stretches the file writes around the wait by seconds. It
+checks the deadline a stub sees against clock readings taken in the stub
+(`TestOriginURLGivesGitAtMostTheTimeout`), or runs the code in a
+`testing/synctest` bubble, whose clock moves only while every goroutine in
+it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
+
 ## Levenshtein checks
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from
@@ -165,7 +172,9 @@ In Go tests, everything goes through injection:
   runner image does not stop unrelated pull requests; a failure in it is a real
   finding about the adapter. To run it yourself, never on your own machine or
   login, use a disposable Linux container with systemd as PID 1 (Docker on
-  macOS runs it in a Linux VM) and a non-root user:
+  macOS runs it in a Linux VM) and a non-root user (or run
+  `scripts/acceptance/linux/host.sh`, which does all of this and more; see
+  [the Linux live acceptance run](#the-linux-live-acceptance-run)):
 
   ```sh
   docker run -d --name aa-systemd --privileged --cgroupns=host \
@@ -292,10 +301,105 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE X
   cannot get a real answer, and a sandboxed `HOME` does not stop it from
   enabling a timer in your real user manager. Run the binary by hand only in a
   disposable Linux container with systemd as PID 1 (the recipe under the
-  real-systemd bullet above), never in your own login.
+  real-systemd bullet above, or [the Linux live acceptance
+  run](#the-linux-live-acceptance-run), which builds one and drives the whole
+  product in it), never in your own login.
 
 The hidden commands `_hook` (what app hooks run) and `_collect` (what the
 LaunchAgent runs) are not part of the user interface and may change.
+
+## The Linux live acceptance run
+
+The Linux adapter's unit tests run against fakes and the `real-systemd` CI job
+runs two real-manager tests; neither runs the product the way a person does.
+`scripts/acceptance/linux/host.sh` does: the real `setup`, hooks, timer, collector,
+`status`, `setup --refresh` and `uninstall`, over a real systemd 255 user manager,
+with a MinIO standing in for the bucket. Run it before a change to the Linux
+scheduler, `setup`'s rollback, `uninstall`, the collector's environment or the
+Cursor snapshot root merges, and before any claim that Linux works is published.
+
+```sh
+scripts/acceptance/linux/host.sh            # the whole run
+scripts/acceptance/linux/host.sh --dry-run  # what it would create; no Docker needed
+```
+
+It needs only Docker (colima or Docker Desktop on a Mac; with a Linux Docker the
+privileged machine shares your own kernel, so use a VM there) and Go to
+cross-build (`BUILD_IN_DOCKER=1` builds in a `golang` container instead). It builds `linux`
+binaries of your working tree, starts a privileged Ubuntu 24.04 container with
+systemd as PID 1 and a MinIO container on a network of their own, runs
+`guest.sh` in the machine as root, prints each check as `PASS` or `FAIL`, and
+removes everything it made (named `aa-accept-<random>-*`; it removes nothing
+else, such as a MinIO of your own) whether it passes, fails or is interrupted.
+Nothing runs on your Mac but Docker's client and the Go build, nothing of your
+home, Keychain or buckets is involved, the only credentials are a MinIO user and
+password made up for the run, and every transcript is synthetic (the repository's
+fixture, and a Cursor database the script writes). It takes about
+three minutes (150 to 170 seconds measured) with Docker's caches warm, most of it waiting for systemd timers (the
+collector's first run is a minute after boot). It is not in CI: a privileged
+container is not something CI should be asked for.
+`python3 scripts/test_linux_acceptance.py` is in CI and checks the scripts
+without Docker (shellcheck, `--dry-run`, and with a fake `docker` that cleanup
+removes only the run's own names, on success, failure and interruption).
+
+**What it covers**, by section of `guest.sh` (the README beside the scripts lists
+each check):
+
+- Setup and the timer: `setup --yes` to S3 from a shell with XDG variables;
+  the unit files' content and mode, the recorded `PATH` and XDG environment,
+  `append:` logging, the enable link, the timer running the collector in the
+  manager, `config.json`'s backend and `host_id`.
+- Capture: a synthetic Claude Code session through the hook command setup
+  installed, published by the **timer's** collector (not `sync`) and read back
+  with `list` and `show`; a hand-made Cursor database written the way a running
+  Cursor leaves it, imported by `backfill` through a copy under
+  `$XDG_CACHE_HOME/agent-archive/cursor-snapshots` (mode, `CACHEDIR.TAG`, the
+  copy removed, nothing under `/tmp` or the default cache).
+- `status`: the XDG-drift warnings, and the machine-ID clone warning (quiet on
+  the original; after `/etc/machine-id` changes it warns in `status`, `--json`
+  and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
+  bind-mounted over `/etc/machine-id` is not read, so it stays quiet).
+- `setup --refresh` after the binary moved, and `uninstall`.
+- The enable link on every path that removes a job: `uninstall`;
+  `uninstall --skip-scheduler` with a reachable manager and with no user bus
+  (the unit files go, no dangling link is left, the manager keeps the timer until
+  the printed stop command is run, and that command stops it); and a `setup`
+  whose start fails after `systemctl enable` made the link (a `systemctl` wrapper
+  in the user's `PATH` enables without starting, then fails): the rollback leaves
+  no files, no link and no running timer.
+- The real-manager Go tests (`AGENT_ARCHIVE_REAL_SYSTEMD=1`) as a second lingering
+  user, and `cursorstore`'s snapshot tests on a real Linux account.
+
+**What it does not cover:** the real Cursor application, `cursor-agent` and the
+Cursor database layout on Linux (the database is hand-made after macOS's and VS
+Code's layout, so a real Cursor's Linux paths and its hook approval are
+unverified); Claude Code itself (the hook payloads are hand-written); any distribution
+other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
+252 and 255 for the adapter's parsing, but only 255 has run live); amd64, unless a run
+below says otherwise; a manager without lingering over a real logout (the
+no-user-bus session is simulated by unsetting the bus variables); real R2 or
+AWS (MinIO stands in); WSL; Linux running as the machine's only user session
+with a desktop; and anything about upgrades from an earlier release.
+
+**Last run** (record each run that follows a change to what it covers: date,
+commit, systemd, architecture, result):
+
+- 2026-09-30, the tree of the pull request that added the run (on top of 5c's
+  enable-link and clone-warning change), Ubuntu 24.04.5 LTS, systemd 255
+  (255.4-1ubuntu8.17), linux/arm64 (Docker in a colima VM on an Apple silicon
+  Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
+  the product. amd64 has not been run (the script builds for Docker's
+  architecture; on an amd64 host it would run as is).
+- 2026-09-30, the same pull request after review (the Go test binaries must
+  report each named test passed, a root-only `cursorstore` test added), same
+  machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
+  (the enable link left out of uninstall's paths, and the clone warning turned
+  off) failed 8 checks, in sections 6, 9, 11 and 12.
+
+When a check fails, read it from the top (later sections build on earlier ones),
+and diagnose before changing a check: a failure is a finding about the product
+until shown to be the harness's. `KEEP=1` leaves the machine for a look; the
+README says how to get a shell as the user whose manager is running.
 
 ## Fixtures and goldens
 

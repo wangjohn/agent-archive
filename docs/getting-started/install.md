@@ -40,8 +40,10 @@ What was tested on Linux, so you can judge how far to trust it:
 
 - A live acceptance run of the real `setup`, hook, timer-driven collector,
   `status`, `setup --refresh` and `uninstall` on Ubuntu 24.04 with systemd
-  255 on arm64 (`scripts/acceptance/linux`), over synthetic sessions and a
-  throwaway S3-compatible bucket.
+  255 on arm64 ([`scripts/acceptance/linux`](../../scripts/acceptance/linux/README.md)),
+  over synthetic sessions and a throwaway S3-compatible bucket (MinIO): 89
+  checks, all passed. What it covers and what it does not is in
+  [testing](../../dev/contributing/testing.md#the-linux-live-acceptance-run).
 - The systemd adapter against a real user manager in CI on an x86-64 Ubuntu
   runner, and against recorded output of systemd 239 (Rocky 8), 245 (Ubuntu
   20.04), 252 (Debian 12) and 255 (Ubuntu 24.04).
@@ -67,7 +69,7 @@ What is **not** verified on Linux:
 - **Real R2 and Amazon S3 from Linux.** The live run uploaded to a MinIO
   bucket; the storage code is the same as on macOS.
 - **A real logout with lingering off** (the no-user-bus case is simulated),
-  **WSL**, and **a home directory shared across several machines**, which is
+  **a desktop login** (the live run was a headless container), **WSL**, and **a home directory shared across several machines**, which is
   [not supported](../guides/multiple-machines.md#a-home-directory-shared-across-machines-is-not-supported).
 
 Windows is not supported.
