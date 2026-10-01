@@ -19,6 +19,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // ErrRefreshRequired means the source bundle a metadata sidecar points to is
@@ -144,8 +145,13 @@ type ListOptions struct {
 // a sequential read would. A listing split into ranges fails with the error
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
+	span := trace.Start("list metadata")
+	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)
+	scan := span.Child("scan cache")
 	known := options.Cache.keys(listPrefix)
+	scan.Count("cached keys", len(known))
+	scan.End()
 	objects, err := listObjects(ctx, store, listPrefix, known)
 	if err != nil {
 		return nil, err
@@ -156,6 +162,8 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 			sidecars = append(sidecars, object)
 		}
 	}
+	span.Count("keys", len(objects))
+	span.Count("sidecars", len(sidecars))
 	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache, options.Progress)
 	if err != nil {
 		return nil, err
@@ -205,6 +213,13 @@ func listPrefixFor(prefix, harness string) string {
 // since the listing is left out, and one that is invalid is left out and
 // returned in skipped, in key order; neither stops the others.
 func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache, progress func(done, total int)) (loaded []archive.Metadata, skipped []SkippedSidecar, err error) {
+	span := trace.Start("read sidecars")
+	var cached, downloaded atomic.Int64
+	defer func() {
+		span.Count("from cache", int(cached.Load()))
+		span.Count("downloaded", int(downloaded.Load()))
+		span.End()
+	}()
 	out := make([]archive.Metadata, len(objects))
 	present := make([]bool, len(objects))
 	errs := make([]error, len(objects))
@@ -233,7 +248,13 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 					progress(int(finished.Add(1)), len(objects))
 				}
 			}()
-			metadata, err := readListedSidecar(ctx, store, object, cache)
+			metadata, fromCache, err := readListedSidecar(ctx, store, object, cache)
+			switch {
+			case err == nil && fromCache:
+				cached.Add(1)
+			case err == nil:
+				downloaded.Add(1)
+			}
 			switch {
 			case errors.Is(err, storage.ErrNotFound):
 				// Deleted since the listing.
@@ -269,24 +290,25 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 }
 
 // readListedSidecar serves an unchanged sidecar from the cache and otherwise
-// downloads it. Only a sidecar which decoded and validated is cached, and a
-// cache entry which no longer decodes is treated as a miss.
-func readListedSidecar(ctx context.Context, store storage.ObjectStore, object storage.Object, cache *MetadataCache) (archive.Metadata, error) {
+// downloads it, saying which it did. Only a sidecar which decoded and
+// validated is cached, and a cache entry which no longer decodes is treated
+// as a miss.
+func readListedSidecar(ctx context.Context, store storage.ObjectStore, object storage.Object, cache *MetadataCache) (metadata archive.Metadata, fromCache bool, err error) {
 	if data, ok := cache.get(object.Key, object.ETag); ok {
 		if metadata, err := decodeMetadata(object.Key, data); err == nil {
-			return metadata, nil
+			return metadata, true, nil
 		}
 	}
 	data, err := store.Get(ctx, object.Key)
 	if err != nil {
-		return archive.Metadata{}, fmt.Errorf("read metadata %q: %w", object.Key, err)
+		return archive.Metadata{}, false, fmt.Errorf("read metadata %q: %w", object.Key, err)
 	}
-	metadata, err := decodeMetadata(object.Key, data)
+	metadata, err = decodeMetadata(object.Key, data)
 	if err != nil {
-		return archive.Metadata{}, err
+		return archive.Metadata{}, false, err
 	}
 	cache.put(object.Key, object.ETag, data)
-	return metadata, nil
+	return metadata, false, nil
 }
 
 // ReadMetadata reads and validates one metadata sidecar by its object key.
@@ -476,6 +498,7 @@ func matchesSkillIdentity(name, hash string, f Filter) bool {
 // metadata pointer. A schema-1 bundle (a single JSON document) is refused with
 // an error naming its schema version.
 func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, limits Limits) (archive.SourceBundle, error) {
+	defer trace.Start("load source").End()
 	if err := metadata.ValidateSourceReference(); err != nil {
 		return archive.SourceBundle{}, err
 	}
