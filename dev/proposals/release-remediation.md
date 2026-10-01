@@ -5,27 +5,37 @@ are maintained in the linked PRs. Release sign-off still requires disposable
 live acceptance. Prepared: 2026-10-01. Refreshed baseline: `61d068b` on `main`,
 compared with `v0.1.1`. The original investigation used `d85766f`; its observations
 below are historical reproductions, not claims that every failure remains on
-the refreshed baseline.
+the refreshed baseline. This documentation integration was reconciled against
+`98f8bd0898abc8f22e4d67d567cf11ae2b88ee2f`, including the Linux acceptance
+evidence in `9e67e981c89da8db78a8b96e40dae6fbb6f0c472`.
 
 ## Refreshed execution record
 
 - A: [PR #261](https://github.com/wangjohn/agent-archive/pull/261) implements
   resumable cleanup. The manifest remains immutable; recovery builds a new
-  reviewable plan from original surviving keys. Consult its review and checks for the final
-  deletion-boundary and recovery evidence.
+  reviewable plan from original surviving keys. The reviewed
+  `ddb83044846011ee6bfd64f36d70033408e317c8` implementation records manifest
+  progress capsules and lineage, including metadata absence across recovery
+  history. Consult the PR for final matrix, review, and CI evidence; local
+  verification does not establish disposable S3/R2 acceptance.
 - B: the refreshed baseline already retains immutable rendered pager bytes.
   [PR #259](https://github.com/wangjohn/agent-archive/pull/259) tests complete
   fallback for startup failures, including shell exits 126/127. Ordinary pager
   exit, signals, and Ctrl-C preserve behavior without replaying the listing.
+  It merged as `235a86d`.
 - C/D: [PR #264](https://github.com/wangjohn/agent-archive/pull/264) makes the
   README reach app-specific verified capture and uses
   `list --all-projects --json --limit 0` for sizing. Local documentation and
   CLI verification is recorded below; live per-app acceptance remains pending.
-- E: the baseline already uses a bounded durable admission-intent queue and
-  moves staging disk synchronization outside its short queue lock.
-  [PR #262](https://github.com/wangjohn/agent-archive/pull/262) implements the
-  pause/resume generation boundary fix for delayed intents. Consult its final review,
-  head, and checks for contention and registration regression evidence.
+- E: [PR #262](https://github.com/wangjohn/agent-archive/pull/262) moves the
+  first admission-intent file synchronization outside the short queue lock
+  and persists a pause generation, so delayed intents cannot cross a
+  pause/resume boundary. Independent final review was clean on
+  `ea594428df6d18c3fe939fd7f2c8da7ed52aa920`. The documented normal performance
+  run on that exact head passed with zero missing intents and p99 about 727 ms.
+  This evidence does not measure the whole installed CLI startup/hook budget;
+  live app overlap and end-to-end latency acceptance remain release gates.
+  Consult the PR for current CI and integration evidence.
 
 The package designs below retain the original requirements, adjusted where the
 refreshed implementation changed their premise. Consult each PR for its final
@@ -270,7 +280,10 @@ this plan with the event format, lock order, replay ownership, and migration:
   for an event that cannot be retained or replayed. Account for cleanup,
   uninstall, legacy installs, and status visibility.
 
-The refreshed baseline has implemented the admission-intent inbox. Retain the
+The refreshed baseline has implemented the admission-intent inbox. PR #262
+adds first-intent synchronization outside the queue lock and a persisted pause
+generation. The fallback discussion above retains the original investigation
+requirements; it does not describe work still to be designed. Retain the
 requirements above as the design and regression checklist, and audit delayed
 publication across pause/resume generations. The boundary fix and its final
 regression evidence are tracked in PR #262. Ordinary lock exhaustion

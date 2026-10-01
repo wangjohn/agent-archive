@@ -89,12 +89,14 @@ systemd user timer, so a headless machine or an SSH session needs `loginctl
 enable-linger`; there is no cron fallback. An R2 key is kept in a private file
 (not encrypted), so use an S3 profile where you can. Release binaries are
 unsigned (the installer checks them against `SHA256SUMS`, and `gh attestation
-verify` confirms where they came from). What is **not** verified on Linux:
+verify` confirms where they came from). The live synthetic-session acceptance
+run passed 91 checks on Ubuntu 24.04 with systemd 255 on both arm64 and amd64,
+using a throwaway MinIO bucket. What is **not** verified on Linux:
 the real Cursor app and `cursor-agent` hooks (a Cursor forum report says
 they may fail silently there, so Cursor capture is best effort), the real
 Claude Code and Codex apps, distributions and systemd versions other than
-Ubuntu 24.04 with systemd 255 (run live on arm64), an amd64 live run, a real
-logout with lingering off, and WSL. A
+Ubuntu 24.04 with systemd 255, real R2 and Amazon S3, a real
+logout with lingering off, a desktop login, and WSL. A
 home directory shared by several Linux machines (NFS, say) is refused by
 setup unless you opt in for a home only one machine mounts
 ([details](multiple-machines.md#a-home-directory-shared-across-machines)).

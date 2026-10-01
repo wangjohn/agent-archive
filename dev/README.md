@@ -34,6 +34,7 @@ implemented design records live in `proposals/implemented/`.
 
 | Proposal | Status |
 | --- | --- |
+| [Release remediation](proposals/release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
 | [Local session discovery](proposals/local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
 | [Portable handoff, guided setup, and Linux](proposals/implemented/portable-handoff-and-onboarding.md) | Implemented (repo-key handoff, guided S3 and R2 creation, Linux); guided R2 is experimental. Open items in the document. |
