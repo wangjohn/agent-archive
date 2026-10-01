@@ -545,15 +545,12 @@ type pickerPages struct {
 	pages    []pickerPage
 }
 
-func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	format.Numbered = true
-	return l.pickRows(p, stdout, formatSessionRows(sessions, format), totalMatched, truncated, format, action)
-}
-
-// pickRows is pick for rows already built, which handoff annotates with
-// sessions not yet uploaded. format.Numbered must be set. An answer that is
-// not a number, an ID, or a command word is words to filter the table by;
-// they add to the filter already there.
+// pickRows shows the numbered table of rows and prompts until the user
+// selects a row (ok=true), quits or input ends (ok=false), or an error occurs.
+// A table taller than the terminal is shown a page at a time, or scrolled
+// when keys are read. format.Numbered must be set. An answer that is not a
+// number, an ID, or a command word is words to filter the table by; they add
+// to the filter already there.
 func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	l.memo = nil
 	if l.keys != nil {

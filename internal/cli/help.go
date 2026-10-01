@@ -184,7 +184,14 @@ project every row shares is left out of the table and named in the heading.
 On a terminal with an interactive stdin, list a numbered table and pick a
 session to show its summary, then t for its transcript, Enter or b to go
 back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
-scroll. Piped or --json output is never interactive, nor is any run with
+scroll. Press / to filter the rows as you type, with the words WORDS takes:
+the first row is highlighted, the arrows move the highlight, Enter shows it,
+and Esc clears the filter. A subagent that matches is shown under its parent,
+which is shown too. Rows keep their numbers while filtered. WORDS open the
+browser with the filter already filled in, to edit. Where keys cannot be read,
+the browser reads lines, and an answer that is not a number, an ID, or q is
+words to filter by (an empty answer clears them). Piped or --json output is
+never interactive, nor is any run with
 AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
 configuration reference). On a terminal without interactive stdin, text is
 paged through $PAGER unless --no-pager.
@@ -243,9 +250,13 @@ metadata sidecar instead. WORDS also work, as in list: every word must appear
 in some field of a session (name, title, branch, project, harness, the start
 of its SESSION_ID from 4 characters, or a PR number such as #212), looking at
 this repository's sessions first. One match is shown; several on a terminal
-open a picker, and without one they are listed with the command to run next.
+open the browser on them, with the words in its filter, and without one they
+are listed with the command to run next. With --json or --transcript the
+browser picks the one session to print instead.
 With no SESSION_ID on a terminal, browse sessions as list does: pick one for
-its summary, then t for its transcript, Enter or b to go back, or q to quit.
+its summary, then t for its transcript, Enter or b to go back, or q to quit,
+and press / to filter the rows as you type. With --json, it picks one session
+and prints its sidecar.
 On a terminal, the summary and transcript are paged; in the default less,
 scroll with the mouse wheel, arrows, or space, search with /, and quit with
 q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
@@ -373,9 +384,12 @@ answer only when no other session matches. Inside a project, the picker and
 WORDS look at that repository's sessions first (every checkout and worktree of
 it), then everywhere; a note says how many more match in other projects.
 On the picker, the a key, typed alone, switches between the repository and
-all projects. The heading names what is shown, and a dot marks a session active
-in the last 2 minutes. Several matches on a terminal open the
-picker on them; without one, or inside a coding agent, they are listed on
+all projects, and / filters the rows as you type (the arrows move the
+highlight, Enter hands off the highlighted session, Esc clears the filter; a
+subagent that matches shows under its parent). The heading names what is shown,
+and a dot marks a session active in the last 2 minutes. Several matches on a
+terminal open the same picker on them, with the words in its filter; without
+one, or inside a coding agent, they are listed on
 stderr, with a PR column and the exact command to run next, and the command
 exits 1, never guessing. WORDS skip the agent session running the command,
 unless --to is given.

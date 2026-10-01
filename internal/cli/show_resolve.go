@@ -15,8 +15,9 @@ import (
 type showLookup struct {
 	SessionID string
 	Harness   string
-	// Cancelled is set when the user quit an interactive disambiguation
-	// picker without choosing a session (caller should exit 0).
+	// Cancelled is set when the user quit the browser opened on several
+	// matches without choosing a session, or browsed them (it showed the
+	// session itself): the caller has nothing left to read, and exits 0.
 	Cancelled bool
 }
 
