@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -137,7 +138,7 @@ type subagentOutcome struct {
 // materializeSubagentCandidates registers each candidate a hook left, rejects
 // it, or keeps it waiting for its transcript, judged at now, the pass's
 // clock. One unreadable candidate fails only itself.
-func materializeSubagentCandidates(local *state.Store, opts Options, now time.Time) subagentOutcome {
+func materializeSubagentCandidates(ctx context.Context, local *state.Store, opts Options, now time.Time) subagentOutcome {
 	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
 		return subagentOutcome{errors: map[string]error{"subagent-candidates": candidateFailure(err)}}
@@ -147,7 +148,7 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 		outcome.errors[id] = candidateFailure(issue)
 	}
 	for _, candidate := range candidates {
-		err := materializeSubagentCandidate(local, candidate, opts, now)
+		err := materializeSubagentCandidate(ctx, local, candidate, opts, now)
 		var rejected subagentRejectedError
 		switch {
 		case err == nil:
@@ -168,13 +169,16 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 	return outcome
 }
 
-func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options, now time.Time) error {
+func materializeSubagentCandidate(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, opts Options, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	parent, err := admittedSubagentParent(local, candidate, opts)
 	if err != nil {
 		return err
 	}
 	reg := assembleSubagentRegistration(parent, candidate)
-	reg, err = validateCandidateTranscript(local, candidate, parent, reg, opts, now)
+	reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
 	if err != nil {
 		return err
 	}
@@ -215,12 +219,15 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 	}
 }
 
-func validateCandidateTranscript(local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options, now time.Time) (archive.SessionRegistration, error) {
+func validateCandidateTranscript(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options, now time.Time) (archive.SessionRegistration, error) {
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
-	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, _, err := filterTranscript(ctx, adapter, reg, opts.maxTranscriptBytes())
+	if ctx.Err() != nil {
+		return reg, ctx.Err()
+	}
 	// A transcript with lines but no recognized record yet is treated like an
 	// empty one: its first record may still be on its way.
 	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, archive.ErrUnsafeSourceFormat) {

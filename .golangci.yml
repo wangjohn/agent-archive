@@ -30,6 +30,30 @@ linters:
   settings:
     depguard:
       rules:
+        native-reads-are-isolated:
+          files:
+            - "**/internal/nativesessions/*.go"
+            - "**/internal/transcriptio/*.go"
+            - "!$test"
+          deny:
+            - pkg: os/exec
+              desc: native reads never run programs
+            - pkg: net/http
+              desc: native reads never use the network
+            - pkg: github.com/wangjohn/agent-archive/internal/config
+              desc: native reads have no configured archive dependencies
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: native reads never register or persist sessions
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: native reads never access archive storage
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: native reads never access credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: discovery does not filter full conversations
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: native reads have no CLI dependency
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: native reads have no terminal dependency
         # statetest's whole-file saves bypass the single in-memory copy a
         # collector scan keeps (see its package doc), so only tests use it.
         statetest-only-in-tests:
