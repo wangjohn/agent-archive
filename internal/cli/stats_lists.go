@@ -9,30 +9,25 @@ import (
 
 // The commands whose output has every row of a list a screen cuts. A hint
 // names one only when it is true: plain --json keeps the engine's top five
-// projects, so the projects are in --json --by project (groups.rows, which is
-// never cut), and the models are in --json (the engine never cuts them).
+// projects, skills and MCP servers, so --json --all has every one of them,
+// and the models are in --json (the engine never cuts them). The detail
+// screen's project table (--by project) is a group table, whose rows are in
+// --json --by project.
 const (
-	allProjectsHint = "--json --by project"
-	allModelsHint   = "--json"
+	allProjectsHint      = "--json --all"
+	allModelsHint        = "--json"
+	allUsageHint         = "--json --all"
+	allProjectGroupsHint = "--json --by project"
 )
 
 // listMore is the line under a list that says how many rows it leaves out and
-// where to find them all: hint is the command that lists every row. The
-// interactive screen takes no command, and its window is the one w chose, not
-// a flag, so there the line says to quit first and names the window (and
-// that the filters it was started with apply).
+// where to find them all: hint is the command that lists every row. See
+// moreAtoms for the interactive screen's variant.
 func (p *statsPrinter) listMore(shown, total int, hint string) []string {
 	if total <= shown {
 		return nil
 	}
-	if p.v.interactive {
-		text := fmt.Sprintf("+ %d more (quit, then run agent-archive stats --days %d %s", total-shown, p.s.Window.Days, hint)
-		if p.v.filters != (statsFilters{}) {
-			text += ", with the same filters"
-		}
-		return p.dimAll(p.wrap(text + ")"))
-	}
-	return p.dimAll(p.wrap(fmt.Sprintf("+ %d more (all in %s)", total-shown, hint)))
+	return p.dimAll(p.packAtoms(0, 0, p.moreAtoms(total-shown, hint, p.width)))
 }
 
 // share is a row's part of a total (0 to 1); a total that is not above zero
@@ -44,8 +39,8 @@ func share(part, total float64) (float64, bool) {
 	return math.Min(part/total, 1), true
 }
 
-// projectsPage is every project, by spend: a bar, its sessions, tokens,
-// spend and share of the spend.
+// projectsPage is the projects by spend, up to statsMaxListRows: a bar, its
+// sessions, tokens, spend and share of the spend.
 func (p *statsPrinter) projectsPage() [][]string {
 	return [][]string{p.header(pageProjects), p.projectsTable(), p.footer("--view overview")}
 }
@@ -98,7 +93,7 @@ func (p *statsPrinter) projectsTable() []string {
 	return append(lines, p.listMore(len(shown), total, allProjectsHint)...)
 }
 
-// modelsPage is every model family: its spend and share of it, tokens and
+// modelsPage is the model families, up to statsMaxListRows: its spend and share of it, tokens and
 // sessions. A model the price table does not list is flagged unpriced, with
 // its tokens.
 func (p *statsPrinter) modelsPage() [][]string {

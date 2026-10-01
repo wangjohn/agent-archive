@@ -32,6 +32,27 @@ private credentials file: [where credentials are kept](../security/privacy.md#wh
 
 ## Amazon S3
 
+### Let setup create it
+
+If you have an AWS profile that may create buckets, `agent-archive setup`
+can do the console steps: choose **Amazon S3: create a new bucket for
+me**, pick the profile, and confirm the region and name. Setup creates
+the bucket, turns on all four **Block Public Access** settings, checks them,
+and prints the [least-privilege
+policy](../security/bucket-permissions.md#amazon-s3) for the new bucket. The
+profile needs `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock` (see
+[creating a bucket](../security/bucket-permissions.md#creating-a-bucket-setup-time-only));
+without them setup says so and lets you pick an existing bucket. It creates
+buckets in the standard AWS regions only (not China or GovCloud); pick an
+existing bucket for those. Setup never creates IAM users or keys. After the
+bucket is made it asks which profile archiving should use, defaulting to the
+one that created it, which can do far more than archiving needs. To use a
+narrower one, create a separate IAM user or role with the printed policy, save
+it as its own profile, and choose it at that question (or run
+`agent-archive setup` again to switch to it).
+
+### By hand
+
 1. Create a bucket in the S3 console. Keep **Block all public access** on
    (the default).
 2. Create an IAM user (or role) with the
@@ -39,7 +60,7 @@ private credentials file: [where credentials are kept](../security/privacy.md#wh
    that bucket, and an access key for it.
 3. Save the key as an AWS profile: `aws configure --profile agent-archive`.
 
-Then run `agent-archive setup`, choose `s3`, and pick that profile.
+Then run `agent-archive setup`, choose **Amazon S3**, and pick that profile.
 
 ## One key per Mac
 

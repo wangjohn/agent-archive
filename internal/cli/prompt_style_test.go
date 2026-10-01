@@ -278,7 +278,7 @@ func TestStorageCheckSkipsSpinnerForCredentialProcess(t *testing.T) {
 // status for it, as the signal does anywhere else in setup.
 func TestStorageCheckInterruptKeepsTheSignalsExitStatus(t *testing.T) {
 	t.Parallel()
-	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129, syscall.SIGQUIT: 131} {
 		signals := make(chan os.Signal, 1)
 		release := make(chan struct{})
 		env := Env{

@@ -261,11 +261,12 @@ when in doubt. With none, the message points to `agent-archive list`.
 With no session selector, `handoff` opens a numbered session picker when
 stdin and stdout are terminals. It lists this Mac's sessions, including ones
 marked `not yet uploaded`, together with archived ones, most recently active
-first; a session that is both appears once. Sessions with no prompt yet are
-left out, and `--harness` narrows the list. When the archive cannot be read
-(offline, say), the picker lists this Mac's sessions and says why archived
-ones are missing. Quit with `q` without producing a handoff. In a script or
-pipeline, pass a session ID or title, `--latest`, or `--file`.
+first; a session that is both appears once. Subagent sessions and sessions
+with no prompt yet are left out, and `--harness` narrows the list. When the
+archive cannot be read (offline, say), the picker lists this Mac's sessions
+and says why archived ones are missing. Quit with `q` without producing a
+handoff. In a script or pipeline, pass a session ID or title, `--latest`, or
+`--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
