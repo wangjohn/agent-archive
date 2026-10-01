@@ -152,3 +152,42 @@ func TestFreshIdentityLookupDoesNotEnumerateRegistrations(t *testing.T) {
 		t.Fatal("fresh lookup enumerated registrations", err)
 	}
 }
+
+func TestUnsafeLegacyIdentityCannotAllocateReplacement(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{"", "../other", ".", "nested/id"} {
+		t.Run(id, func(t *testing.T) {
+			t.Parallel()
+			store := newTestStore(t)
+			if err := local.Write(nativeSessionIndexPath(store.home, "native"), sessionIndexEntry{ArchiveSessionID: id}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.AgentSessionID("codex", "native"); err == nil {
+				t.Fatal("corrupt legacy identity was treated as unseen")
+			}
+			if _, _, err := store.EnsureAgentSessionID("codex", "native"); err == nil {
+				t.Fatal("corrupt legacy identity allocated a replacement")
+			}
+			if _, found, err := store.journalLookup("codex", "native"); err != nil || found {
+				t.Fatal("rejected legacy identity wrote authoritative state", err)
+			}
+		})
+	}
+}
+
+func TestLegacyIdentityWithDifferentNativeNeedsRepair(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	reg, err := store.RegisterOrMerge("native-1", registrationFor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Write(nativeSessionIndexPath(store.home, "different-native"), sessionIndexEntry{ArchiveSessionID: reg.ArchiveSessionID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []string{"claude", "codex"} {
+		if _, _, err := store.EnsureAgentSessionID(agent, "different-native"); err == nil {
+			t.Fatal("legacy identity with mismatched native was treated as unseen")
+		}
+	}
+}

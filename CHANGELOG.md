@@ -32,6 +32,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   mappings keep their archive IDs. Hooks and discovery preserve original
   admission, provenance and destination when they meet an existing session.
   Retention and undo removal records prevent automatic resurrection.
+  Scheduled privacy refresh preserves the current consent and identity writer
+  protection; malformed legacy identity mappings require repair.
 - Status JSON version 4 separates actual hook observation from discovery
   provenance. Parser 0.19.0 adds truthful discovery provenance and the
   `discovered_without_hook_evidence` capture gap without an import timestamp.

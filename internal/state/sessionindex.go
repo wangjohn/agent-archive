@@ -135,10 +135,16 @@ func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
 	}
 	var legacy sessionIndexEntry
 	err = local.Read(nativeSessionIndexPath(s.home, native), &legacy)
-	if err == nil && safeFileComponent(legacy.ArchiveSessionID) {
+	if err == nil && !safeFileComponent(legacy.ArchiveSessionID) {
+		return "", false, errors.New("legacy identity index needs repair")
+	}
+	if err == nil {
 		reg, found, e := s.LoadRegistration(legacy.ArchiveSessionID)
 		if e != nil {
 			return "", false, e
+		}
+		if found && reg.NativeSessionID != native {
+			return "", false, errors.New("legacy identity index ownership conflict")
 		}
 		if found && archive.CanonicalHarness(reg.Harness.Name) == agent && reg.NativeSessionID == native {
 			return legacy.ArchiveSessionID, true, nil
