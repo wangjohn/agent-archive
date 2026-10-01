@@ -304,6 +304,10 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --all                          With --json, list every project, skill and
+                                 MCP server, not the top five of each (models
+                                 are always all). Only with --json: the --html
+                                 page keeps its top lists
   --html                         Write one self-contained web page (inline
                                  styles and SVG; no script, no requests, works
                                  in light and dark and prints) to stdout, or

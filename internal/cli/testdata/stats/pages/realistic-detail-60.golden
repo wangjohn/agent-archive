@@ -40,8 +40,8 @@ Costliest       ~$564 · styleprofile · long context, 38
                 subagents
 
 SKILLS AND MCP
-Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide
-        2 sessions
+Skills  code-review 10 · review-pr 4 · docs 3 ·
+        cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor
         only)
 Skills count the sessions that used each one; MCP counts
