@@ -330,6 +330,7 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 	next.HostID = cmp.Or(old.HostID, env.hostFingerprint())
 	next.SchemaVersion = config.SchemaVersion
 	next.Paused = old.Paused
+	next.PauseGeneration = old.PauseGeneration
 	next.Archive.Enabled = true
 	next.Archive.MachineID = next.MachineID
 	next.Archive.SchemaVersion = 1
