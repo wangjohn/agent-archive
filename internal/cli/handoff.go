@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -92,16 +91,17 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// Every prompt reads through one buffer, so an answer typed (or
 	// scripted) ahead for a later prompt is not lost to an earlier one's.
 	// A launched agent gets stdin itself: it must see the terminal.
-	answers := bufio.NewReader(stdin)
+	input := newTypedInput(stdin)
+	answers := input.answers
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.
 	if opts.sessionID != "" {
-		if code, done := resolveHandoffQuery(&opts, home, interactive, answers, stdout, stderr, env); done {
+		if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
 			return code
 		}
 	}
 	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		if code, done := chooseHandoffSession(&opts, home, interactive, answers, stdout, stderr, env); done {
+		if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
 			return code
 		}
 	}
@@ -677,6 +677,18 @@ func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {
 	out := sessions[:0:0]
 	for _, m := range sessions {
 		if m.ParentSessionID == "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// subagentSessions is the subagent sessions among sessions: those with a
+// parent.
+func subagentSessions(sessions []archive.Metadata) []archive.Metadata {
+	out := sessions[:0:0]
+	for _, m := range sessions {
+		if m.ParentSessionID != "" {
 			out = append(out, m)
 		}
 	}

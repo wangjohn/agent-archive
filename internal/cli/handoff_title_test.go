@@ -159,8 +159,8 @@ func TestHandoffTitleAmbiguousOnATerminalOpensThePickerOnTheMatches(t *testing.T
 	if strings.Contains(out, f.both[:minShortSessionID]) || strings.Contains(out, f.archiveOnly[:minShortSessionID]) {
 		t.Fatalf("the picker lists sessions the title does not match:\n%s", out)
 	}
-	if !strings.Contains(out, "2 session(s)") {
-		t.Fatalf("footer:\n%s", out)
+	if !strings.Contains(out, `Hand off · "yet" matches 2`) {
+		t.Fatalf("heading:\n%s", out)
 	}
 	// Row 1 is the newest match; choosing it hands that session off.
 	out, errOut, code = runPicker(t, f.env, "1\n", "yet")
@@ -400,8 +400,9 @@ func TestHandoffTitleListsAnIDPublishedUnderTwoHarnesses(t *testing.T) {
 }
 
 // A title as common as a word in every prompt lists a few candidates and
-// counts the rest, on stderr and in the picker, rather than flooding the
-// caller.
+// counts the rest on stderr, rather than flooding the caller. The picker is
+// for a person, who scrolls it and narrows it with the filter, so it lists
+// every match.
 func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -420,7 +421,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 		t.Fatalf("not the newest first:\n%s", errOut)
 	}
 	out, errOut, code := runPicker(t, f.env, "q\n", "bulk job")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s)", handoffCandidateLimit, extra)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0 ") || strings.Contains(out, "Showing") {
 		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

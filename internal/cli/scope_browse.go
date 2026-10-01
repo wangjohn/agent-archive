@@ -19,7 +19,26 @@ type scopeView struct {
 	hidden int
 	// note is a line the footer adds (a search's count of matches elsewhere).
 	note string
+	// search, when set, lists every session the view's scope holds, subagents
+	// too, which the filter searches; read only once a filter is typed, and
+	// the rows alone are searched without it. A top-level row there has the
+	// number it has in rows (more of them, past a limit), and a subagent has
+	// none.
+	search func() []listRow
+	// searchNote is the footer's line about the matches elsewhere of the
+	// words the browser opens with, which the filter shows only while it
+	// holds those words; searchWords says them.
+	searchNote  string
+	searchWords string
+	// nothing is set when the view holds nothing though it has rows: the
+	// words the browser opens with match none of them, so the browser opens
+	// on all projects as it does for a scope with no session.
+	nothing bool
 }
+
+// holdsNothing reports whether the view has nothing to show: no row, or none
+// that the words the browser opens with match.
+func (v scopeView) holdsNothing() bool { return len(v.rows) == 0 || v.nothing }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
 // session.
@@ -68,7 +87,7 @@ func newScopeChoices(scope sessionScope, format listFormatOptions, plain bool, r
 	switch {
 	case scope.Label == "" || scope.All:
 		c.current = viewAll
-	case len(c.choice(viewScope).rows) == 0:
+	case c.choice(viewScope).holdsNothing():
 		c.current, c.fellBack = viewAll, true
 	default:
 		c.current = viewScope
@@ -89,7 +108,7 @@ func (c *scopeChoices) toggle() {
 	if !c.canToggle() {
 		return
 	}
-	if c.current == viewAll && len(c.choice(viewScope).rows) == 0 {
+	if c.current == viewAll && c.choice(viewScope).holdsNothing() {
 		c.fellBack = true
 		all := c.choice(viewAll)
 		all.heading = c.heading(viewAll, all.scopeView, all.constants)
@@ -114,15 +133,38 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 	return c.built[i]
 }
 
+// headingOptions say what a browser adds to a scope's heading.
+type headingOptions struct {
+	// Verb is what Enter does, which leads the heading ("Hand off"); empty
+	// for none.
+	Verb string
+	// Words are the filter's words, empty when there is none; Matches is how
+	// many sessions match them.
+	Words   string
+	Matches int
+	// Keys is set for a browser reading keys, which names Esc while it
+	// filters, and where `a` is typed text, not the other scope.
+	Keys bool
+}
+
 // heading is the line above the table, naming what is shown and the other
 // choice: "agent-archive · 42 sessions · a all projects", or "All projects ·
 // 104 sessions · a agent-archive". Columns left out because every row has one
 // value are named here instead. With no scope, and nothing left out, there is
 // nothing to say.
 func (c *scopeChoices) heading(i int, view scopeView, constants []string) string {
+	return c.headingWith(i, view, constants, headingOptions{})
+}
+
+// headingWith is heading in a browser: led by the verb, and while it filters
+// naming what matches in place of how many sessions there are.
+func (c *scopeChoices) headingWith(i int, view scopeView, constants []string, o headingOptions) string {
 	// A folder's or a project's name, cleaned like the PROJECT column.
 	label := archive.DisplayLine(c.scope.Label)
 	var parts []string
+	if o.Verb != "" {
+		parts = append(parts, o.Verb)
+	}
 	switch {
 	case label == "":
 	case c.fellBack:
@@ -132,12 +174,15 @@ func (c *scopeChoices) heading(i int, view scopeView, constants []string) string
 	default:
 		parts = append(parts, allProjectsLabel)
 	}
-	if len(parts) == 0 && len(constants) == 0 {
+	if len(parts) == 0 && len(constants) == 0 && o.Words == "" {
 		return ""
 	}
-	if view.total >= 0 {
+	switch {
+	case o.Words != "":
+		parts = append(parts, fmt.Sprintf("\"%s\" matches %d", archive.DisplayLine(o.Words), o.Matches))
+	case view.total >= 0:
 		parts = append(parts, plural(view.total, "session"))
-	} else {
+	default:
 		parts = append(parts, fmt.Sprintf("%d+ sessions", len(view.rows)))
 	}
 	for _, value := range constants {
@@ -147,6 +192,8 @@ func (c *scopeChoices) heading(i int, view scopeView, constants []string) string
 		}
 	}
 	switch {
+	case o.Words != "" && o.Keys:
+		parts = append(parts, "Esc clear")
 	case !c.canToggle():
 	case c.plain && i == viewScope:
 		parts = append(parts, "--all-projects lists every project")

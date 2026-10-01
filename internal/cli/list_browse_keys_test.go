@@ -311,9 +311,9 @@ func TestKeyPickerScrollsByRowsOnTheWheel(t *testing.T) {
 	// 16 rows: the column header and 15 sessions.
 	spans := []string{"1-15", "4-18", "3-17"}
 	statuses := []string{
-		"Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"36% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"34% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
+		"Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"36% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"34% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
 	}
 	for i, screen := range screens {
 		if rowSpan(screen) != spans[i] || statusLine(screen) != statuses[i] || !strings.HasPrefix(screen, "#") {
@@ -416,7 +416,7 @@ func TestKeyPickerFitsWithoutScrolling(t *testing.T) {
 	t.Parallel()
 	for _, size := range []fixedTerminal{{120, 40}, {}} {
 		_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(12, oneProject), listFormatOptions{}, "\x1b[B\x1b[6~ \x1b[F", "q")
-		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · type a number and Enter · q quit" {
+		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · / filter · type a number and Enter · q quit" {
 			t.Fatalf("%v:\n%s", size, strings.Join(screens, "\n----\n"))
 		}
 	}

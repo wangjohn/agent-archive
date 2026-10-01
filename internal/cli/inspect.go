@@ -160,11 +160,19 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
 		GroupByProject: true, Numbered: browsing, Children: childCounts(sessions),
 	}
-	choices := newScopeChoices(scope, format, !browsing, func(s sessionScope) scopeView {
+	rowsFor := func(s sessionScope) scopeView {
 		v := view(s)
 		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden, note: v.note}
-	})
-	if len(choices.shown().rows) == 0 {
+	}
+	// The browser lists every top-level session, and opens with the words in
+	// its filter; the sessions the search finds decide only which scope it
+	// opens on and the note about matches elsewhere.
+	words := strings.Join(strings.Fields(query), " ")
+	if browsing {
+		rowsFor = browseSearchRows(archiveRows(sessions, opts.limit, format), view, words)
+	}
+	choices := newScopeChoices(scope, format, !browsing, rowsFor)
+	if choices.shown().holdsNothing() {
 		if !q.empty() {
 			terminal.Printf(stdout, "No archived sessions match %q.\n", queryLabel(query))
 		} else {
@@ -173,7 +181,8 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	if browsing {
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, choices, opts.noPager, "list")
+		_, _, code := runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
+		return code
 	}
 	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		return printListTable(w, choices.shown())
@@ -182,6 +191,22 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	return 0
+}
+
+// browseSearchRows is a browser's rows when it opens with words in its filter:
+// the rows it would have without them, in the scope the search settles on. A
+// scope the search finds nothing in counts as holding nothing, so the browser
+// opens on all projects, and the note about matches elsewhere shows while the
+// filter holds those words.
+func browseSearchRows(rows scopeRowsFunc, found func(sessionScope) listView, words string) scopeRowsFunc {
+	if words == "" {
+		return rows
+	}
+	return func(s sessionScope) scopeView {
+		v, hits := rows(s), found(s)
+		v.nothing, v.searchNote, v.searchWords = len(hits.shown) == 0, hits.note, words
+		return v
+	}
 }
 
 // listView is what one scope lists.
@@ -545,7 +570,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *jsonOut {
 			// The one-shot picker, as before the browser: a script-like
 			// request for one document.
-			row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "show")
+			row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "Show")
 			if code != 0 || !selected {
 				return code
 			}
@@ -560,10 +585,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if !ok {
 			return code
 		}
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, choices, *noPager, "show")
+		_, _, code = runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: *noPager})
+		return code
 	}
 
-	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects)
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
 	}

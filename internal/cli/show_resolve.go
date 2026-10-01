@@ -24,10 +24,13 @@ type showLookup struct {
 // lookups win. Otherwise the argument is words, matched as list matches them
 // (sessionQuery) over every archived sidecar, in the tiers of the search: the
 // working directory's repository first, then every project, subagents last.
-// Several matches on a terminal open a one-shot picker that returns the chosen
-// session (so the caller can still honor --transcript and --json); off a
-// terminal they print the candidates and exit 1.
-func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
+// Several matches on a terminal open the browser over them, with the words in
+// its filter: it shows the sessions' details itself (and the lookup is
+// Cancelled, nothing left for the caller to read), unless pickOne is set
+// because the caller has something to do with one session (--transcript or
+// --json), when it returns the chosen session. Off a terminal they print the
+// candidates and exit 1.
+func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
 	if harness == "" || len(query) == 32 {
@@ -96,13 +99,16 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		}.print(stderr)
 		return showLookup{}, 1
 	}
-	format.Style, format.GroupByProject = styleFor(stdout), true
-	row, ok, err := pickBrowseSession(env, newPrompter(stdin, stdout), stdout, matches, len(matches), false, format, "show")
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return showLookup{}, 1
+	format.Style, format.GroupByProject, format.Numbered = styleFor(stdout), true, true
+	spec := browserSpec{Mode: browseSessions, Choices: rowChoices(formatSessionRows(matches, format), format), Query: strings.Join(strings.Fields(query), " "), Command: "show", Store: store, NoPager: noPager}
+	if pickOne {
+		spec.Mode, spec.Verb = pickSession, "Show"
 	}
-	if !ok {
+	row, picked, code := runBrowser(env, newPrompter(stdin, stdout), stdout, stderr, spec)
+	if code != 0 {
+		return showLookup{}, code
+	}
+	if !picked {
 		return showLookup{Cancelled: true}, 0
 	}
 	return showLookup{SessionID: row.SessionID, Harness: row.HarnessKey}, 0

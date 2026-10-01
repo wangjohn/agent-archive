@@ -66,6 +66,8 @@ type listScreen struct {
 	start  int
 	end    int
 	bottom int
+	// cursor is the highlighted row the screen was measured for.
+	cursor int
 }
 
 // pickKeys is pick reading a key at a time. The table scrolls: ↑ and ↓ (and
@@ -75,34 +77,47 @@ type listScreen struct {
 // marked continued, and its column header. Typed characters collect at the
 // prompt until Enter chooses the row they name.
 func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
-	groups := sessionTableGroups(rows, format)
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
-	var footer bytes.Buffer
-	printListFooter(&footer, len(rows), totalMatched, truncated, format)
-	if len(rows) == 0 {
-		if err := printSessionGroups(stdout, groups, format); err != nil {
+	if len(rows) == 0 && l.words() == "" {
+		v := l.view(rows, totalMatched, truncated, format)
+		if err := printSessionGroups(stdout, v.groups, v.format); err != nil {
 			return listRow{}, false, err
 		}
-		terminal.Print(stdout, footer.String())
+		terminal.Print(stdout, v.footer)
 		return listRow{}, false, nil
 	}
 	typed, notice := "", ""
+	prompt := func() string {
+		if l.filtering {
+			return "/" + l.filter
+		}
+		return question + typed
+	}
 	for first := true; ; first = false {
 		if !first && l.clear != nil {
 			l.clear()
 		}
-		screen := l.screen(stdout, groups, format, len(rows), footer.String(), question+typed)
+		v := l.view(rows, totalMatched, truncated, format)
+		screen := l.filterScreen(stdout, v, prompt())
 		var frame bytes.Buffer
-		if l.heading != "" {
-			frame.WriteString(oneRow(l.heading, screen.width) + "\n")
+		if v.heading != "" {
+			frame.WriteString(oneRow(v.heading, screen.width) + "\n")
 		}
-		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), format); err != nil {
+		groups := v.groups
+		if l.filtering {
+			groups = highlightGroups(groups, l.cursor)
+		}
+		if err := printSessionGroups(&frame, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), v.format); err != nil {
 			return listRow{}, false, err
 		}
-		frame.WriteString(footer.String())
-		frame.WriteString(oneRow(screen.status(), screen.width) + "\n")
+		frame.WriteString(v.footer)
+		status := screen.status()
+		if l.filtering {
+			status = filterStatus(screen, action)
+		}
+		frame.WriteString(oneRow(status, screen.width) + "\n")
 		frame.WriteString(oneRow(notice, screen.width) + "\n")
-		frame.WriteString(question + typed)
+		frame.WriteString(prompt())
 		terminal.Print(stdout, frame.String())
 		notice = ""
 		for {
@@ -114,11 +129,16 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 				return listRow{}, false, err
 			}
 			var result listKeyResult
-			typed, result = l.listKey(k, screen, typed)
-			if l.start != screen.start {
+			if l.filtering {
+				result = l.filterKey(k, screen, v)
+			} else {
+				typed, result = l.listKey(k, screen, typed)
+			}
+			if again := l.view(rows, totalMatched, truncated, format); again != v || l.start != screen.start || l.filtering && l.cursor != screen.cursor {
 				// Measured again, so the next key of a burst (PgDn after
 				// PgDn, or after ↓) moves on from here.
-				screen = l.screen(stdout, groups, format, len(rows), footer.String(), question+typed)
+				v = again
+				screen = l.filterScreen(stdout, v, prompt())
 			}
 			switch result {
 			case listQuit:
@@ -131,6 +151,11 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 					return row, true, nil
 				}
 				typed, notice = "", "Enter a listed number or unique short SESSION_ID, or q to quit."
+			case listPick:
+				if l.cursor < len(v.order) {
+					return v.order[l.cursor], true, nil
+				}
+				notice = "Nothing matches the filter; Esc clears it."
 			case listStay:
 			}
 			if !l.keys.buffered() {
@@ -151,11 +176,13 @@ const (
 	listSubmit
 	// listToggle asks for the other scope.
 	listToggle
+	// listPick asks for the row the filter highlights.
+	listPick
 )
 
 // listKey applies one key to the list drawn as screen: it scrolls (moving
-// l.start) or edits what is typed. a (when the scope can change), n, p, and
-// q act only when nothing is typed.
+// l.start) or edits what is typed. a (when the scope can change), n, p, q,
+// and / (which opens the filter) act only when nothing is typed.
 func (l *sessionPicker) listKey(k key, screen listScreen, typed string) (string, listKeyResult) {
 	if move, ok := scrollKeys[k.kind]; ok {
 		l.scroll(move, screen)
@@ -193,6 +220,8 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 		return "", listQuit
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
+	case typed == "" && r == '/':
+		l.filtering, l.cursor = true, 0
 	case typed == "" && (r == 'n' || r == 'N'):
 		l.scroll(scrollPageDown, screen)
 	case typed == "" && (r == 'p' || r == 'P'):
@@ -304,22 +333,28 @@ func (l *sessionPicker) previousScreen(s listScreen) int {
 	return lo
 }
 
+// position is where the screen is in the list: Top, a percentage, Bottom, or
+// All when every row fits.
+func (s listScreen) position() string {
+	switch {
+	case s.bottom == 0:
+		return "All"
+	case s.start == 0:
+		return "Top"
+	case s.start >= s.bottom:
+		return "Bottom"
+	}
+	return fmt.Sprintf("%d%%", s.end*100/s.n)
+}
+
 // status is the line below the list's footer: where the screen is in the
-// list (Top, a percentage, Bottom, or All when every row fits) and the
-// keys.
+// list and the keys.
 func (s listScreen) status() string {
-	const choose = "type a number and Enter · q quit"
+	const choose = "/ filter · type a number and Enter · q quit"
 	if s.bottom == 0 {
 		return "All · " + choose
 	}
-	position := fmt.Sprintf("%d%%", s.end*100/s.n)
-	switch {
-	case s.start == 0:
-		position = "Top"
-	case s.start >= s.bottom:
-		position = "Bottom"
-	}
-	return position + " · ↑↓ scroll · PgUp/PgDn page · " + choose
+	return s.position() + " · ↑↓ scroll · PgUp/PgDn page · " + choose
 }
 
 // detailsScreen is a session's summary as one screen draws it, reading
