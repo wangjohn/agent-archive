@@ -242,6 +242,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	stopApps()
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
+	p.tokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	p.spaceAfterAnswer = true
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)

@@ -16,6 +16,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   no archive or configuration; private launch files have seven-day best-effort
   cleanup on later local handoffs. Disposable real-app acceptance is still
   unverified on macOS and Linux.
+- Experimental read-only `machines --verify` provider observations, gated by
+  `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1`, and an interactive argv-based
+  `cloudflare_token_command` source shared with guided setup. Provider inventory
+  visibility and machine ownership remain explicitly unknown.
 
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.

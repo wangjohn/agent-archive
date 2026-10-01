@@ -889,3 +889,12 @@ exclusive key ownership. Uninstall leaves remote records and access unchanged;
 remove access at your storage provider, and include `machines/` when deleting
 the entire archive. Local registration retry state is removed by
 `uninstall --delete-local-data`.
+
+Explicit experimental provider verification reads metadata only. Management
+API tokens remain in memory, are removed from the process environment before
+requests, and are never written to config, setup drafts, journals, credential
+stores or output. Interactive token commands have bounded stdout and discarded
+stderr; child environments exclude token, secret, object and pairing credential
+variables. Ordinary machine listing and collection never acquire a management
+token. Provider inventory can be restricted to creator-owned keys, so missing
+metadata never proves that access was removed.
