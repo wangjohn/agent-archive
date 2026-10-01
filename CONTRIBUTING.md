@@ -78,5 +78,7 @@ The [architecture](dev/contributing/architecture.md) page maps the
 packages. Supporting a new coding agent is described in
 [adding an adapter](dev/contributing/adding-an-adapter.md). The hidden
 `_hook` and `_collect` commands are what app hooks and the LaunchAgent run;
-`scripts/measure-hook.py` measures hook latency. Maintainers: see
+`scripts/measure-hook.py` measures hook latency, and
+`scripts/acceptance/linux/host.sh` runs the product live on Linux in a
+disposable container (see [testing](dev/contributing/testing.md#the-linux-live-acceptance-run)). Maintainers: see
 [releasing](dev/maintainers/releasing.md).
