@@ -3,11 +3,9 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 )
 
 // This child is only launched under a pseudo-terminal by the test below:
@@ -51,18 +49,10 @@ func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 	}
 	// One at a time, not as parallel subtests.
 	for _, mode := range []string{"quit", "interrupt", "suspend", "pager"} {
-		if out, err := runKeysPTYScript(python, binary, mode); err != nil {
+		if out, err := runPTYScript(t, python, keysPTYScript, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
 	}
-}
-
-// runKeysPTYScript runs keysPTYScript for one mode. The script gives up
-// after 60 seconds, before this does.
-func runKeysPTYScript(python, binary, mode string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, python, "-c", keysPTYScript, binary, mode).CombinedOutput()
 }
 
 const keysPTYScript = `import fcntl, os, pty, select, signal, struct, subprocess, sys, termios, time
