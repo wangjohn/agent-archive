@@ -10,8 +10,9 @@ There are two ways to do it:
 - **Inside an agent.** In Claude Code, type `/handoff codex`. In Codex, ask
   for `$handoff`. The other agent opens in a new terminal tab (a new window
   in Terminal) with this session as its context.
-- **From a terminal.** Run `agent-archive handoff`, pick a session, and press
-  Enter at `Continue in:`. The other agent starts in this terminal.
+- **From a terminal.** Run `agent-archive handoff`, pick a session (or name one
+  in words: `agent-archive handoff "flaky retention"`), and press Enter at
+  `Continue in:`. The other agent starts in this terminal.
 
 ## Before setup: native local sessions
 
@@ -123,9 +124,8 @@ another one, ask it in words: the `agent-archive` skill runs
 agent-archive handoff
 ```
 
-Pick a session from the numbered list (see
-[where the session comes from](#where-the-session-comes-from)), and
-`handoff` asks where to continue:
+Pick a session in [the picker](#the-picker) (a number, or `/` and a few
+words to find one), and `handoff` asks where to continue:
 
 ```text
 Continue in:
@@ -150,8 +150,10 @@ pager when it is longer than the screen. `c` copies it with `pbcopy` on macOS,
 `wl-copy` on Wayland, or `xclip`/`xsel` on X11. The copy choice appears only when
 a provider is installed and, on Linux, a display is configured. In a headless
 session, use `w` to write a file instead. `w`
-asks for a file name (default `handoff-<short id>.md` in the `--project` or
-current directory; `~/` is your home directory), writes it with mode 0600,
+asks for a file name (default `handoff-<short id>.md` in the directory an
+agent would start in: the current one, or `--project DIR` with `--latest` or,
+before setup, with any selection; `~/` is your home directory), writes it with
+mode 0600,
 and asks before replacing a file. A write that fails is reported and asked
 again; Enter or `q` then gives up. With no agent installed, Enter prints.
 
@@ -290,80 +292,137 @@ The argument is a session ID or words; quote several words as one argument:
 ```sh
 agent-archive handoff "fix the auth bug" --harness codex
 agent-archive handoff "fix the auth bug" --to claude --worktree
+agent-archive handoff "#212"                    # a pull request number
+agent-archive handoff "personal_website blog"   # a project, then a topic
 ```
 
-It matches the way `show` and `list "<words>"` do: every word must appear,
-case-insensitively, in some field of the session (its name, its title (the first
-prompt), its branch, its project name, or its app), or start its session ID
-(from 4 characters), and a word like `#212` or `212` also matches a pull request
-the session linked or created, never the start of an ID. Words may match
-different fields, so a topic, a PR number, a branch, or a project name all work.
-A session ID, full or the short one a table shows, names that session, even when
-another title mentions it, and even when it has no prompt, which words never
-offer. Inside a repository, its top-level sessions are
-searched first, then every project's, and subagent sessions only when no other
-session matches; a note on stderr says how many more match in other projects.
-`--harness` and `--source` narrow the search. When the command runs inside a
-Claude Code or Codex session, that session is not offered for words (as
-`--latest` passes over it), unless `--to` is set, which hands off a session the
-caller names.
+Use one or two distinctive words: a topic, a PR number, a branch, or a project
+name. `handoff` matches them the way `list "<words>"` and `show "<words>"` do.
+
+This section describes `handoff` after setup. [Before
+setup](#before-setup-native-local-sessions) there is no archive: words search
+only the loaded previews of Claude Code and Codex sessions in this directory
+and below (the newest 50 at first), match a name, title, branch, project, app,
+or the start of a native ID but not a pull request number, can match a session
+with no prompt yet, and never widen to other projects unless you pass
+`--all-projects`. Several matches open the picker on a
+terminal; without one, the first 20 are printed as `local <ID> (<app>): <title>`
+and the command exits 1, saying how many matched, with no `Next:` line.
+
+**What a word matches.** Every word must appear, case-insensitively, in some
+field of the session: its name (the one your agent shows in its sidebar), its
+title (the first prompt), its branch, its project name, or its app
+(`claude`, `codex`, `cursor`). Words may match different fields, so "linux 212"
+finds the session named for Linux that opened PR 212. Two more ways to match:
+
+- **A pull request number.** `#212` or `212` (a number of 1 to 6 digits) matches
+  a pull request the session linked or created. It matches the number exactly,
+  so `#21` does not find PR 212, and it never matches the start of a session ID.
+- **The start of a session ID.** Any other word of 4 characters or more also
+  matches a session whose ID starts with it, as git's shortest abbreviation
+  does. Shorter words don't, since IDs are random hexadecimal and a 3-character
+  word would match a session by chance. A whole session ID, or the 8-character
+  short one a table shows, names that session outright, even when another
+  title mentions it, and even when it has no prompt, which words never offer.
+
+Only metadata is matched, never the rest of the conversation. For a session
+on this machine the name, title, branch, and linked pull requests are read
+from its transcript file, so a session that was never uploaded is found too.
+
+**Where it looks, in order.** Each step is tried only when the one before found
+nothing, and the first that has a match answers:
+
+1. An exact session ID, full or short.
+2. Top-level sessions in the current scope: this repository's (every checkout
+   and worktree of it, and its sessions from other Macs), when you are in one.
+   This machine's sessions come before the archive's. `--project DIR|NAME`
+   looks in that project instead, and `--all-projects` skips this step.
+3. Top-level sessions in every project, this machine's first, then the
+   archive's.
+4. Subagent sessions ([below](#subagent-sessions)), in the scope and then
+   everywhere.
+
+When step 2 answers, a note on stderr says how many more match elsewhere:
+`1 match in agent-archive (3 more in other projects: --all-projects or a
+project name finds them)`. A project's name also works as a word
+(`"personal_website blog"`), so you need no flag to reach another project.
+Outside any repository or configured project there is no scope, and steps 2
+and 3 are one.
 
 The search looks at this machine's sessions first, which needs no network and
-no upload: a session's name, title (its first prompt), branch, and linked pull
-requests are read from its transcript file on this machine, and only those, its
-project name, and its app are matched, never the rest of the conversation. It
-goes on to the archive's sessions when none of this machine's match (inside a
-repository, the repository's archived sessions come before this machine's
-sessions in other projects), and a single word of 8 hexadecimal characters that
-is not the short ID of one of this machine's sessions is also looked up in the
-archive as a short ID first. An archive that cannot be reached does not fail
-words this machine can answer. `--source local` or `--source archive` limits it
-to one. Only the 50 most recently active sessions on this machine that have a
-prompt are searched by words; an older one that was uploaded is found in the
-archive.
+no upload, then the archive's when none of this machine's match. An archive
+that cannot be reached does not fail words this machine can answer. A single
+word of 8 hexadecimal characters that is not the short ID of one of this
+machine's sessions is also looked up in the archive as a short ID first.
+`--source local` or `--source archive` limits the search to one. Only the 50
+most recently active sessions on this machine that have a prompt are searched
+by words; an older one that was uploaded is found in the archive.
+`--harness` narrows the search. When the command runs inside a Claude Code or
+Codex session, that session is not offered for words (as `--latest` passes over
+it), unless `--to` is set, which hands off a session the caller names.
 
-One match is handed off, and then everything else applies to it: `--to`,
-`--worktree`, the `Continue in:` question on a terminal. Several matches are
-never guessed between. On a terminal the picker opens on those sessions,
-with the words already in its filter. Without one, and inside a coding agent (where nothing is asked),
-they are printed to standard error, each with its short ID, app, project
-(when they span several), age, pull request (when one has any), and title,
-followed by the exact command to run next (`Next: agent-archive handoff
-d7a77938 --harness claude`) and the `list "<words>" --json` that shows them as
-data; the command exits with code 1, so the caller can ask which and run it
-again with an ID. At most the 20 newest are listed, with a count of the rest;
-add words, a PR number, or `--harness` to narrow. One
-match on this machine is taken even when the archive holds others, so name an ID
-when in doubt. With none, the message points to `agent-archive list`.
+**One match** is handed off, and then everything else applies to it: `--to`,
+`--worktree`, the `Continue in:` question on a terminal. This holds even when the
+archive holds other matches, so name an ID when in doubt.
+
+**Several matches** are never guessed between.
+
+- On a terminal, the [picker](#the-picker) opens on just those sessions, with
+  the words already in its filter (heading `Hand off · "flaky" matches 3`).
+  `▸` marks the first match and Enter hands it off (↑ and ↓ move it). On the
+  filter line digits and `q` are typed text, so press Esc first to pick by
+  number or to quit with `q`; Esc lists the same matches without the filter.
+  Every match is listed, however many.
+- Without a terminal, and inside a coding agent (where nothing is asked), they
+  are printed to standard error and the command exits with code 1, so the
+  caller can ask which one and run it again with an ID:
+
+  ```text
+  agent-archive: handoff: "flaky" matches 3 sessions in agent-archive; pass one ID:
+    d7a77938  claude  just now        #213  Fix flaky retention hook-request test
+    36a7d5ee  claude  36 minutes ago  #209  Fix flaky hook-lock timeout test bound
+    76941c69  claude  12 hours ago    #183  Fix flaky TestBrowserKeysRestoreTheTerminal
+  Next: agent-archive handoff d7a77938 --harness claude
+        (or: agent-archive list "flaky" --json)
+  ```
+
+  Each row has its short ID, app, project (when the rows span several
+  projects), age, pull request (when a row has one), and title. The first line
+  names the scope when the scope answered. `Next:` is the exact command for the
+  first row; edit the ID for another. The second line is the `list` command that
+  prints the archive's matches for the same words as data (a session not
+  uploaded yet is only in this table; it repeats `--harness`, `--project`, and
+  `--all-projects` when you gave them, and is left out when the words were cut
+  to fit or hold control characters). At most the 20 newest are listed, with a
+  count of the rest; add words, a PR number, or `--harness` to narrow.
+
+With none, the message points to `agent-archive list`.
+
+### Subagent sessions
+
+A session an agent started for a task (a Claude Code subagent) is its own
+archived session, but the picker, `list`, and the candidate table leave it out:
+it would crowd the sessions you mean. Words find one only when no top-level
+session matches (step 4), and a subagent is named by what its parent asked of it
+(for example "Review and fix PR #208 (5b-1b)"), so a PR number or a word from
+that task finds it. A candidate table labels it `subagent of <parent short ID>`,
+and in the picker, while you filter, it appears indented under its parent
+(`↳ Review and fix PR #208 (5b-1b)`). Handing one off works like any session,
+by its ID or by picking it. A parent shows how many subagents it has
+(`· 45 subagents`), and `list --json` without words keeps every row,
+subagents included. Only the archive's subagents are searched: one that is
+registered on this machine is handed off by its full ID.
 
 ## Where the session comes from
 
-With no session selector, `handoff` opens a numbered session picker when
-stdin and stdout are terminals. It lists this machine's sessions, including ones
-marked `not yet uploaded`, together with archived ones, most recently active
-first; a session that is both appears once. Subagent sessions and sessions
-with no prompt yet, on this machine or in the archive, are left out (one
-uploaded before its first prompt is listed once its transcript here has one),
-and `--harness` narrows the list. When the
-archive cannot be read (offline, say), the picker lists this machine's sessions
-and says why archived ones are missing. Quit with `q` without producing a
-handoff. In a script or pipeline, pass a session ID or words, `--latest`, or
-`--file`.
-
-The picker is the browser that `list` and `show` open (see
-[browsing on a terminal](list-and-show.md#browsing-on-a-terminal)), so it has
-the same keys: type a number and Enter, or press `/` to type a few words and
-narrow the rows as you type, with `▸` marking the row Enter hands off and ↑
-and ↓ moving it (a subagent that matches shows under its parent, and so can
-be picked). `a` switches between this repository and all projects, `Esc`
-clears a filter, and `q` quits. Where keys cannot be read, the picker reads
-lines, and words typed there filter the table. Whatever you type ahead for
-the `Continue in:` question after your pick is kept for it.
-The picker never opens when a coding agent runs the command, even in a
-pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
-`CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
-prompts off, and `handoff` without a selector is a usage error (exit 2)
-instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
+With no session selector, `handoff` opens the session picker when stdin and
+stdout are terminals. In a script or pipeline, pass a session ID or words,
+`--latest`, or `--file`. The picker never opens when a coding agent runs the
+command, even in a pseudo-terminal: `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`, or `CURSOR_AGENT` in the environment (or
+`AGENT_ARCHIVE_NONINTERACTIVE=1`) turns prompts off, and `handoff` without a
+selector is a usage error (exit 2) instead. `AGENT_ARCHIVE_NONINTERACTIVE=0`
+turns them back on; see
 [configuration](../reference/configuration.md#environment-variables).
 
 With `--to` and no selector, run from inside an agent, `handoff` hands off
@@ -388,6 +447,120 @@ through `CLAUDE_CODE_SESSION_ID`), skips that session unless `--to` is used.
 With `--to`, the calling session is eligible because it is the source being
 handed off. `--latest` matches the current directory's project, not projects
 beneath it.
+
+### The picker
+
+The picker is the one session browser that `list` and bare `show` open, and
+that an ambiguous `show "<words>"` or `handoff "<words>"` opens too (see
+[browsing on a terminal](list-and-show.md#browsing-on-a-terminal)). It has the
+same keys everywhere; only what Enter does differs. Here Enter hands the
+session off, and the heading starts with `Hand off ·`. This section describes
+the picker after setup; [before setup](#before-setup-native-local-sessions) its
+heading starts with `Hand off local ·`, it lists only this machine's Claude
+Code and Codex sessions in this directory and below, including ones with no
+prompt yet (an unnamed one is titled by its native ID; no PR column, `●`,
+`· not yet uploaded`, or `a`), and `o` loads 50 older ones.
+
+```text
+Hand off · agent-archive · 5 sessions · claude · a all projects
+#  TITLE                                                            PR    WHEN            ID
+1  ● Fix the retry budget in the upload queue                       #213  just now        d7a77938
+2    Stop rereading the config on every hook call                         4 minutes ago   36a7d5ee
+3    Add a status line for paused collection · 1 subagent           #212  38 minutes ago  76941c69
+4    Investigate slow listings on a large archive                         5 hours ago     5b0c1e22
+5    Rename the export flag and update the docs · not yet uploaded  #204  2 days ago      9f3a64d0
+5 session(s).
+All · / filter · type a number and Enter · q quit
+
+Enter number (or unique short SESSION_ID) to hand off, or q to quit:
+```
+
+*What it lists.* Top-level sessions, newest activity first: this machine's,
+including ones not uploaded yet, together with the archive's. A session that is
+both appears once. Subagent sessions and sessions with no prompt yet, on this
+machine or in the archive, are left out (one uploaded before its first prompt
+is listed once its transcript here has one), and `--harness` narrows the list
+(`--source local` or `--source archive` limits where it looks). At most 50 rows
+are listed; the filter below searches the rest. When the archive cannot be read (offline, say), the picker lists this
+machine's sessions and says why archived ones are missing.
+
+*What a row shows.*
+
+- **The title is the name your agent gave the session** (the one in Claude
+  Code's sidebar, or a Cursor chat's name), else a preview of its first prompt.
+- **PR** is the last pull request the session linked or created, and appears
+  when some row has one.
+- **`●`** marks a session on this machine that was active in the last 2
+  minutes, the same test that makes `handoff` ask about a shared checkout (see
+  [working in a separate checkout](#working-in-a-separate-checkout---worktree)).
+  The archive says nothing about what is running here, so only this machine's
+  sessions get one.
+- **`· not yet uploaded`** marks a session on this machine that the archive does
+  not have yet (shown once the archive was read, so a failed read marks nothing).
+  You can hand it off; it is read from its transcript as it is now.
+- **`· 45 subagents`** says how many subagent sessions a session has. They are
+  not rows; search for one.
+- The **ID** is dim: numbers choose rows, and a typed short ID works too.
+  HARNESS and PROJECT columns appear when rows differ in them. When every row
+  shares one value, the heading names it (`claude`) instead.
+
+*Which sessions: the scope.* In a git repository with an `origin` remote, or
+inside a project you configured, the picker starts on that repository's
+sessions, across all its checkouts and worktrees and from your other Macs, and
+the heading says so. Elsewhere it lists every session, grouped by project. If the
+repository has none yet, it opens on all projects with `Nothing in agent-archive ·
+showing all projects` in the heading.
+
+- Press `a` (typed alone) to switch between the repository and all projects. The
+  heading names the other choice: `a all projects`, or `a agent-archive`.
+- `--all-projects` starts on all projects, and `--project DIR|NAME` on another
+  project: a directory (its repository), or a project name matched to the
+  archived project name or a configured label, exactly but ignoring case. The two
+  together are a usage error. Neither applies to `--file`, and `--all-projects`
+  does not apply to `--latest`, which names the current directory's project
+  (`--project DIR` moves it).
+
+*Keys.* Type a row number or a short ID and press Enter to hand that session off.
+The list scrolls with the mouse wheel, arrows, PgUp and PgDn (or space, `n`,
+and `p`), Home and End. `q`, Ctrl-D, or Enter with nothing typed quits without
+producing a handoff; Ctrl-C quits at once.
+
+- **`/` filters as you type**, as in `less`. A line at the bottom takes the words,
+  and the rows narrow with each character. They are the words `handoff
+  "<words>"` takes ([above](#naming-a-session-in-words)): a topic, a PR number
+  (`/208`), a branch, a project. The filter searches every session in the
+  scope, not only the 50 listed (a session not uploaded yet is searched only
+  among the picker's 50 rows). On the filter line `a`, `n`, `p`, `q`, and
+  digits are typed text: press Esc first to use them as keys.
+- **`▸` marks the row Enter hands off**; it starts on the first match. ↑ and ↓
+  move it, and Enter acts on it.
+- **A subagent that matches is shown indented under its parent** (`↳ Review and
+  fix PR #208 (5b-1b)`), and the parent is shown even when it does not match, so
+  a subagent can be picked like any row. The mark starts on the subagent.
+- **Rows keep the numbers they have unfiltered**, and Esc clears the words and
+  closes the filter line (Backspace on an empty filter does too), after which the
+  list's own numbers choose again.
+
+```text
+Hand off · agent-archive · "208" matches 1 · claude · Esc clear
+#  TITLE                                                   PR    WHEN            ID
+3    Add a status line for paused collection · 1 subagent  #212  38 minutes ago  76941c69
+   ▸   ↳ Review and fix PR #208 (5b-1b)                    #208  3 hours ago     a1b2c3d4
+All · ↑↓ move · Enter hand off · Esc clear
+
+/208
+```
+
+*Line mode.* Where keys cannot be read, the picker prints the table and reads
+lines. A number or short ID picks. `n` and `p` turn pages and `a` switches the
+scope. Any other answer is words to filter by (`3 sessions match "flaky" · a
+number, more words, or Enter for all`): the table is drawn again with the matches,
+more words narrow it, and an empty answer clears the filter, and quits when
+there is none. A number the table does not have, and a word shorter than 4
+characters, are words too.
+
+*After you pick.* The picker closes and `Continue in:` follows. Whatever you
+type ahead for that question while the picker is closing is kept for it.
 
 ### Finding a session by repository
 
