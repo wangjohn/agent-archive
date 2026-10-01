@@ -130,10 +130,10 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 		return err
 	}
 	pairedAt := env.now().UTC()
-	kind := "aws_profile"
+	kind := config.MachineAssignmentAWSProfile
 	sharedWith := ""
 	if cfg.Storage.Provider == credentials.ProviderR2 {
-		kind = "r2_shared"
+		kind = config.MachineAssignmentR2Shared
 		sharedWith = payload.IssuerID
 	}
 	cfg.MachineName = payload.Name
