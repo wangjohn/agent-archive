@@ -106,11 +106,11 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 	for _, event := range names {
 		// Keys in the order earlier releases wrote them (sorted), so rerunning
 		// setup over an existing installation changes nothing.
-		handler := &object{Members: []member{{"command", command}, {"timeout", json.Number("2")}}}
+		handler := &object{Members: []member{{Key: "command", Value: command}, {Key: "timeout", Value: json.Number("2")}}}
 		var entry any = handler
 		if !app.Flat {
-			handler = &object{Members: []member{{"command", command}, {"statusMessage", spec.Owner}, {"timeout", json.Number("2")}, {"type", "command"}}}
-			entry = &object{Members: []member{{"hooks", []any{handler}}}}
+			handler = &object{Members: []member{{Key: "command", Value: command}, {Key: "statusMessage", Value: spec.Owner}, {Key: "timeout", Value: json.Number("2")}, {Key: "type", Value: "command"}}}
+			entry = &object{Members: []member{{Key: "hooks", Value: []any{handler}}}}
 		}
 		list, _ := getList(hs, event)
 		hs.Set(event, append(list, entry))
