@@ -269,9 +269,9 @@ the first row is highlighted, the arrows move the highlight, Enter shows it,
 and Esc clears the filter. A subagent that matches is shown under its parent,
 which is shown too. Rows keep their numbers while filtered. WORDS open the
 browser with the filter already filled in, to edit. Where keys cannot be read,
-the browser reads lines, and an answer that is not a number, an ID, or q is
-words to filter by (an empty answer clears them). Piped or --json output is
-never interactive, nor is any run with
+the browser reads lines, and an answer that is not a number, a SESSION_ID,
+or q is words to filter by (an empty answer clears them). Piped or --json
+output is never interactive, nor is any run with
 AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
 configuration reference). On a terminal without interactive stdin, text is
 paged through $PAGER unless --no-pager.
