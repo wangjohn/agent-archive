@@ -84,6 +84,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 		if h.Outcome != "native_format" {
 			h.Meta = CodexMeta{}
 			h.Started = time.Time{}
+			h.FirstTaskAt = time.Time{}
 		}
 	}()
 	r := bufio.NewReaderSize(io.LimitReader(reader, HeaderBytes), 32<<10)

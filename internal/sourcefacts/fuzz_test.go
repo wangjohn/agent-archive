@@ -17,7 +17,7 @@ func FuzzCodexHeader(f *testing.F) {
 			t.Fatal("read budget exceeded")
 		}
 		if h.Outcome != "native_format" {
-			if !reflect.DeepEqual(h.Meta, CodexMeta{}) || !h.Started.IsZero() {
+			if !reflect.DeepEqual(h.Meta, CodexMeta{}) || !h.Started.IsZero() || !h.FirstTaskAt.IsZero() {
 				t.Fatal("rejected source retained metadata")
 			}
 		} else {

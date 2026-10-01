@@ -106,3 +106,36 @@ func TestCorruptJournalNeverAllocatesAReplacementIdentity(t *testing.T) {
 		t.Fatal("corrupt migration reset")
 	}
 }
+
+func TestMigrationCannotOverwriteConcurrentEmptyStateCompletion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	calls := 0
+	complete, err := s.ReconcileIdentityIndexes(8, func() error {
+		calls++
+		if calls == 1 {
+			// Model a direct allocator completing after reconciliation's initial
+			// readiness/snapshot read but before its marker write. Both writes use
+			// hooks.lock in production; the guard gives a deterministic interleaving.
+			return s.ensureIdentityReady()
+		}
+		ready, err := s.identityReady()
+		if err != nil {
+			return err
+		}
+		if !ready {
+			t.Error("completed migration rolled back before final save")
+		}
+		return nil
+	})
+	if err != nil || !complete {
+		t.Fatal("completed migration lost", err)
+	}
+	if calls != 1 {
+		t.Fatalf("enumerated already-completed state: %d guards", calls)
+	}
+	ready, err := s.identityReady()
+	if err != nil || !ready {
+		t.Fatal("completion not durable", err)
+	}
+}

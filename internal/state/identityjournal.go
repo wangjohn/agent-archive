@@ -110,12 +110,18 @@ func (s *Store) ReconcileIdentityIndexes(limit int, guard func() error) (bool, e
 	} else {
 		err = config.ProtectIdentityWriter(s.home)
 	}
+	// The empty-state allocator can complete migration between our initial
+	// read and this lock. Completion is monotonic: never overwrite it with
+	// the stale pre-enumeration snapshot.
 	if err == nil {
+		ready, err = s.identityReady()
+	}
+	if err == nil && !ready {
 		err = local.Write(filepath.Join(s.home, "identity-migration.json"), m)
 	}
 	release()
-	if err != nil {
-		return false, err
+	if err != nil || ready {
+		return ready, err
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for n := 0; n < limit && !m.Complete && time.Now().Before(deadline); {
