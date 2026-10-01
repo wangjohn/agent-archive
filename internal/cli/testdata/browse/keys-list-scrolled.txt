@@ -15,6 +15,6 @@ beta (12)
 #   TITLE              WHEN          HARNESS  PROJECT  ID
 19  Session number 19  18 hours ago  codex    beta     1a2d2cce
 30 session(s).
-63% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit
+63% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit
 
 Enter number (or unique short SESSION_ID) to show, or q to quit: 12

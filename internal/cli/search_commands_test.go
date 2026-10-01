@@ -304,18 +304,26 @@ func TestListQueryEdges(t *testing.T) {
 	}
 }
 
-// On a terminal, list "<words>" opens the browser over the matches only.
-func TestListQueryOpensTheBrowserOverTheMatches(t *testing.T) {
+// On a terminal, list "<words>" opens the browser with the words already in
+// its filter, over the matches; clearing the filter lists every session.
+func TestListQueryOpensTheBrowserWithTheWordsInItsFilter(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
 	a.add(t, "mine0001", "Shared words here", a.label)
 	a.add(t, "mine0002", "Different thing", a.label)
-	out, code := ttyRunAllowingInput(t, a.env, "\n", "list", "shared")
+	out, code := ttyRunAllowingInput(t, a.env, "\n\n", "list", "shared")
 	if code != 0 || !strings.Contains(out, "Enter number") {
 		t.Fatalf("code=%d\n%s", code, out)
 	}
-	if got := namedIDs(out, "mine0001", "mine0002"); !sameStrings(got, []string{"mine0001"}) {
-		t.Fatalf("browser rows %v:\n%s", got, out)
+	screens := strings.Split(out, clearScreenSequence)
+	if len(screens) < 3 {
+		t.Fatalf("%d screens:\n%s", len(screens), out)
+	}
+	if got := namedIDs(screens[1], "mine0001", "mine0002"); !sameStrings(got, []string{"mine0001"}) || !strings.Contains(screens[1], `"shared" matches 1`) {
+		t.Fatalf("opening screen shows %v:\n%s", got, screens[1])
+	}
+	if got := namedIDs(screens[2], "mine0001", "mine0002"); !sameStrings(got, []string{"mine0001", "mine0002"}) || strings.Contains(screens[2], "matches") {
+		t.Fatalf("screen with the filter cleared shows %v:\n%s", got, screens[2])
 	}
 }
 
@@ -452,13 +460,13 @@ func TestHandoffSubagentIsTheLastTier(t *testing.T) {
 	f.addArchivedWith(t, "subhere1", "Auditor of the docs", filepath.Base(f.project), subagentOf("parent01"))
 	opts := handoffOptions{sessionID: "auditor", source: "auto"}
 	var out, errOut bytes.Buffer
-	code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+	code, done := resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 	if done || code != 0 || opts.sessionID != "subhere1" {
 		t.Fatalf("in scope: session %q code %d done %v stderr %q", opts.sessionID, code, done, errOut.String())
 	}
 	opts = handoffOptions{sessionID: "ledger", source: "auto"}
 	errOut.Reset()
-	code, done = resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+	code, done = resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 	if done || code != 0 || opts.sessionID != "subbill1" {
 		t.Fatalf("elsewhere: session %q code %d done %v stderr %q", opts.sessionID, code, done, errOut.String())
 	}
@@ -466,7 +474,7 @@ func TestHandoffSubagentIsTheLastTier(t *testing.T) {
 	f.addArchivedWith(t, "bill0009", "Auditor for billing", "billing", nil)
 	opts = handoffOptions{sessionID: "auditor", source: "auto"}
 	errOut.Reset()
-	code, done = resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+	code, done = resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 	if done || code != 0 || opts.sessionID != "bill0009" {
 		t.Fatalf("top-level elsewhere: session %q code %d done %v stderr %q", opts.sessionID, code, done, errOut.String())
 	}
@@ -485,7 +493,7 @@ func TestHandoffWordsMatchAcrossFieldsAndPRs(t *testing.T) {
 	for _, query := range []string{"linux 212", "#212", "212", "linux-port systemd", "LINUX SUPPORT"} {
 		opts := handoffOptions{sessionID: query, source: "auto"}
 		var out, errOut bytes.Buffer
-		code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+		code, done := resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 		if done || code != 0 || opts.sessionID != "linux001" {
 			t.Errorf("%q: session %q code %d done %v stderr %q", query, opts.sessionID, code, done, errOut.String())
 		}
@@ -556,7 +564,7 @@ func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
 	for query, want := range map[string]string{"abcd1234": "abcd1234", "fedc4321": "fedc4321"} {
 		opts := handoffOptions{sessionID: query, source: "auto"}
 		var out, errOut bytes.Buffer
-		code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+		code, done := resolveHandoffQuery(&opts, f.home, false, newTypedInput(strings.NewReader("")), &out, &errOut, f.env)
 		if done || code != 0 || opts.sessionID != want || errOut.Len() != 0 {
 			t.Errorf("handoff %s: session %q code %d done %v stderr %q", query, opts.sessionID, code, done, errOut.String())
 		}

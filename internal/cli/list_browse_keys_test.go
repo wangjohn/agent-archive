@@ -269,7 +269,7 @@ func runKeyPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metada
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
 	format.Now = pickerNow
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, len(sessions), false, format, "show")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,9 +311,9 @@ func TestKeyPickerScrollsByRowsOnTheWheel(t *testing.T) {
 	// 16 rows: the column header and 15 sessions.
 	spans := []string{"1-15", "4-18", "3-17"}
 	statuses := []string{
-		"Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"36% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"34% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
+		"Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"36% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"34% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
 	}
 	for i, screen := range screens {
 		if rowSpan(screen) != spans[i] || statusLine(screen) != statuses[i] || !strings.HasPrefix(screen, "#") {
@@ -416,7 +416,7 @@ func TestKeyPickerFitsWithoutScrolling(t *testing.T) {
 	t.Parallel()
 	for _, size := range []fixedTerminal{{120, 40}, {}} {
 		_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(12, oneProject), listFormatOptions{}, "\x1b[B\x1b[6~ \x1b[F", "q")
-		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · type a number and Enter · q quit" {
+		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · / filter · type a number and Enter · q quit" {
 			t.Fatalf("%v:\n%s", size, strings.Join(screens, "\n----\n"))
 		}
 	}
@@ -485,7 +485,7 @@ func TestKeysSuspendRestoresTheTerminal(t *testing.T) {
 	keys := startKeys(fake)
 	var out bytes.Buffer
 	picker := &sessionPicker{env: fixedTerminal{120, 20}, keys: keys, clear: func() { out.WriteString(screenBreak) }}
-	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), 30, false, listFormatOptions{Now: pickerNow}, "show")
+	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), listFormatOptions{Now: pickerNow}, "show")
 	keys.close()
 	if err != nil || ok || strings.Count(out.String(), screenBreak) != 1 {
 		t.Fatalf("ok=%v err=%v:\n%s", ok, err, out.String())

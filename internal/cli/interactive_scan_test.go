@@ -68,7 +68,7 @@ var terminalPackageUses = classifiedCalls{
 	// and Env.terminalSize, the window size the browser and pickers fit.
 	"ui.go": {"term.IsTerminal": 2, "term.GetSize": 2},
 	// Key mode: the session browser reads keys one at a time. It is set up
-	// only by runSessionBrowser, which runs after browseInteractive, and
+	// only by runBrowser, which runs after browseInteractive, and
 	// its terminal is restored on every way out.
 	"keys_unix.go": {
 		"term.IsTerminal": 1, "unix.IoctlGetTermios": 3, "unix.IoctlSetTermios": 2,
@@ -98,7 +98,7 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
-	"prompt.go":           {"newPrompter": 1, "prompter{}": 1}, // the definition
+	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
 	"setup.go":            {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
@@ -107,8 +107,6 @@ var promptSites = classifiedCalls{
 	"list_browse.go":      {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
 	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
 	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
-	"handoff_select.go":   {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
-	"handoff_title.go":    {"newPrompter": 1},                  // the picker on several title matches: choose lists them instead unless the interactive flag, from browseInteractive, is set
 	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
 	"handoff_match.go":    {"newPrompter": 1},                  // "Hand off this session?" for a repository-only match: gateRepoMatch refuses without browseInteractive
 	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
@@ -118,15 +116,15 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
-	// The prompter's own line reader: every prompt (see promptSites).
-	"prompt.go": {"bufio.NewReader": 1},
+	// The prompter's own line reader: every prompt (see promptSites); and
+	// handoff's one buffer for its answers (typedInput), read only by the
+	// picker (and the ambiguous-title chooser) and the "Continue in:" prompt,
+	// both behind browseInteractive. A launched agent run here gets stdin
+	// itself, not through a reader: it is the agent's terminal, not a
+	// question, and runs only when browseInteractive.
+	"prompt.go": {"bufio.NewReader": 2},
 	// The hook payload the agent writes and closes; never a person.
 	"hook_command.go": {"json.NewDecoder": 1},
-	// handoff's one buffer for its answers, read only by the picker and the
-	// "Continue in:" prompt, both behind browseInteractive. A launched agent
-	// run here gets stdin itself, not through a reader: it is the agent's
-	// terminal, not a question, and runs only when browseInteractive.
-	"handoff.go": {"bufio.NewReader": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
 	"purge.go": {"bufio.NewReader": 1},
