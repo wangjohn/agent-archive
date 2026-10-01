@@ -167,13 +167,18 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 			return err
 		}
 	}
+	printUninstallSummary(out, unverified)
+	return nil
+}
+
+func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
+	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	if len(unverified) > 0 {
 		printUnverifiedJobs(out, unverified)
 		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
-		return nil
+		return
 	}
-	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.\nBucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
-	return nil
+	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 }
 
 // confirmUninstall says what uninstall is about to do and asks, twice for a
