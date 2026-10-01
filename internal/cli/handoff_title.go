@@ -375,7 +375,12 @@ func handoffRowKey(m archive.Metadata) string {
 func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, done bool) {
 	row := matches[0]
 	if len(matches) > 1 {
-		format := listFormatOptions{Now: r.env.now(), Projects: projectLabels(r.cfg)}
+		// A parent's hint counts the archive's subagents, when it was read.
+		subagents := make([]archive.Metadata, len(r.subagents))
+		for i, sub := range r.subagents {
+			subagents[i] = sub.metadata
+		}
+		format := listFormatOptions{Now: r.env.now(), Projects: projectLabels(r.cfg), Children: childCounts(subagents)}
 		if !r.interactive {
 			r.printCandidates(matches, format)
 			return 1, true

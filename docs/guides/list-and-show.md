@@ -18,6 +18,7 @@ agent-archive list --project billing  # another project, by directory or name
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
 agent-archive list --verbose          # full IDs, absolute times, origin, parser
+agent-archive list "flaky retention"  # the sessions these words find, as for show (below)
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -155,8 +156,8 @@ None of this happens when a coding agent runs the command, even if its shell
 is a pseudo-terminal. With `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
 `CURSOR_AGENT` in the environment, or `AGENT_ARCHIVE_NONINTERACTIVE=1`,
 `list` prints its table without a pager or browser, bare `show` asks for a
-SESSION_ID, and a `show` title that matches several sessions prints the
-candidates on stderr and exits 1, exactly as when piped.
+SESSION_ID, and `show` words that match several sessions print the
+candidates on stderr and exit 1, exactly as when piped.
 `AGENT_ARCHIVE_NONINTERACTIVE=0` brings the browser back; see
 [configuration](../reference/configuration.md#environment-variables) and
 [troubleshooting](troubleshooting.md#no-picker-or-prompt-in-an-agents-terminal).

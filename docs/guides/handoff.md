@@ -54,7 +54,7 @@ warns when one was written by an earlier release (after you upgrade
 `agent-archive`); `agent-archive setup --refresh` (which the installer runs)
 refreshes it. To bring a session *into* the agent you are in, without opening
 another one, ask it in words: the `agent-archive` skill runs
-`handoff "<title>"` for you ([agent skills](agent-skills.md)).
+`handoff "<words>"` for you ([agent skills](agent-skills.md)).
 
 ## From a terminal
 
@@ -98,7 +98,7 @@ agent-archive handoff --to codex                       # pick the session
 agent-archive handoff --latest --harness claude --to codex
 agent-archive handoff SESSION_ID --to claude
 agent-archive handoff SESSION_ID --to cursor
-agent-archive handoff "fix the auth bug" --to claude   # a title, as for show
+agent-archive handoff "fix the auth bug" --to claude   # words, as for show
 ```
 
 `handoff` asks where to continue only on a terminal, and not with `--to`,
@@ -280,7 +280,7 @@ first; a session that is both appears once. Subagent sessions and sessions
 with no prompt yet are left out, and `--harness` narrows the list. When the
 archive cannot be read (offline, say), the picker lists this machine's sessions
 and says why archived ones are missing. Quit with `q` without producing a
-handoff. In a script or pipeline, pass a session ID or title, `--latest`, or
+handoff. In a script or pipeline, pass a session ID or words, `--latest`, or
 `--file`.
 The picker never opens when a coding agent runs the command, even in a
 pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or

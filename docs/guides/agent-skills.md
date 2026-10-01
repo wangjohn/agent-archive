@@ -38,7 +38,7 @@ to the receiving agent. It then does what you asked with it.
   topic ("where my other agent left off") it takes the most recent session for
   the project you are in (`--latest`). It passes over the session it is
   running in when the agent names it to commands it runs, as Claude Code does;
-  Cursor does not, so there a title or `--latest` can match the current chat.
+  Cursor does not, so there words or `--latest` can match the current chat.
 - **It never guesses.** When several sessions match, the agent shows you the
   candidates (short ID, agent, project when they span several, when, pull
   request, title) and asks which. It never picks for you. It can also read

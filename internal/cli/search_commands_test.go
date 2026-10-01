@@ -514,6 +514,15 @@ func TestHandoffPickerHintsAtSubagents(t *testing.T) {
 	if strings.Contains(out, "child task") {
 		t.Fatalf("a subagent is offered:\n%s", out)
 	}
+	// So does the picker that words matching several sessions open.
+	f.addArchivedWith(t, "parent02", "Orchestrate the docs", filepath.Base(f.project), nil)
+	out, errOut, code = runPicker(t, f.env, "q\n", "orchestrate")
+	if code != 0 {
+		t.Fatalf("words: code=%d stderr=%s", code, errOut)
+	}
+	if line := pickerLine(t, out, "parent01"); !strings.Contains(line, "Orchestrate the release · 2 subagents") {
+		t.Fatalf("words: parent row: %q", line)
+	}
 }
 
 // The browser, like the table, lists top-level sessions only, says how many
