@@ -2,8 +2,8 @@ package discovery
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -32,7 +32,7 @@ func (s scan) observeActiveHints(ctx context.Context, o Options, roots []string,
 		if entry.ActiveHint {
 			pinned := false
 			for hint := range hints {
-				if strings.HasPrefix(key, hint+string(filepath.Separator)) {
+				if local.PathWithin(key, hint) {
 					pinned = true
 					break
 				}

@@ -351,9 +351,7 @@ func continuationLocator(store *state.Store, native, sourceRoot, locator string)
 	if errors.Is(err, os.ErrNotExist) {
 		return r.TranscriptPath, true
 	}
-	old, _ := filepath.Rel(r.DiscoveryRoot, r.TranscriptPath)
-	next, _ := filepath.Rel(sourceRoot, locator)
-	return r.TranscriptPath, strings.HasPrefix(next, "sessions"+string(filepath.Separator)) && strings.HasPrefix(old, "archived_sessions"+string(filepath.Separator))
+	return r.TranscriptPath, local.PathWithin(locator, filepath.Join(sourceRoot, "sessions")) && local.PathWithin(r.TranscriptPath, filepath.Join(r.DiscoveryRoot, "archived_sessions"))
 }
 
 // LoadHealth reads scan facts independently of collector/upload status.
