@@ -163,6 +163,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	if err := n.ctx.Err(); err != nil {
 		return false, err
 	}
+	partial, unavailable := 0, 0
 	for _, j := range batch {
 		a := got[j.index]
 		c := j.c
@@ -177,8 +178,15 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		row.fields = sessionFields{Name: a.p.Name, Title: a.p.Title, Branch: a.p.Branch, Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 		if a.err != nil {
 			row.SkillHint = " · preview unavailable"
+			unavailable++
+		} else if !a.p.NameComplete {
+			row.SkillHint = " · preview partial"
+			partial++
 		}
 		n.rows = append(n.rows, row)
+	}
+	if partial > 0 || unavailable > 0 {
+		terminal.Printf(n.stderr, "handoff: this preview batch has %d partial labels and %d unavailable labels; word searches may miss uninspected text\n", partial, unavailable)
 	}
 	terminal.Printf(n.stderr, "handoff: labels inspected for %d of %d discovered local sessions; word searches cover only these loaded previews\n", n.next, len(n.candidates))
 	return n.next < len(n.candidates) && !n.exhausted, nil
@@ -357,7 +365,37 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if err != nil {
 		return handoffTarget{}, err
 	}
+	if !nativeBundleIdentityMatches(bundle, c) {
+		return handoffTarget{}, errors.New("selected local transcript has conflicting native identity; use --file PATH --harness NAME to inspect it explicitly")
+	}
 	return handoffTarget{bundle: bundle, source: "local", native: &c, startedAt: c.StartedAt, lastActivityAt: s.Stamp().ModifiedAt}, nil
+}
+
+// Native headers are bounded; the complete selected record must not introduce
+// another top-level identity beyond that inspected window.
+func nativeBundleIdentityMatches(bundle archive.SourceBundle, c nativesessions.Candidate) bool {
+	for _, record := range bundle.NativeRecords {
+		if sidechain, _ := record["isSidechain"].(bool); sidechain {
+			continue
+		}
+		if sidechain, _ := record["is_sidechain"].(bool); sidechain {
+			continue
+		}
+		for _, key := range []string{"sessionId", "session_id"} {
+			if id, _ := record[key].(string); id != "" && id != c.NativeID {
+				return false
+			}
+		}
+		if kind, _ := record["type"].(string); c.Ref.Harness == archive.HarnessCodex && kind == "session_meta" {
+			payload, _ := record["payload"].(map[string]any)
+			id, _ := payload["id"].(string)
+			alias, _ := payload["session_id"].(string)
+			if id != c.NativeID || alias != "" && alias != c.NativeID {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func selectKnownNative(opts handoffOptions, result nativesessions.Result, interactive bool, env currentSessionDependencies) (*nativesessions.Candidate, error) {

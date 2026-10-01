@@ -518,3 +518,60 @@ func nativeRecipeArguments(t *testing.T, prompt, destination string) []string {
 	}
 	return strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 }
+
+// A later complete record cannot change the selected native identity.
+// Regression: 2026-10 review BH-01.
+func TestNativeFullReadRejectsIdentityConflictBeyondHeader(t *testing.T) {
+	t.Parallel()
+	for _, harness := range []string{"claude", "codex"} {
+		t.Run(harness, func(t *testing.T) {
+			t.Parallel()
+			f := newNativeFixture(t)
+			id := "12345678-1234-1234-1234-123456789012"
+			path := f.add(t, harness, id, "Selected work", time.Hour)
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			padding := `{"type":"assistant","message":{"role":"assistant","content":"` + strings.Repeat("x", int(nativeWindowBytes)) + `"}}` + "\n"
+			conflict := `{"type":"user","sessionId":"different-session","message":{"role":"user","content":"Unrelated work"}}` + "\n"
+			if harness == "codex" {
+				conflict = `{"type":"session_meta","payload":{"id":"different-session","cwd":"/other"}}` + "\n"
+			}
+			if _, err := file.WriteString(padding + conflict); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			out, errOut, code := runHandoff(t, f.env, id, "--harness", harness)
+			if code == 0 || out != "" || !strings.Contains(errOut, "identity") {
+				t.Fatalf("conflicting identity accepted: code=%d out=%s stderr=%s", code, out, errOut)
+			}
+		})
+	}
+}
+
+// Partial labels must be visible without reading the uninspected middle.
+// Regression: 2026-10 review BH-02.
+func TestNativePickerReportsPartialPreviewLabels(t *testing.T) {
+	t.Parallel()
+	f := newNativeFixture(t)
+	path := f.add(t, "claude", "native-source", "Selected work", time.Hour)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(strings.Repeat("x", int(3*nativeWindowBytes)) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.env.IsTerminal = func(any) bool { return true }
+	var out, errOut bytes.Buffer
+	code := Run([]string{"handoff", "--no-preamble"}, strings.NewReader("q\n"), &out, &errOut, f.env)
+	if code != 0 || !strings.Contains(out.String(), "preview partial") || !strings.Contains(errOut.String(), "1 partial") {
+		t.Fatalf("partial label unreported: code=%d out=%s stderr=%s", code, out.String(), errOut.String())
+	}
+}
