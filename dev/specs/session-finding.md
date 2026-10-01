@@ -772,11 +772,15 @@ guide. Live check on the owner's Mac:
   text does (a substring). `fieldsOf` collects every PR the session linked
   (`pull_requests`) and every `pr_created` in `git_activity`, deduplicated,
   not merged ones; `LatestPR` stays the PR column's.
-- PR 5: an exact session ID wins inside each pool a search reads (a single
-  word equal to a full ID, or to an ID's first 8 characters, the short ID the
-  table shows), not across tiers: an exact ID of an out-of-scope session does
-  not outrank an in-scope title match. In `handoff` the exact full-ID reads
-  (registered, then the archive) still come first, unchanged.
+- PR 5: an exact session ID is a single word equal to a full ID, or to an
+  ID's first 8 characters (the short ID the table shows). It wins before the
+  tiers, as §3's first tier, across every session the search reads: an exact
+  ID of an out-of-scope session or a subagent outranks an in-scope title that
+  mentions it, so a candidate table's `Next:` command takes the row it names.
+  In `handoff` the exact full-ID reads (registered, then the archive) still
+  come first, unchanged; then an exact short ID among this Mac's sessions, and
+  then, for a word of 8 hex characters only, the archive's (subagents too), so
+  other words still need no network when this Mac answers them.
 - PR 5: `--harness`, `--since` and the other filters are applied when the
   archive is listed, before the tiers, rather than after them, so a filter can
   never empty a tier and hide a lower one. `--limit` applies last, as planned.

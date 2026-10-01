@@ -86,12 +86,12 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
 	allProjects := fs.Bool("all-projects", false, "list every project's sessions, not only the current repository's")
 	project := fs.String("project", "", "list this project's sessions: a directory, or a project name (default: the current directory's repository)")
-	query, ok := fs.parseWithArgument(args)
+	query, given, ok := fs.parseWithOptionalArgument(args)
 	if !ok {
 		return 2
 	}
 	q := parseSessionQuery(query)
-	if query != "" && q.empty() {
+	if given && q.empty() {
 		return fs.usageError("the search words are empty")
 	}
 	if *project != "" && *allProjects {

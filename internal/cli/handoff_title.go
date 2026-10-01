@@ -181,6 +181,9 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		stop()
 		local, scanned = rows, truncated
 	}
+	if exact := r.exactID(local); len(exact) > 0 {
+		return r.choose(exact)
+	}
 	if r.scope.narrowed() {
 		if code, done, found := r.inScope(local); found {
 			return code, done
@@ -241,6 +244,30 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 	r.inLabel = r.scope.Label
 	code, done = r.choose(matches)
 	return code, done, true
+}
+
+// exactID is the sessions whose ID is the query's one word, whole or as the
+// short ID a table shows, before any tier, as list and show find them: an
+// exact ID wins outright, over a title in the scope that happens to contain
+// it. This Mac's sessions are looked at first; the archive (its subagents
+// too) only for a word shaped like a short ID, so other words still need no
+// network when this Mac answers them.
+func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPickerRow {
+	if len(r.q.words) != 1 {
+		return nil
+	}
+	exact := func(rows []handoffPickerRow) []handoffPickerRow {
+		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return r.skip[row.metadata.NativeSessionID] })
+		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields { return sessionFields{SessionID: row.metadata.SessionID} })
+	}
+	if found := exact(local); len(found) > 0 {
+		return found
+	}
+	word := r.q.words[0]
+	if r.opts.source == "local" || len(word) != minShortSessionID || strings.Trim(word, "0123456789abcdef") != "" {
+		return nil
+	}
+	return exact(append(slices.Clone(r.archiveRows()), r.subagents...))
 }
 
 // within keeps the rows in the scope.

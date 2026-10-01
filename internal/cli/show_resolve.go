@@ -86,8 +86,12 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		if found.inScope {
 			label = scope.Label
 		}
+		var listFlags []string
+		if harness != "" {
+			listFlags = append(listFlags, "--harness "+harness)
+		}
 		candidateList{
-			command: "show", query: query, label: label, total: len(matches), rows: formatSessionRows(shown, format),
+			command: "show", query: query, label: label, total: len(matches), rows: formatSessionRows(shown, format), listFlags: listFlags,
 			next: func(row listRow) string { return "agent-archive show " + archive.DisplayLine(row.ShortID) },
 		}.print(stderr)
 		return showLookup{}, 1

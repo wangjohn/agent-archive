@@ -221,17 +221,23 @@ and nothing is asked.
 
 ## Naming a session by its title
 
-The argument is a session ID or a title; quote a title of several words:
+The argument is a session ID or words; quote several words as one argument:
 
 ```sh
 agent-archive handoff "fix the auth bug" --harness codex
 agent-archive handoff "fix the auth bug" --to claude --worktree
 ```
 
-It matches the way `show` does: a substring of the title (the session's
-first prompt), case-insensitively, a short session ID, or an ID prefix. A
-full session ID, of a session on this Mac or in the archive, names that
-session, even when another title mentions it. `--harness` and `--source`
+It matches the way `show` and `list "<words>"` do: every word must appear,
+case-insensitively, in some field of the session (its name, its title, the
+first prompt, its branch, its project name, or its app), or start its
+session ID, and a word like `#212` or `212` also matches a pull request the
+session linked or created. Words may match different fields, so a topic, a
+PR number, a branch, or a project name all work. A session ID, full or the
+short one a table shows, names that session, even when another title
+mentions it. Inside a repository, its top-level sessions are searched first,
+then every project's, and subagent sessions only when no other session
+matches; a note on stderr says how many more match in other projects. `--harness` and `--source`
 narrow the search. When the command runs inside a Claude Code or Codex
 session, that session is not offered for a title (as `--latest` passes over
 it), unless `--to` is set, which hands off a session the caller names.
@@ -240,7 +246,7 @@ The search looks at this Mac's sessions first, which needs no network and no
 upload (a session's title, its first prompt, is read from its transcript file
 on this Mac, and only the title is matched, never the rest of the
 conversation), and goes on to the archive's sessions only when none of this
-Mac's match, so an archive that cannot be reached does not fail a title this
+Mac's match, so an archive that cannot be reached does not fail words this
 Mac can answer. `--source local` or `--source archive` limits it to one. Only
 the 50 most recently active sessions on this Mac that have a prompt are
 searched by title; an older one that was uploaded is found in the archive.
@@ -249,10 +255,13 @@ One match is handed off, and then everything else applies to it: `--to`,
 `--worktree`, the `Continue in:` question on a terminal. Several matches are
 never guessed between. On a terminal the picker opens with just those
 sessions. Without one, and inside a coding agent (where nothing is asked),
-they are printed to standard error, each with its short ID, app, project,
-age, and title, and the command exits with code 1, so the caller can ask
-which and run it again with an ID. At most the 20 newest are listed, with a
-count of the rest; add more of the title, or `--harness`, to narrow. One
+they are printed to standard error, each with its short ID, app, project
+(when they span several), age, pull request (when one has any), and title,
+followed by the exact command to run next (`Next: agent-archive handoff
+d7a77938 --harness claude`) and the `list "<words>" --json` that shows them as
+data; the command exits with code 1, so the caller can ask which and run it
+again with an ID. At most the 20 newest are listed, with a count of the rest;
+add words, a PR number, or `--harness` to narrow. One
 match on this Mac is taken even when the archive holds others, so name an ID
 when in doubt. With none, the message points to `agent-archive list`.
 

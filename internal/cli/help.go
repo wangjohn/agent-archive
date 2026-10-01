@@ -609,21 +609,28 @@ func (f *commandFlags) parseFlagsOnly(args []string) bool {
 // package otherwise stops at the first positional value. It returns the
 // argument, or "" when there is none.
 func (f *commandFlags) parseWithArgument(args []string) (string, bool) {
+	argument, _, ok := f.parseWithOptionalArgument(args)
+	return argument, ok
+}
+
+// parseWithOptionalArgument is parseWithArgument that also reports whether
+// the argument was given, so an empty one ("") can be told from none.
+func (f *commandFlags) parseWithOptionalArgument(args []string) (argument string, given, ok bool) {
 	if !f.parse(args) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() == 0 {
-		return "", true
+		return "", false, true
 	}
-	argument := f.Arg(0)
+	argument = f.Arg(0)
 	if !f.parse(f.Args()[1:]) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() != 0 {
 		f.usageError("unexpected argument %q", f.Arg(0))
-		return "", false
+		return "", false, false
 	}
-	return argument, true
+	return argument, true, true
 }
 
 var flagValueError = regexp.MustCompile(`^invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-+([^:]+): (.*)$`)

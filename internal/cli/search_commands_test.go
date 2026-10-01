@@ -290,8 +290,10 @@ func TestListQueryLimitCutsTheMatches(t *testing.T) {
 func TestListQueryEdges(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
-	if out, errOut, code := a.runList(t, "   "); code != 2 || out != "" || !strings.Contains(errOut, "search words are empty") {
-		t.Fatalf("blank: code=%d stdout=%q stderr=%q", code, out, errOut)
+	for _, blank := range []string{"   ", ""} {
+		if out, errOut, code := a.runList(t, blank); code != 2 || out != "" || !strings.Contains(errOut, "search words are empty") {
+			t.Fatalf("blank %q: code=%d stdout=%q stderr=%q", blank, code, out, errOut)
+		}
 	}
 	if out, _, code := a.runList(t, "nothing like this"); code != 0 || !strings.Contains(out, `No archived sessions match "nothing like this".`) {
 		t.Fatalf("no match: code=%d\n%s", code, out)
@@ -368,6 +370,10 @@ func TestShowSeveralMatchesPrintTheCandidateTable(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "\nNext: agent-archive show wobbly01\n") || !strings.HasSuffix(errOut, "      (or: agent-archive list \"wobbly\" --json)\n") {
 		t.Fatalf("next command:\n%s", errOut)
+	}
+	// The list command repeats the search's --harness, so it is the same search.
+	if _, errOut, _ := a.runShow(t, "wobbly", "--harness", "codex"); !strings.HasSuffix(errOut, "      (or: agent-archive list \"wobbly\" --harness codex --json)\n") {
+		t.Fatalf("--harness is not repeated:\n%s", errOut)
 	}
 	// The ID it names is read directly.
 	if out, _, code := a.runShow(t, "wobbly01", "--json"); code != 0 || !strings.Contains(out, `"session_id": "wobbly01"`) {
@@ -521,5 +527,37 @@ func TestListBrowserHidesSubagents(t *testing.T) {
 	if strings.Contains(out, "child001") || !strings.Contains(out, "Orchestrate the release · 1 subagent") ||
 		!strings.Contains(out, "(1 subagent session hidden; search to find one)") {
 		t.Fatalf("browser:\n%s", out)
+	}
+}
+
+// An exact short ID wins before the tiers in every command: a session in
+// another project, or in the archive only, is the answer over an in-scope
+// title that mentions its ID, so a candidate table's Next line takes the row
+// it names.
+func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.addArchivedWith(t, "abcd1234", "The real one", "billing", nil)
+	f.addArchivedWith(t, "wxyz9999", "Notes about abcd1234", filepath.Base(f.project), nil)
+	f.addArchivedWith(t, "fedc4321", "A subagent elsewhere", "billing", subagentOf("abcd1234"))
+	f.addArchivedWith(t, "wxyz8888", "Notes about fedc4321", filepath.Base(f.project), nil)
+	for query, want := range map[string]string{"abcd1234": "abcd1234", "fedc4321": "fedc4321"} {
+		opts := handoffOptions{sessionID: query, source: "auto"}
+		var out, errOut bytes.Buffer
+		code, done := resolveHandoffQuery(&opts, f.home, false, strings.NewReader(""), &out, &errOut, f.env)
+		if done || code != 0 || opts.sessionID != want || errOut.Len() != 0 {
+			t.Errorf("handoff %s: session %q code %d done %v stderr %q", query, opts.sessionID, code, done, errOut.String())
+		}
+	}
+
+	a := newScopedArchive(t)
+	a.add(t, "abcd1234", "The real one", "billing")
+	a.add(t, "wxyz9999", "Notes about abcd1234", a.label)
+	out, _, _ := a.runList(t, "abcd1234")
+	if got := namedIDs(out, "abcd1234", "wxyz9999"); !sameStrings(got, []string{"abcd1234"}) {
+		t.Fatalf("list listed %v:\n%s", got, out)
+	}
+	if out, _, code := a.runShow(t, "abcd1234", "--json"); code != 0 || !strings.Contains(out, `"session_id": "abcd1234"`) {
+		t.Fatalf("show: code=%d\n%s", code, out)
 	}
 }

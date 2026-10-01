@@ -37,7 +37,10 @@ agent-archive list --rebuild-index  # one-time full scan for older archives
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same
-# session browser as list. A title substring or short ID also works.
+# session browser as list. Words also work, as for `list "<words>"`: every
+# word must appear in the session's name, title, branch, project, app, or the
+# start of its ID, and #212 or 212 also matches a pull request number. This
+# repository's sessions are searched first, subagent sessions last.
 agent-archive show
 agent-archive show SESSION_ID
 agent-archive show "OAuth callback"

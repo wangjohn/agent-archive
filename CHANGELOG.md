@@ -340,10 +340,11 @@ follow [Semantic Versioning](https://semver.org/).
   were hidden (`42 sessions (318 subagent sessions hidden; search to find
   one)`), and a session that has some carries a dim `· 45 subagents` hint, as
   the handoff picker does. A subagent is found by searching. `list --json`
-  keeps every row, subagents included, so scripts see what they did. A listing
-  without a search now reads every session's metadata (the cache keeps it
+  keeps every row, subagents included, so scripts see what they did. The
+  table and the browser now read every session's metadata (the cache keeps it
   quick) instead of the index's newest page, so that subagents can be left out
-  before the limit.
+  before the limit; `list --json` without words keeps the index's page outside
+  a project or with `--all-projects`.
 - `handoff "<words>"` and `show "<words>"` match words across a session's
   fields (above) where they matched the whole text as a substring of the title
   or the start of an ID. A title that was found before is still found by the
