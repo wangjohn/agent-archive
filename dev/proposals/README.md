@@ -15,6 +15,7 @@ moving a proposal.
 | [Cloud capture](cloud-capture.md) | Proposed; not implemented or scheduled. |
 | [Archive listing at scale](listing-at-scale.md) | Phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
 | [Adding a machine: pairing, per-machine keys, and revocation](machine-pairing.md) | Proposed; not implemented. |
+| [First local handoff before bucket setup](local-handoff-before-setup.md) | Proposed; on-demand utility, no persistent local archive. |
 
 ## Implemented
 
