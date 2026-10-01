@@ -639,6 +639,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pager startup failure preserves the complete direct-output fallback, even
+  when the pager consumed its input; regression coverage checks partial and
+  complete reads and reports output write failures.
+
 - `setup`'s hidden prompt for a secret access key no longer spins at full
   CPU forever on macOS when its terminal goes away without a hangup signal
   (a closed pseudo-terminal, for example). It now ends as every other prompt
