@@ -1810,7 +1810,11 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 			destination.mark, destination.detail = sc.style.warnMark(), failed
 		}
 		if private && !sc.verbose {
-			destination.detail += " · bucket private"
+			if view.PrivacyEvidence.Reason == "r2_public_domains_disabled" {
+				destination.detail += " · R2 public access off at setup"
+			} else {
+				destination.detail += " · bucket private"
+			}
 		} else {
 			privacy = sc.privacyRow(view.PrivacyEvidence)
 		}
@@ -2029,6 +2033,9 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
 	switch report.State {
 	case "verified_private":
+		if report.Reason == "r2_public_domains_disabled" {
+			return statusRow{mark: s.okMark(), cells: []string{"R2 public access off at setup"}, detail: "r2.dev off; no enabled custom domains" + checked}
+		}
 		return statusRow{mark: s.okMark(), cells: []string{"Bucket is private"}, detail: "public access blocked" + checked}
 	case "public_or_risky":
 		detail := "public access is allowed"
@@ -2038,6 +2045,8 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 			detail = "its bucket policy is public"
 		case "public_bucket_acl":
 			detail = "its access list grants public access"
+		case "r2_public_access_enabled":
+			detail = "R2 public access was enabled at setup"
 		}
 		return statusRow{mark: s.failMark(), cells: []string{"Bucket may be public"}, detail: detail + checked, notes: []statusNote{review}}
 	}
@@ -2048,6 +2057,8 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 		detail = "this storage can't be inspected"
 	case "r2_management_credentials_not_configured":
 		detail = "R2 object credentials can't inspect public access"
+	case "r2_public_access_not_fully_checked":
+		detail = "not every R2 public-access setting could be checked" + checked
 	case "public_access_controls_not_fully_verified":
 		detail = "some public access settings couldn't be read" + checked
 	case "inspection_stale":
@@ -2079,6 +2090,8 @@ func (sc statusScreen) shortPrivacyReason(report storage.PrivacyReport) string {
 		return "this storage can't be inspected" + see
 	case "r2_management_credentials_not_configured":
 		return "R2 object credentials can't inspect it" + see
+	case "r2_public_access_not_fully_checked":
+		return "some R2 public-access settings couldn't be read"
 	case "public_access_controls_not_fully_verified":
 		return "some settings couldn't be read"
 	case "inspection_stale":
@@ -2530,7 +2543,11 @@ func printBucketPrivacy(out io.Writer, report storage.PrivacyReport) {
 	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
 	switch report.State {
 	case "verified_private":
-		terminal.Println(out, "  Bucket privacy: native public access blocked at the last check.")
+		if report.Reason == "r2_public_domains_disabled" {
+			terminal.Println(out, "  Bucket privacy: r2.dev off and no enabled custom domains at setup's last check.")
+		} else {
+			terminal.Println(out, "  Bucket privacy: native public access blocked at the last check.")
+		}
 	case "public_or_risky":
 		terminal.Println(out, "  Bucket privacy: public configuration detected; review access before archiving.")
 	default:

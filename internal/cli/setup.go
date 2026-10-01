@@ -480,6 +480,11 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 			}
 		}
 		draft.Config.Storage = cfg
+		if p.guided != nil && p.guided.c.privacy.CheckedAt != nil {
+			report := p.guided.c.privacy
+			report.ConfigurationID = privacyConfigurationID(draft.Config)
+			draft.Config.BucketPrivacy = &report
+		}
 		draft.Step = 2
 		if err = save(); err != nil {
 			return false, p.rollbackGuidedCreation(err)
@@ -545,12 +550,23 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 		}
 		draft.FailedRegion = ""
 		terminal.Println(p.out, "")
+		guidedPrivacy := p.guidedR2Privacy(draft.Config)
 		e := runStorageCheck(p, &draft.Config, env)
 		if errors.Is(e, errStorageCheckInterrupted) {
 			return false, e
 		}
 		if e != nil {
 			return recoverSetupStorageFailure(p, draft, save, savedPath, userHome, env, known, e, verbose)
+		}
+		report := p.guidedR2Privacy(draft.Config)
+		if report == nil {
+			report = guidedPrivacy
+		}
+		if report != nil {
+			draft.Config.BucketPrivacy = report
+			if e := save(); e != nil {
+				return false, e
+			}
 		}
 		*verifiedStorage = draft.Config.Storage
 	}
@@ -619,8 +635,9 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 		return false, e
 	}
 	if action == "check" {
-		// The storage check runs again too, which reads the bucket's
-		// public-access settings again.
+		// The storage check runs again. S3 privacy is read again; guided R2
+		// retains its setup-time management-API check because the bootstrap
+		// token has been discarded.
 		*verifiedStorage = credentials.Config{}
 		return false, nil
 	}

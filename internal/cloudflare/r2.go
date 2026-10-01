@@ -23,11 +23,10 @@ const (
 	PermissionBucketItemWrite = "Workers R2 Storage Bucket Item Write"
 )
 
-// TokenDocsURL is Cloudflare's page on account-owned API tokens. Cloudflare
-// documents the way to the token page (Manage account, then Account API
-// tokens) but no dashboard URL for it, so setup names the path and links
-// this page rather than guess a deep link.
-const TokenDocsURL = "https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/" //nolint:gosec // G101: a documentation link, not a credential
+// TokenDashboardURL is Cloudflare's own link to the account API tokens page.
+// The encoded account placeholder is resolved by its dashboard after login;
+// a person with multiple accounts chooses one there.
+const TokenDashboardURL = "https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fapi-tokens" //nolint:gosec // G101: a dashboard link, not a credential
 
 // Jurisdictions are the data-residency jurisdictions setup offers, besides the
 // default of none: the ones Cloudflare's token documentation lists for the

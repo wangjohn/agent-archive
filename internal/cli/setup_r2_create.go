@@ -128,6 +128,7 @@ type r2Creator struct {
 	// token and tokenName are the key's token, once one passed its check.
 	token     cloudflare.Token
 	tokenName string
+	privacy   storage.PrivacyReport
 	// revoking is set while a revoke request is out, so a signal that
 	// arrives then is answered instead of ignored. printMu keeps that answer
 	// from interleaving with the revoke's own output.
@@ -145,6 +146,8 @@ type r2Handoff struct{ c *r2Creator }
 type r2Created struct {
 	bucket    string
 	tokenName string
+	storage   credentials.Config
+	privacy   storage.PrivacyReport
 	// reported is set once setup has said they are still there, so the note
 	// at the end of setup does not say it again.
 	reported bool
@@ -198,7 +201,7 @@ func (p *prompter) finishGuidedCreation() {
 	}
 	p.guided = nil
 	h.c.api.Discard()
-	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName})
+	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName, storage: h.c.storageConfig(), privacy: h.c.privacy})
 	if h.c.tokenFromEnv {
 		if h.c.tokenRemovedFromEnv {
 			terminal.Println(p.out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN, and has dropped it; it also removed the variable from setup's own environment. Your shell still has it.")
@@ -208,6 +211,33 @@ func (p *prompter) finishGuidedCreation() {
 		return
 	}
 	terminal.Println(p.out, "The Cloudflare API token you pasted is not saved anywhere. You can delete it in the dashboard; the archive doesn't need it again.")
+}
+
+// guidedR2Privacy returns the last management-API check for the bucket setup
+// just created. The ordinary storage check uses the bucket's object key,
+// which cannot read these settings, so it cannot replace this evidence.
+func (p *prompter) guidedR2Privacy(cfg config.Config) *storage.PrivacyReport {
+	destination := cfg.Storage
+	destination.R2CredentialRef = ""
+	for i := len(p.created) - 1; i >= 0; i-- {
+		made := p.created[i]
+		if made.storage != destination || made.privacy.CheckedAt == nil {
+			continue
+		}
+		report := made.privacy
+		report.ConfigurationID = privacyConfigurationID(cfg)
+		return &report
+	}
+	if report := cfg.BucketPrivacy; report != nil && report.ConfigurationID == privacyConfigurationID(cfg) && report.CheckedAt != nil {
+		switch report.Reason {
+		case "r2_public_domains_disabled", "r2_public_access_enabled", "r2_public_access_not_fully_checked":
+			if age, ok := privacyEvidenceAge(cfg, p.clock()); ok && age <= bucketPrivacyStaleAfter {
+				copy := *report
+				return &copy
+			}
+		}
+	}
+	return nil
 }
 
 // rollbackGuidedCreation is for a failure to stage the new key: the key was
@@ -286,13 +316,12 @@ func (c *r2Creator) storageConfig() credentials.Config {
 func printR2BootstrapInstructions(p *prompter) {
 	out := p.out
 	terminal.Println(out, "Setup can create a new Cloudflare R2 bucket (Cloudflare buckets have no public access by default), and a key that reaches only that bucket.")
-	terminal.Println(out, p.style.warnMark()+" This is experimental: it has not yet been run against every kind of Cloudflare account.")
-	terminal.Println(out, "It needs one Cloudflare API token to do that. You create the token; setup uses it now and then discards it. It is never saved.")
+	terminal.Println(out, "Setup needs a Cloudflare API token to create the bucket and key, and won't save it.")
 	terminal.Println(out, "")
-	terminal.Println(out, "In the Cloudflare dashboard, go to Manage account > Account API tokens > Create Token, and give the token these permissions on your account:")
+	terminal.Println(out, "Get your token: "+cloudflare.TokenDashboardURL)
+	terminal.Println(out, "Sign in, select your account, choose Create Token, and give it these permissions:")
 	terminal.Println(out, "  - "+cloudflare.PermissionR2Write)
 	terminal.Println(out, "  - "+cloudflare.PermissionTokensWrite)
-	terminal.Println(out, "Cloudflare's steps: "+cloudflare.TokenDocsURL)
 	terminal.Println(out, "")
 }
 
@@ -345,7 +374,7 @@ func (c *r2Creator) chooseAccount() error {
 		terminal.Println(c.p.out, "Couldn't list your Cloudflare accounts, so setup needs the account ID. "+explainCloudflare(err, "The token isn't allowed to list accounts."))
 	case len(accounts) == 1:
 		if account, e := parseR2AccountID(accounts[0].ID); e == nil {
-			terminal.Printf(c.p.out, "Cloudflare account: %s (%s)\n", printableText(accounts[0].Name), account)
+			terminal.Printf(c.p.out, "Using Cloudflare account: %s (%s)\n", printableText(accounts[0].Name), account)
 			c.account = account
 			return nil
 		}
@@ -797,11 +826,9 @@ func (c *r2Creator) confirmPublicAccess() error {
 	}
 }
 
-// reportPublicAccess says what the bootstrap token could see of the bucket's
-// public access, and only that: the r2.dev URL and the custom domains, read
-// now. It is not stored and not repeated later, and it says nothing of access
-// setup cannot read. It fixes nothing, and says whether either read found the
-// bucket publicly readable.
+// reportPublicAccess records what the bootstrap token could see of the
+// bucket's native public access: the r2.dev URL and custom domains. Setup
+// does not repeat these reads after discarding that token.
 //
 // Which token permissions these two reads need is not documented; a refusal
 // is reported as "not checked", and does not hide what the other read found.
@@ -810,6 +837,15 @@ func (c *r2Creator) reportPublicAccess() (public bool) {
 	ctx := context.Background()
 	domain, managedErr := c.api.ManagedDomain(ctx, c.account, c.bucket.BucketRef)
 	custom, customErr := c.api.CustomDomains(ctx, c.account, c.bucket.BucketRef)
+	report := storage.UnknownPrivacy(credentials.ProviderR2)
+	checked := c.env.now().UTC()
+	report.CheckedAt = &checked
+	if managedErr == nil {
+		report.Checks = append(report.Checks, "r2_dev_domain")
+	}
+	if customErr == nil {
+		report.Checks = append(report.Checks, "custom_domains")
+	}
 	var enabled []string
 	for _, d := range custom {
 		if d.Enabled {
@@ -832,11 +868,20 @@ func (c *r2Creator) reportPublicAccess() (public bool) {
 		public = true
 		p.warn(p.style.fail("The bucket serves these custom domains publicly: "+strings.Join(enabled, ", ")+"."), "Remove them if the archive shouldn't be publicly readable.")
 	case customErr == nil:
-		terminal.Println(p.out, p.style.okMark()+" Custom domains: none (checked at setup).")
+		terminal.Println(p.out, p.style.okMark()+" Custom domains: none enabled (checked at setup).")
 	default:
 		p.warn("Couldn't check whether the bucket has custom domains. " + explainCloudflare(customErr, "The token may need the Workers R2 Storage Read permission to read them."))
 	}
 	terminal.Println(p.out, p.style.dim("  These were read just now; setup doesn't check again."))
+	switch {
+	case public:
+		report.State, report.Reason = "public_or_risky", "r2_public_access_enabled"
+	case managedErr == nil && customErr == nil:
+		report.State, report.Reason = "verified_private", "r2_public_domains_disabled"
+	default:
+		report.Reason = "r2_public_access_not_fully_checked"
+	}
+	c.privacy = report
 	return public
 }
 
