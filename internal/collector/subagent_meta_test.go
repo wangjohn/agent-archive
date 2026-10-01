@@ -341,6 +341,20 @@ func TestUnusableMetaFileLeavesTheFilteredTranscriptUnchanged(t *testing.T) {
 			t.Errorf("%s: filtered differently (err %v): %+v vs %+v", name, err, got, want)
 		}
 	}
+	// A link in its place is not followed, even to a file elsewhere with a
+	// description of its own.
+	elsewhere := writeTranscript(t, t.TempDir(), "package.json", `{"description":"SYNTHETIC-LINKED-DESCRIPTION"}`)
+	metaPath := filepath.Join(dir, "agent-1.meta.json")
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, metaPath); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := filterTranscript(archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("symbolic link: filtered differently (err %v): %+v vs %+v", err, got, want)
+	}
 }
 
 // A subagent-meta record is a label, not evidence: a snapshot with it, without

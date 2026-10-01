@@ -772,9 +772,11 @@ guide. Live check on the owner's Mac:
   `agent-<id>.jsonl` (`archive.SubagentMetaPath`: the sibling is
   `agent-<id>.meta.json`). The file is read through the same non-blocking
   regular-file open as the transcript and at most `MaxSubagentMetaBytes`
-  (16 KB) of it; anything else (missing, a directory or pipe, oversized, not a
-  JSON object, no non-blank string `description`) is as if absent, with no
-  gap and no warning. Only `description` is read; `worktreePath` and
+  (16 KB) of it, after an `Lstat` that refuses a symbolic link (and a check
+  that the file opened is the one found), so a link never makes it read a
+  file elsewhere; anything else (missing, a link, a directory or pipe,
+  oversized, not a JSON object, no non-blank string `description`) is as if
+  absent, with no gap and no warning. Only `description` is read; `worktreePath` and
   `agentType` are never kept, and are not reported as omitted keys.
 - PR 7: the description is cut to 512 bytes, after redaction (a cut before it
   could leave half a secret that no pattern matches) and then redacted again

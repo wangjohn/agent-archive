@@ -34,11 +34,14 @@ task, and nothing else that was dropped.
   - Nothing else of the file is kept, and none of it is reported: the file
     is not part of the transcript. `worktreePath` (a path on this Mac) and
     `agentType` (local-only state) are never read.
-  - The file is optional. One that is missing, unreadable, not a regular file,
-    larger than 16 KB, not a JSON object, or without a description that is a
-    non-blank string changes nothing and records no gap.
-  - The record, and any gap about it, is written only when the transcript
-    has records of its own, so it never makes an empty or unrecognized
+  - The file is optional. One that is missing, unreadable, a symbolic link
+    (never followed, so no file elsewhere is read in its place) or otherwise
+    not a regular file, larger than 16 KB, not a JSON object, or without a
+    description that is a non-blank string changes nothing and records no
+    gap.
+  - The record, and any gap about it (including the names of keys dropped
+    from a description that is JSON text, filtered as a prompt's is), is
+    written only when the transcript has records of its own, so it never makes an empty or unrecognized
     transcript look captured, and never changes the transcript's timestamps
     or identities. There is at most one: a `subagent-meta` record in the
     transcript itself (a retained snapshot filtered again carries the one

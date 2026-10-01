@@ -673,7 +673,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	var filteredLead subagentLead
 	if lead != nil && format == "claude-jsonl" {
 		var err error
-		if filteredLead, err = meta.lead(lead, omittedKeys.add); err != nil {
+		if filteredLead, err = meta.lead(lead); err != nil {
 			return FilteredTranscript{}, err
 		}
 	}
@@ -751,7 +751,7 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat
 	}
-	filteredLead.writeTo(&result, addGap)
+	filteredLead.writeTo(&result, addGap, omittedKeys.add)
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}

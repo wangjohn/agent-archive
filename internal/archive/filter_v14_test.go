@@ -275,24 +275,35 @@ func TestFilterV14SubagentMetaWithoutADescriptionIsDropped(t *testing.T) {
 // no gap either: the output is the transcript's alone.
 func TestFilterV14MetaFileAloneNeverMakesATranscript(t *testing.T) {
 	t.Parallel()
-	meta := []byte(`{"description":"Find the retention tests password=SYNTHETICSUBAGENTPW"}`)
-	empty, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(""), meta)
-	if err != nil || len(empty.Records) != 0 || empty.Boundary.RetainedRecords != 0 || len(empty.Gaps) != 0 {
-		t.Fatalf("empty transcript: %+v, %v", empty, err)
+	for name, meta := range map[string][]byte{
+		"redacted text": []byte(`{"description":"Find the retention tests password=SYNTHETICSUBAGENTPW"}`),
+		// JSON text is filtered as JSON, as a prompt's is, and the names of
+		// the keys it drops are held with the record.
+		"JSON text": []byte(`{"description":"{\"usage\":{\"SYNTHETIC-KEY-NAME\":\"x\"}}"}`),
+	} {
+		empty, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(""), meta)
+		if err != nil || len(empty.Records) != 0 || empty.Boundary.RetainedRecords != 0 || len(empty.Gaps) != 0 {
+			t.Fatalf("%s: empty transcript: %+v, %v", name, empty, err)
+		}
+		if _, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"nothing-we-know"}`+"\n"), meta); !errors.Is(err, ErrUnsafeSourceFormat) {
+			t.Fatalf("%s: unrecognized transcript: err = %v, want ErrUnsafeSourceFormat", name, err)
+		}
+		// Records that are all dropped leave no records to put it before, and
+		// the description's redaction is not reported for a record not kept.
+		untitled := `{"type":"custom-title","sessionId":"native-parent","timestamp":"2026-09-30T11:00:00Z"}` + "\n"
+		plain, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(untitled))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dropped, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(untitled), meta)
+		if err != nil || len(dropped.Records) != 0 || !reflect.DeepEqual(dropped, plain) {
+			t.Fatalf("%s: all records dropped: %+v, want %+v (err %v)", name, dropped, plain, err)
+		}
 	}
-	if _, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(`{"type":"nothing-we-know"}`+"\n"), meta); !errors.Is(err, ErrUnsafeSourceFormat) {
-		t.Fatalf("unrecognized transcript: err = %v, want ErrUnsafeSourceFormat", err)
-	}
-	// Records that are all dropped leave no records to put it before, and
-	// the description's redaction is not reported for a record not kept.
-	untitled := `{"type":"custom-title","sessionId":"native-parent"}` + "\n"
-	plain, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(untitled))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dropped, err := (ClaudeAdapter{}).FilterSubagentJSONL(strings.NewReader(untitled), meta)
-	if err != nil || len(dropped.Records) != 0 || !reflect.DeepEqual(dropped, plain) {
-		t.Fatalf("all records dropped: %+v, want %+v (err %v)", dropped, plain, err)
+	// Written, the record brings its omitted key names with it.
+	filtered, _ := filterSubagent(t, `{"description":"{\"usage\":{\"SYNTHETIC-KEY-NAME\":\"x\"}}"}`)
+	if !hasGapDetail(filtered.Gaps, "unknown_field_omitted", "omitted keys: SYNTHETIC-KEY-NAME, agentId") {
+		t.Errorf("the omitted key name is not reported with the record: %#v", filtered.Gaps)
 	}
 }
 
