@@ -847,6 +847,13 @@ the release behavior.
   its lock for an instant; it could take a new snapshot's lock just before
   the read did. A read's lock file now appears already locked, so the
   sweep sees it in use and leaves it alone.
+- The `handoff` picker, its filter, and `handoff "<words>"` no longer offer
+  an archived session with no prompt, which has nothing to hand off: one
+  uploaded before its first prompt showed as an untitled row and was counted
+  in the footer. They already passed over such a session on this machine;
+  one archived before its first prompt is offered again once its transcript
+  here has one. Its session ID still names it, and `list` and `show` are
+  unchanged.
 
 #### Changed
 

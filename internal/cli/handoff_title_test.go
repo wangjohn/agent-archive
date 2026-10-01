@@ -495,3 +495,37 @@ func TestHandoffLatestTakesNoTitle(t *testing.T) {
 		t.Fatalf("--latest --source local opened the archive %d times", *opens)
 	}
 }
+
+// Words never offer an archived session with no prompt, which has nothing to
+// hand off, without a terminal or on one.
+func TestHandoffTitleSkipsArchivedSessionsWithNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	f.unregister(t, f.noPrompt)
+	// "codex" is in every session's harness; --source archive leaves the archive's.
+	out, errOut, code := runHandoff(t, f.env, "codex", "--source", "archive")
+	if code != 1 || out != "" || !strings.Contains(errOut, `"codex" matches 3 sessions`) || strings.Contains(errOut, f.noPrompt[:minShortSessionID]) {
+		t.Fatalf("code=%d stdout=%q stderr=%s", code, out, errOut)
+	}
+	out, errOut, code = runPicker(t, f.env, "q\n", "codex", "--source", "archive")
+	if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, `"codex" matches 3`) {
+		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// An archived session's ID, whole or short, names it even with no prompt, as
+// a registered one's does (TestHandoffExactIDNeedsNoTitle): only the picker
+// and words pass it over.
+func TestHandoffArchivedIDNeedsNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	f.unregister(t, f.noPrompt)
+	for _, query := range []string{f.noPrompt, f.noPrompt[:minShortSessionID]} {
+		out, errOut, code := runHandoff(t, f.env, query)
+		if code != 0 || !strings.Contains(out, "session "+f.noPrompt+" · source: archive") {
+			t.Fatalf("%q: code=%d stderr=%s\n%s", query, code, errOut, out)
+		}
+	}
+}
