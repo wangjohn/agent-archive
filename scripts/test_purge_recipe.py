@@ -363,6 +363,36 @@ exit 0
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(self.attempts()), 6)
 
+    def test_unapplied_recovery_preserves_deleted_metadata_history(self):
+        for shell in self.shells:
+            for expired in (False, True):
+                with self.subTest(shell=shell, expired=expired):
+                    self.build()
+                    tail = r"""
+original=$purge_dir
+purge_apply && exit 91
+unset FAKE_RM_FAIL_AT
+purge_resume "$original" || exit 92
+recovery=$purge_dir
+"""
+                    if expired:
+                        tail += r"""
+expiry=$(($(cat "$purge_dir/created") + 301))
+date() { printf '%s\n' "$expiry"; }
+purge_apply && exit 93
+unset -f date
+"""
+                    tail += r"""
+cp "$original/meta.1" "$FAKE_S3/my-archive-bucket/agent-archive/sessions/claude/aaaa/metadata.json"
+purge_resume "$recovery" && purge_apply && exit 94
+exit 0
+"""
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'machine'],
+                        env_extra={'FAKE_RM_FAIL_AT': '2'}, tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(self.attempts()), 2, result.stderr)
+                    self.assertIn('Metadata reappeared', result.stderr)
+
     def test_progress_failure_and_repeated_recovery(self):
         for shell in self.shells:
             with self.subTest(shell=shell):

@@ -307,7 +307,7 @@ purge_seal() {
   chmod 400 "$purge_dir/manifest.json" "$purge_dir/manifest.sha256" || return 1
 }
 purge_seal_attempt() {
-  (cd "$purge_dir" && shasum -a 256 bucket prefix mode created keys targets metas > attempt.sha256) || return 1
+  (cd "$purge_dir" && shasum -a 256 bucket prefix mode created keys targets metas tombstones > attempt.sha256) || return 1
   n=0
   while IFS= read -r meta; do
     n=$((n + 1))
@@ -625,6 +625,9 @@ purge_resume() {
       printf '%s\n' "$key" >> "$purge_dir/targets" || return 1
     fi
   done < "$purge_dir/original.targets"
+  # Preserve inherited deletion history even if this recovery plan is never applied.
+  : > "$purge_dir/removed" || return 1
+  purge_progress_write "" || return 1
   date +%s > "$purge_dir/created" || return 1
   purge_seal_attempt || return 1
   : > "$purge_dir/VALID" || return 1
