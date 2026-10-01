@@ -77,32 +77,38 @@ func TestSweepSkipsASnapshotInUse(t *testing.T) {
 // (Ctrl-C during a backfill plan) leaves a directory whose lock nobody
 // holds. It is removed as soon as its lock file is a minute old, not after
 // the hour a directory without a lock file waits; one whose lock file was
-// just created may be a read starting, and is kept.
+// just created may be a read starting, and is kept. The same holds for a
+// process killed before renaming its lock file into place, which leaves
+// only snapshotLockNewName.
 func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
-	root := useTempSnapshots(t)
-	abandoned := filepath.Join(root, snapshotPrefix+"abandoned")
-	starting := filepath.Join(root, snapshotPrefix+"starting")
-	for _, d := range []string{abandoned, starting} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(d, snapshotLockName), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(d, "state.vscdb"), []byte("copy"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	twoMinutes := time.Now().Add(-2 * abandonedSnapshotAge)
-	if err := os.Chtimes(filepath.Join(abandoned, snapshotLockName), twoMinutes, twoMinutes); err != nil {
-		t.Fatal(err)
-	}
-	RemoveStaleSnapshots()
-	if _, err := os.Stat(abandoned); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("abandoned snapshot kept: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(starting, "state.vscdb")); err != nil {
-		t.Fatalf("a snapshot just starting was swept: %v", err)
+	for _, lockName := range []string{snapshotLockName, snapshotLockNewName} {
+		t.Run(lockName, func(t *testing.T) {
+			root := useTempSnapshots(t)
+			abandoned := filepath.Join(root, snapshotPrefix+"abandoned")
+			starting := filepath.Join(root, snapshotPrefix+"starting")
+			for _, d := range []string{abandoned, starting} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, lockName), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, "state.vscdb"), []byte("copy"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			twoMinutes := time.Now().Add(-2 * abandonedSnapshotAge)
+			if err := os.Chtimes(filepath.Join(abandoned, lockName), twoMinutes, twoMinutes); err != nil {
+				t.Fatal(err)
+			}
+			RemoveStaleSnapshots()
+			if _, err := os.Stat(abandoned); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("abandoned snapshot kept: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(starting, "state.vscdb")); err != nil {
+				t.Fatalf("a snapshot just starting was swept: %v", err)
+			}
+		})
 	}
 }
 

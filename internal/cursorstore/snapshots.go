@@ -25,6 +25,10 @@ const snapshotPrefix = "cursor-snapshot-"
 // long the pass lasts.
 const snapshotLockName = "in-use.lock"
 
+// snapshotLockNewName is the file lockSnapshot creates and locks before
+// renaming it to snapshotLockName.
+const snapshotLockNewName = snapshotLockName + ".new"
+
 // staleSnapshotAge is how old a leftover snapshot directory must be before
 // it is removed. Only a killed process leaves one, and a directory whose lock
 // is held is never removed whatever its age.
@@ -271,9 +275,10 @@ func RemoveOwnSnapshots() {
 // backfill command calls it first, and the collector at the start of every
 // pass; any other long-running reader should too. A locked
 // one belongs to a read in progress and is left alone. An unlocked one whose
-// lock file is over abandonedSnapshotAge old was abandoned and is removed; one
-// without a lock file may belong to a read that is just starting, so it is
-// removed only once it is over staleSnapshotAge old.
+// lock file (or, for a process killed before renaming it into place,
+// snapshotLockNewName) is over abandonedSnapshotAge old was abandoned and is
+// removed; one without either may belong to a read that is just starting, so
+// it is removed only once it is over staleSnapshotAge old.
 func RemoveStaleSnapshots() {
 	root := snapshotRootPath()
 	info, err := os.Lstat(root)
@@ -294,8 +299,11 @@ func RemoveStaleSnapshots() {
 		}
 		age := staleSnapshotAge
 		info, err := e.Info()
-		if lock, lockErr := os.Lstat(filepath.Join(dir, snapshotLockName)); lockErr == nil {
-			age, info, err = abandonedSnapshotAge, lock, nil
+		for _, name := range []string{snapshotLockName, snapshotLockNewName} {
+			if lock, lockErr := os.Lstat(filepath.Join(dir, name)); lockErr == nil {
+				age, info, err = abandonedSnapshotAge, lock, nil
+				break
+			}
 		}
 		if err == nil && time.Since(info.ModTime()) > age {
 			_ = os.RemoveAll(dir)

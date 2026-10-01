@@ -11,10 +11,6 @@ import (
 // The snapshot locks are flocks, which only Unix systems have: the program
 // is Unix-only, and a build for anything else fails here.
 
-// snapshotLockNewName is the file lockSnapshot creates and locks before
-// renaming it to snapshotLockName.
-const snapshotLockNewName = snapshotLockName + ".new"
-
 // lockSnapshot creates dir's lock file and takes its exclusive lock, which
 // the returned file holds until it is closed. The file is locked under
 // another name and only then renamed into place, so a sweep never finds it
@@ -39,13 +35,23 @@ func lockSnapshot(dir string, placed func(lockPath string)) (*os.File, error) {
 		return nil, err
 	}
 	if placed != nil {
+		// Should placed not return (a test's t.Fatal), nothing else would
+		// ever close f and release its lock.
+		returned := false
+		defer func() {
+			if !returned {
+				_ = f.Close()
+			}
+		}()
 		placed(lockPath)
+		returned = true
 	}
 	return f, nil
 }
 
 // snapshotInUse reports whether a Reader holds dir's lock. A directory
-// without a lock file was left by a process that died before taking it.
+// without a lock file is not reported in use: its Reader may still be
+// starting, or may have died before placing the file.
 func snapshotInUse(dir string) bool {
 	f, err := os.Open(filepath.Join(dir, snapshotLockName))
 	if err != nil {
