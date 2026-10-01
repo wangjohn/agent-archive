@@ -208,40 +208,62 @@ func TestFilteredRowsKeepTheirUnfilteredNumbers(t *testing.T) {
 }
 
 // A row the filter finds past the table's limit has the number it would have
-// in the whole table, and in key mode that number, typed after Esc, picks it
-// as any number on the table does.
-func TestKeyNumberOfARowPastTheLimitPicksItAfterEsc(t *testing.T) {
+// in the whole table, and is picked in the filter: by the highlight and Enter
+// in key mode, by that number in line mode while the page drawn shows it.
+// Only the table's own numbers pick once the filter is gone, so a number past
+// the table never names a session the person has not seen.
+func TestARowPastTheLimitIsPickedInTheFilter(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(30, oneProject)
 	format := listFormatOptions{Now: pickerNow, Numbered: true}
 	choices := newScopeChoices(sessionScope{}, format, false, archiveRows(sessions, 10, format))
-	fake := newFakeKeys("/", "number 27", "\x1b", "27", "\r")
-	picker := &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
-	defer picker.keys.close()
-	var out bytes.Buffer
-	picker.clear = func() { out.WriteString(screenBreak) }
-	row, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
-	screens := strings.Split(out.String(), screenBreak)
-	if err != nil || !ok || row.Index != 27 || row.SessionID != sessions[26].SessionID {
-		t.Fatalf("27 after Esc picked %+v ok=%v err=%v\n%s", row, ok, err, strings.Join(screens, "\n----\n"))
+	pickKeys := func(chunks ...string) (listRow, bool, []string) {
+		t.Helper()
+		var out bytes.Buffer
+		picker := &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(newFakeKeys(chunks...)), clear: func() { out.WriteString(screenBreak) }}
+		defer picker.keys.close()
+		row, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row, ok, strings.Split(out.String(), screenBreak)
+	}
+	row, ok, screens := pickKeys("/", "number 27", "\r")
+	if !ok || row.Index != 27 || row.SessionID != sessions[26].SessionID {
+		t.Fatalf("Enter in the filter picked %+v ok=%v\n%s", row, ok, strings.Join(screens, "\n----\n"))
 	}
 	if got := rowNumbers(screens[2]); !sameInts(got, []int{27}) {
 		t.Fatalf("the filter numbers the row past the limit %v:\n%s", got, screens[2])
 	}
-	// A number past the table that no filter listed names a session never
-	// shown, and is refused, as is a number no session has.
-	for _, typed := range []string{"27", "31"} {
-		fake = newFakeKeys(typed, "\r", "q")
-		out.Reset()
-		picker = &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake), clear: func() { out.WriteString(screenBreak) }}
-		row, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
-		picker.keys.close()
-		if err != nil || ok {
-			t.Fatalf("%s picked row %d: ok=%v err=%v", typed, row.Index, ok, err)
+	// After Esc, 27 is refused as any number past the table is, seen in a
+	// filter or not, as is a number no session has.
+	for _, keys := range [][]string{{"/", "number 27", "\x1b", "27", "\r", "q"}, {"27", "\r", "q"}, {"31", "\r", "q"}} {
+		row, ok, screens := pickKeys(keys...)
+		if ok {
+			t.Fatalf("%q picked row %d", keys, row.Index)
 		}
-		if !strings.Contains(out.String(), "Enter a listed number or unique short SESSION_ID") {
-			t.Fatalf("%s was not refused:\n%s", typed, out.String())
+		if out := strings.Join(screens, ""); !strings.Contains(out, "Enter a listed number or unique short SESSION_ID") {
+			t.Fatalf("%q was not refused:\n%s", keys, out)
 		}
+	}
+
+	// Line mode: 27 picks while the filter shows it.
+	var out bytes.Buffer
+	picker := &sessionPicker{env: fixedTerminal{120, 40}}
+	row, ok, err := picker.pickScoped(newPrompter(strings.NewReader("number 27\n27\n"), &out), &out, choices, "show")
+	if err != nil || !ok || row.Index != 27 {
+		t.Fatalf("line mode 27 in the filter picked %+v ok=%v err=%v\n%s", row, ok, err, out.String())
+	}
+	// On a page of the filter that does not show 28, 28 is words, which
+	// narrow the filter to it; then it picks.
+	out.Reset()
+	picker = &sessionPicker{env: fixedTerminal{120, 14}}
+	row, ok, err = picker.pickScoped(newPrompter(strings.NewReader("number\n28\n28\n"), &out), &out, choices, "show")
+	if err != nil || !ok || row.Index != 28 || !strings.Contains(out.String(), `"number 28"`) {
+		t.Fatalf("line mode 28 off the page picked %+v ok=%v err=%v\n%s", row, ok, err, out.String())
+	}
+	if !strings.Contains(out.String(), "Page 1 of") {
+		t.Fatalf("the filter is not paged:\n%s", out.String())
 	}
 }
 

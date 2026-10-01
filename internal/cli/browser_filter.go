@@ -72,14 +72,6 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	} else {
 		shown, matched = filterRows(l.universe(rows), q)
 		laid = filteredFormat(format, shown)
-		for _, r := range shown {
-			if r.Index > len(rows) {
-				if l.listed == nil {
-					l.listed = map[int]listRow{}
-				}
-				l.listed[r.Index] = r
-			}
-		}
 		footer.WriteString(l.filterFooter(matched, words))
 	}
 	// The mark is for the key browser's filter line; a table read by lines

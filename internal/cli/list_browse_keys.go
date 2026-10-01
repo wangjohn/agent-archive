@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -149,7 +148,7 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 				l.toggled = true
 				return listRow{}, false, nil
 			case listSubmit:
-				if row, ok := l.submitted(typed, rows); ok {
+				if row, ok := matchBrowseRow(typed, rows); ok {
 					return row, true, nil
 				}
 				typed, notice = "", "Enter a listed number or unique short SESSION_ID, or q to quit."
@@ -165,22 +164,6 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 			}
 		}
 	}
-}
-
-// submitted resolves what was typed at the list's prompt to a row: one of the
-// table's, or, by its number, one a filter listed past the table's limit (the
-// number the filter showed it with, typed after Esc). A number past the table
-// that no filter listed names a session the person has not seen, and is
-// refused.
-func (l *sessionPicker) submitted(typed string, rows []listRow) (listRow, bool) {
-	if row, ok := matchBrowseRow(typed, rows); ok {
-		return row, true
-	}
-	if n, err := strconv.Atoi(typed); err == nil && len(typed) < minShortSessionID {
-		row, ok := l.listed[n]
-		return row, ok
-	}
-	return listRow{}, false
 }
 
 // listKeyResult is what a key at the list asks for besides scrolling or

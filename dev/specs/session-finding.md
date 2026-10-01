@@ -959,11 +959,14 @@ guide. Live check on the owner's Mac:
   open. `resolveShowQuery` takes `noPager` and `pickOne` for it.
 - PR 6: while the filter line is open, `a`, `n`, `p` and `q` are typed text
   (§5 says they act outside it), so the other scope is one Esc away; digits
-  are typed text too, so in key mode a row's number is chosen by after Esc (it
-  is the number the row had in the filter, past the table's limit too: Enter
-  takes a number past the last row for a row a filter listed, and refuses
-  one no filter listed, which names a session never shown), and in line mode
-  at once; the
+  are typed text too, so in key mode a row's number is chosen by after Esc,
+  and in line mode at once. A row the filter finds past the table's limit is
+  numbered on from the table's last row, and is chosen in the filter: with
+  the highlight and Enter in key mode, and in line mode by its number while
+  the page drawn shows it. Once the filter is gone (and in line mode on
+  another page of it), a number past the table picks nothing (key mode
+  refuses it, line mode takes it as words), so it never names a session the
+  person has not seen; the table's own numbers always pick, as §5 asks; the
   heading while filtering names `Esc clear`, not `a`. Esc clears the words and
   closes the line in one press, and Backspace on an empty filter closes it. In
   line mode `a` still switches the scope with a filter on, and keeps it.

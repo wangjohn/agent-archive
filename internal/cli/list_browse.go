@@ -447,9 +447,6 @@ type sessionPicker struct {
 	search     func() []listRow
 	searched   []listRow
 	searchRead bool
-	// listed holds, by number, the rows past the table's last that a filter
-	// has listed, which a number typed at the table's prompt can pick.
-	listed map[int]listRow
 	// headingFor, when set, words the heading for the table shown, and for
 	// a filter's words and how many sessions match them.
 	headingFor func(words string, matches int) string
@@ -473,7 +470,7 @@ func (l *sessionPicker) pickScoped(p *prompter, stdout io.Writer, choices *scope
 		l.headingFor = func(words string, matches int) string {
 			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Keys: l.keys != nil})
 		}
-		l.search, l.searched, l.searchRead, l.listed = c.search, nil, false, nil
+		l.search, l.searched, l.searchRead = c.search, nil, false
 		l.noteText, l.noteWords = c.searchNote, c.searchWords
 		row, ok, err := l.pickRows(p, stdout, c.rows, c.total, c.truncated, c.format, action)
 		if !l.toggled || err != nil {
@@ -626,7 +623,11 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 				message = l.turnPage(pages, page, answer)
 				again = message == "" || redraw
 			default:
-				if row, matched := l.matchRow(answer, v.rows, rows); matched {
+				onPage := v.order
+				if paged {
+					onPage = v.order[pages[page].start:pages[page].end]
+				}
+				if row, matched := l.matchRow(answer, v.rows, onPage, rows); matched {
 					return row, true, nil
 				}
 				// Words to narrow the table by, added to those already there.
@@ -677,12 +678,15 @@ func (l *sessionPicker) turnPage(pages []pickerPage, page int, answer string) st
 	return ""
 }
 
-// matchRow resolves an answer to a row listed: one of those shown, or, by
-// the number it had before the table was narrowed, one of rows. A word
+// matchRow resolves an answer to a row listed: by its number, one of the
+// table's rows (the number it has unfiltered), or one past the table that
+// the filter shows on the page drawn (onPage); by its ID, one of those the
+// filter shows. A number past the table on another page of the filter, or
+// on none, names a session the person has not seen, and is words. A word
 // shorter than the ID prefixes the matcher takes (minIDPrefixWord) is words,
 // not an ID: "db" or "add" would otherwise pick the one session whose ID
 // starts with it.
-func (l *sessionPicker) matchRow(answer string, shown, rows []listRow) (listRow, bool) {
+func (l *sessionPicker) matchRow(answer string, shown, onPage, rows []listRow) (listRow, bool) {
 	if _, err := strconv.Atoi(answer); err != nil && len(answer) < minIDPrefixWord {
 		return listRow{}, false
 	}
@@ -690,13 +694,13 @@ func (l *sessionPicker) matchRow(answer string, shown, rows []listRow) (listRow,
 		return matchBrowseRow(answer, rows)
 	}
 	if n, err := strconv.Atoi(answer); err == nil && len(answer) < minShortSessionID {
-		for _, r := range shown {
+		if n >= 1 && n <= len(rows) {
+			return rows[n-1], true
+		}
+		for _, r := range onPage {
 			if r.Index == n && n > 0 {
 				return r, true
 			}
-		}
-		if n >= 1 && n <= len(rows) {
-			return rows[n-1], true
 		}
 		return listRow{}, false
 	}
