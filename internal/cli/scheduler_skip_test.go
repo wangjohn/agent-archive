@@ -231,6 +231,7 @@ func TestLinuxUninstallSkippingTheSchedulerLeavesAnotherInstallationsJob(t *test
 // system, or a scheduler this build has never heard of) refuses uninstall in
 // the same way, and the flag goes on.
 func TestUninstallOfARecordedBackendThisSystemCannotUse(t *testing.T) {
+	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	l.setup()
 	cfg := mustLoadConfig(t, l.home)
@@ -257,6 +258,7 @@ func TestUninstallOfARecordedBackendThisSystemCannotUse(t *testing.T) {
 // the stop is tried, the plist is removed, and the summary says the job was not
 // verified stopped, naming launchctl.
 func TestMacOSUninstallSkippingTheSchedulerSaysSo(t *testing.T) {
+	// Not parallel: newSchedRun replaces launchctl.
 	r := newSchedRun(t, true)
 	r.install()
 	r.answers[r.ownLabel()] = []launchdAnswer{answerUnknown}

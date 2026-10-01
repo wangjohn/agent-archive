@@ -17,7 +17,8 @@ import (
 // current code wrote (testdata/scheduler/journals; its README says how). The
 // journal's on-disk format is read across releases, so these files must keep
 // replaying unchanged: they are never regenerated, a new format gets new
-// fixtures beside them.
+// fixtures beside them. None of these tests is parallel: newSchedRun replaces
+// launchctl.
 
 // crashPoint is where in its commit an interrupted setup stopped.
 type crashPoint string

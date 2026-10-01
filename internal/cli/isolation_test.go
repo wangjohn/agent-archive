@@ -121,6 +121,7 @@ func isolateProcessForTesting() func() {
 // reaches this machine itself stops the test, and the process's own home is a
 // temporary one.
 func TestIsolationFailsClosed(t *testing.T) {
+	t.Parallel()
 	panics := func(name string, f func()) {
 		t.Helper()
 		defer func() {

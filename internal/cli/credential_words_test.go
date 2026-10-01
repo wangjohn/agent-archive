@@ -17,14 +17,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
-// None of these tests is parallel: each may set credentialOS, which the
-// package's parallel tests read (they run after every serial test, so a
-// serial test that restores it can never race them).
+// The tests that set credentialOS (useCredentialOS, or linuxFixture) are not
+// parallel: the package's parallel tests read it (they run after every serial
+// test, so a serial test that restores it can never race them). The tests
+// that pass the platform to the wording functions themselves are parallel.
 
 // Every credential message on macOS is the message it was before the file
 // store existed; the other platform's words are new and never name the
 // Keychain.
 func TestCredentialWordsOnBothPlatforms(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("cause")
 	const dataDir = "/data/agent-archive"
 	darwin := map[string]string{
@@ -292,6 +294,7 @@ func TestUninstallPurgeReportsCredentialFilesBehindALinkOnLinux(t *testing.T) {
 // The wording of a credential left behind depends on what the purge did to
 // the credentials folder.
 func TestUndeletedCredentialsProblemFollowsTheFolder(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("cause")
 	const dataDir = "/data/agent-archive"
 	still := undeletedCredentialsProblem(platform.Linux, dataDir, []string{"r"}, cause, credentialFolder{remains: true})
@@ -334,6 +337,7 @@ func TestUndeletedCredentialsProblemFollowsTheFolder(t *testing.T) {
 // The credentials folder is one of the entries uninstall removes, so a
 // purge leaves nothing behind and does not report it as an unrelated file.
 func TestPurgeRemovesTheCredentialsFolder(t *testing.T) {
+	t.Parallel()
 	home := filepath.Join(t.TempDir(), "agent-archive")
 	store, err := credentials.NewFileStore(credentials.FileStoreDir(home))
 	must(t, err)
@@ -349,6 +353,7 @@ func TestPurgeRemovesTheCredentialsFolder(t *testing.T) {
 
 // setup --yes and the environment store read the same two variables.
 func TestEnvironmentVariableNamesAgreeWithTheCredentialsPackage(t *testing.T) {
+	t.Parallel()
 	if envR2AccessKeyID != credentials.EnvR2AccessKeyID || envR2SecretAccessKey != credentials.EnvR2SecretAccessKey {
 		t.Fatalf("setup reads %s and %s, the environment store %s and %s", envR2AccessKeyID, envR2SecretAccessKey, credentials.EnvR2AccessKeyID, credentials.EnvR2SecretAccessKey)
 	}
@@ -420,6 +425,7 @@ func TestOpeningTheStoreForR2Failure(t *testing.T) {
 // The program's own credentialOS is the platform it runs on: the tests pin
 // it to Darwin, so a hard-coded value would otherwise go unseen.
 func TestCredentialOSIsTheRunningPlatform(t *testing.T) {
+	t.Parallel()
 	want := platform.Unknown
 	switch runtime.GOOS {
 	case "darwin":
@@ -434,7 +440,8 @@ func TestCredentialOSIsTheRunningPlatform(t *testing.T) {
 
 // linuxFixture is a Linux setup environment whose credential store is the real
 // one for Linux (the credentials file, with the environment as its fallback)
-// and whose environment is vars: what the shell setup runs in exports.
+// and whose environment is vars: what the shell setup runs in exports. It
+// sets credentialOS, so a test that calls it must not be parallel.
 func linuxFixture(t *testing.T, vars map[string]string) (env Env, home, project string) {
 	t.Helper()
 	useCredentialOS(t, platform.Linux)
@@ -598,6 +605,7 @@ func TestOpenedStoreOnLinuxServesTheRuntimeFromTheEnvironment(t *testing.T) {
 // A relative link's target is reported where it points, from the folder that
 // holds the link, not as written.
 func TestLookCredentialFolderResolvesARelativeLink(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	must(t, os.Symlink(filepath.Join("..", "shared", "creds"), credentials.FileStoreDir(base)))
 	got := lookCredentialFolder(base)

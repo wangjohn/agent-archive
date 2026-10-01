@@ -41,6 +41,9 @@ func stubExit() (func(os.Signal), func() []os.Signal) {
 // exitOnSignal, which removes this process's copies of Cursor's database
 // first, instead of the default handler leaving them behind.
 func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
+	// Not parallel: stubExit removes this process's copies of Cursor's database,
+	// as exitOnSignal does, which would take them from under another test's
+	// backfill.
 	exit, exits := stubExit()
 	signals := make(chan os.Signal, 1)
 	stopped := make(chan struct{})
@@ -87,6 +90,9 @@ func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
 // B-24: SIGTERM or SIGHUP (a closing terminal, a process manager) quits at
 // once, even as the first signal, through exitOnSignal.
 func TestTerminateSignalsExitAtOnce(t *testing.T) {
+	// Not parallel: stubExit removes this process's copies of Cursor's database,
+	// as exitOnSignal does, which would take them from under another test's
+	// backfill.
 	for _, sig := range []os.Signal{syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT} {
 		exit, exits := stubExit()
 		signals := make(chan os.Signal, 1)
@@ -106,6 +112,8 @@ func TestTerminateSignalsExitAtOnce(t *testing.T) {
 // plan, nothing is written, the stop is announced, and no copy of Cursor's
 // database is left in the snapshot folder.
 func TestBackfillPlanningStopsOnInterrupt(t *testing.T) {
+	// Not parallel: it checks the process's shared snapshot folder, where another
+	// test's backfill may hold a copy of Cursor's database.
 	f := newBackfillFixture(t)
 	signals := make(chan os.Signal, 1)
 	signals <- os.Interrupt // pressed as planning starts
