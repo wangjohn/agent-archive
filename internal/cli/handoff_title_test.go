@@ -270,8 +270,9 @@ func TestHandoffTitleWithToLaunchesTheMatch(t *testing.T) {
 
 func TestHandoffTitleBeforeSetup(t *testing.T) {
 	t.Parallel()
-	_, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "some title")
-	if code != 1 || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	_, errOut, code := runHandoff(t, f.env, "some title")
+	if code != 1 || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d stderr=%q", code, errOut)
 	}
 }

@@ -10,6 +10,13 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Handoff before setup discovers Claude Code and Codex native conversations in
+  the current checkout, with filtered batches of 50 previews, explicit older
+  loading, native ID selection and modification-time latest selection. It writes
+  no archive or configuration; private launch files have seven-day best-effort
+  cleanup on later local handoffs. Disposable real-app acceptance is still
+  unverified on macOS and Linux.
+
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
 - Interactive session browsing and search, project-aware listings, richer
@@ -32,6 +39,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   bundles from retained transcript text, including truncated payloads, nested
   JSON, tool arguments, and displayed files. Existing sessions are re-filtered
   on the next collector scan.
+
+- Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
+- Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
+- The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
 
 - Listings default to the current project when available and return at most 50
   sessions. Use `--all-projects` to search the whole archive and `--limit 0` to

@@ -24,8 +24,15 @@ const (
 // other part of the browser (the rows and their columns, the scope heading
 // and `a`, the `/` filter, paging and scrolling) is the same code for every
 // caller.
+type browserLoadAction struct {
+	Label string
+	Load  func() (bool, error)
+}
+
 type browserSpec struct {
-	Mode browserMode
+	LoadOlder *browserLoadAction
+	Notice    string
+	Mode      browserMode
 	// Verb is what Enter does, which leads the heading ("Hand off", "Show").
 	// Empty for none. Lower-cased, it is what the line-mode prompt says
 	// Enter does when the browser picks.
@@ -78,7 +85,7 @@ func runBrowser(ctx context.Context, env sessionBrowserDependencies, p *prompter
 	if keys != nil {
 		defer keys.close()
 	}
-	list := &sessionPicker{env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
+	list := &sessionPicker{older: spec.LoadOlder, boundedNotice: spec.Notice, env: env, clear: redraw, keys: keys, verb: spec.Verb, filter: spec.Query, filtering: spec.Query != "" && keys != nil}
 	var err error
 	if spec.Mode == browseSessions {
 		b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: spec.Store, format: spec.Choices.format, noPager: spec.NoPager, screen: screen, keys: keys, list: list}

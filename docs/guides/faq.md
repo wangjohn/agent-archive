@@ -30,10 +30,26 @@ class and region you choose. Sources are gzip-compressed filtered
 transcripts (tool results are capped at 64 KB per string), and a session is
 uploaded again only when it changed; retention deletes old snapshots and
 expired sessions. There is no typical figure to quote, since it depends on
-how long and how many your sessions are. To measure yours, `aws s3 ls
-s3://<bucket>/<prefix>sessions/ --recursive --summarize` prints the object
-count and total size (divide by the sessions `agent-archive list` counts),
-and your provider's billing page shows request counts.
+how long and how many your sessions are. To measure current stored bytes, run
+`aws s3 ls s3://<bucket>/<prefix>sessions/ --recursive --summarize` for the
+same bucket and prefix configured in agent-archive (for R2, also pass its
+`--endpoint-url`). Divide **Total Size**, not the object count, by the readable
+session count from `agent-archive list --all-projects --json --limit 0`, with
+no other filters. Its `total_matched` is exact when `total_matched_known` is
+true; `returned` and `sessions.length` also give the full readable count in
+this unlimited result. Default text and JSON listings return at most 50
+sessions, and capped JSON may omit `total_matched`
+([JSON contract](../reference/json-output.md#list---json)).
+
+For example, 200 MiB across 200 readable sessions is approximately
+1 MiB/session, even if the default listing shows only 50. With zero sessions,
+do not divide; report the stored bytes and zero readable sessions instead.
+Unreadable or skipped metadata makes the denominator incomplete: investigate
+stderr warnings before using the estimate. This is approximate current storage
+per readable session, not exact transcript size or provider billing; the
+session prefix can include superseded objects, and versioned storage charges
+can include noncurrent objects. Your provider's billing page shows request
+counts and charges.
 
 **How do I stop it for a while?**
 `agent-archive pause`, then `agent-archive resume`. Pause persists across
@@ -73,12 +89,14 @@ systemd user timer, so a headless machine or an SSH session needs `loginctl
 enable-linger`; there is no cron fallback. An R2 key is kept in a private file
 (not encrypted), so use an S3 profile where you can. Release binaries are
 unsigned (the installer checks them against `SHA256SUMS`, and `gh attestation
-verify` confirms where they came from). What is **not** verified on Linux:
+verify` confirms where they came from). The live synthetic-session acceptance
+run passed 91 checks on Ubuntu 24.04 with systemd 255 on both arm64 and amd64,
+using a throwaway MinIO bucket. What is **not** verified on Linux:
 the real Cursor app and `cursor-agent` hooks (a Cursor forum report says
 they may fail silently there, so Cursor capture is best effort), the real
 Claude Code and Codex apps, distributions and systemd versions other than
-Ubuntu 24.04 with systemd 255 (run live on arm64), an amd64 live run, a real
-logout with lingering off, and WSL. A
+Ubuntu 24.04 with systemd 255, real R2 and Amazon S3, a real
+logout with lingering off, a desktop login, and WSL. A
 home directory shared by several Linux machines (NFS, say) is refused by
 setup unless you opt in for a home only one machine mounts
 ([details](multiple-machines.md#a-home-directory-shared-across-machines)).
@@ -103,9 +121,17 @@ agent-archive hasn't seen is reported as `unverified` rather than assumed to
 work.
 
 **Is my R2 bucket verified private?**
-No. R2's S3-compatible credentials can't inspect public-bucket settings, so
-status reports R2 privacy as `not_verified`. For S3, setup and the collector
-inspect Block Public Access, the bucket policy, and the ACL read-only.
+An existing or manually configured R2 bucket remains `not_verified`: its
+S3-compatible credentials can't inspect public-bucket settings. When guided
+setup creates a bucket, its temporary Cloudflare token can check that
+`r2.dev` is off and no custom domains are enabled. If both checks succeed,
+status shows **R2 public access off at setup** with `verified_private`
+evidence. This is a setup-time snapshot, not a continuing guarantee: the
+collector's next privacy refresh returns to `not_verified`, and without a
+refresh the observation becomes stale after 24 hours. Check public access
+in the Cloudflare dashboard; see [bucket privacy evidence](../security/privacy.md#bucket-privacy-evidence).
+For S3, setup and the collector inspect Block Public Access, the bucket
+policy, and the ACL read-only.
 
 **Why didn't a session show up?**
 Check `agent-archive status` first. A connected bucket or `Ready` state does not by itself prove this app captured and read back a session. Follow the app-specific steps for [Claude Code](troubleshooting.md#no-claude-code-session), [Codex](troubleshooting.md#no-codex-session), or [Cursor](troubleshooting.md#no-cursor-session).

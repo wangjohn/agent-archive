@@ -4,6 +4,12 @@ Start with the [README](../README.md) for what agent-archive is. These docs
 are for people using it; specs and contributor guides are in
 [`dev/`](../dev/README.md).
 
+## First local handoff
+
+After installing, run `agent-archive handoff` inside a project to choose an
+existing Claude Code or Codex conversation before configuring storage. See
+[scope, bounded previews and cleanup](guides/handoff.md#before-setup-native-local-sessions).
+
 ## First successful capture
 
 1. Read [what is uploaded](security/privacy.md#what-is-uploaded) before setup. Filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text can be uploaded even when you include only one project.
