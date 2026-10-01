@@ -309,6 +309,12 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
+- `--prefix PREFIX` sets the folder inside the bucket, including when changing
+  only that setting on an existing installation.
+- `--retention-days DAYS` sets retention from 1 to 36500 days.
+- `--require-skill-use` captures only sessions that use skills;
+  `--no-require-skill-use` captures sessions with or without skills. Omitted
+  settings keep their saved values (fresh setup captures both).
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
