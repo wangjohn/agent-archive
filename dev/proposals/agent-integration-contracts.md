@@ -94,8 +94,8 @@ transaction state and generation checks can still decline admission.
 | --- | --- | --- |
 | Claude/Codex `SessionStart` | `source`, trimmed/lowercased, `startup` or `clear` | Explicit fresh, regardless of transcript presence/content |
 | Claude/Codex `SessionStart` | `resume` or `compact` | Explicit continuation; cannot admit |
-| Claude/Codex `SessionStart` | Any other nonempty source | Unknown; cannot admit even with an empty file |
-| Claude/Codex `SessionStart` | Source absent, empty, or non-string | Bounded path stat request; use rules below |
+| Claude/Codex `SessionStart` | Any other nonempty trimmed/lowercased source | Unknown; cannot admit even with an empty file |
+| Claude/Codex `SessionStart` | Source absent, empty, all-whitespace, or non-string | Bounded path stat request; use rules below |
 | Claude/Codex `UserPromptSubmit` | Any source/path | Turn start only; cannot admit |
 | Cursor `sessionStart` or `beforeSubmitPrompt` | Path absent, null, or string `""` | Fresh (tested desktop contract) |
 | Cursor `sessionStart` or `beforeSubmitPrompt` | Path present, non-string/non-null | Unknown; cannot admit |
@@ -105,8 +105,10 @@ transaction state and generation checks can still decline admission.
 
 Path inspection: absolute missing path (`errors.Is(os.ErrNotExist)`) or absolute
 empty regular file proves fresh. Existing nonempty file gives no fresh proof;
-relative path, directory, unreadable path or other stat error gives unknown.
-No transcript is opened. Stat follows symlinks as today. Cursor's `source` and
+relative path, directory, or stat error other than not-exist gives unknown.
+No transcript is opened, and file read permissions are not checked: an empty
+regular file with mode 000 still proves fresh if stat succeeds. Stat follows
+symlinks as today. Cursor's `source` and
 `cursor_version` are irrelevant to fresh proof. Unknown evidence can continue
 an already admitted session after shared ownership checks; it cannot create a
 never-seen registration. Existing file continuation may relocate its transcript.

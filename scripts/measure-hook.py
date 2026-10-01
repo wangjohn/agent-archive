@@ -54,7 +54,9 @@ def measure(scenario):
         elif scenario == 'stop':
             event = {'hook_event_name':'Stop','session_id':'synthetic'}
             def check():
-                pass
+                requests = [json.loads(path.read_text()) for path in (home / 'requests').glob('*.json')]
+                if not any('stop' in request.get('reasons', []) and request.get('token') and not request.get('deferred', False) for request in requests):
+                    raise RuntimeError('Stop staged no urgent request; refusing a no-op benchmark')
         else:
             # A real SubagentStop names the child's own transcript. Point at a
             # small synthetic file so the hook does the work it does live:

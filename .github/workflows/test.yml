@@ -51,6 +51,7 @@ jobs:
       # real-systemd's name and pinned runner image, which branch protection
       # and its validation depend on.
       - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_measure_hook.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py

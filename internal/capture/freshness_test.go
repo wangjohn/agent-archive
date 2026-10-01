@@ -18,6 +18,10 @@ func TestFreshnessEvidenceFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	unreadable := filepath.Join(dir, "mode-000-empty")
+	if err := os.WriteFile(unreadable, nil, 0000); err != nil {
+		t.Fatal(err)
+	}
 	for _, harness := range []string{"claude", "codex", "cursor"} {
 		for _, tc := range []struct {
 			name   string
@@ -32,6 +36,8 @@ func TestFreshnessEvidenceFields(t *testing.T) {
 			{"compact with empty", "compact", empty, false, harness == "cursor"},
 			{"unknown source with empty", "other", empty, false, harness == "cursor"},
 			{"mistyped source with empty", 42, empty, false, true},
+			{"whitespace source with empty", " \t\n ", empty, false, true},
+			{"mode 000 empty file", nil, unreadable, false, true},
 			{"missing transcript", nil, filepath.Join(dir, "missing"), false, true},
 			{"nonempty transcript", nil, nonempty, false, false},
 			{"relative transcript", nil, "missing.jsonl", false, false},

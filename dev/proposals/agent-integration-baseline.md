@@ -23,11 +23,16 @@ Create a detached checkout at the exact reference above; copy
 `internal/archive/record_limits_bench_test.go`,
 `internal/collector/cursor_scan_bench_test.go`, the testing.TB helper in
 `internal/collector/source_test.go`, and
-`scripts/measure-hook.py` from this phase into it. Preserve and record their
+`scripts/measure-hook.py` from recorded snapshot
+`394d3c1fa2571c4e7d9673a0319987816bf492bb` into it. For these historical
+measurements, take all copied files from that snapshot, not a moving branch:
+later harness repairs must not silently replace the recorded instrumentation.
+Preserve and record their
 SHA-256 hashes with each comparison (matched in `provenance.json`). Run both revisions serially on the same
 host/toolchain, outside correctness/lint compilation or other benchmarks:
 
 ```sh
+export GOMAXPROCS=5
 go test -run '^$' -bench 'BenchmarkScan(SettledRegistrations|Large|ChangedCursorChats)' -benchtime=1x -count=3 ./internal/collector
 go test -run '^$' -bench BenchmarkHookLocalEffects -benchtime=10x -count=3 ./internal/capture
 go test -run '^$' -bench 'BenchmarkAnalysisConsumers|BenchmarkCursorTextFilterFiveMegabytes' -benchtime=10x -count=3 ./internal/archive
@@ -37,12 +42,38 @@ go build -o /absolute/temporary/path/agent-archive ./cmd/agent-archive
 TMPDIR=/var/tmp python3 scripts/measure-hook.py /absolute/temporary/path/agent-archive
 ```
 
+The longer paired recheck commands were:
+
+```sh
+go test -run '^$' -bench 'BenchmarkScanChangedCursorChats|BenchmarkScanLargeGrowingSession' -benchtime=5x -count=5 ./internal/collector
+go test -run '^$' -bench 'BenchmarkHookLocalEffects/(fresh|stop)$' -benchtime=100x -count=5 ./internal/capture
+go test -run '^$' -bench 'BenchmarkFilterRecordLimits/near-limit$' -benchtime=5x -count=5 ./internal/archive
+```
+
+Use identical fixed iteration counts for both sides of every pair. Cursor
+chat history grows each iteration: the initial chat has one message, and
+measured iterations have 2 through N+1 messages per chat (2 at 1x, 2–6 at 5x).
+The short and longer Cursor samples therefore measure different workloads;
+only baseline/current samples with matching N can be compared. The existing
+large-growing-file benchmark also appends one record each iteration, starting
+with 2,000 records. Fresh hooks accumulate new registrations; local stop and
+subagent benchmarks repeat the same identity and timestamp, characterizing
+duplicate/coalesced delivery rather than distinct turns or children. Pin N for
+those comparisons too; default time-based Go calibration is not equivalent.
+
 This managed sandbox adds a read-only `.git` sentinel to `/tmp`, causing the
 real CLI data-home guard to refuse that location. Subprocess measurements used
 an approved isolated `/var/tmp` run. The guard was not patched or disabled.
 The subprocess harness creates private HOME/AWS paths, never installs hooks or
 contacts storage, and checks that synthetic registration/candidate effects
 occur before timing. Subprocess fresh is Claude; local fresh is Codex.
+The recorded script checked registration and child candidate effects, but its
+stop check was empty. The repaired current script additionally requires an
+urgent request containing the stop reason; `python3 scripts/test_measure_hook.py`
+checks refusal of silent/deferred stop no-ops, successful measurement and
+temporary-home cleanup with fake subprocesses. Historical stop samples remain
+latency evidence with that validation limitation; they are not retroactively
+claimed to satisfy the stronger guard.
 
 ## Paired measurements and attribution
 
