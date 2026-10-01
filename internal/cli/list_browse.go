@@ -563,7 +563,7 @@ func (l *sessionPicker) pickRows(p *prompter, stdout io.Writer, rows []listRow, 
 	groups := sessionTableGroups(rows, format)
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	var footer bytes.Buffer
-	printListFooter(&footer, len(rows), totalMatched, truncated, format.NarrowHint)
+	printListFooter(&footer, len(rows), totalMatched, truncated, format)
 	notice := ""
 	for {
 		pages, width, sized := l.pages(stdout, groups, format, len(rows), footer.String(), question)
@@ -836,12 +836,14 @@ func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectSt
 }
 
 // archiveRows builds the choices of a browser over archived sessions, read
-// without a limit: each scope's rows are its sessions, newest first, cut to
-// limit (0 for all).
+// without a limit: each scope's rows are its top-level sessions, newest first,
+// cut to limit (0 for all). Subagents are dropped before the limit and
+// counted in the footer; a parent carries a hint of how many it has.
 func archiveRows(sessions []archive.Metadata, limit int, format listFormatOptions) scopeRowsFunc {
+	format.Children = childCounts(sessions)
 	return func(scope sessionScope) scopeView {
-		shown, total, truncated := applyListLimit(scope.filter(sessions), limit)
-		return scopeView{rows: formatSessionRows(shown, format), total: total, truncated: truncated}
+		v := topLevelView(sessions, scope, limit)
+		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden}
 	}
 }
 

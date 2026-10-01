@@ -7,7 +7,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -64,11 +63,12 @@ func skippedSessions(opts *handoffOptions, env currentSessionDependencies) map[s
 // an agent, whose context a title as common as "fix" must not flood.
 const handoffCandidateLimit = 20
 
-// resolveHandoffQuery turns the positional argument, a session ID or a title,
+// resolveHandoffQuery turns the positional argument, a session ID or words,
 // into the one session to hand off, replacing opts.sessionID (and opts.harness
-// when it was not given) with that session's archive ID and harness. It
-// matches as show does (a title substring, a short ID or an ID prefix, an
-// exact ID winning) over titles and metadata, never transcript content:
+// when it was not given) with that session's archive ID and harness. Words
+// match as list and show match them (sessionQuery: every word in some field of
+// a session, or the start of its ID, an exact ID winning), over metadata,
+// never transcript content:
 //
 //  1. a session ID registered on this Mac (a subagent's too, as handoff
 //     always took), then, for a full ID, the archive (one read), which a
@@ -76,10 +76,10 @@ const handoffCandidateLimit = 20
 //  2. this Mac's sessions, which need no network;
 //  3. only when none of those match, the archive's.
 //
-// Inside a repository (or with --project), a title looks at that scope's
-// sessions first: this Mac's, then the archive's, and only when none match
-// there, everywhere. A note on stderr says how many more match outside the
-// scope.
+// Inside a repository (or with --project), the words look at that scope's
+// top-level sessions first: this Mac's, then the archive's, and only when none
+// match there, everywhere; a note on stderr says how many more match outside
+// the scope. Subagents are the last tier, in the scope and then everywhere.
 //
 // Several matches print the candidates to stderr and exit 1 without a
 // terminal, and open the handoff picker limited to them with one. done is set
@@ -93,7 +93,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, st
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
+	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -112,8 +112,12 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, st
 }
 
 type handoffQueryResolver struct {
-	opts        *handoffOptions
-	query       string
+	opts  *handoffOptions
+	query string
+	// q is the query's words, and labels the configured project names the
+	// matcher reads.
+	q           sessionQuery
+	labels      map[string]string
 	home        string
 	cfg         config.Config
 	interactive bool
@@ -129,8 +133,12 @@ type handoffQueryResolver struct {
 	// scope is where the title looks first.
 	scope sessionScope
 	// archive is the archive's top-level sessions, read once (archiveRead).
-	archive     []handoffPickerRow
+	archive []handoffPickerRow
+	// subagents are the archive's subagent sessions, read with archive.
+	subagents   []handoffPickerRow
 	archiveRead bool
+	// inLabel names the scope the matches are in, when they are.
+	inLabel string
 	// archiveErr is why the archive could not be read, for the no-match
 	// message.
 	archiveErr error
@@ -179,12 +187,22 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		}
 	}
 	if opts.source != "archive" {
-		if matches := matchHandoffRows(local, r.query, r.skip); len(matches) > 0 {
+		if matches := r.match(local); len(matches) > 0 {
 			return r.choose(matches)
 		}
 	}
 	if opts.source != "local" {
-		if matches := matchHandoffRows(r.archiveRows(), r.query, r.skip); len(matches) > 0 {
+		if matches := r.match(r.archiveRows()); len(matches) > 0 {
+			return r.choose(matches)
+		}
+		// Subagents are the last tier: in the scope, then everywhere.
+		if r.scope.narrowed() {
+			if matches := r.match(r.within(r.subagents)); len(matches) > 0 {
+				r.inLabel = r.scope.Label
+				return r.choose(matches)
+			}
+		}
+		if matches := r.match(r.subagents); len(matches) > 0 {
 			return r.choose(matches)
 		}
 	}
@@ -197,12 +215,9 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 // nothing in the scope matches, and the search goes on everywhere; otherwise
 // code and done are choose's.
 func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done, found bool) {
-	within := func(rows []handoffPickerRow) []handoffPickerRow {
-		return slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return !r.scope.contains(row.metadata, row.reg) })
-	}
-	matches := matchHandoffRows(within(local), r.query, r.skip)
+	matches := r.match(r.within(local))
 	if len(matches) == 0 && r.opts.source != "local" {
-		matches = matchHandoffRows(within(r.archiveRows()), r.query, r.skip)
+		matches = r.match(r.within(r.archiveRows()))
 	}
 	if len(matches) == 0 {
 		return 0, false, false
@@ -212,7 +227,7 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 	seen := map[string]bool{}
 	outside := 0
 	for _, rows := range [][]handoffPickerRow{local, r.archive} {
-		for _, row := range matchHandoffRows(rows, r.query, r.skip) {
+		for _, row := range r.match(rows) {
 			key := handoffRowKey(row.metadata)
 			if !seen[key] && !r.scope.contains(row.metadata, row.reg) {
 				outside++
@@ -221,15 +236,25 @@ func (r *handoffQueryResolver) inScope(local []handoffPickerRow) (code int, done
 		}
 	}
 	if outside > 0 {
-		noun := "matches"
-		if len(matches) == 1 {
-			noun = "match"
-		}
-		terminal.Printf(r.stderr, "%d %s in %s (%d more in other projects: --all-projects or a project name finds them)\n",
-			len(matches), noun, archive.DisplayLine(r.scope.Label), outside)
+		terminal.Println(r.stderr, outsideNote(len(matches), outside, r.scope.Label))
 	}
+	r.inLabel = r.scope.Label
 	code, done = r.choose(matches)
 	return code, done, true
+}
+
+// within keeps the rows in the scope.
+func (r *handoffQueryResolver) within(rows []handoffPickerRow) []handoffPickerRow {
+	return slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return !r.scope.contains(row.metadata, row.reg) })
+}
+
+// match keeps the rows the query matches, in order, leaving out the sessions
+// whose native ID is in skip. An exact ID wins outright.
+func (r *handoffQueryResolver) match(rows []handoffPickerRow) []handoffPickerRow {
+	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return r.skip[row.metadata.NativeSessionID] })
+	return matchPool(rows, r.q, func(row handoffPickerRow) sessionFields {
+		return fieldsOf(row.metadata, sessionProjectName(row.metadata, r.labels))
+	})
 }
 
 // openArchive opens the archive's store once.
@@ -281,7 +306,8 @@ func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (harness
 	return found[0], true
 }
 
-// archiveRows is the archive's top-level sessions, read once. An archive
+// archiveRows is the archive's top-level sessions, read once, which also reads
+// its subagents (r.subagents). An archive
 // that cannot be read is none, with the reason kept for the no-match message
 // (or that of r.opts.source "local", which never reads it).
 func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
@@ -301,31 +327,15 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		r.archiveErr = err
 		return nil
 	}
-	for _, m := range topLevelSessions(sessions) {
-		r.archive = append(r.archive, handoffPickerRow{metadata: m, active: m.CapturedAt})
+	for _, m := range sessions {
+		row := handoffPickerRow{metadata: m, active: m.CapturedAt}
+		if m.ParentSessionID == "" {
+			r.archive = append(r.archive, row)
+		} else {
+			r.subagents = append(r.subagents, row)
+		}
 	}
 	return r.archive
-}
-
-// matchHandoffRows keeps the rows matchSessionsByQuery matches, in order,
-// leaving out the sessions whose native ID is in skip.
-func matchHandoffRows(rows []handoffPickerRow, query string, skip map[string]bool) []handoffPickerRow {
-	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool { return skip[row.metadata.NativeSessionID] })
-	sessions := make([]archive.Metadata, len(rows))
-	for i, row := range rows {
-		sessions[i] = row.metadata
-	}
-	// One ID can be published under two harnesses, so the harness is part
-	// of the key.
-	byKey := make(map[string]handoffPickerRow, len(rows))
-	for _, row := range rows {
-		byKey[handoffRowKey(row.metadata)] = row
-	}
-	var matched []handoffPickerRow
-	for _, m := range matchSessionsByQuery(sessions, query) {
-		matched = append(matched, byKey[handoffRowKey(m)])
-	}
-	return matched
 }
 
 func handoffRowKey(m archive.Metadata) string {
@@ -342,9 +352,11 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			return 1, true
 		}
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
-		format.NarrowHint = "Narrow with more of the title, or --harness, or name a session: agent-archive handoff SESSION_ID."
+		format.NarrowHint = "Narrow with more words, a PR number, or --harness, or name a session: agent-archive handoff SESSION_ID."
 		shown := matches[:min(len(matches), handoffCandidateLimit)]
-		picked, selected, err := pickBrowseRow(r.env, newPrompter(r.stdin, r.stdout), r.stdout, formatHandoffRows(shown, format), len(matches), len(shown) < len(matches), format, "hand off")
+		rows := formatHandoffRows(shown, format)
+		format.ShowPR = slices.ContainsFunc(rows, func(row listRow) bool { return row.PR != "" })
+		picked, selected, err := pickBrowseRow(r.env, newPrompter(r.stdin, r.stdout), r.stdout, rows, len(matches), len(shown) < len(matches), format, "hand off")
 		if err != nil {
 			terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
 			return 1, true
@@ -369,20 +381,23 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 // printCandidates lists ambiguous matches for a caller with no terminal to
 // pick on: a person reading a log, or an agent that must ask which.
 func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, format listFormatOptions) {
-	var b strings.Builder
-	fmt.Fprintf(&b, "agent-archive: handoff: %q matches %d sessions; pass one SESSION_ID, or run on a terminal to pick:\n", queryLabel(r.query), len(matches))
 	shown := matches[:min(len(matches), handoffCandidateLimit)]
-	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	for _, row := range formatHandoffRows(shown, format) {
-		// The table is built in memory, where writes cannot fail. The ID is
-		// stored data, like the title, and may hold control characters.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(row.ShortID), row.Harness, row.Project, row.When, row.Title)
+	var listFlags []string
+	if r.opts.harness != "" {
+		listFlags = append(listFlags, "--harness "+r.opts.harness)
 	}
-	_ = tw.Flush()
-	if len(shown) < len(matches) {
-		fmt.Fprintf(&b, "  ... and %d more; use more of the title, or --harness, to narrow\n", len(matches)-len(shown))
+	if r.opts.allProjects {
+		listFlags = append(listFlags, "--all-projects")
 	}
-	terminal.Print(r.stderr, b.String())
+	if r.opts.project != "" {
+		listFlags = append(listFlags, "--project "+shellWord(r.opts.project))
+	}
+	candidateList{
+		command: "handoff", query: r.query, label: r.inLabel, total: len(matches), rows: formatHandoffRows(shown, format), listFlags: listFlags,
+		next: func(row listRow) string {
+			return fmt.Sprintf("agent-archive handoff %s --harness %s", archive.DisplayLine(row.ShortID), archive.DisplayLine(row.HarnessKey))
+		},
+	}.print(r.stderr)
 }
 
 func (r *handoffQueryResolver) noMatchMessage(scanLimited bool) string {

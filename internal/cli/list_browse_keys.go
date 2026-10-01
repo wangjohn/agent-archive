@@ -78,7 +78,7 @@ func (l *sessionPicker) pickKeys(p *prompter, stdout io.Writer, rows []listRow, 
 	groups := sessionTableGroups(rows, format)
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	var footer bytes.Buffer
-	printListFooter(&footer, len(rows), totalMatched, truncated, format.NarrowHint)
+	printListFooter(&footer, len(rows), totalMatched, truncated, format)
 	if len(rows) == 0 {
 		if err := printSessionGroups(stdout, groups, format); err != nil {
 			return listRow{}, false, err

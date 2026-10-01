@@ -79,7 +79,7 @@ func TestListLimitCapsNewestSessions(t *testing.T) {
 	if len(listed) != 2 || listed[0] != newestFirst[0] || listed[1] != newestFirst[1] {
 		t.Fatalf("listed=%v want newest two %v\n%s", listed, newestFirst[:2], out.String())
 	}
-	if !strings.Contains(out.String(), "Showing 2 or more session(s).") || !strings.Contains(out.String(), "--limit 0") {
+	if !strings.Contains(out.String(), "Showing 2 of 5 session(s).") || !strings.Contains(out.String(), "--limit 0") {
 		t.Fatalf("missing truncated footer:\n%s", out.String())
 	}
 

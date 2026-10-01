@@ -420,7 +420,7 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 	if err := printSessionTable(&want, formatSessionRows(sessions, format), format); err != nil {
 		t.Fatal(err)
 	}
-	printListFooter(&want, len(sessions), len(sessions), false, "")
+	printListFooter(&want, len(sessions), len(sessions), false, listFormatOptions{})
 	want.WriteString("\nEnter number (or unique short SESSION_ID) to show, or q to quit: ")
 	for _, size := range []fixedTerminal{{}, {120, 40}, {200, 1000}} {
 		_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByProject: true}, "q\n")

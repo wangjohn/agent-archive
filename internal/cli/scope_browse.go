@@ -14,6 +14,11 @@ type scopeView struct {
 	// the end; truncated is set when rows is only the first part.
 	total     int
 	truncated bool
+	// hidden is how many subagent sessions the view leaves out, which its
+	// footer says.
+	hidden int
+	// note is a line the footer adds (a search's count of matches elsewhere).
+	note string
 }
 
 // scopeRowsFunc builds the rows a scope shows. A scope with All set is every
@@ -104,6 +109,7 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 	}
 	view := c.rowsFor(scope)
 	format, constants := c.format.withColumns(view.rows)
+	format.HiddenSubagents, format.Note = view.hidden, view.note
 	c.built[i] = &scopeChoice{scopeView: view, format: format, heading: c.heading(i, view, constants), constants: constants}
 	return c.built[i]
 }

@@ -152,6 +152,20 @@ func tableHeader(opts listFormatOptions) []string {
 	return append(cols, "ID")
 }
 
+// subagentHint is what follows a title about the subagents: " · 45 subagents"
+// after a parent, " · subagent of d7a77938" after a subagent.
+func subagentHint(r listRow) string {
+	switch {
+	case r.Parent != "":
+		return " · subagent of " + r.Parent
+	case r.Children == 1:
+		return " · 1 subagent"
+	case r.Children > 1:
+		return " · " + strconv.Itoa(r.Children) + " subagents"
+	}
+	return ""
+}
+
 // liveMark leads the title of a session active right now.
 const liveMark = "●"
 
@@ -166,11 +180,11 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 			title = "  " + title
 		}
 	}
-	if r.SkillHint != "" {
+	if hints := r.SkillHint + subagentHint(r); hints != "" {
 		if opts.Style.color {
-			title += opts.Style.dim(r.SkillHint)
+			title += opts.Style.dim(hints)
 		} else {
-			title += r.SkillHint
+			title += hints
 		}
 	}
 	id := archive.DisplayLine(r.ShortID)

@@ -411,7 +411,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	}
 	_, errOut, code := runHandoff(t, f.env, "bulk job")
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if code != 1 || len(lines) != 1+handoffCandidateLimit+1 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
+	if code != 1 || len(lines) != 1+handoffCandidateLimit+1+2 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
 		!strings.Contains(errOut, "and 5 more") {
 		t.Fatalf("code=%d, %d lines:\n%s", code, len(lines), errOut)
 	}

@@ -232,9 +232,23 @@ No flags.
 Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive list [options]
+Usage: agent-archive list [WORDS] [options]
 
 Find sessions using metadata; does not download conversation content.
+With WORDS (quote them: one argument), list only the sessions they match.
+Every word must appear, in any case, in some field of a session: its name,
+title, branch, project name, harness, or the start of its SESSION_ID. A word
+like #212 or 212 also matches a pull request number. Words may match
+different fields, so "linux 212" finds the session named for Linux that
+opened PR 212.
+Inside a project the search looks at that repository's top-level sessions
+first, then at every project's, and only then at subagent sessions, in that
+order; the first that has a match answers, and a note says how many more match
+in other projects. The words are matched against metadata, never the
+conversation. Without WORDS, the table and browser list top-level sessions
+only: subagent sessions are left out before --limit counts, and the footer
+says how many; a parent shows how many it has. --json lists every session,
+subagents included.
 Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other Macs), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
@@ -297,6 +311,7 @@ paged through $PAGER unless --no-pager.
                                  listing looked at a project's sessions
                                  first. Usage errors print no JSON. Never
                                  paged or interactive.
+Example: agent-archive list "flaky retention" --json
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
 
@@ -325,18 +340,21 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 Guide: [Inspect the archive](../guides/list-and-show.md).
 
 ```text
-Usage: agent-archive show [SESSION_ID|TITLE] [options]
+Usage: agent-archive show [SESSION_ID|WORDS] [options]
 
 Print a readable summary of a session's metadata: title, when, app, models,
 activity counts, skills, subagents, and capture gaps. --json prints the
-metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
-several matches on a terminal open a picker. With no SESSION_ID on a
-terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit. On a terminal, the
-summary and transcript are paged; in the default less, scroll with the mouse
-wheel, arrows, or space, search with /, and quit with q. Nothing is asked
-when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
-a SESSION_ID.
+metadata sidecar instead. WORDS also work, as in list: every word must appear
+in some field of a session (name, title, branch, project, harness, the start
+of its SESSION_ID, or a PR number such as #212), looking at this
+repository's sessions first. One match is shown; several on a terminal open a
+picker, and without one they are listed with the command to run next. With no
+SESSION_ID on a terminal, browse sessions as list does: pick one for its
+summary, then t for its transcript, Enter or b to go back, or q to quit. On a
+terminal, the summary and transcript are paged; in the default less, scroll
+with the mouse wheel, arrows, or space, search with /, and quit with q.
+Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
+coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -584,7 +602,7 @@ Example: agent-archive backfill undo --project ~/src/old-experiment
 Guide: [Continue a session in another agent](../guides/handoff.md).
 
 ```text
-Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
+Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
 Continue a session in another coding agent. On a terminal, pick a session
 (this Mac's, including ones not yet uploaded, and archived ones), then pick
@@ -597,21 +615,27 @@ The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
 this Mac is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
-prints without asking. Without a terminal, give a SESSION_ID or TITLE,
+prints without asking. Without a terminal, give a SESSION_ID or WORDS,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
-A TITLE substring or short SESSION_ID matches as it does for show, in this
+WORDS are matched as list matches them: every word must appear, in any case,
+in some field of a session (its name, title, branch, project name, harness,
+or the start of its SESSION_ID), and a word like #212 or 212 also matches a pull
+request number. Quote them as one argument, and use one or two distinctive
+words: a topic, a PR number, a branch, or a project name. They look in this
 Mac's sessions first (no network), then the archive's; a full SESSION_ID
-wins. Quote a title of several words. Inside a project, the picker and a
-TITLE look at that repository's sessions first (every checkout and worktree
-of it), then everywhere; a note says how many more match in other projects.
+wins, and subagent sessions answer only when no other session matches. Inside
+a project, the picker and WORDS look at that repository's sessions first
+(every checkout and worktree of it), then everywhere; a note says how many
+more match in other projects.
 On the picker, the a key, typed alone, switches between the repository and
 all projects. The heading names what is shown, and a dot marks a session active
 in the last 2 minutes. Several matches on a terminal open the
 picker on them; without one, or inside a coding agent, they are listed on
-stderr and the command exits 1, never guessing. A title skips the agent
-session running the command, unless --to is given.
+stderr, with a PR column and the exact command to run next, and the command
+exits 1, never guessing. WORDS skip the agent session running the command,
+unless --to is given.
   --latest              The most recent session for the project
   --project DIR|NAME    The project to pick from and search, in place of
                         the current directory's repository: a directory, or
@@ -658,6 +682,7 @@ session running the command, unless --to is given.
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
+Example: agent-archive handoff "#212"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
