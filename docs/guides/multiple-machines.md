@@ -180,6 +180,13 @@ machines need not send heartbeats. A missing record is recreated on the next
 daily publication. Older installations appear as `unnamed-` followed by four
 characters of their machine ID, without reading a hostname.
 
+Interactive first setup offers **Name this machine** at the final review.
+Leave the default to use a neutral name without reading your hostname. Chosen
+names are checked against bounded bucket observations before saving; concurrent
+choices can still race. The list shows pairing dates when known and shared-key
+source names with their immutable IDs, or the ID alone if its record is absent.
+These are unverified claims; a shared key cannot be revoked independently.
+
 Run `agent-archive machines rename work-laptop` on the machine being named.
 Names contain 1 to 40 lowercase letters, digits, or hyphens and start with a
 letter or digit. Observed duplicates are refused; concurrent naming can race.

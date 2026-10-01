@@ -106,3 +106,12 @@ func TestReviewedSetupConfigUsesCommittedAssignmentForUnchangedCredentials(t *te
 		})
 	}
 }
+
+func TestReviewedFirstSetupPreservesChosenDraftName(t *testing.T) {
+	t.Parallel()
+	draft := setupDraft{Config: config.Config{MachineName: "work-laptop"}}
+	got := reviewedSetupConfig(config.Config{}, draft)
+	if got.MachineName != "work-laptop" {
+		t.Fatalf("first setup lost chosen name: %q", got.MachineName)
+	}
+}
