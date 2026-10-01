@@ -28,6 +28,9 @@ var machineIDPaths = []string{"/etc/machine-id", "/var/lib/dbus/machine-id"}
 // one at every boot, which systemd mounts over /etc/machine-id (machine-id(5));
 // it would look like another machine after each reboot, so a machine ID that
 // is mounted there gives "" too (D-Bus's is a link to it on such a system).
+// So does a container's bind mount of the host's file, whose ID is the host's
+// and not the container's own. With no mount table to read (no /proc), the
+// file is read as it is.
 //
 // It is a signal, not proof: a clone that kept its machine ID looks like the
 // machine it was cloned from, and a machine whose ID was regenerated looks

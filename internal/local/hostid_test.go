@@ -82,3 +82,33 @@ func TestHostFingerprintFallsBackAndRefusesWhatIsNotAMachineID(t *testing.T) {
 		t.Errorf("unreadable files give %q, want none", got)
 	}
 }
+
+// The mount table's fifth field is the mount point, whatever the optional
+// fields before the " - " separator: a machine ID mounted there (systemd's
+// transient one, or a container's bind mount of the host's) is no
+// fingerprint. A mount whose source is the machine ID but whose mount point is
+// elsewhere, a mount point that only begins with its path (spaces in it are
+// escaped as \040), and lines too short to have a mount point are not that;
+// and with no mount table to read (no /proc), the machine ID is read as ever.
+func TestHostFingerprintReadsTheMountPointFromTheMountTable(t *testing.T) {
+	t.Parallel()
+	want := hostFingerprint(readers(map[string]string{"/etc/machine-id": machineA}))
+	if want == "" {
+		t.Fatal("no fingerprint without a mount table")
+	}
+	for name, tc := range map[string]struct {
+		table string
+		want  string
+	}{
+		"a bind mount with no optional fields":    {"611 590 254:1 /etc/machine-id /etc/machine-id ro,relatime - ext4 /dev/vda1 rw\n", ""},
+		"several optional fields":                 {"35 26 0:30 /machine-id /etc/machine-id ro shared:12 master:3 propagate_from:2 - tmpfs tmpfs rw", ""},
+		"the machine ID mounted elsewhere":        {"611 590 254:1 /etc/machine-id /run/host-machine-id ro - ext4 /dev/vda1 rw\n", want},
+		"a mount point that begins with its path": {`36 26 0:31 / /etc/machine-id\040copy rw - tmpfs tmpfs rw` + "\n", want},
+		"short and blank lines":                   {"\n35 26 0:30\n/etc/machine-id\n", want},
+	} {
+		files := map[string]string{"/proc/self/mountinfo": tc.table, "/etc/machine-id": machineA}
+		if got := hostFingerprint(readers(files)); got != tc.want {
+			t.Errorf("%s: fingerprint %q, want %q", name, got, tc.want)
+		}
+	}
+}
