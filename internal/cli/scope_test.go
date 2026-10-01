@@ -301,7 +301,8 @@ func TestScopeIsNamedAfterTheRepositorysMainCheckout(t *testing.T) {
 }
 
 // A worktree is named after the checkout its .git file links to; a
-// submodule or any other link is its own repository.
+// submodule or any other link is its own repository. A checkout reached
+// through a symbolic link is named after the folder it links to.
 func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -320,6 +321,15 @@ func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(bare, "worktrees", "feature"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A link of another name to the main checkout, as its worktrees never
+	// name it.
+	alias := filepath.Join(root, "alias")
+	if err := os.MkdirAll(filepath.Join(main, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(main, alias); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		dir  string
@@ -327,6 +337,8 @@ func TestRepositoryNameOfEachKindOfCheckout(t *testing.T) {
 		ok   bool
 	}{
 		{"a main checkout", main, "app", true},
+		{"a main checkout through a link", alias, "app", true},
+		{"a subdirectory through a link", filepath.Join(alias, "sub"), "app", true},
 		{"a worktree", gitWorktree(t, main, filepath.Join(root, "app-pr7")), "app", true},
 		{"a worktree linked by a relative path", write(filepath.Join(root, "rel"), "gitdir: ../app/.git/worktrees/rel\n"), "app", true},
 		{"a worktree of a bare repository", write(filepath.Join(root, "feature"), "gitdir: "+filepath.Join(bare, "worktrees", "feature")), "service", true},

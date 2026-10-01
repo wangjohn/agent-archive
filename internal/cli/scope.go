@@ -120,12 +120,17 @@ func isDirectory(path string) bool {
 // repositoryName is the name of the git repository dir is in: the folder of
 // its main checkout. A worktree's .git file points into the main checkout's
 // .git/worktrees, so every checkout, worktree, and subdirectory of one
-// repository is named alike, whatever sessions a command reads. ok is false
-// when dir is in no git checkout.
+// repository is named alike, whatever sessions a command reads. A checkout
+// reached through a symbolic link is named after the folder it links to, as
+// git names it and its worktrees' .git files do. ok is false when dir is in
+// no git checkout.
 func repositoryName(dir string) (string, bool) {
 	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
 		dotGit := filepath.Join(d, ".git")
 		if info, err := os.Stat(dotGit); err == nil {
+			if resolved, err := filepath.EvalSymlinks(d); err == nil {
+				d, dotGit = resolved, filepath.Join(resolved, ".git")
+			}
 			if info.IsDir() {
 				return filepath.Base(d), true
 			}

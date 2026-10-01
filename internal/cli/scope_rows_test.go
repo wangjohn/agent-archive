@@ -156,6 +156,13 @@ func TestScopeChoicesSwitchOnlyWhenThereIsAScope(t *testing.T) {
 		t.Fatal("toggled past a fallback")
 	}
 
+	// A name with a newline or an escape sequence is one clean row.
+	odd := sessionScope{Label: "a\npp\x1b[31m", Dir: "/w/app", ProjectIDs: []string{"id-app"}}
+	c = newScopeChoices(odd, listFormatOptions{}, false, rowsFor)
+	if h := c.shown().heading; strings.ContainsAny(h, "\n\x1b") || !strings.HasPrefix(h, "a pp") {
+		t.Fatalf("heading %q", h)
+	}
+
 	// Outside any project there is no scope to name or switch; the heading
 	// only names the column the rows share.
 	c = newScopeChoices(sessionScope{All: true}, listFormatOptions{}, false, rowsFor)

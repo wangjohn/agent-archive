@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // scopeView is the rows one scope shows, before they are laid out.
@@ -100,7 +102,8 @@ func (c *scopeChoices) choice(i int) *scopeChoice {
 // value are named here instead. With no scope, and nothing left out, there is
 // nothing to say.
 func (c *scopeChoices) heading(i int, view scopeView, constants []string) string {
-	label := c.scope.Label
+	// A folder's or a project's name, cleaned like the PROJECT column.
+	label := archive.DisplayLine(c.scope.Label)
 	var parts []string
 	switch {
 	case label == "":
