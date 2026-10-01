@@ -313,7 +313,7 @@ finds the session named for Linux that opened PR 212. Two more ways to match:
   does. Shorter words don't, since IDs are random hexadecimal and a 3-character
   word would match a session by chance. A whole session ID, or the 8-character
   short one a table shows, names that session outright, even when another
-  title mentions it.
+  title mentions it, and even when it has no prompt, which words never offer.
 
 Only metadata is matched, never the rest of the conversation. For a session
 on this machine the name, title, branch, and linked pull requests are read
@@ -443,10 +443,11 @@ Enter number (or unique short SESSION_ID) to hand off, or q to quit:
 
 *What it lists.* Top-level sessions, newest activity first: this machine's,
 including ones not uploaded yet, together with the archive's. A session that is
-both appears once. Subagent sessions and sessions with no prompt yet are left
-out, and `--harness` narrows the list (`--source local` or `--source archive`
-limits where it looks). At most 50 rows are listed; the filter below searches
-the rest. When the archive cannot be read (offline, say), the picker lists this
+both appears once. Subagent sessions and sessions with no prompt yet, on this
+machine or in the archive, are left out (one uploaded before its first prompt
+is listed once its transcript here has one), and `--harness` narrows the list
+(`--source local` or `--source archive` limits where it looks). At most 50 rows
+are listed; the filter below searches the rest. When the archive cannot be read (offline, say), the picker lists this
 machine's sessions and says why archived ones are missing.
 
 *What a row shows.*
