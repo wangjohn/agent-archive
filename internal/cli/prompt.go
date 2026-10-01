@@ -255,30 +255,16 @@ func matchOption(answer string, options []option) (string, bool) {
 			return o.Key, true
 		}
 	}
-	var matches []string
+	match := ""
 	for _, o := range options {
 		if strings.HasPrefix(o.Key, answer) {
-			matches = append(matches, o.Key)
+			if match != "" {
+				return "", false
+			}
+			match = o.Key
 		}
 	}
-	// One match, or one whose key is the start of every other match's key
-	// ("r2" among "r2" and "r2-create"), is what was meant.
-	for _, m := range matches {
-		if allStartWith(matches, m) {
-			return m, true
-		}
-	}
-	return "", false
-}
-
-// allStartWith reports whether every key begins with prefix.
-func allStartWith(keys []string, prefix string) bool {
-	for _, k := range keys {
-		if !strings.HasPrefix(k, prefix) {
-			return false
-		}
-	}
-	return true
+	return match, match != ""
 }
 
 // retentionDays asks how many days to keep sessions, offering def.

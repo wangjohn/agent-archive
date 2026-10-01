@@ -1495,24 +1495,22 @@ func TestGuidedR2SignalDuringRevokeIsAnswered(t *testing.T) {
 	}
 }
 
-// With guided creation switched on, r is still r2, and a key that begins
-// another key still needs its whole name.
-func TestMatchOptionPrefersTheKeyThatStartsTheOthers(t *testing.T) {
+// matchOption takes an exact key first (whatever its case), else the one key
+// an answer begins, and an answer that begins several keys, as "r" does with
+// guided R2 creation on and "s" does with guided S3 creation, is ambiguous:
+// the person types the whole key or the number.
+func TestMatchOptionExactThenUniquePrefixThenAmbiguous(t *testing.T) {
 	t.Parallel()
-	options := []option{{"r2", "R2"}, {"s3", "S3"}, {"r2-create", "Create"}, {"help", "Help"}}
-	for answer, want := range map[string]string{"r": "r2", "r2": "r2", "R2": "r2", "r2-": "r2-create", "r2-c": "r2-create", "r2-create": "r2-create", "s": "s3", "h": "help"} {
+	options := []option{{"r2", "R2"}, {"s3", "S3"}, {"s3-new", "Create S3"}, {"r2-create", "Create R2"}, {"help", "Help"}}
+	for answer, want := range map[string]string{"r2": "r2", "R2": "r2", "s3": "s3", "s3-new": "s3-new", "r2-c": "r2-create", "r2-create": "r2-create", "h": "help", "HELP": "help"} {
 		if got, ok := matchOption(answer, options); !ok || got != want {
 			t.Errorf("%q chose %q (%v), want %q", answer, got, ok, want)
 		}
 	}
-	for _, answer := range []string{"", "x", "r3", "r2-x"} {
+	for _, answer := range []string{"", "r", "s", "x", "r3", "r2-x"} {
 		if got, ok := matchOption(answer, options); ok {
 			t.Errorf("%q chose %q", answer, got)
 		}
-	}
-	// Without a key that starts the others, a shared start is still ambiguous.
-	if got, ok := matchOption("a", []option{{"ab", ""}, {"ac", ""}}); ok {
-		t.Errorf("ambiguous prefix chose %q", got)
 	}
 }
 
