@@ -426,8 +426,8 @@ producing a handoff; Ctrl-C quits at once.
   "<words>"` takes ([above](#naming-a-session-in-words)): a topic, a PR number
   (`/208`), a branch, a project. The filter searches every session in the
   scope, not only the 50 listed (a session not uploaded yet is searched only
-  among the picker's 50 rows). On the filter line `a`, `n`, `p`, and `q` are
-  typed text.
+  among the picker's 50 rows). On the filter line `a`, `n`, `p`, `q`, and
+  digits are typed text: press Esc first to use them as keys.
 - **`▸` marks the row Enter hands off**; it starts on the first match. ↑ and ↓
   move it, and Enter acts on it.
 - **A subagent that matches is shown indented under its parent** (`↳ Review and
