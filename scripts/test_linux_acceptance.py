@@ -65,7 +65,10 @@ class AcceptanceScriptsTest(unittest.TestCase):
         shellcheck = shutil.which("shellcheck")
         if shellcheck is None:
             self.skipTest("shellcheck is not installed")
-        subprocess.run([shellcheck, "-x", str(HOST), str(GUEST)], check=True)
+        # Warnings and errors only: shellcheck releases differ in which
+        # info-level notes they print (0.9's SC2317 flags functions run only
+        # from a trap as unreachable), and a note is not a defect.
+        subprocess.run([shellcheck, "-x", "--severity=warning", str(HOST), str(GUEST)], check=True)
 
     def test_dry_run_needs_no_docker(self):
         with tempfile.TemporaryDirectory() as tools:
