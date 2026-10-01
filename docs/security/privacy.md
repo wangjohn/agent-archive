@@ -272,7 +272,8 @@ This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
 credentials that can list, read, and delete under the prefix. Keep **every**
 uploading machine paused until the plan has been applied. Run the following blocks
 in the **same bash or zsh shell**; a plan expires after five minutes and can
-only be applied once. If anything fails, start again with a new plan. External
+only be applied once. Keep the printed plan directory for recovery with
+`purge_resume` if an attempt fails or expires. External
 writers can still race a shell recipe, so these commands cannot provide an
 atomic deletion against concurrent writes.
 
@@ -287,6 +288,53 @@ prefix=agent-archive/          # your prefix with its trailing slash, or empty
 # export AWS_PROFILE=...       # a profile that can list, read, and delete
 # For R2: export AWS_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 
+# Identity contains no credentials. Use the same explicit endpoint/profile/region
+# in a fresh shell. Do not put credentials in endpoint URLs.
+purge_identity() {
+  printf '%s\n' "${AWS_ENDPOINT_URL:-}" "${AWS_ENDPOINT_URL_S3:-}" \
+    "${AWS_PROFILE:-}" "${AWS_DEFAULT_PROFILE:-}" "${AWS_REGION:-}" "${AWS_DEFAULT_REGION:-}" \
+    "${AWS_IGNORE_CONFIGURED_ENDPOINT_URLS:-}" "${AWS_USE_FIPS_ENDPOINT:-}" "${AWS_USE_DUALSTACK_ENDPOINT:-}"
+  config_path=${AWS_CONFIG_FILE:-$HOME/.aws/config}
+  printf '%s\n' "$config_path"
+  if [ -e "$config_path" ]; then
+    shasum -a 256 "$config_path" || return 1
+  else
+    printf '%s\n' absent
+  fi
+}
+purge_seal() {
+  (cd "$purge_dir" && shasum -a 256 manifest.json > manifest.sha256) || return 1
+  chmod 400 "$purge_dir/manifest.json" "$purge_dir/manifest.sha256" || return 1
+}
+purge_seal_attempt() {
+  (cd "$purge_dir" && shasum -a 256 bucket prefix mode created keys targets metas > attempt.sha256) || return 1
+  n=0
+  while IFS= read -r meta; do
+    n=$((n + 1))
+    (cd "$purge_dir" && shasum -a 256 "meta.$n" >> attempt.sha256) || return 1
+  done < "$purge_dir/metas"
+}
+purge_manifest() {
+  jq -n --arg bucket "$bucket" --arg prefix "$prefix" --arg mode "$mode" \
+    --arg selector "$selector" --arg identity "$(purge_identity)" \
+    --argjson created "$(cat "$purge_dir/created")" \
+    --rawfile keys "$purge_dir/keys" --rawfile targets "$purge_dir/targets" \
+    --rawfile metas "$purge_dir/metas" --rawfile selected "$purge_dir/selected" --slurpfile snapshots "$purge_dir/snapshots" \
+    '{format:1,bucket:$bucket,prefix:$prefix,mode:$mode,selector:$selector,
+      identity:$identity,created:$created,keys:($keys|split("\n")[:-1]),
+      targets:($targets|split("\n")[:-1]),metas:($metas|split("\n")[:-1]),
+      selected_sessions:($selected|split("\n")[:-1]),snapshots:$snapshots}' > "$purge_dir/manifest.json" || return 1
+  purge_seal
+}
+purge_check_manifest() {
+  (cd "$1" && shasum -a 256 -c manifest.sha256 >/dev/null) &&
+    jq -e 'type == "object" and .format == 1 and
+      (.created|type)=="number" and (.keys|type)=="array" and
+      (.targets|type)=="array" and (.metas|type)=="array" and
+      (.snapshots|type)=="array" and (.metas|length)==(.snapshots|length) and
+      (.keys as $k | all(.targets[]; . as $t | $k|index($t)))' \
+      "$1/manifest.json" >/dev/null
+}
 purge_dir=                         # never inherit a previous plan
 purge_prepare() {
   mode=$1; selector=${2:-}
@@ -298,6 +346,11 @@ purge_prepare() {
     machine) [ -n "$selector" ] || { echo "Missing machine ID." >&2; return 1; } ;;
     *) echo "Invalid purge mode." >&2; return 1 ;;
   esac
+  case "${AWS_ENDPOINT_URL:-}${AWS_ENDPOINT_URL_S3:-}" in
+    *'@'*|*'?'*|*'#'*) echo "Endpoint must not contain credentials, query, or fragment." >&2; return 1 ;;
+  esac
+  purge_identity >/dev/null || return 1
+  umask 077
   purge_dir=$(mktemp -d "${TMPDIR:-/tmp}/agent-archive-purge.XXXXXXXX") || return 1
   printf '%s\n' "$bucket" > "$purge_dir/bucket" || return 1
   printf '%s\n' "$prefix" > "$purge_dir/prefix" || return 1
@@ -325,12 +378,14 @@ purge_prepare() {
   done < "$purge_dir/keys"
   : > "$purge_dir/current" || return 1
   : > "$purge_dir/selected" || return 1
+  : > "$purge_dir/snapshots" || return 1
   n=0
   while IFS= read -r meta; do
     n=$((n + 1))
     if ! aws s3 cp "s3://$bucket/$meta" - </dev/null > "$purge_dir/meta.$n"; then
       echo "Cannot read $meta; nothing deleted." >&2; return 1
     fi
+    jq -Rs . "$purge_dir/meta.$n" >> "$purge_dir/snapshots" || return 1
     # Require the source in this session, a decimal filter version, and a machine ID.
     if ! jq -ser --arg dir "${meta%metadata.json}" --arg p "$prefix" '
         if length == 1 and (.[0] | type) == "object" then .[0]
@@ -360,7 +415,12 @@ purge_prepare() {
   LC_ALL=C sort -u "$purge_dir/current" -o "$purge_dir/current" || return 1
   : > "$purge_dir/targets" || return 1
   if [ "$mode" = all ]; then
-    cp "$purge_dir/keys" "$purge_dir/targets" || return 1
+    cat "$purge_dir/metas" > "$purge_dir/targets" || return 1
+    while IFS= read -r key; do
+      if ! grep -Fxq -- "$key" "$purge_dir/metas"; then
+        printf '%s\n' "$key" >> "$purge_dir/targets" || return 1
+      fi
+    done < "$purge_dir/keys"
   elif [ "$mode" = unreferenced ]; then
     jq -r --arg p "$prefix" '
       if . == null then empty else .[] |
@@ -380,6 +440,8 @@ purge_prepare() {
     done < "$purge_dir/selected"
   fi
   date +%s > "$purge_dir/created" || return 1
+  purge_manifest || return 1
+  purge_seal_attempt || return 1
   : > "$purge_dir/VALID" || return 1 # written only after every check succeeds
   echo "Plan $purge_dir: $(wc -l < "$purge_dir/targets" | tr -d ' ') exact keys."
   cat "$purge_dir/targets"
@@ -389,6 +451,11 @@ purge_apply() {
     echo "No valid plan; nothing deleted." >&2; return 1
   fi
   rm "$purge_dir/VALID" || return 1 # a plan can be attempted only once
+  (cd "$purge_dir" && shasum -a 256 -c attempt.sha256 >/dev/null) || return 1
+  purge_check_manifest "$purge_dir" || { echo "Invalid manifest; nothing deleted." >&2; return 1; }
+  [ "$(jq -r .identity "$purge_dir/manifest.json")" = "$(purge_identity)" ] || {
+    echo "Destination identity changed; nothing deleted." >&2; return 1;
+  }
   if [ "$(cat "$purge_dir/bucket")" != "$bucket" ] ||
      [ "$(cat "$purge_dir/prefix")" != "$prefix" ] ||
      [ "$(cat "$purge_dir/mode")" != "$mode" ]; then
@@ -420,10 +487,17 @@ purge_apply() {
       return 1
     fi
   done < "$purge_dir/metas"
-  : > "$purge_dir/removed"
+  : > "$purge_dir/removed" || return 1
+  : > "$purge_dir/errors" || return 1
+  : > "$purge_dir/pending" || return 1
   cp "$purge_dir/targets" "$purge_dir/pending" || return 1
   while IFS= read -r key; do
-    if ! aws s3 rm "s3://$bucket/$key" </dev/null; then
+    # Write ahead: if interrupted after remote deletion, listing resolves uncertainty.
+    printf '%s\n' "$key" > "$purge_dir/inflight" || return 1
+    if ! aws s3 rm "s3://$bucket/$key" </dev/null 2> "$purge_dir/error.next"; then
+      cat "$purge_dir/error.next" >> "$purge_dir/errors" || return 1
+      cat "$purge_dir/error.next" >&2
+      rm "$purge_dir/inflight" || return 1
       echo "Delete failed at $key. Already removed:" >&2
       cat "$purge_dir/removed" >&2
       echo "Not confirmed removed (including failed key):" >&2
@@ -436,13 +510,89 @@ purge_apply() {
       echo "Progress log failed after removing $key; stopped. Inspect the bucket." >&2
       return 1
     fi
+    rm "$purge_dir/inflight" || return 1
   done < "$purge_dir/targets"
   echo "Deleted $(wc -l < "$purge_dir/removed" | tr -d ' ') keys."
+}
+purge_resume() {
+  original=$1
+  purge_dir=
+  purge_check_manifest "$original" || { echo "Unreadable or corrupt manifest; nothing deleted." >&2; return 1; }
+  [ "$(jq -r .bucket "$original/manifest.json")" = "$bucket" ] &&
+    [ "$(jq -r .prefix "$original/manifest.json")" = "$prefix" ] &&
+    [ "$(jq -r .identity "$original/manifest.json")" = "$(purge_identity)" ] || {
+      echo "Destination changed; nothing deleted." >&2; return 1;
+    }
+  case "${AWS_ENDPOINT_URL:-}${AWS_ENDPOINT_URL_S3:-}" in
+    *'@'*|*'?'*|*'#'*) echo "Endpoint must not contain credentials, query, or fragment." >&2; return 1 ;;
+  esac
+  purge_identity >/dev/null || return 1
+  umask 077
+  purge_dir=$(mktemp -d "${TMPDIR:-/tmp}/agent-archive-purge.XXXXXXXX") || return 1
+  cp "$original/manifest.json" "$purge_dir/manifest.json" &&
+    cp "$original/manifest.sha256" "$purge_dir/manifest.sha256" || return 1
+  mode=$(jq -r .mode "$purge_dir/manifest.json")
+  selector=$(jq -r .selector "$purge_dir/manifest.json")
+  printf '%s\n' "$bucket" > "$purge_dir/bucket" || return 1
+  printf '%s\n' "$prefix" > "$purge_dir/prefix" || return 1
+  printf '%s\n' "$mode" > "$purge_dir/mode" || return 1
+  scope="${prefix}sessions/"; [ "$mode" = all ] && scope=$prefix
+  aws s3api list-objects-v2 --bucket "$bucket" --prefix "$scope" \
+    --query 'Contents[].Key' --output json </dev/null > "$purge_dir/list.json" || return 1
+  jq -r --arg p "$scope" '
+    if . == null then empty
+    elif type == "array" and all(.[]; type == "string" and startswith($p) and
+      (explode|all(.[]; . >= 32))) then .[] else error("incomplete listing") end
+    ' "$purge_dir/list.json" > "$purge_dir/unsorted" || return 1
+  LC_ALL=C sort -u "$purge_dir/unsorted" > "$purge_dir/keys" || return 1
+  jq -r '.keys[]' "$purge_dir/manifest.json" > "$purge_dir/original.keys" || return 1
+  LC_ALL=C comm -13 "$purge_dir/original.keys" "$purge_dir/keys" > "$purge_dir/new.keys" || return 1
+  [ ! -s "$purge_dir/new.keys" ] || { echo "New objects conflict with recovery; nothing deleted." >&2; return 1; }
+  : > "$purge_dir/metas" || return 1
+  : > "$purge_dir/targets" || return 1
+  : > "$purge_dir/tombstones" || return 1
+  for progress in tombstones removed inflight; do
+    if [ -f "$original/$progress" ]; then
+      cat "$original/$progress" >> "$purge_dir/tombstones" || return 1
+    fi
+  done
+  jq -r '.metas[]' "$purge_dir/manifest.json" > "$purge_dir/original.metas" || return 1
+  n=0; i=0
+  while IFS= read -r meta; do
+    i=$((i + 1))
+    if grep -Fxq -- "$meta" "$purge_dir/keys"; then
+      if grep -Fxq -- "$meta" "$purge_dir/tombstones"; then
+        echo "Metadata reappeared or has an interrupted delete: $meta; nothing deleted." >&2; return 1
+      fi
+      n=$((n + 1))
+      aws s3 cp "s3://$bucket/$meta" - </dev/null > "$purge_dir/meta.$n" || return 1
+      jq -jr --argjson i "$((i - 1))" '.snapshots[$i]' "$purge_dir/manifest.json" > "$purge_dir/expected" || return 1
+      cmp -s "$purge_dir/expected" "$purge_dir/meta.$n" || {
+        echo "Metadata changed at $meta; nothing deleted." >&2; return 1;
+      }
+      printf '%s\n' "$meta" >> "$purge_dir/metas" || return 1
+    elif ! jq -e --arg m "$meta" '.targets|index($m)' "$purge_dir/manifest.json" >/dev/null; then
+      echo "Unselected metadata disappeared; nothing deleted." >&2; return 1
+    fi
+  done < "$purge_dir/original.metas"
+  # Preserve original metadata-first order; never discover new ownership.
+  jq -r '.targets[]' "$purge_dir/manifest.json" > "$purge_dir/original.targets" || return 1
+  while IFS= read -r key; do
+    if grep -Fxq -- "$key" "$purge_dir/keys"; then
+      printf '%s\n' "$key" >> "$purge_dir/targets" || return 1
+    fi
+  done < "$purge_dir/original.targets"
+  date +%s > "$purge_dir/created" || return 1
+  purge_seal_attempt || return 1
+  : > "$purge_dir/VALID" || return 1
+  echo "Recovery plan $purge_dir: review these remaining original keys, then purge_apply within five minutes:"
+  cat "$purge_dir/targets"
 }
 purge_prepare unreferenced
 ```
 
-Review the printed exact keys. A failed listing or any unreadable or malformed
+Review the printed exact keys. The manifest needs the macOS `shasum` utility as well as AWS CLI and `jq`.
+A failed listing or any unreadable or malformed
 metadata leaves no valid plan and must be fixed before trying again. Then,
 within five minutes and in the same shell, delete:
 
@@ -462,6 +612,21 @@ within five minutes in that shell.
 ```sh
 purge_prepare old 10
 ```
+
+After a failed, interrupted, or expired attempt, keep every writer paused.
+In a fresh bash or zsh shell, load the helper definitions above (omit the final
+`purge_prepare unreferenced` line), restore the same bucket, prefix, endpoint,
+profile and region (and unchanged AWS configuration), then run `purge_resume /absolute/path/to/retained-plan`.
+Review its printed remaining original keys and run `purge_apply` again within
+five minutes. Use the newest printed recovery directory for each subsequent retry, keeping
+its earlier directories until cleanup succeeds. Recovery uses the immutable
+manifest and a complete bucket listing, so a remote delete interrupted before local logging does not lose source keys.
+Changed or reappearing metadata and new objects abort recovery. An uncertain
+metadata deletion that still exists also aborts; inspect that conflict first.
+The recipes cannot guarantee atomicity against external writers. The private
+manifest retains metadata snapshots and object names, never transcript content
+or credentials. After successful cleanup, remove the retained plan directories;
+deleting them earlier removes resumability.
 
 When you are done, run `agent-archive resume` on every machine you paused.
 
