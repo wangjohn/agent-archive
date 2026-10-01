@@ -135,8 +135,8 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 			return err
 		}
 		p.warn("Storage is changing. Sessions already archived stay at the old destination,",
-			"and this Mac stops adding to or cleaning up there. Nothing is deleted from either bucket;",
-			"this Mac's local copies are removed once they pass the retention period.")
+			"and this machine stops adding to or cleaning up there. Nothing is deleted from either bucket;",
+			"this machine's local copies are removed once they pass the retention period.")
 		if returning > 0 {
 			p.warn(fmt.Sprintf("%d session(s) from when this destination was used before resume uploading there,", returning),
 				"and are deleted from it once they pass the retention period.")

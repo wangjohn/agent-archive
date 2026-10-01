@@ -169,7 +169,7 @@ func TestSetupYesPointsAtBackfill(t *testing.T) {
 	}
 }
 
-// The line for another Mac names the R2 key only by its environment
+// The line for another machine names the R2 key only by its environment
 // variables, never by value, whether setup asked for it or read it.
 func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 	t.Parallel()
@@ -179,7 +179,7 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 		if strings.Contains(out, secret) || strings.Contains(out, keyID) {
 			t.Fatalf("output carries the key:\n%s", out)
 		}
-		want := "To set up another Mac with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --project "
+		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --project "
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
@@ -203,7 +203,7 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 	})
 }
 
-// The command for another Mac writes projects in the home folder from ~, and
+// The command for another machine writes projects in the home folder from ~, and
 // quotes what the shell would split.
 func TestAnotherMacCommand(t *testing.T) {
 	t.Parallel()
@@ -217,7 +217,7 @@ func TestAnotherMacCommand(t *testing.T) {
 			{Root: "/Users/alex", Included: true},
 		}},
 	}
-	got := anotherMacCommand(cfg, "/Users/alex")
+	got := anotherMachineCommand(cfg, "/Users/alex")
 	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
@@ -238,7 +238,7 @@ func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
 		Harnesses: []string{"claude"},
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(resolved, "src", "app"), Included: true}}},
 	}
-	if got := anotherMacCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
+	if got := anotherMachineCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
 		t.Fatalf("got %s", got)
 	}
 }
@@ -303,7 +303,7 @@ func TestSetupImportUploadFailureNamesNoRetry(t *testing.T) {
 	}
 }
 
-// The command for another Mac names an R2 bucket on a custom endpoint by
+// The command for another machine names an R2 bucket on a custom endpoint by
 // that endpoint, and says how to set a folder inside the bucket, which
 // setup --yes cannot.
 func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {

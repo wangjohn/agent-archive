@@ -251,8 +251,8 @@ func TestHandoffTitleNoteCountsSeveralMatches(t *testing.T) {
 	}
 }
 
-// A title answered on this Mac does not ask the archive for a count: this
-// Mac's sessions come first, with no network.
+// A title answered on this machine does not ask the archive for a count: this
+// machine's sessions come first, with no network.
 func TestHandoffTitleInScopeOnThisMacNeverOpensTheArchive(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -267,8 +267,8 @@ func TestHandoffTitleInScopeOnThisMacNeverOpensTheArchive(t *testing.T) {
 }
 
 // The dot follows activeSourceWindow, the window that makes handoff ask about
-// a shared checkout: a session this Mac saw active within it is live, and one
-// that was not, or that this Mac does not run, is not.
+// a shared checkout: a session this machine saw active within it is live, and one
+// that was not, or that this machine does not run, is not.
 func TestHandoffRowsMarkLiveSessionsByActiveSourceWindow(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)

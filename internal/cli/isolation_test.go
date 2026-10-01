@@ -118,7 +118,7 @@ func isolateProcessForTesting() func() {
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that
-// reaches this Mac itself stops the test, and the process's own home is a
+// reaches this machine itself stops the test, and the process's own home is a
 // temporary one.
 func TestIsolationFailsClosed(t *testing.T) {
 	panics := func(name string, f func()) {

@@ -230,7 +230,7 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
-// before its first question: every app detected on this Mac that neither
+// before its first question: every app detected on this machine that neither
 // the saved configuration nor the unfinished setup leaves out, and every
 // app the saved configuration or the unfinished setup includes.
 func preflightApps(detected, saved, declined, draft []string) []string {

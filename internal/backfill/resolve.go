@@ -187,7 +187,7 @@ type workspaceFolder struct {
 }
 
 // documentsInUse reports whether a configured project, included or
-// excluded, is in ~/Documents: then the person already gave this Mac's
+// excluded, is in ~/Documents: then the person already gave this machine's
 // capture access to it, and looking in it (resolving the Codex workspace
 // folder's symlinks) asks nothing new.
 func documentsInUse(env Environment, resolvedHome string, cfg config.Config) bool {
@@ -245,7 +245,7 @@ func (r *resolver) homeOrAbove(dir string) bool {
 
 // homeRule is rule 7 for home or a folder above it. Only home itself can
 // become a project, with --include-home; a folder above it (/, /Users) would
-// capture every session on the Mac, so above_home has no override.
+// capture every session on the machine, so above_home has no override.
 func (r *resolver) homeRule(dir string) resolution {
 	if dir != r.home && dir != r.homeRaw {
 		return resolution{root: dir, kind: ProjectKindHome, skip: SkipAboveHome}

@@ -250,7 +250,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 	}
 	// A clock that disagrees with the storage service's holds every deletion
 	// by age until it is fixed, which status must say. A hold for one pass
-	// after a long gap (the Mac was off) clears itself and says nothing.
+	// after a long gap (the machine was off) clears itself and says nothing.
 	if held := sweepResult.Held; held != nil && !errors.Is(held, retention.ErrClockJumped) {
 		addStatusProblem(localStore, fmt.Sprintf("retention: %v", held))
 	}

@@ -107,7 +107,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
-	refresh := fs.Bool("refresh", false, "bring hooks, the collector's plist, and skills up to date, and nothing else")
+	refresh := fs.Bool("refresh", false, "bring hooks, the background job's definition, and skills up to date, and nothing else")
 	opts, parsed := setupFlags(fs, args)
 	if !parsed {
 		return 2
@@ -634,7 +634,7 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 }
 
 // setupFinish is what finishSetup needs beyond the committed
-// configuration: the Mac it runs on, and whether it may ask to import past
+// configuration: the machine it runs on, and whether it may ask to import past
 // sessions (interactive setup) or only point at backfill (setup --yes).
 type setupFinish struct {
 	env         Env
@@ -668,7 +668,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
 	// working, so it is a choice about history and not a step of setup. A
-	// paused Mac imports nothing (backfill refuses too); resume says so.
+	// paused machine imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
@@ -945,26 +945,26 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 }
 
 // printAnotherMac ends a committed setup with the command that sets up
-// another Mac with the same storage.
+// another machine with the same storage.
 func printAnotherMac(p *prompter, cfg config.Config, userHome string) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
-		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
+		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
-		terminal.Println(p.out, "\nTo set up another Mac with this storage, run there:")
+		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
-	terminal.Println(p.out, "  "+p.style.cmd(anotherMacCommand(cfg, userHome)))
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome)))
 	// setup --yes has no flag for the folder inside the bucket: it stores in
-	// the default one, which would split the archive from this Mac's.
+	// the default one, which would split the archive from this machine's.
 	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
 		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
 	}
 }
 
-// anotherMacCommand is the setup --yes command that sets up another Mac
+// anotherMachineCommand is the setup --yes command that sets up another machine
 // like this one: the same storage, apps and projects. Projects in the home
-// folder are written from ~, which setup resolves on that Mac. An R2 key is
+// folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
-func anotherMacCommand(cfg config.Config, userHome string) string {
+func anotherMachineCommand(cfg config.Config, userHome string) string {
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1073,7 +1073,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 }
 
 // offerFirstCapture is the first setup's one question for what to capture,
-// when it can guess both halves: the apps found on this Mac, and the Git
+// when it can guess both halves: the apps found on this machine, and the Git
 // repository setup was run from. Yes takes both; the review step's "Edit a
 // setting" changes apps, projects, and retention (which stays at its
 // default), and on no chooseCapture asks for each in turn. It reports

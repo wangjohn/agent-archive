@@ -37,7 +37,7 @@ Checking your storage connection…
     from a shell without CODEX_HOME.
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mSave these changes?\e[0m
   1) Yes, save

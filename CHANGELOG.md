@@ -346,6 +346,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **"Mac" became "machine" wherever the text is not about macOS**, now that
+  Linux is supported: in `agent-archive help` and the [CLI
+  reference](docs/reference/cli.md) ("sessions already on this machine"), in
+  `setup`'s review ("What leaves your machine:") and its next-steps line
+  ("To set up another machine with this storage"), in `backfill`, `purge`,
+  `uninstall`, `status` and `handoff` messages and in retention's clock
+  messages. `setup --refresh` is described as bringing "the background job's
+  definition" up to date, not "the collector's plist". The `agent-archive`
+  skill that setup installs says "this machine" instead of "this Mac", so
+  `status` shows an installed skill as written by an earlier release until
+  `agent-archive setup --refresh` (which the installer runs) rewrites it. What
+  is specific to macOS (the Keychain, Time Machine, Migration Assistant,
+  macOS's privacy prompts, launchd) keeps its wording, and scripts that match
+  these messages should match the new words.
 - **Privacy filter 13: a session's name and linked pull request are now
   archived.** Claude Code's session name (the one in its sidebar, set from
   your prompt or by `/rename`) and the pull request a session linked (its

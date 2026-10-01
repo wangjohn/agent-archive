@@ -9,7 +9,7 @@ Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
 ## Problem
 
 A person switching coding agents mid-task (Codex → Claude Code, Claude Code
-→ Cursor, or the same agent on another Mac) has no way to carry the
+→ Cursor, or the same agent on another machine) has no way to carry the
 conversation over. Each app resumes only its own sessions, from its own
 local files. Today the closest path is `agent-archive show ID --normalized`,
 which prints ~350 KB of JSON for a medium Claude session, omits every tool
@@ -149,7 +149,7 @@ pick is visible:
    no project column in v1: a name taken from local config would be blank
    on the other machine, which is where it would be needed.
 
-Known limit: `ProjectID` hashes the absolute path, so on a second Mac the
+Known limit: `ProjectID` hashes the absolute path, so on a second machine the
 same repository only matches when it is checked out at the same path.
 Phase 2 adds a portable repository key (see [Later](#later-phase-2)). Until
 then, the cross-machine flow is step 3's fallback list, or `list` →

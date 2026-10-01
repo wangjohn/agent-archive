@@ -583,7 +583,7 @@ storage, apps and projects ([without questions](#set-up-without-questions)),
 ready to copy:
 
 ```text
-To set up another Mac with this storage, run there:
+To set up another machine with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --project ~/code/app
 ```
 

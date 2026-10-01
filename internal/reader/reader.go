@@ -134,7 +134,7 @@ type ListOptions struct {
 // are not sidecars are skipped before any download, and sidecars are read with
 // bounded concurrency. Results are ordered newest capture first.
 //
-// Another Mac's retention or undo can delete a session at any time, so a
+// Another machine's retention or undo can delete a session at any time, so a
 // sidecar that is listed and then not found is left out: it no longer
 // exists. One that does not decode or validate (damaged, or written by a
 // newer version) is left out and reported through options.Skipped, so one
