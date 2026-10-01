@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `list`, `show`, and handoff keep up to 128 characters of a session's saved
+  name or first-prompt preview, instead of 72. Parser `0.17.1` refreshes
+  existing metadata from retained source bundles on the next collector scan;
+  sessions whose source is unavailable keep their existing preview.
+
 ### Added
 
 - **Linux is supported for persistent capture** (x86-64 and arm64), on a
