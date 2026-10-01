@@ -142,8 +142,9 @@ pager when it is longer than the screen. `c` copies it with `pbcopy` on macOS,
 a provider is installed and, on Linux, a display is configured. In a headless
 session, use `w` to write a file instead. `w`
 asks for a file name (default `handoff-<short id>.md` in the directory an
-agent would start in: the current one, or `--project DIR` with `--latest`;
-`~/` is your home directory), writes it with mode 0600,
+agent would start in: the current one, or `--project DIR` with `--latest` or,
+before setup, with any selection; `~/` is your home directory), writes it with
+mode 0600,
 and asks before replacing a file. A write that fails is reported and asked
 again; Enter or `q` then gives up. With no agent installed, Enter prints.
 
@@ -289,6 +290,15 @@ agent-archive handoff "personal_website blog"   # a project, then a topic
 Use one or two distinctive words: a topic, a PR number, a branch, or a project
 name. `handoff` matches them the way `list "<words>"` and `show "<words>"` do.
 
+This section describes `handoff` after setup. [Before
+setup](#before-setup-native-local-sessions) there is no archive: words search
+only the loaded previews of Claude Code and Codex sessions in this directory
+and below (the newest 50 at first), match a name, title, branch, project, app,
+or the start of a native ID but not a pull request number, and never widen to
+other projects unless you pass `--all-projects`. Several matches open the picker on a
+terminal; without one, each is printed as `local <ID> (<app>): <title>` and the
+command exits 1 with no `Next:` line.
+
 **What a word matches.** Every word must appear, case-insensitively, in some
 field of the session: its name (the one your agent shows in its sidebar), its
 title (the first prompt), its branch, its project name, or its app
@@ -411,7 +421,11 @@ The picker is the one session browser that `list` and bare `show` open, and
 that an ambiguous `show "<words>"` or `handoff "<words>"` opens too (see
 [browsing on a terminal](list-and-show.md#browsing-on-a-terminal)). It has the
 same keys everywhere; only what Enter does differs. Here Enter hands the
-session off, and the heading starts with `Hand off ·`.
+session off, and the heading starts with `Hand off ·`. This section describes
+the picker after setup; [before setup](#before-setup-native-local-sessions) its
+heading starts with `Hand off local ·`, it lists only this machine's Claude
+Code and Codex sessions in this directory and below (no PR column, `●`,
+`· not yet uploaded`, or `a`), and `o` loads 50 older ones.
 
 ```text
 Hand off · agent-archive · 5 sessions · claude · a all projects
