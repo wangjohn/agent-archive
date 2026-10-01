@@ -140,7 +140,7 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 
 func verifyProvider(ctx context.Context, cfg config.Config, listing machines.ListResult, api cloudflare.API, reader cloudflare.InventoryAPI, account string, bucket cloudflare.BucketRef, now time.Time) providerVerification {
 	inventory, err := reader.TokenInventory(ctx, account)
-	report := providerVerification{CheckedAt: now.UTC(), Visibility: "unknown_may_be_creator_only", Observations: []machineProviderObservation{}, PaginationComplete: inventory.PaginationComplete}
+	report := newProviderVerification(now, inventory.PaginationComplete)
 	if err != nil {
 		report.Partial = true
 		report.Diagnostic = "token_listing_failed_or_incomplete"
@@ -178,7 +178,7 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 			}
 		}
 		state, complete := providerBindingState(token, found, binding, account, bucket, permissionID, now)
-		observation := machineProviderObservation{MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: state, Binding: "untrusted_bucket_claim"}
+		locallyCommitted := false
 		if !complete {
 			report.Partial = true
 		}
@@ -186,13 +186,13 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 		if record.MachineID == cfg.MachineID && cfg.MachineAssignment != nil && cfg.MachineAssignment.DestinationID == cfg.DestinationID() {
 			local := cfg.MachineAssignment
 			if local.AccessKeyID == binding.AccessKeyID && local.RecipientID == binding.RecipientID && local.IssuerID == binding.IssuerID && local.SlotID == binding.SlotID && local.Kind == binding.Kind {
-				observation.Binding = "local_committed_binding"
+				locallyCommitted = true
 			} else {
-				observation.State = observationLocalMismatch
+				state = observationLocalMismatch
 				report.Partial = true
 			}
 		}
-		report.Observations = append(report.Observations, observation)
+		report.Observations = append(report.Observations, machineProviderObservation{MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: state, Binding: providerBindingTrust(locallyCommitted)})
 	}
 	for _, token := range inventory.Tokens {
 		if _, known := cloudflare.ParseProviderName(token.Name); known && !claimed[token.ID] && cloudflare.ExactBucketPolicy(token, account, bucket, permissionID) {
@@ -204,6 +204,17 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 		report.Diagnostic = "provider_budget_exhausted"
 	}
 	return report
+}
+
+func newProviderVerification(now time.Time, paginationComplete bool) providerVerification {
+	return providerVerification{CheckedAt: now.UTC(), Visibility: "unknown_may_be_creator_only", Observations: []machineProviderObservation{}, PaginationComplete: paginationComplete}
+}
+
+func providerBindingTrust(locallyCommitted bool) string {
+	if locallyCommitted {
+		return "local_committed_binding"
+	}
+	return "untrusted_bucket_claim"
 }
 
 func providerBindingState(token cloudflare.TokenMetadata, found bool, binding machines.CredentialBinding, account string, bucket cloudflare.BucketRef, permissionID string, now time.Time) (providerObservationState, bool) {
