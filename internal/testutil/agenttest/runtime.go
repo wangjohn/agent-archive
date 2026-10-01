@@ -8,30 +8,41 @@ import (
 	"testing"
 )
 
+type runtimeValue string
+
+const (
+	unsetValue          runtimeValue = ""
+	whitespaceValue     runtimeValue = "  "
+	paddedIdentityValue runtimeValue = "  native-id  "
+	zeroValue           runtimeValue = "0"
+)
+
 // RuntimeConformance checks positive evidence independently of cleanup inventory.
 func RuntimeConformance(t *testing.T, detector agentapi.RuntimeDetector, positive string, exact bool, cleanup []string) {
 	t.Helper()
-	for _, value := range []string{"", "  ", "  native-id  ", "0"} {
-		t.Run(value, func(t *testing.T) {
+	for _, value := range []runtimeValue{unsetValue, whitespaceValue, paddedIdentityValue, zeroValue} {
+		t.Run(string(value), func(t *testing.T) {
 			env := agentapi.RuntimeEnvironment{LookupEnv: func(key string) (string, bool) {
 				if key != positive {
 					t.Errorf("unexpected runtime key %s", key)
 				}
-				return value, true
+				return string(value), true
 			}}
 			got := detector.Detect(env)
-			want := agentapi.RuntimeObservation{}
-			if value == "  native-id  " || value == "0" {
-				want.PresenceKey = positive
+			nativeID, presenceKey := "", ""
+			projectLatest := false
+			if value == paddedIdentityValue || value == zeroValue {
+				presenceKey = positive
 				if exact {
-					want.NativeID = "native-id"
-					if value == "0" {
-						want.NativeID = "0"
+					nativeID = "native-id"
+					if value == zeroValue {
+						nativeID = "0"
 					}
 				} else {
-					want.ProjectLatest = true
+					projectLatest = true
 				}
 			}
+			want := agentapi.RuntimeObservation{NativeID: nativeID, PresenceKey: presenceKey, ProjectLatest: projectLatest}
 			if got != want {
 				t.Fatalf("got %+v want %+v", got, want)
 			}

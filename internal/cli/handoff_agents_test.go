@@ -145,5 +145,6 @@ func TestBuildLaunchSpecRefusesDoubleDashInArguments(t *testing.T) {
 	}
 }
 
-func (fakeLaunchEnv) runtimeLookup() agentapi.RuntimeLookup   { return productionAgents }
+func (fakeLaunchEnv) runtimeLookup() agentapi.RuntimeLookup { return productionAgents }
+
 func (fakeLaunchEnv) launcherLookup() agentapi.LauncherLookup { return productionAgents }

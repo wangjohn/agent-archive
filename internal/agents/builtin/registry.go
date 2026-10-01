@@ -70,17 +70,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
-		for _, op := range b.Descriptor.Operations {
-			r.supporting[op] = append(r.supporting[op], b)
-		}
-		if b.Runtime != nil {
-			r.runtime = append(r.runtime, b)
-			for _, key := range b.Runtime.SessionEnvironmentKeys() {
-				if !slices.Contains(r.sessionKeys, key) {
-					r.sessionKeys = append(r.sessionKeys, key)
-				}
-			}
-		}
+		r.addOperations(b)
 	}
 	var err error
 	r.catalog, err = agentmeta.New(ds)
@@ -165,4 +155,19 @@ func (r *Registry) Launchers() []agentapi.AgentLauncher {
 		out = append(out, agentapi.AgentLauncher{Agent: b.Descriptor.ID, Launcher: b.Launcher})
 	}
 	return out
+}
+
+func (r *Registry) addOperations(b Integration) {
+	for _, op := range b.Descriptor.Operations {
+		r.supporting[op] = append(r.supporting[op], b)
+	}
+	if b.Runtime == nil {
+		return
+	}
+	r.runtime = append(r.runtime, b)
+	for _, key := range b.Runtime.SessionEnvironmentKeys() {
+		if !slices.Contains(r.sessionKeys, key) {
+			r.sessionKeys = append(r.sessionKeys, key)
+		}
+	}
 }

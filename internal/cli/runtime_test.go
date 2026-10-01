@@ -32,12 +32,13 @@ func (s syntheticDetector) Detect(e agentapi.RuntimeEnvironment) agentapi.Runtim
 	if !set || strings.TrimSpace(value) == "" {
 		return agentapi.RuntimeObservation{}
 	}
-	got := agentapi.RuntimeObservation{PresenceKey: syntheticRuntimeKey, ProjectLatest: s.presence}
+	nativeID := ""
 	if !s.presence {
-		got.NativeID = strings.TrimSpace(value)
+		nativeID = strings.TrimSpace(value)
 	}
-	return got
+	return agentapi.RuntimeObservation{PresenceKey: syntheticRuntimeKey, ProjectLatest: s.presence, NativeID: nativeID}
 }
+
 func (syntheticDetector) SessionEnvironmentKeys() []string {
 	return []string{syntheticRuntimeKey, syntheticCleanupKey}
 }
@@ -102,7 +103,7 @@ func TestInjectedRuntimeDrivesCurrentSessionAndInteraction(t *testing.T) {
 	}
 	candidate := nativesessions.Candidate{NativeID: "exact-native", Ref: nativesessions.Ref{Harness: string(syntheticID)}}
 	selected, err := nativeCurrent([]nativesessions.Candidate{candidate}, "", env)
-	if err != nil || selected == nil || !isCurrentNative(candidate, env) {
+	if err != nil || selected == nil || !isCurrentNative(candidate, runtimeObservations(env)) {
 		t.Fatalf("native current %+v %v", selected, err)
 	}
 	if _, err := nativeCurrent([]nativesessions.Candidate{candidate, candidate}, "", env); err == nil {
@@ -169,7 +170,7 @@ func TestPreparedTerminalStripsRuntimeAndTracePreservesConfiguration(t *testing.
 				t.Fatalf("unexpected terminal %s", name)
 			}
 			script := strings.Trim(args[len(args)-1], "'")
-			cmd := exec.Command("/bin/sh", script)
+			cmd := exec.CommandContext(t.Context(), "/bin/sh", script)
 			cmd.Env = inherited
 			raw, err := cmd.CombinedOutput()
 			if err != nil {
@@ -216,7 +217,11 @@ func TestRuntimePrecedenceAndNativeAmbiguityRemainShared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pair := range []struct{ agent, native, id string }{{"claude", "claude-native", "claude-archive"}, {"codex", "codex-native", "codex-archive"}} {
+	for _, pair := range []struct {
+		agent  string
+		native string
+		id     string
+	}{{"claude", "claude-native", "claude-archive"}, {"codex", "codex-native", "codex-archive"}} {
 		reg := archive.SessionRegistration{ArchiveSessionID: pair.id, NativeSessionID: pair.native, ProjectID: "test", ProjectRoot: home, Harness: archive.Harness{Name: pair.agent}, RegisteredAt: time.Unix(1, 0), SessionStartedAt: time.Unix(1, 0), TranscriptPath: filepath.Join(home, "transcript.jsonl")}
 		must(t, store.SaveRegistration(reg))
 	}
@@ -235,5 +240,37 @@ func TestRuntimePrecedenceAndNativeAmbiguityRemainShared(t *testing.T) {
 	selected, err := nativeCurrent(candidates, "codex", env)
 	if err != nil || selected == nil || selected.Ref.Harness != "codex" {
 		t.Fatalf("native constraint %+v %v", selected, err)
+	}
+}
+
+type countingDetector struct{ calls *int }
+
+func (c countingDetector) Detect(env agentapi.RuntimeEnvironment) agentapi.RuntimeObservation {
+	*c.calls++
+	return (syntheticDetector{}).Detect(env)
+}
+
+func (countingDetector) SessionEnvironmentKeys() []string { return []string{syntheticRuntimeKey} }
+
+func TestNativeLatestObservesRuntimeOncePerSelection(t *testing.T) {
+	t.Parallel()
+	c, err := agentmeta.New([]agentmeta.Descriptor{{ID: syntheticID, DisplayName: "Synthetic"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	reg, err := builtin.New(c, []builtin.Integration{{Descriptor: agentmeta.Descriptor{ID: syntheticID}, Runtime: countingDetector{calls: &calls}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Agents: reg, LookupEnv: agentEnv(map[string]string{syntheticRuntimeKey: "current"})}
+	candidates := make([]nativesessions.Candidate, 101)
+	for i := range candidates {
+		candidates[i] = nativesessions.Candidate{NativeID: "current", Ref: nativesessions.Ref{Harness: string(syntheticID)}}
+	}
+	candidates[100].NativeID = "older"
+	selected, err := selectKnownNative(handoffOptions{latest: true}, nativesessions.Result{Candidates: candidates, Coverage: nativesessions.Coverage{IdentityComplete: true}}, false, env)
+	if err != nil || selected == nil || selected.NativeID != "older" || calls != 1 {
+		t.Fatalf("selected %+v err %v detector calls %d", selected, err, calls)
 	}
 }

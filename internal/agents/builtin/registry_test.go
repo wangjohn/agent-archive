@@ -82,6 +82,7 @@ type fakeRuntime struct{}
 func (*fakeRuntime) Detect(agentapi.RuntimeEnvironment) agentapi.RuntimeObservation {
 	return agentapi.RuntimeObservation{NativeID: "native", PresenceKey: "TEST_RUNTIME"}
 }
+
 func (*fakeRuntime) SessionEnvironmentKeys() []string { return []string{"TEST_RUNTIME", "TEST_PARENT"} }
 
 func TestRuntimeProjectionAndCleanupUnion(t *testing.T) {

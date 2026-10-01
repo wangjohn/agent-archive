@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -412,8 +413,9 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 		if !result.Coverage.IdentityComplete {
 			return nil, errors.New("--latest requires complete local identity and checkout discovery; select a known native ID explicitly")
 		}
+		observations := runtimeObservations(env)
 		for _, c := range candidates {
-			if !isCurrentNative(c, env) {
+			if !isCurrentNative(c, observations) {
 				return &c, nil
 			}
 		}
@@ -435,8 +437,8 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 	return nil, nil
 }
 
-func isCurrentNative(c nativesessions.Candidate, env currentSessionDependencies) bool {
-	for _, observation := range runtimeObservations(env) {
+func isCurrentNative(c nativesessions.Candidate, observations []agentapi.AgentRuntime) bool {
+	for _, observation := range observations {
 		if observation.NativeID != "" && string(observation.Agent) == c.Ref.Harness && observation.NativeID == c.NativeID {
 			return true
 		}

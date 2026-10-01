@@ -10,6 +10,7 @@ func TestRuntimeConformance(t *testing.T) {
 	t.Parallel()
 	agenttest.RuntimeConformance(t, RuntimeDetector{}, "CURSOR_AGENT", false, []string{"CURSOR_AGENT"})
 }
+
 func TestLaunchConformance(t *testing.T) {
 	t.Parallel()
 	agenttest.LaunchConformance(t, Launcher{}, []string{"agent", "cursor-agent"}, []string{"--workspace", "/project", "--model", "x", "PROMPT"})
