@@ -5,9 +5,12 @@ touching local collector state. `feedback` attaches your own assessment to
 a session.
 
 ```sh
-# Newest archived sessions matching the filters (at most 50 by default):
-# title (the name your agent gave the session, else a preview of the first
-# filtered prompt), relative time, harness, project, and short ID. Metadata
+# The most recently active archived sessions matching the filters (at most
+# 50 by default): title (the name your agent gave the session, else a
+# preview of the first filtered prompt), how long ago it was last active
+# (WHEN: its latest record, so a session backfill imported is dated by when
+# it ran, not the import), harness, project, and short ID. --json keeps the
+# newest captured first. Metadata
 # only, never full transcript text. On an interactive terminal, pick a
 # numbered row to see that session's summary (see below).
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
@@ -79,7 +82,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.18.0 (partial) · filter 14
+     origin hook · parser 0.19.0 (partial) · filter 14
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -240,7 +243,9 @@ name was kept (privacy filter 13) gets one the next time the collector
 re-reads its transcript, if the transcript is still on the machine. A Claude
 Code subagent's name is the description its parent gave the task (filter 14
 and parser `0.18.0`), so a subagent archived before that gets one the same
-way.
+way. From parser `0.19.0` a Cursor session's title is the prompt as you
+typed it, without the `<timestamp>` line and `<user_query>` tags Cursor
+wraps it in.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its

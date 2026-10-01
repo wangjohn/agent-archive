@@ -142,7 +142,8 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
 		picker.scope = s
 		rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
-		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, search: handoffSearch(picker, s, regs, archived, format)}
+		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, hidden: handoffHiddenSubagents(picker, s, archived),
+			search: handoffSearch(picker, s, regs, archived, format)}
 	})
 	stop()
 	if err != nil {
@@ -181,6 +182,22 @@ func handoffSearch(picker handoffPicker, scope sessionScope, regs []archive.Sess
 		}
 		return append(out, children...)
 	}
+}
+
+// handoffHiddenSubagents is how many of the archive's subagent sessions in a
+// scope the picker's rows leave out, for the footer to name as list's does.
+// They are none with --source local, whose search does not offer them.
+func handoffHiddenSubagents(picker handoffPicker, scope sessionScope, archived []archive.Metadata) int {
+	if picker.source == "local" {
+		return 0
+	}
+	hidden := 0
+	for _, m := range subagentSessions(archived) {
+		if scope.contains(m, nil) {
+			hidden++
+		}
+	}
+	return hidden
 }
 
 // handoffPickerRow is one session the handoff picker offers.
@@ -256,7 +273,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			continue
 		}
 		index[m.SessionID] = len(all)
-		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt, noPrompt: archivedWithoutPrompt(m)})
+		all = append(all, handoffPickerRow{metadata: m, active: lastActivity(m), noPrompt: archivedWithoutPrompt(m)})
 	}
 	// A copy, which leaves registered pointing at the registrations as they were.
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
@@ -361,10 +378,10 @@ func formatHandoffRows(rows []handoffPickerRow, format listFormatOptions) []list
 	sessions := make([]archive.Metadata, len(rows))
 	for i, row := range rows {
 		sessions[i] = row.metadata
-		sessions[i].CapturedAt = row.active
 	}
 	out := formatSessionRows(sessions, format)
 	for i, row := range rows {
+		out[i].When = relativeAge(format.Now, row.active)
 		if row.notUploaded {
 			out[i].SkillHint = notUploadedHint
 		}

@@ -469,6 +469,25 @@ func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
 	}
 }
 
+// The footer names the archived subagents the rows leave out, in list's
+// words, and --source local, which never offers them, does not.
+func TestHandoffPickerFooterNamesHiddenSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range 2 {
+		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
+	}
+	// The subagents are another project's.
+	out, errOut, code := runPicker(t, f.env, "q\n", "--all-projects")
+	if code != 0 || !strings.Contains(out, "3 sessions (2 subagent sessions hidden; search to find one).") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	out, errOut, code = runPicker(t, f.env, "q\n", "--all-projects", "--source", "local")
+	if code != 0 || strings.Contains(out, "hidden") {
+		t.Fatalf("--source local: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
 // A local subagent registration is skipped even when its parent is in the
 // archive, so a parent that is both registered and archived is offered once.
 // The subagent is archived too: its archived row is dropped before the merge,

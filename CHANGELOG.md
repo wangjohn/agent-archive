@@ -47,6 +47,19 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- `list`, `show` and `handoff` line up their columns when color is on: a
+  dimmed hint such as `· 18 subagents` no longer pushes the rest of its row
+  out of line.
+- `list` and `show` date a session by when it was last active, as `handoff`
+  does, and list the most recently active first: a session `backfill`
+  imported shows when it ran, not when it was imported. `list --json` keeps
+  its order and fields.
+- The `handoff` picker's footer names the subagent sessions it leaves out,
+  as `list` and `show` do.
+- The Tools row of `show`'s summary wraps between tools and no longer cuts a
+  line short with `…`.
+- A Cursor session's title (parser 0.19.0) leaves out the `<timestamp>` line
+  and `<user_query>` tags Cursor wraps a prompt in.
 - Guided R2 setup checks the token before asking for bucket settings, offers
   token replacement or retry on failure, and summarizes the bucket and
   automatic or customized location before creation.

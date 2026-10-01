@@ -641,7 +641,7 @@ func (r handoffResolver) archiveCandidates(dir string) (archiveMatches, error) {
 		return archiveMatches{}, err
 	}
 	sessions = topLevelSessions(sessions)
-	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CapturedAt.After(sessions[j].CapturedAt) })
+	sortByActivity(sessions)
 	projectIDs := r.projectIDs(dir)
 	byPath, byRepo := archiveHandoffCandidates(sessions, projectIDs, r.repoKey, r.skip)
 	return archiveMatches{store: store, sessions: sessions, projectIDs: projectIDs, byPath: byPath, byRepo: byRepo}, nil
@@ -788,7 +788,7 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 			break
 		}
 		// The table is built in memory, where writes cannot fail.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, lastActivity(m)), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
 	}
 	_ = tw.Flush()
 	return errors.New(strings.TrimRight(b.String(), "\n"))
