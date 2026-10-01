@@ -836,3 +836,15 @@ guide. Live check on the owner's Mac:
   `Project`, `Harness`, `SessionID`, then `PRs []int`), because the repository's
   lint (LV1003) rejects several names in one declaration; the names and types
   are those of the shared-names table.
+- PR 5: "short or full ID prefix" (§4) is read per word with two limits. A
+  word that is a PR number (`#N`, or a bare number of 1 to 6 digits) never
+  matches the start of an ID, and any other word does only from 4 characters
+  (`minIDPrefixWord`, git's shortest abbreviation). Session IDs are random
+  hex, so without them `handoff 21` meant for PR 21 also matched about one
+  session in 256 by its ID, a 3-digit PR one in 4096, and a short word such as
+  "add" or "bed" one in 4096, making PR and word searches ambiguous in a large
+  archive (and a test flaky when a fixture's random ID began with "212"). The
+  old matcher took a prefix of any length, but only of the whole query, which
+  had no PR numbers. An exact full ID, or exactly the 8-character short ID,
+  still wins outright (`exactIDWins`); an ID that starts with digits only is
+  found by more than 6 of its characters.

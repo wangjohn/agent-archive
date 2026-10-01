@@ -229,15 +229,15 @@ agent-archive handoff "fix the auth bug" --to claude --worktree
 ```
 
 It matches the way `show` and `list "<words>"` do: every word must appear,
-case-insensitively, in some field of the session (its name, its title (the
-first prompt), its branch, its project name, or its app), or start its
-session ID, and a word like `#212` or `212` also matches a pull request the
-session linked or created. Words may match different fields, so a topic, a
-PR number, a branch, or a project name all work. A session ID, full or the
-short one a table shows, names that session, even when another title
-mentions it. Inside a repository, its top-level sessions are searched first,
-then every project's, and subagent sessions only when no other session
-matches; a note on stderr says how many more match in other projects.
+case-insensitively, in some field of the session (its name, its title (the first
+prompt), its branch, its project name, or its app), or start its session ID
+(from 4 characters), and a word like `#212` or `212` also matches a pull request
+the session linked or created, never the start of an ID. Words may match
+different fields, so a topic, a PR number, a branch, or a project name all work.
+A session ID, full or the short one a table shows, names that session, even when
+another title mentions it. Inside a repository, its top-level sessions are
+searched first, then every project's, and subagent sessions only when no other
+session matches; a note on stderr says how many more match in other projects.
 `--harness` and `--source` narrow the search. When the command runs inside a
 Claude Code or Codex session, that session is not offered for a title (as
 `--latest` passes over it), unless `--to` is set, which hands off a session the

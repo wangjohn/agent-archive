@@ -369,14 +369,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 - **`agent-archive list "<words>"` searches.** One or two words find a
   session: every word must appear, in any case, in some field of it (its name,
-  title, branch, project name, harness, or the start of its ID), and words may
-  match different fields, so `list "linux 212"` finds the session named for
-  Linux that opened PR 212. `#212`, or a bare number of 1 to 6 digits, also
-  matches a pull request number, any the session linked or created. On a
-  terminal it opens the browser over the matches; piped it prints the table;
-  `list "<words>" --json` prints the same document, narrowed, with the same
-  `scope` object. `handoff "<words>"` and `show "<words>"` use the same matcher
-  and the same order, so a person and an agent get the same answer: this
+  title, branch, project name, harness, or the first 4 or more characters of its
+  ID), and words may match different fields, so `list "linux 212"` finds the
+  session named for Linux that opened PR 212. `#212`, or a bare number of 1 to 6
+  digits, also matches a pull request number, any the session linked or created.
+  On a terminal it opens the browser over the matches; piped it prints the
+  table; `list "<words>" --json` prints the same document, narrowed, with the
+  same `scope` object. `handoff "<words>"` and `show "<words>"` use the same
+  matcher and the same order, so a person and an agent get the same answer: this
   repository's top-level sessions first, then every project's, then subagent
   sessions (in the repository, then everywhere); the first that has a match
   answers, and a note says how many more match in other projects.
@@ -429,9 +429,12 @@ follow [Semantic Versioning](https://semver.org/).
   fields (above) where they matched the whole text as a substring of the title
   or the start of an ID. Words that matched a title before still match it,
   except a `#N` that was only the start of a longer number (`#21` no longer
-  finds `PR #213`). `show "<words>"` now offers a subagent session only when
-  no top-level session matches, where it listed both. The table printed for
-  several matches is the one described above.
+  finds `PR #213`). The start of an ID now needs 4 characters or more, and a PR
+  number such as `212` or `#212` never matches one, so it does not also find
+  every session whose random ID happens to start with those digits.
+  `show "<words>"` now offers a subagent session only when no top-level session
+  matches, where it listed both. The table printed for several matches is the
+  one described above.
 - **`list`, `show`, and `handoff` start from the repository you are in.**
   Run inside a project, `agent-archive list` and `list --json` now return
   that repository's sessions (every checkout and worktree of it, and its

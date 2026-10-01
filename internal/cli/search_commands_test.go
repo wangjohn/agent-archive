@@ -479,6 +479,9 @@ func TestHandoffWordsMatchAcrossFieldsAndPRs(t *testing.T) {
 	f := newPickerFixture(t)
 	f.addArchivedWith(t, "linux001", "Add a systemd unit", filepath.Base(f.project), all(named("Implement Linux support"), linked(212), onBranch("feature/linux-port")))
 	f.addArchivedWith(t, "linux002", "Linux notes", filepath.Base(f.project), nil)
+	// A session whose ID starts with 212 is not PR 212. The fixture's other
+	// IDs are random, so this pins what one of them could do by chance.
+	f.addArchivedWith(t, "212b0000", "Unrelated notes", filepath.Base(f.project), nil)
 	for _, query := range []string{"linux 212", "#212", "212", "linux-port systemd", "LINUX SUPPORT"} {
 		opts := handoffOptions{sessionID: query, source: "auto"}
 		var out, errOut bytes.Buffer

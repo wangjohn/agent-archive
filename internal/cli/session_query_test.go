@@ -150,3 +150,58 @@ func TestExactSessionIDWinsOutright(t *testing.T) {
 		t.Fatalf("two words: %v", got)
 	}
 }
+
+// A pull request number never matches the start of a session ID, and any
+// other word does only from minIDPrefixWord characters, so a random hex ID
+// that happens to start with "212" or "add" does not answer a search for PR
+// 212 or the word "add".
+func TestSessionQueryShortWordsDoNotMatchAnIDPrefix(t *testing.T) {
+	t.Parallel()
+	byID := sessionFields{SessionID: "212add9f00000000000000000000beef", Title: "Unrelated work"}
+	withPR := sessionFields{SessionID: "0000000000000000000000000000cafe", Title: "Linux support", PRs: []int{212}}
+	for _, tc := range []struct {
+		query  string
+		byID   bool
+		withPR bool
+	}{
+		{"212", false, true},
+		{"#212", false, true},
+		{"2", false, false},
+		{"212a", true, false}, // 4 characters, not a number: an ID prefix
+		{"212add9f", true, false},
+		{"212add9f00000000000000000000beef", true, false},
+	} {
+		q := parseSessionQuery(tc.query)
+		if got := q.matches(byID); got != tc.byID {
+			t.Errorf("%q matches the session by its ID = %v, want %v", tc.query, got, tc.byID)
+		}
+		if got := q.matches(withPR); got != tc.withPR {
+			t.Errorf("%q matches the session with PR 212 = %v, want %v", tc.query, got, tc.withPR)
+		}
+	}
+	fields := func(r sessionFields) sessionFields { return r }
+	for _, query := range []string{"212", "#212"} {
+		if got := matchPool([]sessionFields{byID, withPR}, parseSessionQuery(query), fields); len(got) != 1 || got[0].SessionID != withPR.SessionID {
+			t.Errorf("%q: %v, want only the session with PR 212", query, got)
+		}
+	}
+	// A three-character hex word is text only; four characters start an ID.
+	hexID := sessionFields{SessionID: "addbed0000000000000000000000cafe", Title: "Unrelated work"}
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"add", false},
+		{"ADD", false},
+		{"addb", true},
+		{"ADDBED", true},
+		{"cafe", false}, // the end of an ID is not its start
+	} {
+		if got := parseSessionQuery(tc.query).matches(hexID); got != tc.want {
+			t.Errorf("%q matches = %v, want %v", tc.query, got, tc.want)
+		}
+	}
+	if !parseSessionQuery("add").matches(sessionFields{SessionID: "addbed0000000000000000000000cafe", Title: "Add a systemd unit"}) {
+		t.Error("a three-character word no longer matches a title")
+	}
+}

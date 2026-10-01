@@ -12,6 +12,12 @@ import (
 // request number: a longer one is text (a timestamp, an ID fragment).
 const maxQueryPRDigits = 6
 
+// minIDPrefixWord is the shortest word that matches the start of a session ID,
+// as git's shortest abbreviation is. Session IDs are random hexadecimal, so a
+// shorter word ("21", "add") would start about one session in 16^len by
+// chance and make a search for it ambiguous in a large archive.
+const minIDPrefixWord = 4
+
 // sessionQuery is parsed once from what the person or agent typed. words are
 // the query's words, lower-cased; prs[i] is word i read as a pull request
 // number (`#212`, or a bare number of 1 to 6 digits), or 0 when it is not
@@ -99,8 +105,9 @@ func sessionProjectName(m archive.Metadata, labels map[string]string) string {
 
 // matches reports whether every word appears in some field of the row,
 // ignoring case: in the name, title, branch, project name or harness, or
-// starting the session ID. Words may match different fields. A word that is a
-// pull request number also matches a PR of the row exactly; `#N` as text
+// starting the session ID (a word of minIDPrefixWord characters or more that
+// is not a pull request number). Words may match different fields. A word that
+// is a pull request number also matches a PR of the row exactly; `#N` as text
 // matches only the whole reference, so `#21` does not find `#213`.
 func (q sessionQuery) matches(r sessionFields) bool {
 	if q.empty() {
@@ -117,11 +124,16 @@ func (q sessionQuery) matches(r sessionFields) bool {
 	return true
 }
 
+// wordMatches reports whether word i of the query matches the row: a PR of it,
+// the start of its ID, or one of its texts. A word that is a pull request
+// number never matches the start of an ID (`212` is PR 212, not every session
+// whose random ID starts with 212), and any other word does only from
+// minIDPrefixWord characters; an exact or short ID is exactIDWins'.
 func (q sessionQuery) wordMatches(i int, word string, texts []string, id string, prs []int) bool {
 	if n := q.prs[i]; n > 0 && slices.Contains(prs, n) {
 		return true
 	}
-	if strings.HasPrefix(id, word) {
+	if q.prs[i] == 0 && len(word) >= minIDPrefixWord && strings.HasPrefix(id, word) {
 		return true
 	}
 	if strings.HasPrefix(word, "#") && q.prs[i] > 0 {

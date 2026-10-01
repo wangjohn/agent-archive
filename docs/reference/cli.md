@@ -237,10 +237,10 @@ Usage: agent-archive list [WORDS] [options]
 Find sessions using metadata; does not download conversation content.
 With WORDS (quote them: one argument), list only the sessions they match.
 Every word must appear, in any case, in some field of a session: its name,
-title, branch, project name, harness, or the start of its SESSION_ID. A word
-like #212 or 212 also matches a pull request number. Words may match
-different fields, so "linux 212" finds the session named for Linux that
-opened PR 212.
+title, branch, project name, harness, or the start of its SESSION_ID (4
+characters or more). A word like #212 or 212 also matches a pull request
+number, and never the start of a SESSION_ID. Words may match different
+fields, so "linux 212" finds the session named for Linux that opened PR 212.
 Inside a project the search looks at that repository's top-level sessions
 first, then at every project's, and only then at subagent sessions, in that
 order; the first that has a match answers, and a note says how many more match
@@ -347,14 +347,14 @@ Print a readable summary of a session's metadata: title, when, app, models,
 activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. WORDS also work, as in list: every word must appear
 in some field of a session (name, title, branch, project, harness, the start
-of its SESSION_ID, or a PR number such as #212), looking at this
-repository's sessions first. One match is shown; several on a terminal open a
-picker, and without one they are listed with the command to run next. With no
-SESSION_ID on a terminal, browse sessions as list does: pick one for its
-summary, then t for its transcript, Enter or b to go back, or q to quit. On a
-terminal, the summary and transcript are paged; in the default less, scroll
-with the mouse wheel, arrows, or space, search with /, and quit with q.
-Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
+of its SESSION_ID from 4 characters, or a PR number such as #212), looking at
+this repository's sessions first. One match is shown; several on a terminal
+open a picker, and without one they are listed with the command to run next.
+With no SESSION_ID on a terminal, browse sessions as list does: pick one for
+its summary, then t for its transcript, Enter or b to go back, or q to quit.
+On a terminal, the summary and transcript are paged; in the default less,
+scroll with the mouse wheel, arrows, or space, search with /, and quit with
+q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
@@ -621,15 +621,15 @@ prints without asking. Without a terminal, give a SESSION_ID or WORDS,
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
 WORDS are matched as list matches them: every word must appear, in any case,
-in some field of a session (its name, title, branch, project name, harness,
-or the start of its SESSION_ID), and a word like #212 or 212 also matches a pull
-request number. Quote them as one argument, and use one or two distinctive
-words: a topic, a PR number, a branch, or a project name. They look in this
-machine's sessions first (no network), then the archive's; a full SESSION_ID
-wins, and subagent sessions answer only when no other session matches. Inside
-a project, the picker and WORDS look at that repository's sessions first
-(every checkout and worktree of it), then everywhere; a note says how many
-more match in other projects.
+in some field of a session (its name, title, branch, project name, harness, or
+the start of its SESSION_ID, from 4 characters), and a word like #212 or 212
+also matches a pull request number, never a SESSION_ID. Quote them as one
+argument, and use one or two distinctive words: a topic, a PR number, a
+branch, or a project name. They look in this machine's sessions first (no
+network), then the archive's; a full SESSION_ID wins, and subagent sessions
+answer only when no other session matches. Inside a project, the picker and
+WORDS look at that repository's sessions first (every checkout and worktree of
+it), then everywhere; a note says how many more match in other projects.
 On the picker, the a key, typed alone, switches between the repository and
 all projects. The heading names what is shown, and a dot marks a session active
 in the last 2 minutes. Several matches on a terminal open the
