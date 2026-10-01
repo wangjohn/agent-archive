@@ -12,7 +12,7 @@ import (
 // temporary files.
 const testTempPrefix = "agent-archive-agentskills-test-"
 
-// TestMain runs every test in a process that cannot reach this Mac's real
+// TestMain runs every test in a process that cannot reach this machine's real
 // home, where the skills live.
 func TestMain(m *testing.M) {
 	restore := isolation.Process(testTempPrefix)

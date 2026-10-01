@@ -230,7 +230,7 @@ func TestScopedHandoffGolden(t *testing.T) {
 	rows := make([]handoffPickerRow, len(sessions))
 	for i, m := range sessions {
 		// The first two are registered here, the first active just now; the
-		// last is on this Mac only.
+		// last is on this machine only.
 		rows[i] = handoffPickerRow{metadata: m, active: m.CapturedAt, registered: i < 2, notUploaded: i == 4}
 	}
 	choices := newScopeChoices(scope, format, false, func(sessionScope) scopeView {

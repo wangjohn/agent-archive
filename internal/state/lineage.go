@@ -144,7 +144,7 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // forgotten, so a record that cannot be written leaves the session
 // registered and the caller's next attempt retries both. It is written
 // before the request lock is taken, not under it: the record is a durable
-// write, whose syncs can take seconds on a busy Mac, and a hook waits only
+// write, whose syncs can take seconds on a busy machine, and a hook waits only
 // a second for that lock on the user's turn. A session the locked recheck
 // keeps alive has the record taken back, so it gets none. Until then, or
 // after a crash in between, the record sits beside a registration, where

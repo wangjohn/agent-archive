@@ -49,7 +49,7 @@ Step 3 of 3 · Ready to start
 
   Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Start archiving?
   1) Yes, start archiving

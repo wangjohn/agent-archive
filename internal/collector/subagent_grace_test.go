@@ -467,7 +467,7 @@ func TestNeverWrittenSubagentReachesParentMetadataAndStatus(t *testing.T) {
 	if !found {
 		t.Fatalf("parent capture gaps=%+v", metadata.CaptureGaps)
 	}
-	// The type stays on this Mac: nothing uploaded names it.
+	// The type stays on this machine: nothing uploaded names it.
 	objects, err := remote.List(context.Background(), "")
 	if err != nil || len(objects) == 0 {
 		t.Fatalf("objects=%+v err=%v", objects, err)

@@ -231,7 +231,7 @@ directory:
 
 1. The repository key of the directory (`gitremote.Resolver.Key`, the same
    hash hooks record). A session is in scope when its `RepoKey` equals it.
-   This spans checkouts, worktrees, and Macs.
+   This spans checkouts, worktrees, and machines.
 2. With no key on either side (no origin remote, or an older session), a
    local session is in scope when `sameProject(reg.ProjectRoot, dir)`, and an
    archived one when its `ProjectID` is in `projectIDs(dir)`, as `--latest`
@@ -262,7 +262,7 @@ all projects, and the heading says `Nothing in agent-archive ·
 showing all projects`.
 
 Title search, in `handoff "<words>"` and `list "<words>"`, looks in scope
-first, then everywhere, as `handoff` already looks on this Mac before the
+first, then everywhere, as `handoff` already looks on this machine before the
 archive. The tiers, each tried only when the one before has no match:
 
 1. an exact session ID (unchanged)
@@ -372,7 +372,7 @@ Everything else is the same code for every caller:
 - paging, scrolling, and fitting to the window (#149)
 
 Rows keep their own sources: `list` and `show` read the archive, and
-`handoff` also offers this Mac's sessions that are not uploaded yet. Making
+`handoff` also offers this machine's sessions that are not uploaded yet. Making
 `list` and `show` offer local sessions is out of scope. `list`'s ID column
 is a column rule (§7), not a browser difference.
 
@@ -691,10 +691,10 @@ guide. Live check on the owner's Mac:
   `findBrowseSessions`; it has no `--all-projects` or `--project` flag yet.
   `show "<words>"` is unchanged (PR 5 replaces its matcher).
 - PR 4: title search keeps today's matcher (`matchSessionsByQuery`) and only
-  gains the scope-first order: this Mac's in-scope sessions, then the
-  archive's in-scope, then everywhere (this Mac's, then the archive's). The
+  gains the scope-first order: this machine's in-scope sessions, then the
+  archive's in-scope, then everywhere (this machine's, then the archive's). The
   subagent tier is PR 5's. The "N more in other projects" count covers what
-  was searched: a title answered on this Mac does not read the archive, which
+  was searched: a title answered on this machine does not read the archive, which
   needs the network, so its other matches are not counted.
 - PR 4: a scope is applied before `--limit`, so a `list` that can narrow (a
   scope, or a terminal that can switch to one) reads the whole archive

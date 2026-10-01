@@ -394,7 +394,7 @@ const subagentExpiryProvenance = "collector:subagent-expiry"
 
 // subagentNeverWrittenDetail is the capture gap detail for a subagent whose
 // transcript was never written. It is fixed, archive-authored text: the
-// subagent's type stays on this Mac (the candidate, status), because a name
+// subagent's type stays on this machine (the candidate, status), because a name
 // the sanitizer admits can still be a secret redaction does not recognize.
 const subagentNeverWrittenDetail = "Claude Code reported a subagent but never wrote its transcript"
 

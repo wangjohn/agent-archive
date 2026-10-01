@@ -128,13 +128,13 @@ follow [Semantic Versioning](https://semver.org/).
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
 - `agent-archive setup --refresh` brings the app hooks, the background
-  collector's plist, and the skill files up to date for the saved settings and
+  job's definition, and the skill files up to date for the saved settings and
   the binary you run it from, and changes nothing else. It asks nothing and
   needs no terminal, prints `nothing to refresh` or what it refreshed, and
   refuses (exit 1) before setup has finished, while a setup needs recovery,
   after uninstall, or when another installation's hooks are in the way. It
   also repairs hooks left pointing at a binary that moved. `install.sh` runs it
-  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  when it finds a set-up machine, so upgrading the binary upgrades the hooks and
   skills; if it fails, or the installer runs as root (which would leave
   root-owned files in your home directory), the install still succeeds and
   says how to run it. It waits up to ten seconds for a running collection
@@ -153,7 +153,7 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/agent-archive/SKILL.md`), so you can ask an agent to
   "pull in the auth session from Codex". The agent runs
   `agent-archive handoff "auth" --harness codex` (a bounded, filtered handoff
-  prompt, found by title on this Mac first, then in the archive), asks you
+  prompt, found by title on this machine first, then in the archive), asks you
   which when several sessions match, and can browse with `list`, `show`,
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
@@ -348,6 +348,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **"Mac" became "machine" wherever the text is not about macOS**, now that
+  Linux is supported: in `agent-archive help` and the [CLI
+  reference](docs/reference/cli.md) ("sessions already on this machine"), in
+  `setup`'s review ("What leaves your machine:") and its next-steps line
+  ("To set up another machine with this storage"), in `backfill`, `purge`,
+  `uninstall`, `status` and `handoff` messages and in retention's clock
+  messages. What is specific to macOS (the Keychain, Time Machine, Migration
+  Assistant, macOS's privacy prompts, launchd) keeps its wording, and scripts
+  that match these messages should match the new words.
 - **Privacy filter 13: a session's name and linked pull request are now
   archived.** Claude Code's session name (the one in its sidebar, set from
   your prompt or by `/rename`) and the pull request a session linked (its

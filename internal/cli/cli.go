@@ -92,7 +92,7 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 type Env struct {
 	// sweepClock, set only by tests, adjusts the retention sweep's clock
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
-	// moves Now months ahead moves only this Mac's clock; the sweep rightly
+	// moves Now months ahead moves only this machine's clock; the sweep rightly
 	// refuses to delete by it unless the storage clock moves too.
 	sweepClock func(*retention.Options)
 	// observeFlags, set only by tests, sees every command flag set as it is
@@ -461,7 +461,7 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this Mac is not archiving: it has no saved
+// notSetUp reports whether this machine is not archiving: it has no saved
 // configuration, or uninstall left one with archiving disabled. It reads
 // only, and says nothing when the data directory cannot be read.
 func notSetUp(env Env) bool {
@@ -491,7 +491,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
