@@ -11,11 +11,9 @@ import (
 
 // readSecret reads a line from the terminal fd with echo off, as
 // term.ReadPassword does, and restores the terminal's modes. Unlike
-// term.ReadPassword it ends at the end of input: a read of no bytes is
-// io.EOF, as it is for the key browser (ttyKeys.readReady).
-// term.ReadPassword reads again instead, and on macOS a terminal whose
-// other end has closed answers every read with no bytes, so it spun at full
-// CPU forever.
+// term.ReadPassword it ends at the end of input (see readTerminal):
+// term.ReadPassword reads again after a read of no bytes, so it spun at
+// full CPU forever on a macOS terminal whose other end had closed.
 func readSecret(fd int) ([]byte, error) {
 	modes, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
@@ -32,23 +30,21 @@ func readSecret(fd int) ([]byte, error) {
 	var line []byte
 	var b [1]byte
 	for {
-		n, err := unix.Read(fd, b[:])
+		_, err := readTerminal(fd, b[:])
 		switch {
-		case errors.Is(err, unix.EINTR):
-			continue
-		case err != nil:
-			return nil, err
-		case n == 0:
+		case errors.Is(err, io.EOF):
 			// A final answer with no trailing newline is still a real one.
 			if len(line) > 0 {
 				return line, nil
 			}
 			return nil, io.EOF
+		case err != nil:
+			return nil, err
 		}
+		// ICRNL above turns Enter's CR into the NL that ends the line.
 		switch b[0] {
 		case '\n':
 			return line, nil
-		case '\r':
 		case '\b':
 			if len(line) > 0 {
 				line = line[:len(line)-1]

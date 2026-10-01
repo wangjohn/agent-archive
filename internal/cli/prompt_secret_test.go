@@ -115,6 +115,9 @@ func TestSecretInputEndsWithItsInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The "close" mode catches the spin only on macOS: there a read from a
+	// terminal whose other end has closed returns no bytes, where Linux
+	// returns EIO, an error any reader stops at.
 	for _, mode := range []string{"close", "eof"} {
 		if out, err := runPTYScript(t, python, secretEndScript, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)

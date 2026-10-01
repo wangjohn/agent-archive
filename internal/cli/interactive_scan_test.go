@@ -89,7 +89,7 @@ var terminalPackageUses = classifiedCalls{
 	// readSecret, prompter.secret's reader (above), and the same elsewhere.
 	"secret_unix.go": {
 		"unix.IoctlGetTermios": 1, "unix.IoctlSetTermios": 2, "unix.ECHO": 1, "unix.ICANON": 1,
-		"unix.ISIG": 1, "unix.ICRNL": 1, "unix.Read": 1, "unix.EINTR": 1,
+		"unix.ISIG": 1, "unix.ICRNL": 1,
 	},
 	"secret_other.go": {"term.ReadPassword": 1},
 }
