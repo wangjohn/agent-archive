@@ -251,7 +251,10 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 // preparePlanWork performs local discovery, reads transcript heads, and maps
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
-	found, unread := discover(env)
+	found, unread, err := discover(ctx, env)
+	if err != nil {
+		return nil, nil, unread, 0, err
+	}
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()

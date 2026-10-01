@@ -200,7 +200,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
 	cursorstore.RemoveStaleSnapshots()
-	subagents := materializeSubagentCandidates(local, opts, now)
+	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
 		ctx:              ctx,
