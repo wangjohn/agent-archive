@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -78,6 +80,7 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 	if !removed || calls != 1 || !got.Verification.PaginationComplete || got.Verification.AccountInventoryComplete || got.Verification.Visibility != "unknown_may_be_creator_only" || len(got.Verification.Observations) != 2 {
 		t.Fatalf("false completeness %#v", got.Verification)
 	}
+	validateVerificationSchema(t, got.Verification)
 	for _, observation := range got.Verification.Observations {
 		if observation.MachineID == recipient && observation.Binding != "local_committed_binding" || observation.MachineID != recipient && observation.Binding != "untrusted_bucket_claim" {
 			t.Fatalf("forged trust %#v", observation)
@@ -102,6 +105,21 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 		}
 		return nil
 	}))
+	// An unreadable bucket record prevents overall verification completion.
+	must(t, store.Put(context.Background(), "machines/"+strings.Repeat("f", 32)+".json", []byte("invalid")))
+	output.Reset()
+	if code := Run([]string{"machines", "--verify", "--yes", "--json"}, nil, &output, &output, env); code != 1 {
+		t.Fatal("unreadable listing did not report failure")
+	}
+	must(t, json.Unmarshal(output.Bytes(), &got))
+	if got.ProviderVerified {
+		t.Fatal("incomplete bucket listing marked provider verified")
+	}
+	output.Reset()
+	if code := Run([]string{"machines", "--verify", "--yes"}, nil, &output, &output, env); code != 1 || !strings.Contains(output.String(), "Omitted") {
+		t.Fatal("text verification hid unreadable bucket records")
+	}
+	must(t, store.Delete(context.Background(), "machines/"+strings.Repeat("f", 32)+".json"))
 	server.MetadataTokens = nil
 	output.Reset()
 	if code := Run([]string{"machines", "--verify", "--yes", "--json"}, nil, &output, &output, env); code != 1 {
@@ -166,4 +184,23 @@ func TestProviderBindingStatesDoNotInferIdentityFromNameAlone(t *testing.T) {
 	if providerTokenActive(token, now) {
 		t.Fatal("future key active")
 	}
+}
+
+func validateVerificationSchema(t *testing.T, report providerVerification) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "machine-verification.schema.json"))
+	must(t, err)
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	must(t, err)
+	id := doc.(map[string]any)["$id"].(string)
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	must(t, compiler.AddResource(id, doc))
+	schema, err := compiler.Compile(id)
+	must(t, err)
+	raw, err = json.Marshal(report)
+	must(t, err)
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	must(t, err)
+	must(t, schema.Validate(value))
 }

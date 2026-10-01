@@ -243,7 +243,8 @@ Canonical issued names are `agent-archive r=<32hex> i=<32hex> k=<32hex>` (118
 bytes, within Cloudflare's 120-character limit). Bucket-bearing names from the
 original proposal are not accepted. Exact provider policy must independently
 match the configured account, jurisdiction, bucket and verified permission
-group. A matching name describes issuance, not machine ownership. Only the
+group. Unsupported policy fields or inconsistent pagination evidence remain
+unknown. A matching name describes issuance, not machine ownership. Only the
 current destination-bound local assignment establishes a committed local
 binding; other bucket records remain untrusted claims. Legacy/manual keys
 remain unknown. “Claim not observed” keys are candidates for inspection, never

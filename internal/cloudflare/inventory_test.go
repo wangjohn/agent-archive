@@ -149,3 +149,53 @@ func TestExactBucketPolicyRequiresOnlyVerifiedPermissionAndDestination(t *testin
 		})
 	}
 }
+
+func TestExactBucketPolicyRejectsUnknownPolicyFields(t *testing.T) {
+	t.Parallel()
+	resource, _ := cloudflare.BucketResource(cloudflaretest.AccountID, cloudflare.BucketRef{Name: "test-bucket"})
+	raw, _ := json.Marshal(map[string]any{"policies": []any{map[string]any{"effect": "allow", "resources": map[string]string{resource: "*"}, "permission_groups": []any{map[string]string{"id": "group"}}, "condition": map[string]any{"unknown": "CANARY"}}}})
+	var token cloudflare.TokenMetadata
+	if err := json.Unmarshal(raw, &token); err != nil {
+		t.Fatal(err)
+	}
+	if cloudflare.ExactBucketPolicy(token, cloudflaretest.AccountID, cloudflare.BucketRef{Name: "test-bucket"}, "group") {
+		t.Fatal("unknown policy semantics accepted")
+	}
+	encoded, _ := json.Marshal(token)
+	if strings.Contains(string(encoded), "CANARY") {
+		t.Fatal("unknown policy payload retained")
+	}
+}
+
+func TestTokenInventoryRejectsInconsistentPageEvidence(t *testing.T) {
+	t.Parallel()
+	for _, info := range []map[string]int{
+		{"page": 1, "per_page": 5, "count": 6, "total_count": 6},
+		{"page": 1, "per_page": 50, "count": 6, "total_count": 7},
+	} {
+		client, srv, _ := newClient(t)
+		var tokens []map[string]any
+		for i := 1; i <= 6; i++ {
+			tokens = append(tokens, metadataToken(i))
+		}
+		raw, _ := json.Marshal(map[string]any{"success": true, "result": tokens, "result_info": info})
+		srv.Fail(cloudflaretest.RouteListTokens, cloudflaretest.Failure{Status: 200, RawBody: string(raw)})
+		got, err := client.TokenInventory(t.Context(), cloudflaretest.AccountID)
+		if err == nil || got.PaginationComplete || len(got.Tokens) != 0 {
+			t.Fatalf("inconsistent page accepted: %#v %v", got, err)
+		}
+	}
+}
+
+func TestEmptyTokenInventoryRequiresExplicitCounts(t *testing.T) {
+	t.Parallel()
+	for _, info := range []map[string]int{{"page": 1, "per_page": 50}, {"page": 1, "per_page": 50, "count": 0}, {"page": 1, "per_page": 50, "total_count": 0}} {
+		client, srv, _ := newClient(t)
+		raw, _ := json.Marshal(map[string]any{"success": true, "result": []any{}, "result_info": info})
+		srv.Fail(cloudflaretest.RouteListTokens, cloudflaretest.Failure{Status: 200, RawBody: string(raw)})
+		got, err := client.TokenInventory(t.Context(), cloudflaretest.AccountID)
+		if err == nil || got.PaginationComplete {
+			t.Fatal("omitted counts treated as completed empty inventory")
+		}
+	}
+}

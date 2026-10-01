@@ -98,6 +98,7 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"machines_verify.go":  {"newPrompter": 1},                  // readManagementToken prompts only with env.interactive(stdin), without --yes or --json.
 	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
 	"setup.go":            {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints

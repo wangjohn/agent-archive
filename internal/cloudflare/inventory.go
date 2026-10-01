@@ -30,6 +30,15 @@ type MetadataPermissionGroup struct {
 	ID string `json:"id"`
 }
 
+type metadataPolicyField string
+
+const (
+	metadataPolicyID        metadataPolicyField = "id"
+	metadataPolicyEffect    metadataPolicyField = "effect"
+	metadataPolicyGroups    metadataPolicyField = "permission_groups"
+	metadataPolicyResources metadataPolicyField = "resources"
+)
+
 // UnmarshalJSON preserves supported simple resource maps while classifying
 // nested/unknown values without retaining their arbitrary contents.
 func (p *MetadataPolicy) UnmarshalJSON(raw []byte) error {
@@ -46,6 +55,17 @@ func (p *MetadataPolicy) UnmarshalJSON(raw []byte) error {
 	resources, supported := simplePolicyResources(wire.Resources)
 	p.Resources = resources
 	p.Unsupported = !supported
+	var fields map[metadataPolicyField]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for key := range fields {
+		switch key {
+		case metadataPolicyID, metadataPolicyEffect, metadataPolicyGroups, metadataPolicyResources:
+		default:
+			p.Unsupported = true
+		}
+	}
 	return nil
 }
 
@@ -108,13 +128,17 @@ func (c *Client) TokenInventory(ctx context.Context, account string) (TokenInven
 	ctx, cancel := context.WithTimeout(ctx, InventoryTimeout)
 	defer cancel()
 	seen := map[string]bool{}
+	total := -1
 	for page := 1; page <= 20; page++ {
 		var tokens []TokenMetadata
 		env, err := c.do(ctx, call{op: "list account token metadata", method: http.MethodGet, path: accountPath(account) + "/tokens", query: url.Values{"page": {strconv.Itoa(page)}, "per_page": {"50"}, "include_expired": {"true"}}}, &tokens)
 		if err != nil {
 			return result, err
 		}
-		if len(tokens) > 50 || env.ResultInfo.Page != page || env.ResultInfo.PerPage < 5 || env.ResultInfo.PerPage > 50 || env.ResultInfo.Count != len(tokens) || env.ResultInfo.TotalCount < len(result.Tokens)+len(tokens) {
+		if total == -1 {
+			total = env.ResultInfo.TotalCount
+		}
+		if !env.ResultInfo.countsPresent || env.ResultInfo.Page != page || env.ResultInfo.PerPage != 50 || len(tokens) > env.ResultInfo.PerPage || env.ResultInfo.Count != len(tokens) || env.ResultInfo.TotalCount != total || total < len(result.Tokens)+len(tokens) || (len(result.Tokens)+len(tokens) < total && len(tokens) != env.ResultInfo.PerPage) {
 			return result, errors.New("token pagination evidence is incomplete")
 		}
 		for _, token := range tokens {
