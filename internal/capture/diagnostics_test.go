@@ -135,18 +135,51 @@ func TestPruneWaitsForAHookHoldingTheLock(t *testing.T) {
 	}
 }
 
+// On a busy machine a hook can hold the lock for seconds: before #228 through
+// its disk syncs, and still through a stalled rename. Setup's prune outwaits
+// such a hook rather than failing, as it did with a 2s wait.
+//
+// Regression: 2026-09-30, TestSetupPruneAndHookDiagnosticRaceNeverResurrects
+// failed 3 of 4 runs under load with prune=ErrBusy.
+func TestPruneOutwaitsAHookHoldingTheLockForSeconds(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+		t.Fatal(err)
+	}
+	projects := twoProjectConfig(t, home, "/work/kept")
+	release, err := local.NamedLock(home, DiagnosticsLockName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(3 * time.Second)
+		release()
+	}()
+	if err := PruneDiagnostics(home, projects); err != nil {
+		t.Fatalf("prune gave up on a hook holding the lock for 3s: %v", err)
+	}
+	if storedRoots(t, home)["/work/excluded"] {
+		t.Fatal("prune did not remove the excluded project's diagnostic")
+	}
+}
+
 // The race itself: setup commits an exclusion and prunes while a hook, which
 // read the old configuration, records a diagnostic for the excluded project.
 // Whatever the interleaving, the excluded project's diagnostic is gone at
 // the end, and an included project's diagnostic is never lost to the prune.
 //
-// The hook's wait is raised for this test only. At 50 ms a busy machine can
-// make a hook drop its diagnostic by design, which would be indistinguishable
-// here from a lost update; the bounded wait has its own test.
+// The hook's wait is raised for this test only, to setup's. At 50 ms a busy
+// machine can make a hook drop its diagnostic by design, which would be
+// indistinguishable here from a lost update; the bounded wait has its own
+// test. A hook here can queue behind both the prune and the other hook, so it
+// gets the same wait setup does.
 func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 	const rounds = 40
 	saved := hookDiagnosticsWait
-	hookDiagnosticsWait = 10 * time.Second
+	hookDiagnosticsWait = pruneDiagnosticsWait
 	t.Cleanup(func() { hookDiagnosticsWait = saved })
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	for round := range rounds {

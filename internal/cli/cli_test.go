@@ -36,6 +36,11 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
+		// Guided bucket creation waits for Cloudflare between checks; a
+		// test does not.
+		Pause: func(time.Duration) {},
+		// Tests never change the real process environment.
+		UnsetEnv: func(string) error { return nil },
 		// Tests model a Mac (its app folders and Cursor's Library data
 		// folder), whatever system runs them.
 		OS: platform.Darwin,

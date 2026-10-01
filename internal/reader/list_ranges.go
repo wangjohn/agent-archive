@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // rangeSidecars is how many cached sidecars one planned listing range
@@ -20,11 +21,13 @@ const rangeSidecars = 200
 const rangeConcurrency = 16
 
 // listObjects lists everything under listPrefix. When the store can list key
-// ranges and the keys known from the metadata cache are enough to split it, the
-// listing is cut into contiguous ranges listed concurrently (planRanges,
+// ranges and the keys known from the metadata cache are enough to split it,
+// the listing is cut into contiguous ranges listed concurrently (planRanges,
 // listRanges); otherwise it is the store's single sequential List. Both
 // return the same objects in the same key order.
 func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string) ([]storage.Object, error) {
+	span := trace.Start("list objects")
+	defer span.End()
 	ranger, ok := store.(storage.RangeLister)
 	if !ok {
 		return store.List(ctx, listPrefix)
@@ -33,7 +36,8 @@ func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix stri
 	if len(bounds) == 0 {
 		return store.List(ctx, listPrefix)
 	}
-	return listRanges(ctx, ranger, listPrefix, bounds)
+	span.Count("ranges", len(bounds)+1)
+	return listRanges(ctx, ranger, listPrefix, bounds, span)
 }
 
 // planRanges picks the boundaries that split a listing into ranges of about
@@ -57,13 +61,13 @@ func planRanges(known []string) []string {
 	return bounds
 }
 
-// listRanges lists the ranges bounds make with at most rangeConcurrency in
-// flight and joins them in range order, so the result is in key order like a
-// single listing. The first range to fail cancels the rest, and its error is
-// the one returned: errors that arrive after it, whatever they wrap, may be
-// only the echo of that cancellation. It returns only after every range it
-// started has finished.
-func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string) ([]storage.Object, error) {
+// listRanges lists the ranges bounds make, each a trace child of span, with
+// at most rangeConcurrency in flight, and joins them in range order, so the
+// result is in key order like a single listing. The first range to fail
+// cancels the rest, and its error is the one returned: errors that arrive
+// after it, whatever they wrap, may be only the echo of that cancellation.
+// It returns only after every range it started has finished.
+func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span) ([]storage.Object, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	count := len(bounds) + 1
@@ -90,10 +94,13 @@ func listRanges(ctx context.Context, store storage.RangeLister, prefix string, b
 		}
 		dispatched++
 		wg.Add(1)
+		child := span.Child("range")
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
+			defer child.End()
 			objects, err := store.ListRange(ctx, prefix, after, through)
+			child.Count("keys", len(objects))
 			if err != nil {
 				failed.Do(func() {
 					failure = err

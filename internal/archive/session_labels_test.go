@@ -55,7 +55,7 @@ func TestSessionLabelsLastCustomTitleWins(t *testing.T) {
 
 func TestSessionLabelsNameIsCutLikeTitle(t *testing.T) {
 	t.Parallel()
-	long := strings.Repeat("é", 100)
+	long := strings.Repeat("é", sessionTitleLimit+20)
 	labels := labelsOf(t, claudeLabelLines(t, fmt.Sprintf(`{"type":"custom-title","customTitle":%q,"sessionId":"s"}`, long)))
 	if want := strings.Repeat("é", sessionTitleLimit) + "…"; labels.Name != want {
 		t.Fatalf("name = %q, want %d runes and an ellipsis", labels.Name, sessionTitleLimit)

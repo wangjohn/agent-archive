@@ -61,8 +61,16 @@ func TestCollapseSessionTitleTruncates(t *testing.T) {
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("expected ellipsis: %q", got)
 	}
-	if len([]rune(got)) != sessionTitleLimit+1 { // 72 runes + ellipsis
+	if len([]rune(got)) != sessionTitleLimit+1 {
 		t.Fatalf("len=%d got=%q", len([]rune(got)), got)
+	}
+}
+
+func TestCollapseSessionTitleKeepsTextBeyondOldLimit(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("a", 72) + " distinguish this session"
+	if got := collapseSessionTitle(text); got != text {
+		t.Fatalf("title lost distinguishing text: %q", got)
 	}
 }
 

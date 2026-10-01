@@ -52,6 +52,7 @@ flowchart LR
 | `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection, and `Diagnose`, which names a storage failure's cause in plain words. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
+| `cloudflare` | Cloudflare's management API, only what guided R2 setup needs: list accounts, create a bucket, create and revoke a bucket-scoped API token, read public-access settings. Used at setup time with a pasted bootstrap token that is never stored; `cloudflare/cloudflaretest` is the fake tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
 | `config` | `config.json`: the one record of how this machine is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
@@ -70,6 +71,7 @@ flowchart LR
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
 | `backfill` | Discovery, the import plan, registration, and undo. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
+| `trace` | `AGENT_ARCHIVE_TRACE`'s recorder: process-wide, so `storage` (each request), `reader`, `state`, `collector` and `config` record spans without a context threaded through every command. Spans carry fixed names, durations and counts only. Standard library only. |
 | `cli` | Every command: flags, prompts, rendering, and the wiring between packages. Terminal output takes its colors, symbols, wrapping, and spinner from `ui.go`, which prints plain text when output is not a terminal, `NO_COLOR` is set, or `TERM` is `dumb`. The `stats` screens are pure page functions (`renderPage` in `stats_render.go`: numbers and a view in, lines out) with one color table (`stats_colors.go`). Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory, through `getconf` on macOS). |
 | `statsfmt` | How `stats` writes a number: token counts (`4.9M`), money, percentages, ordinals. Shared by the terminal screen and the page so one number reads the same on both; pure, imports only `archive` (depguard and `TestFormattersImportBoundary`). |
 | `statshtml` | Renders the engine's `stats.Stats` as one self-contained HTML page for `stats --html`: an embedded `html/template` and stylesheet, inline SVG charts (daily bars, a token-composition donut), no script and no external request, valid as strict XML, light, dark, print and forced-colors. Pure: it imports only `stats` and `archive` (depguard and `TestRendererImportBoundary`), reads no clock, and every name reaches the page as a `string` that `archive.DisplayLine` has cleaned and the template has escaped (`TestNothingIsMarkedTrusted` forbids the `template` types that skip escaping). Project, skill and MCP server names are replaced by "project A", "skill A", "MCP server A" unless asked for. |
@@ -86,7 +88,7 @@ everything imports, are left out. Only `cmd/agent-archive` imports `cli`; `captu
 ```mermaid
 flowchart TD
   cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence & agentskills
-  cli --> config & state & storage & credentials & cursorstore & terminal
+  cli --> config & state & storage & credentials & cloudflare & cursorstore & terminal
   capture --> setupjournal & config & state
   setupjournal --> hooks & state
   agentskills --> hooks
