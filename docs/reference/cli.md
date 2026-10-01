@@ -72,9 +72,10 @@ Guide: [Set up capture](../getting-started/setup.md).
 
 ```text
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
-               [--no-skills | --skills]
+               [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
+               [--allow-network-home]
        agent-archive setup --refresh [--verbose]
 
 Choose apps and projects, connect storage, then review and enable capture.
@@ -90,8 +91,10 @@ An interrupted setup is recovered on the next run.
                         refresh" when all is current. It refuses, changing
                         nothing, before setup has finished, while a setup
                         needs recovery, after uninstall, when another
-                        installation's hooks are in the way, or when this
-                        executable is a temporary build. It points the hooks
+                        installation's hooks are in the way, when this
+                        executable is a temporary build, or (Linux) when the
+                        data directory is on a network filesystem that
+                        --allow-network-home never allowed. It points the hooks
                         at the executable now running, which repairs hooks
                         left pointing at one that moved or was deleted. Takes
                         no other flag than --verbose (which lists the files)
@@ -120,6 +123,13 @@ An interrupted setup is recovered on the next run.
                         remove those setup wrote. Later setup runs keep
                         them off until --skills
   --skills              Turn the agent skills back on and install them
+  --allow-network-home  Linux: allow the data directory or the systemd unit
+                        directory (under your home) on a network filesystem
+                        (NFS, SMB, ...), which setup otherwise refuses,
+                        changing nothing, because machines that share a home
+                        share one identity, cannot rely on file locks, and
+                        each run the background job. Only for a home that one
+                        machine ever mounts; recorded while it is needed
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -135,6 +145,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--abandon-recovery` | no value | — |
+| `--allow-network-home` | no value | — |
 | `--apps` | a value | — |
 | `--aws-profile` | a value | — |
 | `--bucket` | a value | — |

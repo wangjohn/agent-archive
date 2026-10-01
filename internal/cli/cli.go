@@ -163,6 +163,12 @@ type Env struct {
 	// directory copied from another machine. Defaults to
 	// local.HostFingerprint; it is read only on Linux.
 	HostFingerprint func() string
+	// MountTable returns this machine's mount table in the format of
+	// /proc/self/mountinfo, which setup, setup --refresh and status read on
+	// Linux to tell whether the data directory or the systemd unit directory
+	// is on a network filesystem. Defaults to reading /proc/self/mountinfo; it
+	// is read only on Linux, and a table that cannot be read stops nothing.
+	MountTable func() ([]byte, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of

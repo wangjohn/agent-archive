@@ -110,6 +110,10 @@ func isolateProcessForTesting() func() {
 	openAWSBucketCreator = func(string, string) (BucketCreator, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBucketCreator")
 	}
+	// The mount table is the machine's own: a Linux test that means a network
+	// filesystem sets Env.MountTable, and every other reads none, which is no
+	// answer and stops nothing.
+	readMountTable = func() ([]byte, error) { return nil, errors.New("no mount table in this test: set Env.MountTable") }
 	detectLessVersion = func(string) (int, bool) {
 		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
 	}

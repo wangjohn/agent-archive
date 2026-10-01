@@ -45,7 +45,15 @@ follow [Semantic Versioning](https://semver.org/).
     machine ID, on Linux; `status` and `setup` warn when the data directory
     was set up on a different machine (a cloned VM or image). It is best
     effort; see [multiple machines](docs/guides/multiple-machines.md#cloned-machines-on-linux).
-    A home directory shared by several machines is not supported.
+  - **Network homes.** `setup` and `setup --refresh` refuse, before any
+    question and changing nothing, when the data directory or the systemd unit
+    directory is on a network filesystem (NFS, SMB/CIFS, Ceph, sshfs and the
+    like; read from `/proc/self/mountinfo`), since machines that share a home
+    share one machine ID, cannot rely on file locks and each run the
+    collector. Set `AGENT_ARCHIVE_HOME` to local disk, or for a home only one
+    machine mounts run `setup --allow-network-home`, which is recorded as
+    `allow_network_home` in `config.json`; `status` warns either way. See
+    [multiple machines](docs/guides/multiple-machines.md#a-home-directory-shared-across-machines).
   - **Not verified on Linux:** the real Cursor app and `cursor-agent` hooks
     (a Cursor forum report says they may fail silently, so Cursor capture is
     best effort and its version is not detected), the real Claude Code and

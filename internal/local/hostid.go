@@ -55,15 +55,15 @@ func hostFingerprint(read func(string) ([]byte, error)) string {
 }
 
 // mountedOver reports whether something is mounted at path, as this process's
-// mount table (/proc/self/mountinfo, whose fifth field is the mount point)
-// says. A table that cannot be read says nothing is.
+// mount table (/proc/self/mountinfo; see ParseMountTable) says. A table that
+// cannot be read says nothing is.
 func mountedOver(read func(string) ([]byte, error), path string) bool {
-	data, err := read("/proc/self/mountinfo")
+	data, err := read(mountTablePath)
 	if err != nil {
 		return false
 	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if fields := strings.Fields(line); len(fields) > 4 && fields[4] == path {
+	for _, mount := range ParseMountTable(data) {
+		if mount.Point == path {
 			return true
 		}
 	}

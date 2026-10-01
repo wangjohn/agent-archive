@@ -84,6 +84,25 @@ func TestOtherSystemsHaveNoCursorLocation(t *testing.T) {
 	}
 }
 
+// The systemd user unit directory is a Linux location under the home, and
+// does not follow XDG_CONFIG_HOME (the user manager reads that only from its
+// own environment).
+func TestUserUnitDirIsLinuxOnly(t *testing.T) {
+	t.Parallel()
+	env := envOf(map[string]string{"XDG_CONFIG_HOME": "/xdg"})
+	if got, want := NewLocations(Linux, "/home/me", env, LocationDeps{}).UserUnitDir, "/home/me/.config/systemd/user"; got != want {
+		t.Errorf("Linux: UserUnitDir = %q, want %q", got, want)
+	}
+	if got := NewLocations(Linux, "", env, LocationDeps{}).UserUnitDir; got != "" {
+		t.Errorf("Linux with no home: UserUnitDir = %q, want none", got)
+	}
+	for _, name := range append([]string{"darwin"}, otherSystems...) {
+		if got := NewLocations(OS(name), "/home/me", env, LocationDeps{}).UserUnitDir; got != "" {
+			t.Errorf("%q: UserUnitDir = %q, want none", name, got)
+		}
+	}
+}
+
 // The desktop apps' folders are macOS locations: absent (empty) everywhere
 // else, an unknown system included.
 func TestDesktopAppFoldersAreMacOnly(t *testing.T) {

@@ -40,6 +40,7 @@ type setupOptions struct {
 	skillEvidence        string
 	noSkills             bool
 	skills               bool
+	allowNetworkHome     bool
 	storageFlagsSupplied bool
 }
 
@@ -111,6 +112,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
+	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -290,6 +292,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
 	}
 	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
+	cfg.AllowNetworkHome = env.networkHomeOptIn(home, userHome, opts.allowNetworkHome, existing)
 	if !config.ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}

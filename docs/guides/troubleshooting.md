@@ -369,8 +369,17 @@ directory, not to the journal.
 - **"This data directory was set up on a different machine."** `status` and
   `setup` say it when the data directory's recorded host ID is not this
   machine's, which means it was copied (a cloned VM or container image).
-  What to do about it, and why a shared home directory is not supported, is
-  in [multiple machines](multiple-machines.md#cloned-machines-on-linux).
+  What to do about it is in [multiple
+  machines](multiple-machines.md#cloned-machines-on-linux).
+- **"Data directory ... is on a network filesystem"** (or the systemd unit
+  directory). Setup and `setup --refresh` refuse, changing nothing, when the
+  data directory or `~/.config/systemd/user` is on NFS, SMB/CIFS or another
+  network filesystem, because machines that share a home would share one
+  machine ID, cannot rely on file locks and would each run the collector.
+  Set `AGENT_ARCHIVE_HOME` to a local path, or, if only one machine ever
+  mounts this home, run `agent-archive setup --allow-network-home`. `status`
+  warns about such a home either way. See [a home directory shared across
+  machines](multiple-machines.md#a-home-directory-shared-across-machines).
 - **Uninstalling without a user bus.** `agent-archive uninstall` refuses and
   prints the command that stops the job; `agent-archive uninstall
   --skip-scheduler` removes the units, hooks and skills anyway and prints

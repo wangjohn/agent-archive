@@ -79,7 +79,9 @@ they may fail silently there, so Cursor capture is best effort), the real
 Claude Code and Codex apps, distributions and systemd versions other than
 Ubuntu 24.04 with systemd 255 (run live on arm64), an amd64 live run, a real
 logout with lingering off, and WSL. A
-home directory shared by several Linux machines (NFS, say) is not supported.
+home directory shared by several Linux machines (NFS, say) is refused by
+setup unless you opt in for a home only one machine mounts
+([details](multiple-machines.md#a-home-directory-shared-across-machines)).
 See [platforms](../getting-started/install.md#platforms), [setup on
 Linux](../getting-started/setup.md#setup-on-linux) and [troubleshooting](troubleshooting.md#linux-and-systemd).
 

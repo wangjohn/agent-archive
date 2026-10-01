@@ -62,8 +62,8 @@ agent-archive uninstall --delete-local-data
 
 This also deletes agent-archive's own files in the data directory and stored
 R2 credentials (the Keychain item on macOS, the `credentials` folder on
-Linux). If the data directory is shared with other machines, which is [not
-supported](../guides/multiple-machines.md#a-home-directory-shared-across-machines-is-not-supported),
+Linux). If the data directory is shared with other machines, which setup [refuses
+on Linux unless you opt in](../guides/multiple-machines.md#a-home-directory-shared-across-machines),
 this deletes it for all of them. It shows how many sessions are still waiting to upload and
 asks a second time (`--yes` answers both). Unpublished evidence is lost. Only
 files agent-archive creates are removed (see
