@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -74,12 +75,19 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-incomplete"); err != nil {
 		return err
 	}
-	ids, err := s.listJSONStems("registrations")
-	if err != nil {
+	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("recover session identities: %w", err)
 	}
-	inventory := make(map[agentmeta.SessionKey][]string, len(ids))
-	for _, id := range ids {
+	inventory := make(map[agentmeta.SessionKey][]string, len(entries))
+	for _, file := range entries {
+		if filepath.Ext(file.Name()) == quarantineSuffix {
+			return ErrSessionIndexRecoveryRequired
+		}
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(file.Name(), ".json")
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -95,16 +103,6 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 			return fmt.Errorf("invalid registration identity %q: %w", id, ErrSessionIndexRecoveryRequired)
 		}
 		inventory[key] = append(inventory[key], id)
-	}
-	// Do not turn a quarantined registration into proof that no identity exists.
-	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == quarantineSuffix {
-			return ErrSessionIndexRecoveryRequired
-		}
 	}
 	if err := s.indexStep("recovery-enumerated"); err != nil {
 		return err
@@ -172,10 +170,10 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := errors.Join(failures...); err != nil {
 		return err
 	}
-	if err := s.recoverRequestedMisses(ctx, inventory); err != nil {
+	if err := s.recoverCandidateIndexes(ctx); err != nil {
 		return err
 	}
-	if err := s.recoverCandidateIndexes(ctx); err != nil {
+	if err := s.recoverRequestedMisses(ctx, inventory); err != nil {
 		return err
 	}
 	if err := s.indexStep("recovery-completing"); err != nil {
@@ -214,10 +212,10 @@ func (s *Store) recoverCandidateIndexes(ctx context.Context) error {
 			return ErrSessionIndexRecoveryRequired
 		}
 		entry, found, err := s.readQualifiedIndex(key)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 			return err
 		}
-		if found {
+		if found && !entry.Absent {
 			if entry.ArchiveSessionID != candidate.ArchiveSessionID {
 				return ErrSessionIdentityConflict
 			}
@@ -255,7 +253,10 @@ func (s *Store) recoverCandidateIndexes(ctx context.Context) error {
 			return nil
 		}, func(current fileSnapshot) (any, bool, error) {
 			if current.found {
-				return nil, false, ErrSessionIndexRecoveryRequired
+				var latest qualifiedSessionIndexEntry
+				if err := json.Unmarshal(current.data, &latest); err == nil && latest.validate(key) == nil && !latest.Absent {
+					return nil, false, ErrSessionIndexRecoveryRequired
+				}
 			}
 			return next, true, nil
 		}); err != nil {

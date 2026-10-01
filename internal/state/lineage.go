@@ -155,6 +155,12 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	if err := key.Validate(); err != nil {
+		return false, err
+	}
+	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
+		return false, ErrSessionIdentityConflict
+	}
 	takeBack := func() error { return nil }
 	if removal != nil {
 		if takeBack, err = s.recordRemovalRevocably(removal.Harness, key.NativeID, removal.Reason, removal.At); err != nil {
@@ -344,6 +350,21 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
+	}
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
+		}
 	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {

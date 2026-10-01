@@ -112,7 +112,7 @@ func OwnedEntries() []string {
 
 func safeFileComponent(value string) bool {
 	//lint:ignore LV1001 value is an arbitrary file name component; these are the reserved names it must not be
-	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\") {
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\\x00") {
 		return false
 	}
 	return true
@@ -191,12 +191,20 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalKey, err := registrationKey(reg)
+		if err != nil {
+			return nil, false, err
+		}
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
 		}
 		if reg.ArchiveSessionID != archiveSessionID {
 			return nil, false, errors.New("a registration update cannot change its archive session ID")
+		}
+		updatedKey, err := registrationKey(reg)
+		if err != nil || updatedKey != originalKey {
+			return nil, false, ErrSessionIdentityConflict
 		}
 		if err := reg.Validate(); err != nil {
 			return nil, false, err

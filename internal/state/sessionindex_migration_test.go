@@ -331,3 +331,58 @@ func TestQualifiedIndexSyncNeverHoldsRequestLock(t *testing.T) {
 		t.Fatalf("index syncs %d", syncs)
 	}
 }
+
+func TestQualifiedRecoveryPreservesLegacyChildReservation(t *testing.T) {
+	s := newTestStore(t)
+	parentKey := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"}
+	childKey := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent:subagent:child"}
+	legacyRegistration(t, s, parentKey, "parent-archive")
+	if err := local.Write(nativeSessionIndexPath(s.home, childKey.NativeID), sessionIndexEntry{ArchiveSessionID: "child-archive"}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := SubagentCandidate{ArchiveSessionID: "child-archive", NativeSessionID: childKey.NativeID, ParentArchiveSessionID: "parent-archive", ParentNativeSessionID: parentKey.NativeID, ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "claude-code"}, AgentID: "child", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)}
+	if err := s.SaveSubagentCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	// Known corruption is requested before maintenance; its negative census must
+	// not discard the candidate's stronger durable positive reservation evidence.
+	if err := s.RequestSessionIndexRecovery(childKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.ArchiveSessionID(childKey); err != nil || found {
+		t.Fatalf("candidate admitted %t %v", found, err)
+	}
+	if id, created, err := s.EnsureArchiveSessionID(childKey); err != nil || created || id != "child-archive" {
+		t.Fatalf("candidate reassigned %q %t %v", id, created, err)
+	}
+	reg := migrationRegistration(childKey, "child-archive")
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = "parent-archive", parentKey.NativeID, "child"
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if id, found, err := s.ArchiveSessionID(childKey); err != nil || !found || id != "child-archive" {
+		t.Fatalf("child commit %q %t %v", id, found, err)
+	}
+}
+
+func TestQualifiedRegistrationUpdateAndRemovalCannotChangeOwner(t *testing.T) {
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "owner"}
+	reg, err := s.RegisterNewSession(key, func(id string) archive.SessionRegistration { return migrationRegistration(key, id) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.NativeSessionID = "other"; return nil }); !errors.Is(err, ErrSessionIdentityConflict) {
+		t.Fatalf("identity update %v", err)
+	}
+	wrong := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: key.NativeID}
+	if err := s.ForgetSession(reg.ArchiveSessionID, wrong); !errors.Is(err, ErrSessionIdentityConflict) {
+		t.Fatalf("wrong removal %v", err)
+	}
+	if id, found, err := s.ArchiveSessionID(key); err != nil || !found || id != reg.ArchiveSessionID {
+		t.Fatalf("owner lost %q %t %v", id, found, err)
+	}
+}

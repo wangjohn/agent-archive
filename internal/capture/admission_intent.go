@@ -252,6 +252,9 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	if nativeID == "" {
 		return admissionIntent{}, false, nil
 	}
+	if _, err := agentmeta.NewSessionKey(harness, nativeID); err != nil {
+		return admissionIntent{}, false, err
+	}
 	intent := admissionIntent{
 		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
 		NativeSessionID: nativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(),
