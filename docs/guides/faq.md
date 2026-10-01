@@ -30,10 +30,26 @@ class and region you choose. Sources are gzip-compressed filtered
 transcripts (tool results are capped at 64 KB per string), and a session is
 uploaded again only when it changed; retention deletes old snapshots and
 expired sessions. There is no typical figure to quote, since it depends on
-how long and how many your sessions are. To measure yours, `aws s3 ls
-s3://<bucket>/<prefix>sessions/ --recursive --summarize` prints the object
-count and total size (divide by the sessions `agent-archive list` counts),
-and your provider's billing page shows request counts.
+how long and how many your sessions are. To measure current stored bytes, run
+`aws s3 ls s3://<bucket>/<prefix>sessions/ --recursive --summarize` for the
+same bucket and prefix configured in agent-archive (for R2, also pass its
+`--endpoint-url`). Divide **Total Size**, not the object count, by the readable
+session count from `agent-archive list --all-projects --json --limit 0`, with
+no other filters. Its `total_matched` is exact when `total_matched_known` is
+true; `returned` and `sessions.length` also give the full readable count in
+this unlimited result. Default text and JSON listings return at most 50
+sessions, and capped JSON may omit `total_matched`
+([JSON contract](../reference/json-output.md#list---json)).
+
+For example, 200 MiB across 200 readable sessions is approximately
+1 MiB/session, even if the default listing shows only 50. With zero sessions,
+do not divide; report the stored bytes and zero readable sessions instead.
+Unreadable or skipped metadata makes the denominator incomplete: investigate
+stderr warnings before using the estimate. This is approximate current storage
+per readable session, not exact transcript size or provider billing; the
+session prefix can include superseded objects, and versioned storage charges
+can include noncurrent objects. Your provider's billing page shows request
+counts and charges.
 
 **How do I stop it for a while?**
 `agent-archive pause`, then `agent-archive resume`. Pause persists across
