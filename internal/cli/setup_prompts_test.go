@@ -194,7 +194,7 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 func TestReviewActionMapsChoices(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "3\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
-		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false)
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
 		}
@@ -207,7 +207,7 @@ func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{"1\n": "check", "\n": "check", "c\n": "check", "2\n": "edit", "e\n": "edit", "3\n": "cancel", "n\n": "cancel", "y\ne\n": "edit", "yes\n3\n": "cancel"} {
 		var out bytes.Buffer
-		got, err := reviewAction(newPrompter(strings.NewReader(input), &out), false, true)
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &out), false, true, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q\n%s", input, got, err, want, &out)
 		}
@@ -581,5 +581,15 @@ func TestSelectionWithManyProjectsPrintsACount(t *testing.T) {
 	}
 	if want := fmt.Sprintf("Included: %d projects.", maxKnownProjects+2); !strings.Contains(out.String(), want) || strings.Contains(out.String(), "/imported/0") {
 		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+func TestFirstSetupReviewKeepsExistingShortAnswers(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]string{"y\n": "start", "n\n": "cancel", "e\n": "edit", "4\n": "machine"} {
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false, true)
+		if err != nil || got != want {
+			t.Fatalf("input %q got %q %v", input, got, err)
+		}
 	}
 }

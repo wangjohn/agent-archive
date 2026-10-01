@@ -159,7 +159,7 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 			if r.MachineID == cfg.MachineID {
 				own = " (this machine)"
 			}
-			terminal.Printf(out, "%s  %s  %s  %s  Heartbeat %s%s\n", r.Name, r.MachineID, r.Platform, r.Credential.Kind, r.HeartbeatAt.Format("2006-01-02"), own)
+			terminal.Printf(out, "%s  %s  %s  %s  Paired %s  Heartbeat %s%s\n", r.Name, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02"), own)
 		}
 		for _, u := range result.Unreadable {
 			terminal.Printf(out, "Omitted %s: %s.\n", u.Key, u.Reason)
@@ -256,4 +256,75 @@ func runMachinesRename(args []string, out, errOut io.Writer, env Env) int {
 	}
 	terminal.Printf(out, "This machine is now %s (%s).\n", name, cfg.MachineID)
 	return 0
+}
+
+// chooseSetupMachineName changes only a first-setup draft after bounded duplicate
+// observation. A blank answer keeps a neutral default without reading a hostname.
+func chooseSetupMachineName(p *prompter, cfg *config.Config, env Env) error {
+	for {
+		name, err := p.line("Machine name (1-40 lowercase letters, digits or hyphens; blank keeps unnamed): ")
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			cfg.MachineName = ""
+			return nil
+		}
+		if !config.ValidMachineName(name) {
+			p.warn("Use 1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.")
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), machines.Timeout)
+		store, err := env.openStoreContext(ctx, *cfg)
+		if err != nil {
+			cancel()
+			return errors.New("could not check machine names; retry setup or keep the unnamed default")
+		}
+		result := machines.List(ctx, store)
+		cancel()
+		if result.Partial {
+			return errors.New("machine listing is incomplete; retry setup or keep the unnamed default")
+		}
+		taken := false
+		for _, r := range result.Records {
+			if r.Name == name {
+				taken = true
+				break
+			}
+		}
+		if taken {
+			p.warn("Name is already used; choose another name.")
+			continue
+		}
+		cfg.MachineName = name
+		return nil
+	}
+}
+
+func machinePairingDate(r machines.Record) string {
+	if r.PairedAt == nil {
+		return "unknown"
+	}
+	return r.PairedAt.Format("2006-01-02")
+}
+
+func machineCredentialClaim(r machines.Record, records []machines.Record) string {
+	switch r.Credential.Kind {
+	case config.MachineAssignmentAWSProfile:
+		return "AWS profile (claim)"
+	case config.MachineAssignmentR2Unknown:
+		return "R2 ownership unknown"
+	case config.MachineAssignmentR2Own:
+		return "own R2 key (claim)"
+	case config.MachineAssignmentR2Shared:
+		identity := r.Credential.SharedWith
+		for _, other := range records {
+			if other.MachineID == identity {
+				identity = other.Name + " (" + identity + ")"
+				break
+			}
+		}
+		return "shared R2 key with " + identity + " (claim; cannot revoke independently)"
+	}
+	return "unknown"
 }
