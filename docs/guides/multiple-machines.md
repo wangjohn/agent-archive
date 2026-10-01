@@ -181,7 +181,9 @@ different path. A configured subdirectory keeps its path to preserve scope. Repo
 printed. Projects without a key retain their `--project DIR` argument.
 
 `setup --yes --project-repo REPO_KEY` includes only a unique, eligible clone.
-It checks the current directory, saved project roots, and the first record
+It establishes each keyed candidate’s full checkout root with Git, so running
+from a subdirectory cannot narrow the requested repository. It checks the
+current directory, saved project roots, and the first record
 of app history files, with a shared five-second budget, 128 distinct roots,
 four Git processes, and 250 milliseconds per Git lookup. Discovery returns
 partial results and reports timeout, cap, or unreadable files; incomplete or

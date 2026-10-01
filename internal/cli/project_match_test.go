@@ -268,3 +268,51 @@ func TestProjectMatcherDoesNotBroadenOverlappingSavedScope(t *testing.T) {
 		t.Fatalf("broadened saved scope: %+v", got)
 	}
 }
+
+// A repository key represents its full checkout, even when setup starts below it.
+func TestProjectMatcherUsesRepositoryTopLevelWithoutChangingSavedScope(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	child := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	remote := "https://example.test/acme/repo.git"
+	key := archive.RepoKey(remote)
+	for _, saved := range []string{"none", "nested", "root"} {
+		t.Run(saved, func(t *testing.T) {
+			t.Parallel()
+			env := Env{WorkingDir: func() (string, error) { return child, nil }, LookupEnv: func(string) (string, bool) { return "", false }, projectGitRunner: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[2] == "rev-parse" {
+					return []byte(root + "\n"), nil
+				}
+				return []byte(remote + "\n"), nil
+			}}
+			var projects []archive.ProjectActivation
+			if saved != "none" {
+				configured := child
+				if saved == "root" {
+					configured = root
+				}
+				projects = []archive.ProjectActivation{{Root: configured, Included: true}}
+			}
+			cfg := config.Config{Archive: archive.Config{Projects: projects}}
+			got := matchProjects(t.Context(), env, home, cfg, []projectMatchRequest{{RepoKey: key}})
+			if got.Incomplete {
+				t.Fatalf("incomplete: %+v", got)
+			}
+			pathOnly := matchProjects(t.Context(), env, home, cfg, []projectMatchRequest{{Path: child}})
+			if len(pathOnly.Roots[0]) != 1 || pathOnly.Roots[0][0] != local.CanonicalPath(child) {
+				t.Fatalf("changed explicit path scope: %+v", pathOnly)
+			}
+			if saved == "nested" {
+				if len(got.Roots[0]) != 0 {
+					t.Fatalf("selected nested inclusion by whole repository key: %+v", got)
+				}
+			} else if len(got.Roots[0]) != 1 || got.Roots[0][0] != local.CanonicalPath(root) {
+				t.Fatalf("narrowed repository: %+v", got)
+			}
+		})
+	}
+}
