@@ -49,11 +49,22 @@ func (e Env) projectOrigin(ctx context.Context, root string) (string, bool) {
 	} else if e.repoKey != nil {
 		key = e.repoKey(root)
 	} else {
-		return gitremote.ProjectKey(ctx, root, nil)
+		return gitremote.ProjectKey(ctx, root, e.projectGitRunner)
 	}
 	// Test lookups use an empty key to establish no origin. Invalid nonempty
 	// answers cannot authorize a path fallback.
 	return key, key == "" || archive.IsRepoKey(key)
+}
+
+// projectRepository establishes the full checkout for a key-based match.
+// The identity-only test seams model candidates already at their top level.
+func (e Env) projectRepository(ctx context.Context, root string) (string, string, bool) {
+	key, known := e.projectOrigin(ctx, root)
+	if !known || key == "" || e.repoKeyContext != nil || e.repoKey != nil {
+		return key, root, known
+	}
+	top := gitremote.ProjectRoot(ctx, root, e.projectGitRunner)
+	return key, top, top != ""
 }
 
 // projectCandidates caches canonical paths and caps filesystem and Git work.
@@ -155,6 +166,7 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	}
 	result.Incomplete = result.Incomplete || result.History.Incomplete()
 	keys := make([]string, len(c.roots))
+	checkoutRoots := make([]string, len(c.roots))
 	known := make([]bool, len(c.roots))
 	var mu sync.Mutex
 	next := 0
@@ -170,7 +182,7 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 					return
 				}
 				child, done := context.WithTimeout(ctx, 250*time.Millisecond)
-				keys[i], known[i] = env.projectOrigin(child, c.roots[i])
+				keys[i], checkoutRoots[i], known[i] = env.projectRepository(child, c.roots[i])
 				if !known[i] || child.Err() != nil {
 					mu.Lock()
 					result.Incomplete = true
@@ -186,18 +198,37 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	result.Capped = result.Capped || result.History.Capped
 	result.Incomplete = result.Incomplete || ctx.Err() != nil
 	for i, request := range requests {
-		hint := ""
-		if request.Path != "" {
-			hint = c.canonical(request.Path)
-		}
-		for j, root := range c.roots {
-			if !projectRequestMatches(request.RepoKey, hint, root, keys[j], known[j]) || projectScopeBlocked(root, included, excluded) {
-				continue
-			}
-			result.Roots[i] = append(result.Roots[i], root)
-		}
+		result.Roots[i] = c.match(request, keys, checkoutRoots, known, included, excluded)
 	}
+
+	// Canonicalizing newly established checkout roots is native I/O too.
+	result.TimedOut = result.TimedOut || ctx.Err() != nil
+	result.Incomplete = result.Incomplete || ctx.Err() != nil
 	return result
+}
+
+func (c *projectCandidates) match(request projectMatchRequest, keys, checkoutRoots []string, known []bool, included, excluded []string) []string {
+	var matches []string
+	hint := ""
+	if request.Path != "" {
+		hint = c.canonical(request.Path)
+	}
+	seen := map[string]bool{}
+	for j, candidate := range c.roots {
+		if !known[j] {
+			continue
+		}
+		root := c.canonical(checkoutRoots[j])
+		if request.RepoKey == "" || keys[j] == "" {
+			root = candidate
+		}
+		if seen[root] || !projectRequestMatches(request.RepoKey, hint, root, keys[j], known[j]) || projectScopeBlocked(root, included, excluded) {
+			continue
+		}
+		seen[root] = true
+		matches = append(matches, root)
+	}
+	return matches
 }
 
 func printProjectMatches(p *prompter, keys []string, result projectMatchResult) {

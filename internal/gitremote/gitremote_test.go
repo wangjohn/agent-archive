@@ -354,3 +354,46 @@ func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectRootEstablishesCheckoutScopeFromSubdirectory(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/repo.git")
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "pkg")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, child} {
+		if got := ProjectRoot(t.Context(), path, nil); got != root {
+			t.Fatalf("ProjectRoot(%q)=%q want %q", path, got, root)
+		}
+	}
+	if got := ProjectRoot(t.Context(), t.TempDir(), nil); got != "" {
+		t.Fatalf("plain directory: %q", got)
+	}
+}
+
+func TestProjectRootWithholdsFailedOrMalformedScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "failed", out: "/repo", err: projectExitStatusError(128)},
+		{name: "relative", out: "repo"},
+		{name: "multiple lines", out: "/repo\n/other\n"},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			if got := ProjectRoot(t.Context(), t.TempDir(), fake.run); got != "" {
+				t.Fatalf("unproven checkout: %q", got)
+			}
+		})
+	}
+}

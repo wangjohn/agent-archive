@@ -115,6 +115,29 @@ func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
 	return key, raw == "" || key != ""
 }
 
+// ProjectRoot returns Git's checkout top level, or empty when it cannot be
+// established. It never infers full-repository scope from an inherited origin.
+// run is nil for ExecRunner and must respect ctx when supplied.
+func ProjectRoot(ctx context.Context, root string, run Runner) string {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return ""
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "rev-parse", "--show-toplevel")
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	top := strings.TrimSuffix(strings.TrimSuffix(string(out), "\n"), "\r")
+	if !filepath.IsAbs(top) || strings.ContainsAny(top, "\x00\r\n") {
+		return ""
+	}
+	return filepath.Clean(top)
+}
+
 // Resolver derives repository keys and remembers each project root's answer,
 // so a sweep over many sessions of one project asks git once. It is safe for
 // concurrent use. The zero value runs the real git.
