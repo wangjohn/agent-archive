@@ -249,6 +249,16 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
+	// Observe the capture window before waiting: a pause and resume can both
+	// finish while this event is waiting for hooks.lock. Neither a direct
+	// admission nor its queued retry may cross that boundary.
+	observedConfig, found, err := config.Load(home)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if !found || !observedConfig.Archive.Enabled || observedConfig.Paused {
+		return nil
+	}
 	// Asked before hooks.lock is taken, never under it: a slow lookup must not
 	// use up the hook's budget or make concurrent hooks find the lock busy.
 	lookupStarted := time.Now()
@@ -267,7 +277,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	unlock, lockErr := lock(home, lockWait)
 	if lockErr != nil {
 		if errors.Is(lockErr, local.ErrBusy) {
-			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
+			queued, queueErr := queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
 			if err := recordHookBusy(home, harness, payload, now); err != nil {
 				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, lockErr, errors.Join(queueErr, err))
 			}
@@ -292,7 +302,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if !found || !cfg.Archive.Enabled || cfg.Paused {
+	if !found || !cfg.Archive.Enabled || cfg.Paused || cfg.PauseGeneration != observedConfig.PauseGeneration {
 		return nil
 	}
 	store, err := state.Open(home)
@@ -338,7 +348,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 				return lookupErr
 			}
 			if !registered {
-				_, err = queueAdmissionIntent(home, harness, kind, payload, now)
+				_, err = queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
 				break
 			}
 		}

@@ -26,6 +26,7 @@ type admissionIntent struct {
 	NativeSessionID string    `json:"native_session_id"`
 	ProjectRoot     string    `json:"project_root"`
 	DestinationID   string    `json:"destination_id"`
+	PauseGeneration string    `json:"pause_generation,omitempty"`
 	TranscriptPath  string    `json:"transcript_path,omitempty"`
 	CursorVersion   string    `json:"cursor_version,omitempty"`
 	ComposerMode    string    `json:"composer_mode,omitempty"`
@@ -56,8 +57,8 @@ const (
 func admissionIntentDir(home string) string { return filepath.Join(home, "admission-intents") }
 
 // ClearAdmissionIntents discards starts observed before a pause. Callers hold
-// hooks.lock while changing the pause flag, so a hook that times out during
-// that change either queues before this purge or observes the paused config.
+// hooks.lock while changing the pause flag. Its generation also invalidates
+// staged files and hooks waiting across a complete pause/resume interval.
 func ClearAdmissionIntents(home string) error {
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", clearAdmissionIntentsWait)
 	if err != nil {
@@ -143,6 +144,13 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	return queueAdmissionIntentAfterStage(home, harness, kind, payload, now, nil)
 }
 
+// queueAdmissionIntentInGeneration binds a contended event to the capture
+// window observed before its lock wait, rather than whichever window is active
+// after that wait. A complete pause/resume cycle must not admit the old start.
+func queueAdmissionIntentInGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, generation string) (bool, error) {
+	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, nil, &generation)
+}
+
 // queueAdmissionIntentAfterStage is queueAdmissionIntent with afterStage,
 // when not nil, called once the intent is staged and synced and before the
 // queue lock is taken, so a test can act in that window.
@@ -157,9 +165,16 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 // staging outside it would create the folder, and could recreate one that
 // uninstall's purge had just deleted under the lock.
 func queueAdmissionIntentAfterStage(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func()) (bool, error) {
+	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, afterStage, nil)
+}
+
+func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func(), generation *string) (bool, error) {
 	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
 	if err != nil || !queued {
 		return false, err
+	}
+	if generation != nil && intent.PauseGeneration != *generation {
+		return false, nil
 	}
 	id, err := local.ID()
 	if err != nil {
@@ -237,7 +252,8 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	intent := admissionIntent{
 		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
 		NativeSessionID: nativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(),
-		CursorVersion: firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
+		PauseGeneration: cfg.PauseGeneration,
+		CursorVersion:   firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
 	}
 	if intent.Harness == "cursor" {
 		intent.TranscriptPath = cursorPath
@@ -258,7 +274,7 @@ func admissionIntentStillQueueable(home string, intent admissionIntent, payload 
 		return false, err
 	}
 	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
+	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -382,7 +398,7 @@ func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Ti
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	return owned && project.Included && project.Root == intent.ProjectRoot &&
-		intent.DestinationID == cfg.DestinationID() &&
+		intent.DestinationID == cfg.DestinationID() && intent.PauseGeneration == cfg.PauseGeneration &&
 		intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) &&
 		cfg.Archive.Eligible(project.Root, intent.ObservedAt)
 }
