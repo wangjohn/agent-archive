@@ -367,6 +367,16 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
 	}
+	if next.Discovery != nil {
+		d := *next.Discovery
+		if len(d.CodexHomes) == 0 && files["codex"] != "" {
+			d.CodexHomes = []string{filepath.Dir(files["codex"])}
+		}
+		next.Discovery = &d
+	}
+	if err := config.ReconcileDiscovery(next, old, env.now()); err != nil {
+		return setupjournal.Journal{}, err
+	}
 	// Another installation's hooks in a file this one would install into
 	// mean every session would be captured twice; they are its to remove.
 	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {

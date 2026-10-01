@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // filterTranscript filters reg's transcript with adapter, falling back to
@@ -51,11 +52,26 @@ func statTranscript(info os.FileInfo) transcriptFileInfo {
 }
 
 func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	file, err := openRegularFile(reg.TranscriptPath)
+	var file *os.File
+	var err error
+	if reg.Origin == archive.SessionOriginDiscovery {
+		file, err = sourcefacts.OpenRegular(reg.DiscoveryRoot, reg.TranscriptPath)
+	} else {
+		file, err = openRegularFile(reg.TranscriptPath)
+	}
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
 	defer func() { _ = file.Close() }()
+	if reg.Origin == archive.SessionOriginDiscovery {
+		header := sourcefacts.ReadCodexHeader(file, reg.TranscriptPath)
+		if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) {
+			return archive.FilteredTranscript{}, transcriptFileInfo{}, errors.New("discovery source identity changed")
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return archive.FilteredTranscript{}, transcriptFileInfo{}, err
+		}
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("stat transcript: %w", err)

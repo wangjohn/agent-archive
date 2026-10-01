@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -146,6 +147,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	defer cancel()
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
+	}
+	if _, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop}); discoveryErr != nil {
+		recordPreflightError(localStore, discoveryErr)
 	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {

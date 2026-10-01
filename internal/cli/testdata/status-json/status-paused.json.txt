@@ -16,7 +16,7 @@ $ agent-archive status --json
     "context": "manual_sync"
   },
   "code": "paused",
-  "schema_version": 3,
+  "schema_version": 4,
   "state": "Paused",
   "storage": "s3 / team-archive / agent-archive/",
   "storage_verified_at": "2026-09-25T12:00:00Z",
@@ -31,6 +31,15 @@ $ agent-archive status --json
   ],
   "applications": [
     {
+      "discovery": {
+        "enabled": false,
+        "supported": false,
+        "pending": false,
+        "header_probes": 0,
+        "directory_entries": 0,
+        "bytes_read": 0,
+        "registered": 0
+      },
       "published_sessions": 1,
       "verified_sessions": 1,
       "configured": true,

@@ -10,7 +10,7 @@ affects.
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
 | Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 14 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
 | Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.14.0 | An adapter's output changes (bumped with the filter in practice). |
-| Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.18.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
+| Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.19.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
@@ -46,3 +46,12 @@ is re-uploaded unless it changed.
   change, and a reader that still reads what earlier versions wrote, or a
   clear refusal.
 - Update the version line in this file.
+
+Discovery-bearing configuration is writer schema 2, while legacy/hook-only
+configuration retains schema 1. The validated `skill_evidence` compatibility
+marker blocks earlier writers that ignored schema numbers (see
+[configuration rollback](../../docs/reference/configuration.md#discovery-authorization-and-rollback)).
+Status JSON is version 4; source/metadata provenance fields are optional
+extensions and retain source schema 2 and metadata schema 1. The transcript
+privacy filter and adapter versions do not change: source envelope provenance
+and derived metadata changed, not retained transcript keys.

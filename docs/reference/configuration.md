@@ -81,3 +81,22 @@ within the selected skill root. Change the policy with interactive setup's
 The change applies to future publications, including rebuilt pending work;
 it does not delete older local copies or bucket objects. See
 [privacy](../security/privacy.md) for cleanup guidance.
+
+## Discovery authorization and rollback
+
+Legacy configuration schema 1 has discovery disabled. Discovery-bearing
+configuration uses schema 2 and keeps `discovery` even after disablement.
+Its Codex homes are persisted, independent of a scheduled process's shell;
+current per-project/destination generations hold half-open unpaused intervals.
+Pause closes an interval, resume opens another, and reconfiguration starts a
+new generation when scope changes. Starts in excluded/disabled/pause periods
+remain ineligible after re-enable. Unknown or expired start evidence fails closed.
+
+A deliberate writer compatibility encoding preserves the effective skill
+policy: `skill_evidence` is `none+discovery-v2`, `metadata+discovery-v2`, or
+`body+discovery-v2`. New writers normalize it before applying the skill policy;
+earlier binaries' enum validation refuses it before rewriting unknown
+permission history. A schema number alone cannot protect those older writers.
+The marker survives disablement and journal recovery. Do not edit it away:
+rollback needs an explicit safe downgrade that disables discovery and resets
+future-only authorization. No downgrade command is supplied in this release.

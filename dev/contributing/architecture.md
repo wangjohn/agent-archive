@@ -118,3 +118,19 @@ flowchart TD
   `_hook` command exits 0 whatever happens.
 - Every side effect in `cli` goes through `Env`, so tests never touch the real
   home, launchd, Keychain, or a bucket.
+
+## Local discovery foundations
+
+`internal/sourcefacts` owns bounded Codex metadata reads, safe confined regular
+file opening, nearest project rules and Git worktree metadata. Backfill shares
+these facts while retaining historical-import policy. `internal/discovery`
+rotates bounded directory batches and caches metadata in private local state;
+it runs under `collector.lock` before storage initialization and takes
+`hooks.lock` only for each configuration revalidation and durable admission.
+The collector reopens discovery sources inside their approved roots and checks
+identity, native start and cwd before the existing filter runs.
+
+Production producer support is empty until the [evidence gate](../specs/local-discovery-evidence.md)
+passes. A private test seam proves synthetic machinery without creating a
+runtime switch that bypasses this gate. Discovery never executes hooks or
+changes Codex trust.

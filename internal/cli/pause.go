@@ -65,7 +65,7 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 			return fail("could not clear pending session starts; still paused: %v", err)
 		}
 	}
-	if _, err := config.SetPaused(home, paused); err != nil {
+	if _, err := config.SetPausedAt(home, paused, env.now()); err != nil {
 		return fail("%v", err)
 	}
 	if paused {

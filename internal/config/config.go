@@ -42,6 +42,7 @@ const (
 // EffectiveSkillEvidence preserves the behavior of configs saved before this
 // setting existed. Fresh setup persists metadata explicitly.
 func (c Config) EffectiveSkillEvidence() SkillEvidence {
+	c.SkillEvidence = underlyingSkillEvidence(c.SkillEvidence)
 	if c.SkillEvidence == "" {
 		return SkillEvidenceBody
 	}
@@ -62,6 +63,8 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// Discovery carries forward-only authorization; absent means disabled.
+	Discovery             *DiscoveryConfig       `json:"discovery,omitempty"`
 	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
 	RetiredCredentialRefs []string               `json:"retired_credential_refs,omitempty"`
 	StorageVerifiedAt     time.Time              `json:"storage_verified_at,omitempty"`
@@ -216,6 +219,9 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
+	if err := validateDiscoveryConfig(cfg); err != nil {
+		return Config{}, false, err
+	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
@@ -230,6 +236,9 @@ var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
 func Save(home string, cfg Config) error {
+	if err := prepareDiscoveryConfig(&cfg); err != nil {
+		return err
+	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
 	}
@@ -247,6 +256,12 @@ func Save(home string, cfg Config) error {
 // setup has not run yet: pausing before there is
 // anything to pause is not a meaningful state.
 func SetPaused(home string, paused bool) (Config, error) {
+	return SetPausedAt(home, paused, time.Now().UTC())
+}
+
+// SetPausedAt commits pause and authorization intervals in the same durable
+// file. Callers hold collector.lock then hooks.lock, as setup does.
+func SetPausedAt(home string, paused bool, now time.Time) (Config, error) {
 	cfg, found, err := Load(home)
 	if err != nil {
 		return Config{}, err
@@ -260,6 +275,7 @@ func SetPaused(home string, paused bool) (Config, error) {
 			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
 		}
 	}
+	transitionDiscoveryPause(&cfg, paused, now.UTC())
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {
 		return Config{}, err

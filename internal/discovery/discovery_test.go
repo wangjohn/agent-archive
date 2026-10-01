@@ -1,0 +1,269 @@
+package discovery
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
+
+func fixture(t testing.TB) (*state.Store, config.Config, time.Time, string) {
+	t.Helper()
+	home, project, codex := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{MachineID: "synthetic-machine", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at}}}, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{codex}}}
+	if err := config.ReconcileDiscovery(&cfg, config.Config{}, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return store, cfg, at, codex
+}
+func writeRollout(t testing.TB, codex, project string, at time.Time, n int, folder string) string {
+	t.Helper()
+	id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
+	path := filepath.Join(codex, folder, "rollout-2026-10-01T12-00-00-"+id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(map[string]any{"type": "session_meta", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": at.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "synthetic", "cli_version": "test"}})
+	task, _ := json.Marshal(map[string]any{"type": "event_msg", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": at.Format(time.RFC3339Nano)}})
+	prompt, _ := json.Marshal(map[string]any{"type": "response_item", "timestamp": at.Format(time.RFC3339Nano), "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "SYNTHETIC_BODY_ONLY"}}}})
+	if err := os.WriteFile(path, []byte(string(meta)+"\n"+string(task)+"\n"+string(prompt)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+func syntheticSupport(m sourcefacts.CodexMeta) bool {
+	return m.Version == "test" && m.Originator == "synthetic"
+}
+func TestProductionScanKeepsUnverifiedNativeProducerUnregistered(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+	if err != nil || h.Registered != 0 || h.Supported || h.Outcomes["unsupported_producer"] != 1 {
+		t.Fatalf("health=%#v err=%v", h, err)
+	}
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatal("unverified producer admitted")
+	}
+}
+func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 1 {
+		t.Fatalf("health=%#v err=%v", h, err)
+	}
+	// Admission succeeded before a storage object exists: outage cannot prevent it.
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].Origin != archive.SessionOriginDiscovery {
+		t.Fatal(regs)
+	}
+	objectStore := storagetest.NewMemoryStore()
+	result, err := collector.Run(context.Background(), store, objectStore, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	_, _, _, found, err := store.LoadPublished(regs[0].ArchiveSessionID)
+	metadataBytes, _ := store.PublishedMetadata(regs[0].ArchiveSessionID)
+	var meta archive.Metadata
+	if decodeErr := json.Unmarshal(metadataBytes, &meta); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if err != nil || !found || meta.Origin != archive.SessionOriginDiscovery || meta.ImportedAt != nil {
+		t.Fatalf("metadata=%#v err=%v", meta, err)
+	}
+	before := regs[0]
+	payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": id, "cwd": before.ProjectRoot}
+	if err := capture.HandleEvent(store.Home(), "codex", payload, at.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := store.LoadRegistration(before.ArchiveSessionID)
+	if after.Origin != before.Origin || !after.AdmittedAt.Equal(before.AdmittedAt) || after.DestinationID != before.DestinationID || after.HookObservedAt.IsZero() {
+		t.Fatal("hook erased discovery provenance")
+	}
+	raw, _ := os.ReadFile(filepath.Join(store.Home(), "discovery-catalog.json"))
+	if strings.Contains(string(raw), "SYNTHETIC_BODY_ONLY") {
+		t.Fatal("catalog retained conversation")
+	}
+	h, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
+	if err != nil || h.Registered != 0 || h.Probes != 0 {
+		t.Fatalf("unchanged source repeated work: %#v %v", h, err)
+	}
+}
+func TestBoundedScanContinuesFairlyAcrossActiveAndArchivedSources(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	for i := 1; i <= 600; i++ {
+		writeRollout(t, root, project, at.Add(-time.Hour), i, "sessions")
+	}
+	writeRollout(t, root, project, at.Add(time.Minute), 9999, "archived_sessions")
+	seen := 0
+	completed := false
+	for pass := 0; pass < 12; pass++ {
+		h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+		if err != nil || h.Probes > HeaderProbes || h.Entries > 2200 {
+			t.Fatalf("unbounded pass %#v %v", h, err)
+		}
+		seen += h.Probes
+		if h.Registered == 1 {
+			completed = true
+		}
+		if !h.Pending {
+			break
+		}
+	}
+	if !completed || seen < 601 {
+		t.Fatalf("starved archived or old coverage: admitted=%t probes=%d", completed, seen)
+	}
+	var c catalog
+	if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Cache) > maxCatalog {
+		t.Fatal("catalog unbounded")
+	}
+}
+func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	h := sourcefacts.ReadHeader(root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"))
+	generation, _ := cfg.DiscoveryGeneration("codex", cfg.Archive.Projects[0].Root, h.Started, at.Add(2*time.Minute))
+	reg, created, err := admit(store, h, root, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl"), cfg.Archive.Projects[0].Root, generation, at.Add(2*time.Minute))
+	if err != nil || !created {
+		t.Fatal(err)
+	}
+	// Simulate crash after registration by removing its queued request.
+	requests, _ := store.LoadRequests()
+	if len(requests) > 0 {
+		if _, err := store.CompleteRequest(reg.ArchiveSessionID, requests[0].Token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("unrequested registration lost: %#v %v", result, err)
+	}
+	if err := store.RecordRemoval("codex", native, state.RemovalReasonUndo, at.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ForgetSession(reg.ArchiveSessionID, native); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := admit(store, h, root, reg.TranscriptPath, reg.ProjectRoot, generation, at.Add(5*time.Minute)); err == nil {
+		t.Fatal("removed session resurrected")
+	}
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatal("tombstone lost")
+	}
+}
+func TestAdmissionRevalidatesPauseGenerationAndSkipsContendedHooks(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+	h := sourcefacts.ReadHeader(root, path)
+	g, _ := cfg.DiscoveryGeneration("codex", cfg.Archive.Projects[0].Root, h.Started, at.Add(2*time.Minute))
+	unlock, err := local.NamedLock(store.Home(), "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := admit(store, h, root, path, cfg.Archive.Projects[0].Root, g, at.Add(2*time.Minute)); err == nil {
+		t.Fatal("admission ignored hooks lock")
+	}
+	unlock()
+	if _, err := config.SetPausedAt(store.Home(), true, at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := admit(store, h, root, path, cfg.Archive.Projects[0].Root, g, at.Add(3*time.Minute)); err == nil {
+		t.Fatal("stale permission admitted")
+	}
+}
+
+func BenchmarkCodexCatalog(b *testing.B) {
+	for _, count := range []int{1000, 10000, 100000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			store, cfg, at, root := fixture(b)
+			for i := 1; i <= count; i++ {
+				writeRollout(b, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), i, "sessions")
+			}
+			b.ResetTimer()
+			probes, bytes, entries := 0, int64(0), 0
+			for i := 0; i < b.N; i++ {
+				h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(time.Hour) }})
+				if err != nil {
+					b.Fatal(err)
+				}
+				probes += h.Probes
+				bytes += h.Bytes
+				entries += h.Entries
+			}
+			b.ReportMetric(float64(probes)/float64(b.N), "headers/pass")
+			b.ReportMetric(float64(bytes)/float64(b.N), "read-bytes/pass")
+			b.ReportMetric(float64(entries)/float64(b.N), "entries/pass")
+		})
+	}
+}
+
+func TestRejectedMetadataPayloadNeverEntersCatalog(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"source", "parent_thread_id", "history_base", "forked_from_id", "subagent_history_start_ordinal", "session_id", "cwd", "timestamp", "history_mode", "originator", "cli_version"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			store, cfg, at, root := fixture(t)
+			id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+			path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
+			raw, _ := os.ReadFile(path)
+			lines := strings.Split(string(raw), "\n")
+			var first map[string]any
+			if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+				t.Fatal(err)
+			}
+			payload := first["payload"].(map[string]any)
+			secret := "PRIVATE_BODY_MUST_NEVER_ENTER_CATALOG"
+			if field == "source" || field == "parent_thread_id" || field == "history_base" || field == "forked_from_id" || field == "subagent_history_start_ordinal" {
+				payload[field] = map[string]any{"prompt": secret}
+			} else {
+				payload[field] = strings.Repeat(secret, 100)
+			}
+			encoded, _ := json.Marshal(first)
+			lines[0] = string(encoded)
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}); err != nil {
+				t.Fatal(err)
+			}
+			catalogBytes, _ := os.ReadFile(filepath.Join(store.Home(), "discovery-catalog.json"))
+			if strings.Contains(string(catalogBytes), secret) {
+				t.Fatalf("%s retained rejected payload", field)
+			}
+		})
+	}
+}

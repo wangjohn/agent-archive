@@ -361,7 +361,18 @@ func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCand
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
 	if nativeSessionID != "" {
-		paths = append(paths, nativeSessionIndexPath(s.home, nativeSessionID))
+		for _, agent := range []string{"claude", "codex", "cursor"} {
+			path := nativeSessionIndexPath(s.home, agent+"\x00"+nativeSessionID)
+			var entry sessionIndexEntry
+			if local.Read(path, &entry) == nil && entry.ArchiveSessionID == archiveSessionID {
+				paths = append(paths, path)
+			}
+		}
+		var entry sessionIndexEntry
+		legacy := nativeSessionIndexPath(s.home, nativeSessionID)
+		if local.Read(legacy, &entry) == nil && entry.ArchiveSessionID == archiveSessionID {
+			paths = append(paths, legacy)
+		}
 	}
 	// The session's own candidate is gone (removed above, under this lock),
 	// so its lock file goes too. Unlinking a lock file is safe:

@@ -196,7 +196,7 @@ func newSessionRepoKey(home, harness string, payload map[string]any, now time.Ti
 	}
 	// An index entry with no registration behind it is treated as never seen
 	// by the registration below, so it still gets a key.
-	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || registered {
+	if registered, err := HasAgentRegistration(state.OpenReadOnly(home), harness, nativeSessionID); err != nil || registered {
 		return ""
 	}
 	return boundedRepoKey(repoKey, owner.Root)
@@ -315,7 +315,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, err = HasRegistration(store, nativeSessionID)
+			registered, err = HasAgentRegistration(store, harness, nativeSessionID)
 			if err != nil {
 				return err
 			}
@@ -337,7 +337,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 		// a later proven start can still be published. This never admits a
 		// session on its own.
 		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, lookupErr := HasRegistration(store, nativeSessionID)
+			registered, lookupErr := HasAgentRegistration(store, harness, nativeSessionID)
 			if lookupErr != nil {
 				return lookupErr
 			}
@@ -426,7 +426,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 		if nativeSessionID == "" {
 			return nil
 		}
-		registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID)
+		registered, err := HasAgentRegistration(state.OpenReadOnly(home), harness, nativeSessionID)
 		if err != nil || registered {
 			return err
 		}
@@ -444,7 +444,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 }
 
 func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := store.AgentSessionID(harness, nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -466,10 +466,10 @@ func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventNa
 	return saveLifecycleEvidence(store, archiveID, harness, strings.ToLower(eventName), payload, now)
 }
 
-// HasRegistration reports whether a native session already has an accepted
+// HasAgentRegistration reports whether a native session already has an accepted
 // registration. An index entry without a registration does not count.
-func HasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+func HasAgentRegistration(store *state.Store, harness, nativeSessionID string) (bool, error) {
+	archiveID, found, err := store.AgentSessionID(harness, nativeSessionID)
 	if err != nil {
 		return false, fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -555,7 +555,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 		root = owner.Root
 	}
 
-	existingID, found, err := store.ArchiveSessionID(nativeSessionID)
+	existingID, found, err := store.AgentSessionID(harness, nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -587,6 +587,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			if transcriptPath != "" && existing.ReadsTranscriptFile() && (!isCursor || existing.TranscriptPath == "") {
 				existing.TranscriptPath = transcriptPath
 			}
+			existing.HookObservedAt = now
 			existing.RegisteredAt = now
 			applyHarnessObservation(&existing.Harness, harness, payload)
 			return nil
@@ -621,7 +622,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 	// RegisterNewSession saves under the archive ID's request lock and
 	// rechecks the index there, so an index entry retention is removing
 	// right now is never reused for a registration that would outlive it.
-	reg, err := store.RegisterNewSession(nativeSessionID, func(archiveID string) archive.SessionRegistration {
+	reg, err := store.RegisterOrMerge(nativeSessionID, func(archiveID string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: archiveID,
 			NativeSessionID:  nativeSessionID,
@@ -637,6 +638,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			// imported session keeps its import provenance.
 			AdmittedAt:      now,
 			Origin:          archive.SessionOriginHook,
+			HookObservedAt:  now,
 			StartedAtSource: archive.StartedAtSourceHook,
 			// Likewise the destination it was admitted into: a continuation
 			// keeps it, and an older registration without one keeps none.
@@ -811,6 +813,9 @@ func applyHarnessObservation(target *archive.Harness, harness string, payload ma
 // upload on every prompt. Stop, end, and response events go through
 // handleSessionStop, whose request is the intended debounce flush.
 func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string, payload map[string]any, now time.Time) error {
+	if _, err := store.UpdateRegistration(archiveID, func(r *archive.SessionRegistration) error { r.HookObservedAt = now; return nil }); err != nil {
+		return err
+	}
 	evidence, err := filteredHookEvidence(archive.EvidenceKindLifecycleHook, harness, reason, payload, false, now)
 	if err != nil || evidence == nil {
 		return err
@@ -819,7 +824,7 @@ func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string
 }
 
 func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := store.AgentSessionID(harness, nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -843,6 +848,9 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 		if err := adoptCursorTranscriptPath(store, &registration, harness, payload); err != nil {
 			return err
 		}
+	}
+	if _, err := store.UpdateRegistration(archiveID, func(r *archive.SessionRegistration) error { r.HookObservedAt = now; return nil }); err != nil {
+		return err
 	}
 	reason := strings.ToLower(eventName)
 	var evidence []archive.SupplementalEvidence

@@ -11,7 +11,7 @@ import (
 )
 
 func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNativeID string, payload map[string]any, now time.Time) error {
-	parentID, found, err := store.ArchiveSessionID(parentNativeID)
+	parentID, found, err := store.AgentSessionID(harness, parentNativeID)
 	if err != nil {
 		return fmt.Errorf("look up parent archive session ID: %w", err)
 	}
@@ -31,7 +31,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", "SubagentStop omitted agent_id", now)
 	}
 	childNativeID := parent.NativeSessionID + ":subagent:" + agentID
-	childID, _, err := store.EnsureArchiveSessionID(childNativeID)
+	childID, _, err := store.EnsureAgentSessionID(harness, childNativeID)
 	if err != nil {
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}

@@ -102,7 +102,7 @@ var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile)
+	return append(entries, "status.json", "discovery-catalog.json", storageClockFile)
 }
 
 func safeFileComponent(value string) bool {
@@ -181,8 +181,15 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
 func (s *Store) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	return s.RegisterOrMerge(nativeSessionID, build)
+}
+
+// RegisterOrMerge atomically creates or merges a namespaced identity under
+// its request lock. Callers hold hooks.lock and revalidate configuration.
+// Original provenance, admission, start and destination remain immutable.
+func (s *Store) RegisterOrMerge(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
 	for range 3 {
-		id, _, err := s.EnsureArchiveSessionID(nativeSessionID)
+		id, _, err := s.EnsureAgentSessionID(build("").Harness.Name, nativeSessionID)
 		if err != nil {
 			return archive.SessionRegistration{}, err
 		}
@@ -214,14 +221,39 @@ func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string)
 		lock: func() (func(), error) { return s.lockRequest(id) },
 		path: s.registrationPath(id),
 		check: func() error {
-			current, found, err := s.ArchiveSessionID(nativeSessionID)
+			current, found, err := s.AgentSessionID(reg.Harness.Name, nativeSessionID)
 			if err == nil && (!found || current != id) {
 				return errIndexMoved
 			}
 			return err
 		},
-		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
-		blind:  true,
+		change: func(current fileSnapshot) (any, bool, error) {
+			if current.found {
+				var existing archive.SessionRegistration
+				if err := json.Unmarshal(current.data, &existing); err != nil {
+					return nil, false, err
+				}
+				if existing.NativeSessionID != reg.NativeSessionID || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(reg.Harness.Name) || existing.ProjectRoot != reg.ProjectRoot || (existing.DestinationID != "" && existing.DestinationID != reg.DestinationID) {
+					return nil, false, errors.New("registration identity conflict")
+				}
+				// Provenance, admission and destination are immutable. A matching
+				// candidate can repair a missing locator, never replace one blindly.
+				if existing.TranscriptPath == "" {
+					existing.TranscriptPath = reg.TranscriptPath
+				}
+				if !reg.HookObservedAt.IsZero() {
+					existing.HookObservedAt = reg.HookObservedAt
+				}
+				reg = existing
+				return reg, true, nil
+			}
+			if _, removed, err := s.Removal(reg.Harness.Name, reg.NativeSessionID); err != nil {
+				return nil, false, err
+			} else if removed && !reg.Imported() {
+				return nil, false, errors.New("session was removed")
+			}
+			return reg, true, nil
+		},
 	})
 	if errors.Is(err, errIndexMoved) {
 		return archive.SessionRegistration{}, false, nil

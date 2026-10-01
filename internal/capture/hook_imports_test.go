@@ -174,6 +174,7 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	}
 	want := imported
 	want.TranscriptPath, want.RegisteredAt = got.TranscriptPath, got.RegisteredAt
+	want.HookObservedAt = resumeAt
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resume changed the import's provenance:\n got %#v\nwant %#v", got, want)
 	}

@@ -345,7 +345,7 @@ at the top level. Read the rules below before using a number:
 
 ## `status --json`
 
-Top-level fields (versioned by `schema_version`, currently `3`):
+Top-level fields (versioned by `schema_version`, currently `4`):
 
 A time that is not known yet is left out rather than printed as a zero
 time: a missing time field means "never". This applies to
@@ -401,3 +401,12 @@ inside it) and `current_branch` (the branch that checkout is on, when it
 differs from the recorded one). Both commands follow the same add-only rule
 but are not yet versioned documents; prefer the text output for anything a
 person reads.
+
+Status version 4 adds per-Codex `discovery` health: enabled/supported, last
+attempt and completed reconciliation, pending coverage, bounded probe/entry/
+byte counts, registrations and fixed outcome/error codes. This is separate
+from `hook_observed`, queued uploads and read-back verification. A heartbeat
+or import alone cannot establish automatic-capture verification. Discovery
+metadata uses `origin: discovery`, no `imported_at`, and a specific
+`discovered_without_hook_evidence` gap; a later hook does not prove earlier
+lifecycle completeness.

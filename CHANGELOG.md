@@ -8,6 +8,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Native session identities are now namespaced by agent. Compatible legacy
+  mappings keep their archive IDs. Hooks and discovery preserve original
+  admission, provenance and destination when they meet an existing session.
+  Retention and undo removal records prevent automatic resurrection.
+- Status JSON version 4 separates actual hook observation from discovery
+  provenance. Parser 0.19.0 adds truthful discovery provenance and the
+  `discovered_without_hook_evidence` capture gap without an import timestamp.
+
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a
   terminal, so their list is gone once you choose, as `list`'s is.
@@ -23,6 +31,15 @@ follow [Semantic Versioning](https://semver.org/).
   sessions whose source is unavailable keep their existing preview.
 
 ### Added
+
+- Bounded Codex source discovery foundations, running before storage access,
+  with durable forward-only authorization intervals, a private bounded
+  catalog, and separate scan health. **Automatic admission remains disabled
+  for every production producer.** Current native, migrated and copied
+  histories need verified local-origin evidence; desktop release acceptance
+  is outstanding. `setup --codex-discovery on` explains this gate, while
+  `off` disables a previously enabled synthetic/test configuration. Upgrades
+  never opt existing installations into broader capture.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches

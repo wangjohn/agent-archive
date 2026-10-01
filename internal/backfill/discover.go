@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -299,32 +300,19 @@ func readHead(env Environment, t *transcript) error {
 		metaFound := false
 		err := scanRecords(env, t.path, func(line []byte) bool {
 			seen++
-			var r struct {
-				Type      string `json:"type"`
-				Timestamp string `json:"timestamp"`
-				Payload   struct {
-					ID        string `json:"id"`
-					SessionID string `json:"session_id"`
-					Timestamp string `json:"timestamp"`
-					Cwd       string `json:"cwd"`
-				} `json:"payload"`
-			}
-			if json.Unmarshal(line, &r) != nil || r.Type != "session_meta" {
+			meta, start, found, err := sourcefacts.ParseCodexMeta(line)
+			if !found {
 				return seen < codexMetaScanLimit
 			}
 			metaFound = true
-			t.nativeID = r.Payload.ID
-			t.cwd = r.Payload.Cwd
+			t.nativeID = meta.ID
+			t.cwd = meta.Cwd
+			t.metaStart = start
+			// Historical import permits arbitrary legacy native IDs only when the
+			// existing filename/session identities agree; automatic capture is stricter.
 			fileID := rolloutFileID(filepath.Base(t.path))
-			if r.Payload.ID == "" || (r.Payload.SessionID != "" && r.Payload.SessionID != r.Payload.ID) || fileID == "" || !strings.EqualFold(fileID, r.Payload.ID) {
-				t.identityMismatch = true
-			}
-			for _, ts := range []string{r.Payload.Timestamp, r.Timestamp} {
-				if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-					t.metaStart = parsed.UTC()
-					break
-				}
-			}
+			t.identityMismatch = meta.ID == "" || (meta.SessionID != "" && meta.SessionID != meta.ID) || fileID == "" || !strings.EqualFold(fileID, meta.ID)
+			_ = err
 			return false
 		})
 		if !metaFound {

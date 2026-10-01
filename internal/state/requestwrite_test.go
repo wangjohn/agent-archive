@@ -267,9 +267,9 @@ func TestHookWriteOvertakenOnceLandsHoldingTheLock(t *testing.T) {
 	assertNoWriteTemporaries(t, local)
 }
 
-// A new registration does not depend on what the file held, so a change to
-// the file while it is written does not make it stage and sync again.
-func TestNewRegistrationIsNotRewrittenWhenTheFileChangesMidWrite(t *testing.T) {
+// Register-or-merge must reread an overtaking registration so it preserves
+// existing immutable provenance and source facts rather than overwriting them.
+func TestRegisterOrMergePreservesAnOvertakingRegistration(t *testing.T) {
 	local := newTestStore(t)
 	syncs := 0
 	var id string
@@ -292,8 +292,8 @@ func TestNewRegistrationIsNotRewrittenWhenTheFileChangesMidWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if syncs != 2 {
-		t.Fatalf("the registration synced %d times, want 2 (one temporary file and its directory)", syncs)
+	if syncs != 3 {
+		t.Fatalf("registration synced %d times, want staged retry plus directory sync (3)", syncs)
 	}
 	if saved, found, err := local.LoadRegistration(id); err != nil || !found || saved.TranscriptPath != reg.TranscriptPath {
 		t.Fatalf("saved=%#v found=%t err=%v, want the new registration", saved, found, err)
