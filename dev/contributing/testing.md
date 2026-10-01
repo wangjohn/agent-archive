@@ -16,6 +16,7 @@ python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
+python3 scripts/test_ci_workflow.py                      # real-systemd keeps its name and pinned image
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
@@ -174,10 +175,12 @@ In Go tests, everything goes through injection:
   change the systemd version and defaults under a required check. Bump the pin
   deliberately, re-validating on the new image with
   `scripts/acceptance/linux` first. The job's name must stay `real-systemd`,
-  because branch protection matches the required check by name. A failure in it
-  is a real finding about the adapter. To run it yourself, never on your own machine or
-  login, use a disposable Linux container with systemd as PID 1 (Docker on
-  macOS runs it in a Linux VM) and a non-root user (or run
+  because branch protection matches the required check by name
+  (`scripts/test_ci_workflow.py` fails on a rename or an unpinned image). A
+  failure in it is a real finding about the adapter. To run it yourself, never
+  on your own machine or login, use a disposable Linux container with
+  systemd as PID 1 (Docker on macOS runs it in a Linux VM) and a non-root
+  user (or run
   `scripts/acceptance/linux/host.sh`, which does all of this and more; see
   [the Linux live acceptance run](#the-linux-live-acceptance-run)):
 

@@ -48,6 +48,9 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+      # real-systemd's name and pinned runner image, which branch protection
+      # and its validation depend on.
+      - run: python3 scripts/test_ci_workflow.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
