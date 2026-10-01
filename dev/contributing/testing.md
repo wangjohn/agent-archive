@@ -532,7 +532,9 @@ open-source acceptance record.
       the field (setup treats a missing `enabled` or `domains`, like any
       success without a result, as unreadable, never as "off" or "none").
       Turn r2.dev on for a scratch
-      bucket and confirm the loud warning.
+      bucket and confirm the warning and the "What now?" menu (Enter
+      revokes the key and returns to the storage question; "Check again"
+      sees the dashboard change).
 - [ ] **Token expiry.** A token created without `expires_on` has no expiry in
       the dashboard.
 - [ ] **Token revoke.** `DELETE /accounts/{account}/tokens/{id}` with the

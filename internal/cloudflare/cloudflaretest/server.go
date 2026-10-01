@@ -139,6 +139,15 @@ func (s *Server) Fail(route Route, f Failure) {
 	s.failures[route] = append(s.failures[route], f)
 }
 
+// SetPublicAccess turns the r2.dev public URL, and the custom domains the
+// fake lists, on or off while the fake is serving, as someone changing them in
+// the dashboard would. Set the fields before the fake serves, not after.
+func (s *Server) SetPublicAccess(managed bool, customDomains []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ManagedEnabled, s.CustomDomains = managed, customDomains
+}
+
 // Requests returns every request received, in order.
 func (s *Server) Requests() []Request {
 	s.mu.Lock()

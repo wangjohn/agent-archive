@@ -603,20 +603,138 @@ func TestGuidedR2DecliningTheGoAheadCreatesNothing(t *testing.T) {
 	}
 }
 
-// Public access that is on is a loud warning, not a failure and not a fix.
-func TestGuidedR2WarnsWhenTheBucketIsPubliclyReachable(t *testing.T) {
+// publicRest is the answers after the token when the bucket reads as public:
+// the bucket name (default), no data location, go ahead, then what to do about
+// public access, and start archiving.
+func publicRest(whatNow ...string) []string {
+	return append(append([]string{"", "n", ""}, whatNow...), "")
+}
+
+// A bucket that reads as public stops setup at a menu whose default is another
+// storage option. Continuing anyway stores the key as before.
+func TestGuidedR2ContinuesAnywayWhenToldTo(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.ManagedEnabled = true
 	g.cf.CustomDomains = []string{"files.example.com"}
-	out := g.run(t, g.happy(), 0)
-	for _, want := range []string{"public r2.dev URL is ON", "anyone with the link can read", "files.example.com"} {
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), publicRest("continue")...)...), 0)
+	for _, want := range []string{"public r2.dev URL is ON", "anyone with the link can read", "files.example.com", "What now?", "Continue anyway (the bucket is publicly readable)", "Connected to your storage."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "off (checked at setup)") || strings.Contains(out, "Custom domains: none") {
 		t.Fatalf("claims access is off:\n%s", out)
+	}
+	if len(g.cf.Live()) != 1 || g.savedConfig(t).Storage.Bucket == "" {
+		t.Fatalf("live %d\n%s", len(g.cf.Live()), out)
+	}
+}
+
+// Enter at that menu, or choosing another storage option, revokes the key's
+// token (made and checked but never stored), reports the empty bucket, drops
+// the bootstrap token, and returns to the storage question. An input that ends
+// there does the same revoke before it ends setup.
+func TestGuidedR2PublicBucketAnotherStorageRevokesTheKey(t *testing.T) {
+	t.Parallel()
+	for name, answer := range map[string][]string{"default": {""}, "chosen": {"other"}, "number": {"2"}, "input ends": nil} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			g := newGuidedR2Fixture(t)
+			g.cf.ManagedEnabled = true
+			rest := append([]string{"", "n", ""}, answer...)
+			// After "another storage option" the storage question is asked
+			// again and the input ends there.
+			want := 1
+			out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), rest...)...), want)
+			if len(g.cf.Tokens()) != 1 || len(g.cf.Live()) != 0 || g.cf.Calls(cloudflaretest.RouteDeleteToken) != 1 {
+				t.Fatalf("tokens %d, live %d\n%s", len(g.cf.Tokens()), len(g.cf.Live()), out)
+			}
+			for _, want := range []string{"What now?", "Revoked the key that wasn't used.", "was created and is empty"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
+			}
+			if name != "input ends" && strings.Count(out, "Where should sessions be stored?") != 2 {
+				t.Errorf("the storage question was not asked again:\n%s", out)
+			}
+			if strings.Contains(out, "not saved anywhere") || strings.Contains(out, "Connected to your storage.") {
+				t.Errorf("went on with a public bucket:\n%s", out)
+			}
+			if len(g.apis) != 1 || !g.apis[0].discarded {
+				t.Error("the bootstrap token was not discarded")
+			}
+			g.notSaved(t)
+			g.assertNothingHolds(t, out, bootstrapCanary)
+		})
+	}
+}
+
+// flipReader delivers one answer per Read and, just before it delivers
+// before, runs flip: someone changes the bucket in the dashboard while setup
+// waits.
+type flipReader struct {
+	lines  []string
+	before string
+	flip   func()
+}
+
+func (r *flipReader) Read(p []byte) (int, error) {
+	if len(r.lines) == 0 {
+		return 0, io.EOF
+	}
+	if r.lines[0] == r.before && r.flip != nil {
+		r.flip()
+		r.flip = nil
+	}
+	n := copy(p, r.lines[0]+"\n")
+	r.lines = r.lines[1:]
+	return n, nil
+}
+
+// "Check again" reads both domain endpoints again: once the r2.dev URL is
+// turned off in the dashboard, setup goes on without asking again.
+func TestGuidedR2CheckAgainSeesTheDashboardChange(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.ManagedEnabled = true
+	answers := strings.Split(strings.TrimSuffix(guidedAnswers(append(append([]string{}, askToken...), publicRest("again")...)...), "\n"), "\n")
+	g.env.IsTerminal = func(any) bool { return true }
+	in := &flipReader{lines: answers, before: "again", flip: func() { g.cf.SetPublicAccess(false, nil) }}
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, in, &out, &out, g.env); code != 0 {
+		t.Fatalf("setup exit %d\n%s", code, &out)
+	}
+	text := out.String()
+	if strings.Count(text, "What now?") != 1 || !strings.Contains(text, "public r2.dev URL is ON") || !strings.Contains(text, "r2.dev public access: off (checked at setup).") {
+		t.Fatalf("output:\n%s", text)
+	}
+	if g.cf.Calls(cloudflaretest.RouteManagedDomain) != 2 || g.cf.Calls(cloudflaretest.RouteCustomDomains) != 2 {
+		t.Fatalf("reads: managed %d, custom %d", g.cf.Calls(cloudflaretest.RouteManagedDomain), g.cf.Calls(cloudflaretest.RouteCustomDomains))
+	}
+	g.savedConfig(t)
+}
+
+// A read that failed does not hide the other's positive: the stop still
+// happens, and the failed read is still only a warning.
+func TestGuidedR2AFailedReadDoesNotHideAPublicAnswer(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.ManagedEnabled = true
+	g.cf.Fail(cloudflaretest.RouteCustomDomains, cloudflaretest.Failure{Status: http.StatusForbidden})
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), publicRest("continue")...)...), 0)
+	for _, want := range []string{"public r2.dev URL is ON", "What now?", "Couldn't check whether the bucket has custom domains"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	// Custom domains alone, with the r2.dev read refused, stop it too.
+	h := newGuidedR2Fixture(t)
+	h.cf.CustomDomains = []string{"files.example.com"}
+	h.cf.Fail(cloudflaretest.RouteManagedDomain, cloudflaretest.Failure{Status: http.StatusForbidden})
+	out = h.run(t, guidedAnswers(append(append([]string{}, askToken...), publicRest("continue")...)...), 0)
+	if !strings.Contains(out, "What now?") || !strings.Contains(out, "files.example.com") {
+		t.Fatalf("output:\n%s", out)
 	}
 }
 
@@ -1188,7 +1306,7 @@ func TestGuidedR2PrintsCloudflareNamesSafely(t *testing.T) {
 	g.cf.Accounts = []cloudflaretest.Account{{ID: cloudflaretest.AccountID, Name: "Evil\x1b[2J\nname"}}
 	g.cf.ManagedEnabled = true
 	g.cf.CustomDomains = []string{"a.example.com\x1b[31m"}
-	out := g.run(t, g.happy(), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), publicRest("continue")...)...), 0)
 	if strings.Contains(out, "\x1b") || !strings.Contains(out, "Evil [2J name") || !strings.Contains(out, "a.example.com [31m") {
 		t.Fatalf("output:\n%q", out)
 	}

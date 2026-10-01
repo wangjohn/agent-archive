@@ -41,6 +41,11 @@ pricing](https://developers.cloudflare.com/r2/pricing/)).
    only**, checks that it works, and keeps that second key in the macOS
    Keychain like any R2 key.
 
+If setup finds the new bucket publicly readable (its `r2.dev` URL is on, or a
+custom domain serves it), it stops and asks whether to check again, choose
+another storage option (the default, which revokes the new key), or continue
+anyway.
+
 The token you pasted is used during setup and then dropped: it is never
 saved, in the Keychain or anywhere else, and the collector never sees it. You
 can delete it in the dashboard afterwards. If setup stops partway, it names

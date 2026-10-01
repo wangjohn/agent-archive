@@ -181,7 +181,9 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	// From here to staging, in setup.go, no signal handler is installed: a
 	// Ctrl-C then ends setup with the key's token still live, and its name was
 	// printed when it was created (docs/security/privacy.md says so).
-	c.reportPublicAccess()
+	if err = c.confirmPublicAccess(); err != nil {
+		return credentials.Config{}, none, false, err
+	}
 	kept = true
 	p.guided = &r2Handoff{c: c}
 	return c.storageConfig(), key, true, nil
@@ -763,14 +765,47 @@ func (c *r2Creator) revoke(ctx context.Context, token cloudflare.Token, name str
 	}
 }
 
+// confirmPublicAccess reports what the bootstrap token can see of the bucket's
+// public access, and stops when it sees the bucket is publicly readable: the
+// person checks again (after turning it off in the dashboard), chooses another
+// storage option, or continues knowing it. Choosing another storage option
+// revokes the key's token (it is made and checked but not stored), reports the
+// empty bucket, and ends with errChooseStorageAgain; so does a prompt that
+// fails, after the same revoke, with its own error. A read that failed does
+// not stop anything: it was reported as "not checked", as before.
+func (c *r2Creator) confirmPublicAccess() error {
+	for {
+		if !c.reportPublicAccess() {
+			return nil
+		}
+		choice, err := c.p.menu("What now?", "other",
+			option{"again", "Check again"},
+			option{"other", "Choose another storage option"},
+			option{"continue", "Continue anyway (the bucket is publicly readable)"})
+		if err == nil && choice == "again" {
+			continue
+		}
+		if err == nil && choice == "continue" {
+			return nil
+		}
+		c.revoke(context.Background(), c.token, c.tokenName)
+		c.reportBucketLeftBehind()
+		if err != nil {
+			return err
+		}
+		return errChooseStorageAgain
+	}
+}
+
 // reportPublicAccess says what the bootstrap token could see of the bucket's
 // public access, and only that: the r2.dev URL and the custom domains, read
-// once, now. It is not stored and not repeated later, and it says nothing of
-// access setup cannot read. It fixes nothing.
+// now. It is not stored and not repeated later, and it says nothing of access
+// setup cannot read. It fixes nothing, and says whether either read found the
+// bucket publicly readable.
 //
 // Which token permissions these two reads need is not documented; a refusal
-// is reported as "not checked".
-func (c *r2Creator) reportPublicAccess() {
+// is reported as "not checked", and does not hide what the other read found.
+func (c *r2Creator) reportPublicAccess() (public bool) {
 	p := c.p
 	ctx := context.Background()
 	domain, managedErr := c.api.ManagedDomain(ctx, c.account, c.bucket.BucketRef)
@@ -783,6 +818,7 @@ func (c *r2Creator) reportPublicAccess() {
 	}
 	switch {
 	case managedErr == nil && domain.Enabled:
+		public = true
 		p.warn(p.style.fail("The bucket's public r2.dev URL is ON: anyone with the link can read what is stored."),
 			"Turn it off before archiving: Cloudflare dashboard > R2 > "+c.bucket.Name+" > Settings > Public access.")
 	case managedErr == nil:
@@ -793,13 +829,15 @@ func (c *r2Creator) reportPublicAccess() {
 	}
 	switch {
 	case customErr == nil && len(enabled) > 0:
+		public = true
 		p.warn(p.style.fail("The bucket serves these custom domains publicly: "+strings.Join(enabled, ", ")+"."), "Remove them if the archive shouldn't be publicly readable.")
 	case customErr == nil:
 		terminal.Println(p.out, p.style.okMark()+" Custom domains: none (checked at setup).")
 	default:
 		p.warn("Couldn't check whether the bucket has custom domains. " + explainCloudflare(customErr, "The token may need the Workers R2 Storage Read permission to read them."))
 	}
-	terminal.Println(p.out, p.style.dim("  These were read once, just now; setup doesn't check again."))
+	terminal.Println(p.out, p.style.dim("  These were read just now; setup doesn't check again."))
+	return public
 }
 
 // maxMessageRunes bounds how much of Cloudflare's own message is shown.

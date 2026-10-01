@@ -38,8 +38,10 @@ follow [Semantic Versioning](https://semver.org/).
   no public access by default) and a key that can read and write only that
   bucket, checks it, and keeps the key in the Keychain. The token you pasted
   is used during setup and then dropped, never saved, and setup revokes the
-  new key's token if it fails its check or can't be stored. It also reports
-  whether the bucket's public `r2.dev` URL is on. Not available with
+  new key's token if it fails its check or can't be stored. It also reads
+  whether the bucket's public `r2.dev` URL or a custom domain is on, and if so
+  stops and asks: check again, choose other storage (the default, which
+  revokes the new key), or continue anyway. Not available with
   `setup --yes`. It has not yet been run against every kind of Cloudflare
   account, which is why it is behind the switch. See [creating a
   bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).

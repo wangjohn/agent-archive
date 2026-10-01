@@ -584,9 +584,14 @@ creation. It is not saved as bucket privacy evidence, is not repeated, and
 does not say the bucket is private: it says nothing about signed URLs, access
 granted later in the dashboard, or copies of what you archive. The bucket
 privacy row in the review and in `status` stays "not verified" for R2. If
-either read is refused, setup says it did not check. If the `r2.dev` URL is
-on, or a custom domain serves the bucket, setup warns and continues; turning
-public access off is up to you.
+either read is refused, setup says it did not check and goes on (a read that
+failed never hides what the other found). If the `r2.dev` URL is on, or a
+custom domain serves the bucket, setup stops and asks what now: check again
+(after you turn it off in the dashboard), choose another storage option, or
+continue anyway; Enter chooses another storage option. Choosing another
+revokes the key's token, which was made and checked but not stored, and says
+the empty bucket is left in your account. Turning public access off is up to
+you.
 
 Inspection covers native bucket public access. It does not assess applications that proxy authorized reads, shared signed URLs, or copies of archived data.
 
