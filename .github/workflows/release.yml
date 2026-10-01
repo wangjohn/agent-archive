@@ -70,7 +70,7 @@ jobs:
       - name: Test
         run: |
           go vet ./...
-          go test -race ./...
+          go test -race -timeout 20m ./...   # as test.yml, for internal/cli
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
           python3 scripts/test_install.py
@@ -147,7 +147,7 @@ jobs:
       - name: Test
         run: |
           go vet ./...
-          go test -race ./...
+          go test -race -timeout 20m ./...   # as test.yml, for internal/cli
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
           python3 scripts/test_install.py
