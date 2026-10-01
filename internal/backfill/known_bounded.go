@@ -112,7 +112,7 @@ func (d *projectDiscovery) walk(dir string, codex bool, depth int) {
 			d.walk(path, codex, depth+1)
 			continue
 		}
-		if !entry.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") || (codex && !isRolloutName(entry.Name())) {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") || (codex && !strings.HasPrefix(entry.Name(), "rollout-")) {
 			continue
 		}
 		d.readProject(path, codex)
