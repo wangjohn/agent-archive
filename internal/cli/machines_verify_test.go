@@ -83,11 +83,7 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 		t.Fatalf("false completeness %#v", got.Verification)
 	}
 	for _, observation := range got.Verification.Observations {
-		want := "untrusted_bucket_claim"
-		if observation.MachineID == recipient {
-			want = "local_committed_binding"
-		}
-		if observation.Binding != want {
+		if observation.MachineID == recipient && observation.Binding != "local_committed_binding" || observation.MachineID != recipient && observation.Binding != "untrusted_bucket_claim" {
 			t.Fatalf("forged trust %#v", observation)
 		}
 	}

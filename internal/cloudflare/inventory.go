@@ -43,29 +43,43 @@ func (p *MetadataPolicy) UnmarshalJSON(raw []byte) error {
 	}
 	p.Effect = wire.Effect
 	p.PermissionGroups = wire.PermissionGroups
-	var resources map[string]json.RawMessage
-	if json.Unmarshal(wire.Resources, &resources) != nil || len(resources) > 32 {
-		p.Unsupported = true
-		return nil
-	}
-	p.Resources = map[string]string{}
-	for key, value := range resources {
-		var permission string
-		if len(key) > 256 || json.Unmarshal(value, &permission) != nil || permission != "*" {
-			p.Resources = nil
-			p.Unsupported = true
-			return nil
-		}
-		p.Resources[key] = permission
-	}
+	resources, supported := simplePolicyResources(wire.Resources)
+	p.Resources = resources
+	p.Unsupported = !supported
 	return nil
 }
+
+func simplePolicyResources(raw []byte) (map[string]string, bool) {
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil || len(values) > 32 {
+		return nil, false
+	}
+	resources := map[string]string{}
+	for key, value := range values {
+		var permission string
+		if err := json.Unmarshal(value, &permission); err != nil || len(key) > 256 || permission != "*" {
+			return nil, false
+		}
+		resources[key] = permission
+	}
+	return resources, true
+}
+
+// TokenStatus is a provider-reported state, not proof that data-plane access works.
+type TokenStatus string
+
+// Documented Cloudflare account token states.
+const (
+	TokenStatusActive   TokenStatus = "active"
+	TokenStatusDisabled TokenStatus = "disabled"
+	TokenStatusExpired  TokenStatus = "expired"
+)
 
 // TokenMetadata deliberately excludes token values, creator emails and other personal data.
 type TokenMetadata struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
-	Status    string           `json:"status"`
+	Status    TokenStatus      `json:"status"`
 	Policies  []MetadataPolicy `json:"policies"`
 	ExpiresOn string           `json:"expires_on,omitempty"`
 	NotBefore string           `json:"not_before,omitempty"`

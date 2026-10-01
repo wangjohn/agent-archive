@@ -217,7 +217,7 @@ func providerBindingState(token cloudflare.TokenMetadata, found bool, binding ma
 }
 
 func providerTokenActive(token cloudflare.TokenMetadata, now time.Time) bool {
-	if token.Status != "active" {
+	if token.Status != cloudflare.TokenStatusActive {
 		return false
 	}
 	if token.ExpiresOn != "" {
