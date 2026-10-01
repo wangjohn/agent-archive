@@ -502,6 +502,28 @@ of a path, and macOS's per-user temporary folder can hold thousands of
 entries. (The product calls it only from setup, status and uninstall, on
 paths under your home folder, never from a hook or a collector pass.)
 
+## Terminal tests
+
+What a real terminal does (echo, key mode, Ctrl-C, Ctrl-Z, a resize, a
+hangup) is tested under a pseudo-terminal: a Python script (`python3`, or
+the test skips) opens one, starts this test binary as a child in it, types,
+and checks the terminal's modes and the output. Run such a script with
+`runPTYScript` (`internal/cli/pty_harness_test.go`):
+
+- The script owns its deadlines (60 seconds overall, 30 for each step) and
+  says what it was waiting for when one passes; match what it waits for to
+  offsets in the output, never to sleeps.
+- `runPTYScript` is the backstop, 90 seconds and never later than 30 seconds
+  before the test binary's own `-timeout`, so a stuck harness fails its test
+  with a message instead of ending the package in a timeout panic. It stops
+  the script with SIGTERM, which raises an exception in the script so its
+  `finally` stops the child, and kills it only after ten seconds more. A
+  script killed outright leaves its child running with nobody to stop it.
+- Budget for a slow start. On macOS, `/usr/bin/python3` is Xcode's, and with
+  the fresh `HOME` that `TestMain` gives each run it compiles its library
+  into `~/Library/Caches` first: a few seconds before the script's first
+  line, more on a loaded machine.
+
 ## Fuzzing
 
 Redaction, parsing, hook-file editing and the hook itself have fuzz targets
