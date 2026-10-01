@@ -131,7 +131,8 @@ session's summary replace each other instead of piling up:
   is marked `▸`, ↑ and ↓ move the mark, and Enter shows the marked session
   (and `b` brings back the filtered list). Esc clears the filter and closes the line, and
   Backspace on an empty one does too. Rows keep the numbers they have
-  unfiltered. A subagent session that matches is shown indented under its
+  unfiltered; a session the filter finds past the list's limit is numbered
+  on from its last row, and that number still works after Esc. A subagent session that matches is shown indented under its
   parent (`↳ Review and fix PR #208 (5b-1b)`), and the parent is shown even
   when it does not match (the mark starts on the subagent, not the parent);
   a subagent has no number, so choose it with the mark. `list "<words>"` and a `show` query that matches several sessions

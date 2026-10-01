@@ -675,8 +675,14 @@ func (l *sessionPicker) turnPage(pages []pickerPage, page int, answer string) st
 }
 
 // matchRow resolves an answer to a row listed: one of those shown, or, by
-// the number it had before the table was narrowed, one of rows.
+// the number it had before the table was narrowed, one of rows. A word
+// shorter than the ID prefixes the matcher takes (minIDPrefixWord) is words,
+// not an ID: "db" or "add" would otherwise pick the one session whose ID
+// starts with it.
 func (l *sessionPicker) matchRow(answer string, shown, rows []listRow) (listRow, bool) {
+	if _, err := strconv.Atoi(answer); err != nil && len(answer) < minIDPrefixWord {
+		return listRow{}, false
+	}
 	if l.words() == "" {
 		return matchBrowseRow(answer, rows)
 	}

@@ -207,6 +207,62 @@ func TestFilteredRowsKeepTheirUnfilteredNumbers(t *testing.T) {
 	}
 }
 
+// A row the filter finds past the table's limit has the number it would have
+// in the whole table, and in key mode that number, typed after Esc, picks it
+// as any number on the table does.
+func TestKeyNumberOfARowPastTheLimitPicksItAfterEsc(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	format := listFormatOptions{Now: pickerNow, Numbered: true}
+	choices := newScopeChoices(sessionScope{}, format, false, archiveRows(sessions, 10, format))
+	fake := newFakeKeys("/", "number 27", "\x1b", "27", "\r")
+	picker := &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
+	defer picker.keys.close()
+	var out bytes.Buffer
+	picker.clear = func() { out.WriteString(screenBreak) }
+	row, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show")
+	screens := strings.Split(out.String(), screenBreak)
+	if err != nil || !ok || row.Index != 27 || row.SessionID != sessions[26].SessionID {
+		t.Fatalf("27 after Esc picked %+v ok=%v err=%v\n%s", row, ok, err, strings.Join(screens, "\n----\n"))
+	}
+	if got := rowNumbers(screens[2]); !sameInts(got, []int{27}) {
+		t.Fatalf("the filter numbers the row past the limit %v:\n%s", got, screens[2])
+	}
+	// A number no session has is still refused.
+	fake = newFakeKeys("31", "\r", "q")
+	picker = &sessionPicker{env: fixedTerminal{120, 40}, keys: startKeys(fake)}
+	defer picker.keys.close()
+	out.Reset()
+	picker.clear = func() { out.WriteString(screenBreak) }
+	if _, ok, err := picker.pickScoped(newPrompter(strings.NewReader(""), &out), &out, choices, "show"); err != nil || ok {
+		t.Fatalf("31 picked a row: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(out.String(), "Enter a listed number or unique short SESSION_ID") {
+		t.Fatalf("31 was not refused:\n%s", out.String())
+	}
+}
+
+// In line mode a word too short to be an ID prefix the matcher takes is words
+// to filter by, even when a listed session's ID starts with it: "db" or "add"
+// is a word, not that session.
+func TestLineModeShortHexWordFiltersRatherThanPickingByID(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, oneProject)
+	sessions[3].SessionID = "db" + sessions[3].SessionID[2:]
+	sessions[5].Title = "Session number 6, the db schema"
+	row, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 60}}, sessions, listFormatOptions{}, "db\nq\n")
+	if ok {
+		t.Fatalf("db picked %+v", row)
+	}
+	if got := rowNumbers(screens[1]); !sameInts(got, []int{6}) || !strings.Contains(screens[1], `1 session matches "db"`) {
+		t.Fatalf("db did not filter: %v\n%s", got, screens[1])
+	}
+	// An ID's first four characters or more still pick its session.
+	if row, ok, _ := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 60}}, sessions, listFormatOptions{}, sessions[3].SessionID[:4]+"\n"); !ok || row.Index != 4 {
+		t.Fatalf("an ID prefix picked %+v ok=%v", row, ok)
+	}
+}
+
 // In line mode an answer that is not a number, an ID, or a command word is a
 // filter, more words add to it, and an empty answer clears it (and quits when
 // there is none).

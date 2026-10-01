@@ -957,7 +957,9 @@ guide. Live check on the owner's Mac:
 - PR 6: while the filter line is open, `a`, `n`, `p` and `q` are typed text
   (§5 says they act outside it), so the other scope is one Esc away; digits
   are typed text too, so in key mode a row's number is chosen by after Esc (it
-  is the number the row had in the filter), and in line mode at once; the
+  is the number the row had in the filter, past the table's limit too: Enter
+  looks a number past the last row up among the sessions the filter
+  searches), and in line mode at once; the
   heading while filtering names `Esc clear`, not `a`. Esc clears the words and
   closes the line in one press, and Backspace on an empty filter closes it. In
   line mode `a` still switches the scope with a filter on, and keeps it.
@@ -971,7 +973,11 @@ guide. Live check on the owner's Mac:
   two spaces, with no `· subagent of` hint, and the parent keeps its `· N
   subagents` hint while filtering. Columns a filter's rows no longer share
   come back (`filteredFormat`: PR, HARNESS, PROJECT, the live dot).
-- PR 6: in line mode an unmatched number is words (a PR number, `208`), `n`
+- PR 6: in line mode an unmatched number is words (a PR number, `208`), and
+  so is a word shorter than `minIDPrefixWord` (4) that is not a number, even
+  when a listed ID starts with it: once words filter, `db` or `add` must not
+  pick the one session whose ID begins so (a typed ID needs 4 characters, as
+  the matcher's ID prefix does). `n`
   and `p` always turn pages (`Everything is on this page.` when there is one),
   and more words add to the filter (`Enter for all` clears it). The question
   now says `words to filter`, which wraps one row more at 40 columns, so
