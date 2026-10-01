@@ -126,13 +126,17 @@ func TestDefinitionListsOnlyItsOwnJobsLink(t *testing.T) {
 func TestDefinitionListsItsOwnLinkUnderEitherSpellingOfTheHome(t *testing.T) {
 	t.Parallel()
 	s := noManager()
-	real, err := filepath.EvalSymlinks(t.TempDir())
+	resolved, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	spelled := filepath.Join(t.TempDir(), "home")
-	must(t, os.Symlink(real, spelled))
-	for _, tc := range []struct{ name, home, target string }{
-		{"a target under the real path", spelled, real},
-		{"a target under the linked path", real, spelled},
+	must(t, os.Symlink(resolved, spelled))
+	for _, tc := range []struct {
+		name   string
+		home   string
+		target string
+	}{
+		{"a target under the real path", spelled, resolved},
+		{"a target under the linked path", resolved, spelled},
 	} {
 		site := scheduler.Site{UserHome: tc.home}
 		ref := write(t, s, site)
