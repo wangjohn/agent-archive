@@ -2,12 +2,11 @@ goos: linux
 goarch: amd64
 pkg: github.com/wangjohn/agent-archive/internal/archive
 cpu: INTEL(R) XEON(R) PLATINUM 8573C
-BenchmarkAnalysisConsumers-5               	      10	     86341 ns/op	    7704 B/op	     108 allocs/op
-BenchmarkAnalysisConsumers-5               	      10	     72724 ns/op	    7704 B/op	     108 allocs/op
-BenchmarkAnalysisConsumers-5               	      10	     92518 ns/op	    7704 B/op	     108 allocs/op
-BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 357570685 ns/op	  15.05 MB/s	48150229 B/op	   61364 allocs/op
-BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 269478795 ns/op	  19.97 MB/s	48046537 B/op	   61278 allocs/op
-BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 267843803 ns/op	  20.09 MB/s	48125896 B/op	   61356 allocs/op
+BenchmarkAnalysisConsumers-5               	      10	     49408 ns/op	    7704 B/op	     108 allocs/op
+BenchmarkAnalysisConsumers-5               	      10	     94977 ns/op	    7704 B/op	     108 allocs/op
+BenchmarkAnalysisConsumers-5               	      10	     45315 ns/op	    7704 B/op	     108 allocs/op
+BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 284555455 ns/op	  18.91 MB/s	48139586 B/op	   61366 allocs/op
+BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 270586109 ns/op	  19.89 MB/s	48087205 B/op	   61310 allocs/op
+BenchmarkCursorTextFilterFiveMegabytes-5   	      10	 264589505 ns/op	  20.34 MB/s	48195304 B/op	   61425 allocs/op
 PASS
-ok  	github.com/wangjohn/agent-archive/internal/archive	9.928s
-
+ok  	github.com/wangjohn/agent-archive/internal/archive	9.124s

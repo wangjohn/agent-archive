@@ -10,17 +10,23 @@ records executable gates and their limits.
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,
 `claude-code` → `claude`); do not trim, lowercase, split, or path-clean the native
-ID. Preserve the existing rejection of all-whitespace IDs. Native IDs remain opaque UTF-8 string values; JSON hook/discovery ingress
-already decodes invalid UTF-8 to replacement characters. Validate UTF-8 for
-injected SessionKey callers; do not add a second byte-preserving identity
-field to registrations or remote metadata. Preserve exact valid string bytes.
+ID. Preserve the existing rejection of all-whitespace IDs. Native IDs remain
+opaque UTF-8 string values. JSON identity fields already decode invalid UTF-8
+to replacement characters; filenames and SQLite key suffixes can instead
+contain invalid bytes, which current registration JSON cannot round-trip.
+At the new boundary classify those as malformed discovery identity (and reject
+injected invalid-UTF-8 SessionKey callers), rather than silently normalizing
+them or adding a second persisted byte identity. Test this explicit malformed
+input refusal alongside exact Unicode persist/reload adoption. Preserve exact
+valid string bytes; no UUID-shaped identity restriction is introduced.
 
 Define `E(s) = uint64-big-endian(byte-length(s)) || bytes(s)` and
 `K = ASCII("agent-archive/session-key/v1") || E(agent) || E(nativeID)`.
 Store at `sessions-v1/<lowercase-hex-SHA256(K)>.json`; entry contains version,
-canonical agent, native ID and archive session ID. Persist the native ID as its JSON string, matching SessionRegistration;
-validate UTF-8 before persistence so index and registration reload identically. Validate entry contents against the requested
-key and the safe archive-ID component. Do not concatenate with a delimiter.
+canonical agent, native ID and archive session ID. Persist the native ID as its
+JSON string, matching SessionRegistration; validate UTF-8 before persistence
+so index and registration reload identically. Validate entry contents against
+the requested key and the safe archive-ID component. Do not concatenate with a delimiter.
 
 Examples: (`claude-code`, `ABC`) and (`claude`, `ABC`) are identical keys;
 (`codex`, `ABC`), (`claude`, `abc`), and (`claude`, ` ABC `) are different.
@@ -212,7 +218,7 @@ from retained bundle evidence; source ownership remains filter-time evidence.
 | `archive.handoff.recordedBranch`, `recordedWorkspace`, `workspaceRoot` | Native working directory, Git branch and workspace evidence | Branch validity/detached HEAD policy and current-checkout comparison |
 | `archive.metadata.structuredCounts`, `toolErrorsObservable` | Availability from actual source format and recorded filter version | Unknown versus zero; common counts and metadata schema |
 | `archive.BuildMetadata`, `SessionLabels`, `BuildTranscript`, `BuildHandoff` | Resolve parser and compute Analysis once at operation entry | Accept that same Analysis; never independently parse bundle |
-| `archive.filter_session_labels`, `filter_subagent_meta`, composer filter | Safe retained facts, sanitized harness observations | Existing filtering/privacy/gap rules and source header assembly |
+| `archive.filter_session_labels`, `filter_subagent_meta`, `subagent_type.SanitizeSubagentType`, composer filter | Safe retained facts, sanitized harness observations | Existing filtering/privacy/gap rules and source header assembly |
 | `collector.subagent_capture.checkSubagentProvenance`, `CheckImportedSubagent` | Local filter observations: native/agent IDs, complete identity flags, native bounds | Parent ownership, admission/time bounds, child publication links |
 | `capture` hook evidence/model/status helpers | Decode native enums/fields; sanitize via shared evidence filter | Hook/native outcome precedence, requests, debounce and replay policy |
 

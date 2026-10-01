@@ -592,7 +592,7 @@ implementation differences as work proceeds.
 
 | Phase | Deliverable | Completion gate | Status |
 | --- | --- | --- | --- |
-| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | Proposed |
+| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | [PR #278](https://github.com/wangjohn/agent-archive/pull/278): contracts and measured references; independent review/CI pending. |
 | 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | Proposed |
 | 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | Proposed |
 | 3 | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | Proposed |
@@ -700,7 +700,9 @@ the architecture map and capability documentation with the implementation.
 
 ## Phase-entry artifacts and recommended defaults
 
-Phase 0 should produce a short contract checklist beside this proposal,
+Phase 0 artifacts are the [contract checklist](agent-integration-contracts.md) and
+[performance reference](agent-integration-baseline.md), including the unresolved
+historical growing-file timing difference. Phase 0 should produce a short contract checklist beside this proposal,
 updating these details in place before dependent implementation starts. No
 production abstraction is required to record the examples and baseline.
 

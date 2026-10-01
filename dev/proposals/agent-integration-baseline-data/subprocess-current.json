@@ -6,27 +6,27 @@
       "results": {
         "enabled": {
           "samples": 100,
-          "median_ms": 24.64,
-          "p95_ms": 36.99,
-          "max_ms": 47.76
+          "median_ms": 25.05,
+          "p95_ms": 34.73,
+          "max_ms": 53.02
         },
         "paused": {
           "samples": 100,
-          "median_ms": 16.97,
-          "p95_ms": 29.28,
-          "max_ms": 35.99
+          "median_ms": 17.09,
+          "p95_ms": 28.29,
+          "max_ms": 34.29
         },
         "disabled": {
           "samples": 100,
-          "median_ms": 15.96,
-          "p95_ms": 24.29,
-          "max_ms": 37.93
+          "median_ms": 16.09,
+          "p95_ms": 24.07,
+          "max_ms": 37.38
         },
         "ignored": {
           "samples": 100,
-          "median_ms": 15.51,
-          "p95_ms": 21.34,
-          "max_ms": 27.53
+          "median_ms": 16.79,
+          "p95_ms": 28.37,
+          "max_ms": 42.94
         }
       }
     },
@@ -35,27 +35,27 @@
       "results": {
         "enabled": {
           "samples": 100,
-          "median_ms": 19.28,
-          "p95_ms": 26.9,
-          "max_ms": 31.52
+          "median_ms": 22.8,
+          "p95_ms": 48.9,
+          "max_ms": 60.34
         },
         "paused": {
           "samples": 100,
-          "median_ms": 15.83,
-          "p95_ms": 22.52,
-          "max_ms": 30.26
+          "median_ms": 16.95,
+          "p95_ms": 28.95,
+          "max_ms": 41.18
         },
         "disabled": {
           "samples": 100,
-          "median_ms": 15.32,
-          "p95_ms": 23.36,
-          "max_ms": 45.33
+          "median_ms": 15.71,
+          "p95_ms": 27.63,
+          "max_ms": 33.23
         },
         "ignored": {
           "samples": 100,
-          "median_ms": 14.44,
-          "p95_ms": 21.75,
-          "max_ms": 24.51
+          "median_ms": 15.86,
+          "p95_ms": 25.98,
+          "max_ms": 41.71
         }
       }
     },
@@ -64,27 +64,27 @@
       "results": {
         "enabled": {
           "samples": 100,
-          "median_ms": 20.28,
-          "p95_ms": 27.4,
-          "max_ms": 35.08
+          "median_ms": 20.82,
+          "p95_ms": 32.06,
+          "max_ms": 43.13
         },
         "paused": {
           "samples": 100,
-          "median_ms": 15.16,
-          "p95_ms": 22.87,
-          "max_ms": 30.62
+          "median_ms": 15.62,
+          "p95_ms": 23.22,
+          "max_ms": 37.19
         },
         "disabled": {
           "samples": 100,
-          "median_ms": 14.49,
-          "p95_ms": 21.33,
-          "max_ms": 29.89
+          "median_ms": 15.23,
+          "p95_ms": 22.49,
+          "max_ms": 29.46
         },
         "ignored": {
           "samples": 100,
-          "median_ms": 14.36,
-          "p95_ms": 20.32,
-          "max_ms": 26.03
+          "median_ms": 15.11,
+          "p95_ms": 24.2,
+          "max_ms": 31.3
         }
       }
     }
