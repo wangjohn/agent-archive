@@ -48,7 +48,9 @@ context budget.
   file. That format is private, versioned per app, and fragile to forge.
   The receiving agent starts a new session with the handoff as context.
 - Moving or inspecting workspace state. Uncommitted changes stay on the
-  source machine, and v1 does not run `git` (see
+  source machine. Reading the current directory's `origin` and branch runs
+  `git` through a bounded helper (`internal/gitremote`, 500 ms, best effort);
+  nothing else about the workspace is inspected (see
   [Workspace section](#workspace-section)).
 - Summarizing with an LLM. The output is deterministic rendering; the
   receiving agent does its own summarizing.
@@ -66,7 +68,7 @@ agent-archive handoff [SESSION_ID | --latest] [flags]
 |---|---|---|
 | `SESSION_ID` | — | Archive session ID from `list`. Mutually exclusive with `--latest` and `--file`. |
 | `--latest` | off | Most recent session for the project (see [Selection](#selection)). |
-| `--project DIR\|NAME` | current directory | The project the picker and a title look at first (a directory's repository, or a project name), and the directory `--latest` searches. See [session finding](session-finding.md#3-scope-this-repository-first). |
+| `--project DIR\|NAME` | current directory | The project the picker and a title look at first (a directory's repository, or a project name), and the directory `--latest` searches, matched by its path and, when it is in a repository with an `origin` remote, by that repository (see [Matching by repository](#matching-by-repository)). See [session finding](session-finding.md#3-scope-this-repository-first). |
 | `--all-projects` | off | The picker and a title look at every project, not only the working directory's repository. Not with `--project`, `--latest`, or `--file`. |
 | `--harness NAME` | any | Restrict `--latest`, or disambiguate an ID, to `claude`, `codex`, or `cursor`. |
 | `--file PATH --harness NAME` | — | Render a native transcript file directly. Same machine only; still filtered. |
@@ -111,11 +113,14 @@ first when `--source` allows it, otherwise `locateMetadataKey`.
 pick is visible:
 
 1. **Local registrations.** `collector.OpenLocalStoreReadOnly(home)` then
-   `LoadRegistrations()`. Keep registrations whose `ProjectRoot` equals the
-   project directory or contains it (compared with and without symlinks
-   resolved; a root inside the directory does not count, so running from ~
-   does not match every project), match `--harness`, and exclude subagent
-   registrations (`ParentSessionID != ""`). Order by the transcript file's
+   `LoadRegistrations()`. Keep registrations that match the project by path
+   or by repository, match `--harness`, and exclude subagent registrations
+   (`ParentSessionID != ""`). *By path:* `ProjectRoot` equals the project
+   directory or contains it (compared with and without symlinks resolved; a
+   root inside the directory does not count, so running from ~ does not
+   match every project). *By repository:* the registration's `repo_key`
+   equals the current directory's
+   ([Matching by repository](#matching-by-repository)). Order by the transcript file's
    modification time, falling back to `RegisteredAt`, and take the first
    that yields a bundle with a prompt: a session with no transcript yet, an
    unreadable or oversized one, or one that has only just started is passed
@@ -128,7 +133,8 @@ pick is visible:
    (read if present, not yet observed). An explicit ID is always honored.
 2. **Archive.** If no local registration matches (another machine, or
    `--source archive`), list metadata with `reader.ListMetadataWithOptions`
-   and keep sidecars whose `ProjectID == archive.ProjectID(projectRoot)`,
+   and keep sidecars whose `ProjectID` is one of the current directory's
+   (the same path) or whose `repo_key` equals its key (the same repository),
    ordered by `CapturedAt`. Exclude sessions with a `ParentSessionID`.
 3. If still nothing matches, exit 1. The message names what was searched
    and, when the archive holds any sessions, lists the five most recent
@@ -136,12 +142,17 @@ pick is visible:
    picked without a separate `list`:
 
    ```
-   agent-archive: handoff: no session for this project on this machine or
-   under its project ID in the archive. Recent archived sessions:
+   agent-archive: handoff: no session for /work/widget on this machine or in the archive.
+   Tried this directory's repository (its remote origin), then its path. A session
+   matches when it ran in a checkout of the same origin or at this path. Recent archived sessions:
      codex   12 minutes ago  another machine  agent-archive handoff 7f3c…
      claude  2 hours ago     this machine     agent-archive handoff 91ab…
      …
    ```
+
+   When the directory has no key (not in a git repository with a remote
+   named `origin`), the message says only the path was tried and that
+   matching by repository needs that remote.
 
    Rows show only metadata (harness, `CapturedAt` as a relative time, and
    whether `MachineID` equals this machine's), so the fallback keeps the
@@ -149,11 +160,102 @@ pick is visible:
    no project column in v1: a name taken from local config would be blank
    on the other machine, which is where it would be needed.
 
-Known limit: `ProjectID` hashes the absolute path, so on a second machine the
-same repository only matches when it is checked out at the same path.
-Phase 2 adds a portable repository key (see [Later](#later-phase-2)). Until
-then, the cross-machine flow is step 3's fallback list, or `list` →
-`handoff ID`.
+`ProjectID` hashes the absolute path, so on its own a second Mac matched
+only when the repository was at the same path. The repository key removes
+that limit for repositories with an `origin` remote; a directory without one
+still matches by path only, and its cross-machine flow is step 3's fallback
+list, or `list` → `handoff ID`.
+
+### Matching by repository
+
+Package R2 of `dev/proposals/implemented/portable-handoff-and-onboarding.md`. The key is
+`archive.RepoKey` of the `origin` remote (`repo_key` in the registration and
+the metadata sidecar; R1 records it).
+
+- **The current directory's key** is asked of git for the directory itself
+  (`git -C DIR config --get remote.origin.url`, bounded by
+  `gitremote.Timeout`), which answers for any directory inside a checkout:
+  running in `repo/pkg/x` has `repo`'s key, and running from a parent of
+  several repositories has none, so it matches nothing by repository (the
+  path rule's "a root inside the directory does not count" holds). Any
+  failure is no key, and then matching is exactly the path rule.
+- **Path matches outrank repository matches.** The search order is this
+  machine's path matches (most recently active first), the archive's path
+  matches (most recently captured first), this machine's repository-only
+  matches, then the archive's. A repository-only candidate is considered
+  only when no path match exists anywhere, so a repository-only match can
+  never displace a working `--latest`: a bucket writer must not be able to
+  turn one into a question or a refusal. A registration or sidecar that
+  matches by path is a path match even when its key matches too. A path
+  match is accepted even when the two keys differ (the remote was changed
+  since). This machine's sessions are still tried before the archive's
+  within each kind, so a stale local session hides a newer one from another
+  computer; `--source archive` skips the local ones. The Cursor fallback
+  (`--to` inside Cursor, which sets `--latest --harness cursor`) goes through
+  the same search, so an unrelated newer clone's session cannot displace the
+  calling chat's own.
+- **Forks.** Only `origin` is read. A fork's `origin` is the fork, which
+  differs from upstream's, so the two do not match.
+- **The key is a convenience, not authentication, and a repository-only
+  match must be accepted by a person.** A directory's key comes from
+  `.git/config`, which whoever wrote the repository controls, and a
+  session's key from a sidecar anyone with write access to the bucket can
+  label; the key is also a hash of a guessable public URL. So a repository
+  that names another repository's origin, or a planted session, can make
+  `--latest` reach a session that matched only by repository. A path match
+  cannot be steered that way by a hostile repository (it names no path of
+  its own); it can be forged by a writer of the bucket, who can compute a
+  project ID (a hash of a path), so the archive is trusted as far as its
+  writers are. When the search reaches a repository-only match,
+  `handoffResolver.acceptRepoMatch` puts it to a gate (`newRepoMatchGate`)
+  before it is used. An archived session is judged from its sidecar alone:
+  none of its source bundle is read until the gate passes, so a hostile
+  bucket cannot make every `--latest` download a large bundle first. For a
+  session on this machine the local transcript is read first (its first
+  prompt is needed for the question), and nothing is printed or launched
+  until the gate passes. The `handoff: using ...` line is printed only
+  after the gate passes.
+  - On a terminal (both stdin and stdout, with `AGENT_ARCHIVE_NONINTERACTIVE`
+    off) stderr says `handoff: matched by repository (remote origin), not by
+    path`, then the machine (this or another), the project name, the start
+    time and the first prompt (the sidecar's `title`, or the transcript's for
+    a session on this machine), each of the session's own words shown through
+    `archive.DisplayLine` and cut to 60 columns, and asks `Hand off this
+    session?`, default No. Nothing is printed to stdout or launched, and no
+    archived source is read, before a yes.
+  - Where it cannot ask (a pipe, or a coding agent's shell) it exits 1. It
+    prints only the machine label and the start time (both ours) and, worded
+    for the person, `Ask the user whether to use it; they can run: agent-archive
+    handoff ID ...`, with the `--harness`, `--to`, and `--worktree` given (not
+    `--format`, `--output`, `--max-bytes`, `--branch`, `--project`, or
+    `--source`: the person adds what they want). The ID is printed only when
+    it is well formed (32 lowercase hexadecimal digits, the one shape the
+    program makes); an ID from a sidecar or a registration can be anything, of
+    any length, so otherwise the message says `they can find it with:
+    agent-archive list`. No other text from the sidecar or the transcript is
+    printed there, since an agent reads it. The same rule covers the IDs in
+    the `handoff: using` line and in the list of recent sessions that ends a
+    failed `--latest`.
+  - **That refusal is a speed bump, not a barrier.** It stops a steered agent
+    from using the session by accident. An agent can still run the printed
+    command, name a session ID itself, or set `AGENT_ARCHIVE_NONINTERACTIVE=0`.
+  - An explicit ID is never gated: naming a session is the person's own
+    choice. The picker never matches by key (it lists every session), so it
+    is not gated. See the threat model in `docs/security/privacy.md`.
+- **Branch.** Nothing is filtered by branch. When the session's recorded
+  branch differs from the current checkout's (`git branch --show-current`,
+  through `gitremote.Branch`; empty when detached), stderr says `handoff:
+  session was on `feature/x`; you are on `main``, and the handoff's
+  workspace section says so too. Under `--worktree` the agent starts in a new
+  worktree, not in this directory, so nothing about this checkout is
+  compared or said.
+- **Where the session ran.** The handoff's workspace section adds `The
+  recorded directory differs from your current checkout…` when the
+  transcript's recorded working directory neither equals, contains, nor lies
+  inside the launch directory (`HandoffOptions.Checkout`, compared without
+  storing the full path: the document still names the base name only). The
+  fields are `workspace.elsewhere` and `workspace.current_branch`, both
+  omitted when not set; `handoff_version` stays 1.
 
 ## Content source
 
@@ -352,14 +454,19 @@ the privacy doc's known misses).
 
 ### Workspace section
 
-From the bundle only: the last retained `cwd` (basename only in the
-rendered text) and `gitBranch`, labeled "as recorded". The command does not
-run `git`. `handoff` runs on the machine where work continues, so a probe
-would describe the receiving workspace, not the source one. On the same
-machine the receiving agent can run `git status` itself, and the preamble
-tells it to. On another machine the useful fact is whether the source left
-unpushed work, which only the source can report; phase 2 records it at the
-Stop hook (see [Later](#later-phase-2)).
+From the bundle: the first retained `cwd` (basename only in the rendered
+text) and the last `gitBranch`, labeled "as recorded". `handoff` runs on the
+machine where work continues, so anything it reads from the receiving
+workspace describes that one, not the source's: it is only compared with the
+recorded values, never mixed into them. The caller gives
+`HandoffOptions.Checkout` (the launch directory and its branch), and the
+section then adds a line when the recorded directory is not the current
+checkout ("check paths against the current tree") and when the branches
+differ; the full paths are compared and dropped, never stored in the
+document. On the same machine the receiving agent can run `git status`
+itself, and the preamble tells it to. On another machine the useful fact is
+whether the source left unpushed work, which only the source can report;
+phase 2 records it at the Stop hook (see [Later](#later-phase-2)).
 
 ## Budget
 
@@ -488,6 +595,19 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
 - **Selection**: `--latest` prefers local over archive; subdirectory cwd
   matches its project; subagent registrations are skipped; `--harness`
   filters; no match exits 1 with the search description.
+- **Repository matching**: two machines' project IDs with one key both
+  match; a path match works whatever the keys; no key is the path rule
+  exactly; a subdirectory of a repository matches and a parent of
+  repositories does not (real `git`); a repository-only match is named on
+  stderr, asked about on a terminal (default No), and refused, printing the
+  explicit command, where nothing can be asked; an explicit ID is never
+  gated; a session from another machine launches with retrieval hints that
+  read the archive; the branch difference line; the no-match text; a path
+  match outranks a newer repository-only one (archive, this machine, Cursor
+  fallback); the refusal prints no text from the sidecar or the transcript
+  and the question shows it plain and capped (hostile fixtures: an
+  instruction sentence, zero-width and tag characters, escapes, 20 KB); no
+  source is read before the answer.
 - **Privacy**: planted `sk-`, `AKIA`, and PEM values in a local transcript
   are redacted in output; `--output` mode is `0600`; overwrite refused
   without `--force`.
@@ -522,11 +642,8 @@ Each PR follows the existing review process in
 
 ## Later (phase 2)
 
-- **Portable repository key** so `--latest` works across machines: record
-  `repo_key = sha256(normalized origin remote URL)[:16]` in metadata
-  (schema bump), computed by the hook from `git config remote.origin.url`
-  and never storing the URL itself. `--latest` matches on it when
-  `ProjectID` does not.
+- ~~**Portable repository key**~~ shipped: see
+  [Matching by repository](#matching-by-repository).
 - **Source workspace state at stop.** The Stop hook records the current
   commit and a count of uncommitted files as supplemental evidence (counts
   only, never names). The handoff then warns "the source left 3 uncommitted
@@ -546,6 +663,9 @@ Settled 2026-09-22.
    always saved when anything is trimmed.
 2. **No `git` in v1.** The workspace line shows only the recorded branch
    and directory; recording source-side state at the Stop hook is phase 2.
+   (Since superseded for reads: `--latest` asks git for the current
+   directory's origin key and the launch directory's branch, both bounded and
+   best effort, and recording source-side state is still not done.)
 3. **No project column in `list` for v1.** `--latest` lists recent sessions
    when it finds no match; a portable repository key and a project name in
    metadata are phase 2.

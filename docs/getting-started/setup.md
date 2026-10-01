@@ -90,6 +90,24 @@ captured. If you finish with no project included, setup asks again.
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
+- **Cloudflare R2: create a new bucket for me** (experimental, and hidden
+  unless `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` is set in the shell that
+  runs setup): setup makes a new bucket and a key for it from one Cloudflare
+  API token you paste (or set as `CLOUDFLARE_API_TOKEN`, with
+  `CLOUDFLARE_ACCOUNT_ID`). It prints the token's permissions first, then asks
+  for the bucket name and an optional data location. It is offered only in
+  this interactive setup, never by `setup --yes`. The [bucket
+  guide](bucket.md#let-setup-create-it-experimental) has the steps, and
+  [privacy](../security/privacy.md#guided-r2-bucket-creation) what happens to
+  the token. If something fails, setup says what to fix, and you can try
+  again with the same bucket, choose another storage option, or stop. A
+  Ctrl-C while it creates and checks the key stops it and revokes that key's
+  token; a Ctrl-C after the key exists, while setup stores it, leaves that
+  key's token in your account (its name was printed when it was created).
+  However else setup ends without using the new bucket and key (you cancel
+  the review, an error, an interrupted storage check), it says they exist and
+  how to remove them, or that your saved setup draft uses them; it says
+  nothing when they are in use.
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
@@ -158,15 +176,19 @@ already have a profile with credentials, and R2 otherwise.
   still names it, that running setup again resumes with it). Guided creation is interactive
   only; `setup --yes` still takes an existing bucket.
 
-Setup checks the connection in two steps. First it lists at most one object
+Setup checks the connection in two steps. (After **Cloudflare R2: create a new
+bucket for me** setup has already made this check on the new key before storing
+it, so a key that doesn't work is revoked at once; the check then runs again on
+the stored key.) First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or
 profile fails within moments with an explanation. Then it writes one
 temporary synthetic object (`.setup-test/<random>.json`), reads it back, and
 deletes it. That proves the credentials work; it does not prove the bucket is private. Setup then
 inspects the bucket's public-access settings read-only (S3 only; see
 [privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
-read those settings, so for R2 the review reminds you to check that public
-access is disabled in the Cloudflare dashboard.
+read those settings. For an existing R2 bucket, the review reminds you to
+check public access in the Cloudflare dashboard. For a bucket setup just
+created, it shows what the temporary Cloudflare token checked at setup.
 
 Never pass secrets as command arguments; secret input fails rather than
 falling back to visible keystrokes.
@@ -215,11 +237,12 @@ any row is ✗, setup does not offer to start: fix what it names, then choose
 
 - **Storage connected**: the storage check wrote, read, listed and deleted a
   test file.
-- **Bucket is private**: the bucket blocks all public access. A public
-  bucket is marked ✗ with a link on fixing it; a bucket whose settings could
-  not be read is marked !. R2 keys cannot read public-access settings, so
-  for R2 the review reminds you to check public access in the Cloudflare
-  dashboard.
+- **Bucket is private**: for S3, all bucket-level Block Public Access settings
+  were observed on. For a newly created R2 bucket, `r2.dev` was off and no
+  custom domains were enabled when setup checked. An existing R2 bucket, or
+  one whose settings could not be read, is marked !. A public bucket is marked
+  ✗ unless you chose **Continue anyway** during guided R2 creation; that
+  choice remains visible as a warning in the review.
 - **Hook files are valid**: setup can edit each app's hook file.
 - **Codex needs one step**: Codex asks you to approve new hooks. After
   setup, run `/hooks` in Codex and approve them.
@@ -412,6 +435,10 @@ what was not](install.md#platforms)).
   so a `credential_process` helper such as `aws-vault`, `op` or one in
   `~/.local/bin` is found. A directory that does not exist when setup runs
   is not recorded; run setup again after installing a helper there.
+- **The job's working directory is `/`.** Use an absolute path or `~/` for
+  a `credential_process` helper under your home. A path such as
+  `./bin/helper` is resolved from `/`, as it is for the macOS collector.
+  Existing installations get this setting when you run setup again.
 - **Credentials.** There is no Keychain. An R2 key is kept in a private file
   that is not encrypted, and an S3 profile stores no secret of
   agent-archive's own; prefer S3 on Linux. In a container or a service, set
@@ -422,8 +449,16 @@ what was not](install.md#platforms)).
 - **Moving or copying.** A data directory copied to another machine, or a
   cloned VM or container image, makes `status` and `setup` warn that it was
   set up on a different machine; see [cloned machines on
-  Linux](../guides/multiple-machines.md#cloned-machines-on-linux). A home
-  directory shared by several machines is not supported.
+  Linux](../guides/multiple-machines.md#cloned-machines-on-linux).
+- **A network home.** If the data directory or `~/.config/systemd/user` is on
+  a network filesystem (NFS, SMB/CIFS, sshfs and the like), setup refuses
+  before its first question and changes nothing: machines sharing a home would
+  share one machine ID, cannot rely on file locks and would each run the
+  collector. Put the data directory on local disk with `AGENT_ARCHIVE_HOME`,
+  or, for a home only one machine mounts, run `agent-archive setup
+  --allow-network-home`, which is recorded in `config.json` and does not stop
+  `status` warning. See [a home directory shared across
+  machines](../guides/multiple-machines.md#a-home-directory-shared-across-machines).
 - **Uninstalling without a user bus.** `agent-archive uninstall` refuses
   when the manager cannot say whether the job is loaded;
   `uninstall --skip-scheduler` removes the units, the hooks and the skill

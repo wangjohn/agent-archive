@@ -25,6 +25,10 @@ const snapshotPrefix = "cursor-snapshot-"
 // long the pass lasts.
 const snapshotLockName = "in-use.lock"
 
+// snapshotLockNewName is the file lockSnapshot creates and locks before
+// renaming it to snapshotLockName.
+const snapshotLockNewName = snapshotLockName + ".new"
+
 // staleSnapshotAge is how old a leftover snapshot directory must be before
 // it is removed. Only a killed process leaves one, and a directory whose lock
 // is held is never removed whatever its age.
@@ -168,7 +172,7 @@ const cacheDirTagName = "CACHEDIR.TAG"
 
 // errCacheDirNotPrivate means agent-archive's folder in the cache home exists
 // but is not a directory of this user's that nobody else can write to, or the
-// cache home is one every account can write to (without the sticky bit). A
+// cache home grants group or other write access (without the sticky bit). A
 // directory another account can write to could have the directory inside it
 // renamed away and replaced between the checks and the copy.
 var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache directory is not private to this user")
@@ -183,8 +187,8 @@ var errCacheDirNotPrivate = errors.New("agent-archive's folder in the cache dire
 // and a failure to write the tag must not stop the read.
 //
 // A cache home that was already there is the user's and is left as it is
-// (its mode is never changed), unless every account can write to it without
-// the sticky bit: anyone could then rename dir away and put their own in its
+// (its mode is never changed), unless group or other accounts can write to it
+// without the sticky bit: they could rename dir away and put their own in its
 // place between the checks and the copy, so it is refused, the way dir is.
 func prepareCacheDir(dir string) error {
 	cache := filepath.Dir(dir)
@@ -193,8 +197,8 @@ func prepareCacheDir(dir string) error {
 	}
 	if info, err := os.Stat(cache); err != nil || !info.IsDir() {
 		return errors.New("inspect the cache directory")
-	} else if info.Mode().Perm()&0o002 != 0 && info.Mode()&fs.ModeSticky == 0 {
-		return fmt.Errorf("%w: every account can write to the cache directory %s; set XDG_CACHE_HOME to a directory of yours, or take that write access away (chmod o-w)", errCacheDirNotPrivate, cache)
+	} else if info.Mode().Perm()&0o022 != 0 && info.Mode()&fs.ModeSticky == 0 {
+		return fmt.Errorf("%w: other accounts can write to the cache directory %s; set XDG_CACHE_HOME to a directory of yours, or take that write access away (chmod go-w)", errCacheDirNotPrivate, cache)
 	}
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return errors.New("create agent-archive's folder in the cache directory")
@@ -224,12 +228,12 @@ func writeCacheDirTag(dir string) {
 }
 
 // abandonedSnapshotAge is how old the lock file of an unlocked snapshot
-// directory must be before the directory is removed. A Reader takes the lock
-// right after creating the file, and the lock is released only by Close,
-// which removes the directory, or by the process dying; so an unlocked lock
-// file older than this was left by a process that died (Ctrl-C, a crash).
-// The grace only covers the instant between creating the file and locking
-// it.
+// directory must be before the directory is removed. A Reader's lock file
+// appears already locked (see lockSnapshot), and the lock is released only
+// by Close, which removes the directory, or by the process dying; so an
+// unlocked lock file was left by a process that died (Ctrl-C, a crash). The
+// grace is for a Reader of an earlier release, such as a collector not yet
+// restarted after an upgrade, which created the file before locking it.
 const abandonedSnapshotAge = time.Minute
 
 // ownSnapshots are the snapshot directories this process's Readers created
@@ -271,9 +275,10 @@ func RemoveOwnSnapshots() {
 // backfill command calls it first, and the collector at the start of every
 // pass; any other long-running reader should too. A locked
 // one belongs to a read in progress and is left alone. An unlocked one whose
-// lock file is over abandonedSnapshotAge old was abandoned and is removed; one
-// without a lock file may belong to a read that is just starting, so it is
-// removed only once it is over staleSnapshotAge old.
+// lock file (or, for a process killed before renaming it into place,
+// snapshotLockNewName) is over abandonedSnapshotAge old was abandoned and is
+// removed; one without either may belong to a read that is just starting, so
+// it is removed only once it is over staleSnapshotAge old.
 func RemoveStaleSnapshots() {
 	root := snapshotRootPath()
 	info, err := os.Lstat(root)
@@ -294,8 +299,11 @@ func RemoveStaleSnapshots() {
 		}
 		age := staleSnapshotAge
 		info, err := e.Info()
-		if lock, lockErr := os.Lstat(filepath.Join(dir, snapshotLockName)); lockErr == nil {
-			age, info, err = abandonedSnapshotAge, lock, nil
+		for _, name := range []string{snapshotLockName, snapshotLockNewName} {
+			if lock, lockErr := os.Lstat(filepath.Join(dir, name)); lockErr == nil {
+				age, info, err = abandonedSnapshotAge, lock, nil
+				break
+			}
 		}
 		if err == nil && time.Since(info.ModTime()) > age {
 			_ = os.RemoveAll(dir)

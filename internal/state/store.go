@@ -36,6 +36,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Store persists small operational files under a private home
@@ -242,6 +243,8 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
+	span := trace.Start("load registrations")
+	defer span.End()
 	dir := filepath.Join(s.home, "registrations")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -265,6 +268,7 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 		}
 		out = append(out, reg)
 	}
+	span.Count("registrations", len(out))
 	sort.Slice(out, func(i, j int) bool { return out[i].ArchiveSessionID < out[j].ArchiveSessionID })
 	return out, nil
 }

@@ -26,6 +26,7 @@ type admissionIntent struct {
 	NativeSessionID string    `json:"native_session_id"`
 	ProjectRoot     string    `json:"project_root"`
 	DestinationID   string    `json:"destination_id"`
+	PauseGeneration string    `json:"pause_generation,omitempty"`
 	TranscriptPath  string    `json:"transcript_path,omitempty"`
 	CursorVersion   string    `json:"cursor_version,omitempty"`
 	ComposerMode    string    `json:"composer_mode,omitempty"`
@@ -36,6 +37,14 @@ const (
 	maxAdmissionIntents   = 128
 	maxAdmissionIntentAge = 24 * time.Hour
 	admissionQueueWait    = 200 * time.Millisecond
+	// pruneAdmissionIntentsWait is setup's wait for the queue lock. Hooks sync
+	// outside it, but a rename under it can still stall for over a second on
+	// a busy machine. Setup runs on no hook's budget; this bound only keeps a
+	// wedged holder from hanging it.
+	pruneAdmissionIntentsWait = 10 * time.Second
+	// clearAdmissionIntentsWait stays short: pause and resume clear holding
+	// hooks.lock, which hooks wait on inside their own budget.
+	clearAdmissionIntentsWait = 2 * time.Second
 )
 
 type cursorFollowupEvent string
@@ -48,10 +57,10 @@ const (
 func admissionIntentDir(home string) string { return filepath.Join(home, "admission-intents") }
 
 // ClearAdmissionIntents discards starts observed before a pause. Callers hold
-// hooks.lock while changing the pause flag, so a hook that times out during
-// that change either queues before this purge or observes the paused config.
+// hooks.lock while changing the pause flag. Its generation also invalidates
+// staged files and hooks waiting across a complete pause/resume interval.
 func ClearAdmissionIntents(home string) error {
-	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", clearAdmissionIntentsWait)
 	if err != nil {
 		return fmt.Errorf("lock admission intent queue: %w", err)
 	}
@@ -78,7 +87,7 @@ func ClearAdmissionIntents(home string) error {
 // PruneAdmissionIntents removes retry records whose project or destination
 // setup changed. The queue lock also serializes this with hook-side writes.
 func PruneAdmissionIntents(home string, cfg config.Config) error {
-	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", pruneAdmissionIntentsWait)
 	if err != nil {
 		return fmt.Errorf("lock admission intent queue: %w", err)
 	}
@@ -126,21 +135,97 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 	return included
 }
 
-// queueAdmissionIntent is only used after hooks.lock times out. It queues a
-// proven start, or a Cursor response/stop that supplies a valid transcript
-// path. A follow-up can update an existing registration but never admit a new
-// session. The queue lock bounds the count across concurrent hook processes.
-func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
+// queueAdmissionIntentInGeneration binds a contended event to the capture
+// window observed before its lock wait, rather than whichever window is active
+// after that wait. A complete pause/resume cycle must not admit the old start.
+func queueAdmissionIntentInGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, generation string) (bool, error) {
+	return queueAdmissionIntentWithGeneration(home, harness, kind, payload, now, nil, &generation)
+}
+
+// The intent is written and synced before the lock and only renamed into
+// the queue under it; the directory is synced after the lock is released.
+// Each sync is an F_FULLFSYNC on macOS and can take seconds on a busy
+// machine, and setup's prune and pause's clear wait for this lock, so
+// neither waits for a hook's disk. Each intent has a file of its own, so
+// nothing another holder does can make the staged file stale. The first
+// intent creates only the queue directory under the lock, then stages without
+// creating directories, so uninstall's purge cannot be undone by its write.
+func queueAdmissionIntentWithGeneration(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, afterStage func(), generation *string) (bool, error) {
 	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
 	if err != nil || !queued {
 		return false, err
 	}
+	if generation != nil && intent.PauseGeneration != *generation {
+		return false, nil
+	}
+	id, err := local.ID()
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
+	staged, err := stageAdmissionIntent(home, intent, payload, path, local.StageInExistingDir)
+	if err != nil || staged == nil {
+		return false, err
+	}
+	defer staged.Discard()
+	if afterStage != nil {
+		afterStage()
+	}
+	committed, err := commitAdmissionIntent(home, intent, payload, staged)
+	if err != nil || committed == nil {
+		return false, err
+	}
+	if err := committed.SyncDir(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Create the first queue directory under its lock, but sync every intent
+// outside it. Staging never creates a directory, so a concurrent purge cannot
+// be undone by a hook that was waiting for its disk write.
+func stageAdmissionIntent(home string, intent admissionIntent, payload map[string]any, path string, stage func(string, any) (*local.Staged, error)) (*local.Staged, error) {
+	staged, err := stage(path, intent)
+	if !os.IsNotExist(err) {
+		return staged, err
+	}
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
 	if err != nil {
-		return false, fmt.Errorf("lock admission intent queue: %w", err)
+		return nil, fmt.Errorf("lock admission intent queue: %w", err)
+	}
+	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	if err == nil && ok {
+		err = os.MkdirAll(admissionIntentDir(home), 0700)
+	}
+	unlock()
+	if err != nil || !ok {
+		return nil, err
+	}
+	staged, err = stage(path, intent)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return staged, err
+}
+
+// commitAdmissionIntent puts an intent in the queue under the queue lock,
+// unless the queue is full or the intent is no longer valid, and returns
+// the committed file (nil when it queued nothing). staged is the intent
+// already staged; the caller discards it if it is not committed.
+func commitAdmissionIntent(home string, intent admissionIntent, payload map[string]any, staged *local.Staged) (*local.Staged, error) {
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
+	if err != nil {
+		return nil, fmt.Errorf("lock admission intent queue: %w", err)
 	}
 	defer unlock()
-	return writeAdmissionIntent(home, intent, payload)
+	ok, err := admissionIntentStillQueueable(home, intent, payload)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if err := staged.Commit(); err != nil {
+		return nil, err
+	}
+	return staged, nil
 }
 
 func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (admissionIntent, bool, error) {
@@ -169,7 +254,8 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	intent := admissionIntent{
 		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
 		NativeSessionID: nativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(),
-		CursorVersion: firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
+		PauseGeneration: cfg.PauseGeneration,
+		CursorVersion:   firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
 	}
 	if intent.Harness == "cursor" {
 		intent.TranscriptPath = cursorPath
@@ -179,7 +265,9 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	return intent, true, nil
 }
 
-func writeAdmissionIntent(home string, intent admissionIntent, payload map[string]any) (bool, error) {
+// admissionIntentStillQueueable is the check made under the queue lock
+// before an intent goes in.
+func admissionIntentStillQueueable(home string, intent admissionIntent, payload map[string]any) (bool, error) {
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
@@ -188,22 +276,24 @@ func writeAdmissionIntent(home string, intent admissionIntent, payload map[strin
 		return false, err
 	}
 	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
+	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
 	if !os.IsNotExist(err) && err != nil {
 		return false, err
 	}
-	if len(entries) >= maxAdmissionIntents {
+	// Only queued intents count. Hooks stage theirs in the same folder before
+	// taking the lock, and those temporary files, this hook's own among them,
+	// are not in the queue.
+	queued := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			queued++
+		}
+	}
+	if queued >= maxAdmissionIntents {
 		return false, errors.New("admission intent queue is full")
-	}
-	id, err := local.ID()
-	if err != nil {
-		return false, err
-	}
-	if err := local.Write(filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id)), intent); err != nil {
-		return false, err
 	}
 	return true, nil
 }
@@ -310,7 +400,7 @@ func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Ti
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	return owned && project.Included && project.Root == intent.ProjectRoot &&
-		intent.DestinationID == cfg.DestinationID() &&
+		intent.DestinationID == cfg.DestinationID() && intent.PauseGeneration == cfg.PauseGeneration &&
 		intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) &&
 		cfg.Archive.Eligible(project.Root, intent.ObservedAt)
 }

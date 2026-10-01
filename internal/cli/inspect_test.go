@@ -225,7 +225,7 @@ func TestListRejectsBadArguments(t *testing.T) {
 		{"list", "--skill-sha256", "abc"},
 		{"list", "--skill-sha256", strings.Repeat("A", 64)},
 		{"list", "--limit", "-1"},
-		{"list", "extra"},
+		{"list", "extra", "more"},
 		{"list", "--bogus"},
 		{"show"},
 		{"show", "id", "extra"},

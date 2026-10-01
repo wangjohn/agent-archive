@@ -1,14 +1,43 @@
 # Portable handoff, lower-friction setup, and Linux: plan and specification
 
-> **Proposed.** Parts 1 and 2 are being implemented; Part 3 (Linux) is planned as a separate effort. Prepared 2026-09-29 from a read of the current code (no builds or tests were run). File and line references are to `main` at commit 5563546.
+> **Implemented**, with the open items under [Outcome](#outcome-as-built). Part 1 (repo-key handoff matching) and Part 2 (guided bucket creation) shipped in PRs #157, #161, #167, #171 and #184; Part 3 (Linux) shipped through the series that [platform-abstraction.md](platform-abstraction.md) re-planned. Prepared 2026-09-29 from a read of the code at commit 5563546 (no builds or tests were run); the file and line references below are to that commit and the sections are kept as the design record, so where they differ from the code, the code and the Outcome section win.
 
 Three changes that back the product's main claim, "switch computers and coding agents without losing your session":
 
 1. **Repo-based handoff matching**: `handoff --latest` finds the right session on another machine without requiring the same checkout path.
 2. **Lower-friction setup**: reach a first working handoff without creating a bucket, and make bucket creation guided when the user wants sync.
-3. **Linux support**: full persistent capture, not only the ephemeral cloud mode in [cloud-capture.md](cloud-capture.md).
+3. **Linux support**: full persistent capture, not only the ephemeral cloud mode in [cloud-capture.md](../cloud-capture.md).
 
 They are independent except for a few shared seams, called out under [Sequencing](#sequencing).
+
+## Outcome (as built)
+
+Updated 2026-10-01. What shipped, and where it differs from the plan below.
+
+| Package | PR | Notes |
+| --- | --- | --- |
+| Plan | #153 | This document. |
+| R1: `repo_key` | #161 | Hash of the normalized `origin` remote, never the URL. Parser `0.16.0` (`0.14.0` and `0.15.0` went to the token fields and git activity first). |
+| S1: setup trims | #157 | One capture question on a first run from a repository; import offer after the next steps; `storage.Probe` before `VerifyAccess`. A repository that is the home folder or a temporary folder is never pre-selected. |
+| S3: guided S3 creation | #167 | After the profile, setup asks which profile archiving should use (the creation profile stays the default); no lifecycle rule; no explicit encryption call. |
+| S2: guided R2 creation | #171 | Experimental: offered only with `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`. No lifecycle rule. A public r2.dev URL or custom domain stops setup with a menu. |
+| R2: handoff matching | #184 | Path matches outrank repository matches; a repository-only match needs confirmation on a terminal and is refused, with no bucket-controlled text, without one. See the threat model in `docs/security/privacy.md`. |
+| Linux | see [platform-abstraction.md](platform-abstraction.md) | The Linux series, with the scheduler and OS work re-planned there. |
+
+**Differences from the plan.**
+
+- **Lifecycle rules were dropped** for both providers: a per-object age rule contradicts the collector's retention (it can delete sessions the user meant to keep, or leave metadata pointing at expired sources). See 2a step 7 and 2b step 5.
+- **Local-only mode and the folder backend were not built**, as decided in Part 2's scope.
+- **Repository-only handoff matches are untrusted.** The plan matched by recency alone. Review found that a cloned repository controls its own `origin`, so path matches always rank first and a repository-only match is confirmed (see `dev/specs/handoff.md` and `docs/security/privacy.md`).
+- **S4 (acceptance record) was not done as a package.** Docs shipped with each PR; `dev/maintainers/open-source-acceptance.md` does not yet cover guided creation or repository matching.
+- **The `AGENT_ARCHIVE_*` printout** from 2c is not done: it waits for cloud capture (see the 2c status).
+
+**Open items.**
+
+- Guided R2 has never run against real Cloudflare. Every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` is unrun (the S3 key derivation, the bucket-conflict code `10073`, the permissions the account and domain reads need, token expiry and the delete 404). Remove the gate only after a real-account run.
+- Guided S3 has never run against real AWS (what `HeadBucket` answers for a free name without list permission, how `GetCallerIdentity` behaves through SSO and assume-role profiles, and the printed runtime policy, which is marked untested).
+- Partly applied review fixes: after creating an S3 bucket, a Ctrl-C at a later prompt leaves an unreported empty bucket (the reminder covers only the archiving-profile question), and the R2 and S3 flows keep separate trackers of what they created.
+- Sessions captured before `repo_key` have no key until a metadata refresh, so they match by path only.
 
 ## Decisions needed from the owner
 
@@ -19,7 +48,7 @@ They are independent except for a few shared seams, called out under [Sequencing
 | D3 | Storage backends beyond S3 and R2 (folder, iCloud, Dropbox, NAS) and a local-only mode? | Decided: no. Keep S3 and R2 only; no local-only mode. |
 | D4 | Linux scheduler: systemd `--user` timer first, with what fallback? | systemd first. Fallback for hosts without a user bus (WSL without systemd, containers): defer, but fail with an actionable message. |
 | D5 | Unsigned Linux binaries: acceptable trust story? | Yes: mandatory `SHA256SUMS` check in `install.sh` plus a GitHub build attestation, documented. |
-| D6 | Guided R2 creation from one pasted Cloudflare API token (bucket, bucket-scoped key, lifecycle)? | Yes: the docs support it end to end (Part 2a). Close the listed unconfirmed items with a live test on a scratch account before shipping. |
+| D6 | Guided R2 creation from one pasted Cloudflare API token (bucket, bucket-scoped key)? | Yes: the docs support it end to end (Part 2a). Close the listed unconfirmed items with a live test on a scratch account before shipping. **Implemented (S2, #171) behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` until that live test is done; the lifecycle rule was dropped from it (see step 7).** |
 
 ---
 
@@ -94,7 +123,7 @@ Limit: refresh can only add `repo_key` on the machine that owns the registration
 
 ### Scope
 
-Storage stays S3 and R2 only. A local-only mode (setup with no bucket) and a folder backend (iCloud, Dropbox, NAS) were considered and are **not planned**: local-only adds little beyond what `handoff` already does on one machine, and cloud capture ([cloud-capture.md](cloud-capture.md)) matters more. So this part is about removing the dashboard work from setup for both providers, and trimming setup's remaining steps.
+Storage stays S3 and R2 only. A local-only mode (setup with no bucket) and a folder backend (iCloud, Dropbox, NAS) were considered and are **not planned**: local-only adds little beyond what `handoff` already does on one machine, and cloud capture ([cloud-capture.md](../cloud-capture.md)) matters more. So this part is about removing the dashboard work from setup for both providers, and trimming setup's remaining steps.
 
 ### Problem
 
@@ -113,7 +142,7 @@ Verified against Cloudflare's docs on 2026-09-29 (sources listed below). It is f
 
 **Bootstrap token.** The user creates it once in the Cloudflare dashboard (setup opens a deep link to the token page and prints the exact permissions):
 
-- `Workers R2 Storage Write` (account scope): creates the bucket, and also sets the lifecycle rule for retention.
+- `Workers R2 Storage Write` (account scope): creates the bucket. (The plan also had it set a lifecycle rule for retention; that step was dropped, see step 7.)
 - `Account API Tokens Write` (account scope): mints the runtime token.
 
 An account-owned token is preferred over a user-owned token: it is a durable service principal, has a higher limit (500 per account versus 50 per user), and R2 is supported for account tokens. A user-owned token can mint tokens only with the `API Tokens Write` permission from the "Create additional tokens" template. Members can grant only a subset of their own permissions, so a member who is not a Super Administrator may be refused; surface that as an actionable error. Also accept `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the environment, matching wrangler's convention, so users who already have them set skip pasting. Do not reuse `wrangler login` OAuth state: its file format is not a documented interface and its scopes are not known to include token creation.
@@ -123,10 +152,10 @@ An account-owned token is preferred over a user-owned token: it is a durable ser
 1. **Account ID.** `GET /accounts`. The docs do not list the token permission this needs, so treat failure as "ask the user for the account ID" (32-hex, already parsed by `ParseR2Location`, `credentials.go:191`).
 2. **Bucket.** `POST /accounts/{account}/r2/buckets` with `{"name": "<name>"}`. Optional `locationHint` (`apac`, `eeur`, `enam`, `weur`, `wnam`, `oc`) and jurisdiction through the `cf-r2-jurisdiction` header (`default`, `eu`, `us`, `fedramp`, `fedramp-high`). Names are lowercase letters, digits, and hyphens, 3 to 63 characters, no leading or trailing hyphen. Default name `agent-archive-<6 random hex>`; a name collision inside the account returns an error, so retry once with a new suffix, and if the user picked the name, ask for another.
 3. **Permission group ID.** `GET /accounts/{account}/tokens/permission_groups?name=Workers%20R2%20Storage%20Bucket%20Item%20Write` (paginated; filter by name and check `is_selectable`). **Look the ID up at runtime, never hardcode it**: the docs say the name is cosmetic and the `id` is the stable key, and they publish an ID only for the read group.
-4. **Runtime token.** `POST /accounts/{account}/tokens` with one policy: resource `com.cloudflare.edge.r2.bucket.<ACCOUNT>_<JURISDICTION>_<BUCKET>` mapped to `*` (`JURISDICTION` is `default` unless the bucket was created in one), permission group = the Bucket Item Write ID. Name it `agent-archive <bucket> <machine-short-id>`. Do not set `expires_on`, since expiry would silently kill capture; the doc does not confirm the default when omitted, so verify with a real call. This token can read, write, and list objects in that one bucket and nothing else. It cannot manage the bucket or set lifecycle, and it cannot reach other buckets.
+4. **Runtime token.** `POST /accounts/{account}/tokens` with one policy: resource `com.cloudflare.edge.r2.bucket.<ACCOUNT>_<JURISDICTION>_<BUCKET>` mapped to `*` (`JURISDICTION` is `default` unless the bucket was created in one), permission group = the Bucket Item Write ID. Name it `agent-archive <bucket> <machine-short-id>`. Do not set `expires_on`, since expiry would silently kill capture; the doc does not confirm the default when omitted, so verify with a real call. This token can read, write, and list objects in that one bucket and nothing else. It cannot manage the bucket, and it cannot reach other buckets.
 5. **Derive S3 keys.** Access Key ID = the token's `result.id`. Secret Access Key = SHA-256 of `result.value`. The value is returned only once (Cloudflare marks it show-once), so setup must save it immediately or roll the token back. **The hash encoding (lowercase hex of the UTF-8 bytes) is not spelled out in the docs**; the plan is to implement hex and confirm it with a live `VerifyAccess` in the acceptance test, treating a mismatch as a blocker.
 6. **Store and verify.** Save the derived key pair through the credential store exactly as a pasted key pair is saved today (Keychain on macOS, see Part 3 for Linux), then run the existing storage check. Endpoint is `https://<ACCOUNT>.r2.cloudflarestorage.com` (jurisdictional buckets require `<ACCOUNT>.<jurisdiction>.r2.cloudflarestorage.com` and work only there, so the config must record it: `R2Endpoint` already exists).
-7. **Retention.** Set a lifecycle rule with the bootstrap token so the user's `retention_days` is enforced server-side as well as by the collector: `PUT /accounts/{account}/r2/buckets/{bucket}/lifecycle` with a delete-after-age rule (`maxAge` in seconds, empty prefix). The runtime token cannot do this. This is optional and additive; the collector's own retention sweep is unchanged. Note the PUT replaces all rules, which is safe on a bucket setup just created and must not be run against a pre-existing bucket.
+7. **Retention. Dropped in the implementation (S2, #171): setup sets no lifecycle rule.** A per-object age rule contradicts the retention backstop in `docs/getting-started/uninstall.md` (it deletes sessions the person meant to keep after retention is raised, or on a second machine with longer retention, and can leave live metadata pointing at expired sources), and the S3 flow sets none either; the docs point at the uninstall guide's backstop instead. The original plan follows for the record. Set a lifecycle rule with the bootstrap token so the user's `retention_days` is enforced server-side as well as by the collector: `PUT /accounts/{account}/r2/buckets/{bucket}/lifecycle` with a delete-after-age rule (`maxAge` in seconds, empty prefix). The runtime token cannot do this. This is optional and additive; the collector's own retention sweep is unchanged. Note the PUT replaces all rules, which is safe on a bucket setup just created and must not be run against a pre-existing bucket.
 8. **Privacy evidence.** R2 privacy is `not_verified` today because object credentials cannot inspect public-access state. With the bootstrap token, setup can check it: `GET /accounts/{account}/r2/buckets/{bucket}/domains/managed` returns `enabled` for the r2.dev public URL. A fresh bucket is private by default per the docs, so this is confirmation, not a fix. Custom domains are a separate public path; the docs read did not confirm the list endpoint, so say "r2.dev public access: off" rather than "private" unless the custom-domain check is also implemented. Record only what was actually checked. If the setup-time result is stored, mark it as observed-at-setup, not continuously verified.
 9. **Discard.** Zero the bootstrap token from memory. Nothing about it is persisted, including in the setup draft (`setup-draft.json` is saved after each step, so keep the token out of the draft struct) and the setup journal.
 
@@ -152,8 +181,8 @@ Uses the AWS SDK v2 already linked in the binary and the profile picker that exi
 1. After the profile is chosen, if no suitable bucket exists, offer "Create a new private bucket" with a default name `agent-archive-<random suffix>` (S3 names are global, so collisions are likely without a suffix).
 2. `CreateBucket` (with `LocationConstraint` outside `us-east-1`), then `PutPublicAccessBlock` with all four flags true, then optionally `PutBucketEncryption`. If `PutPublicAccessBlock` fails after the bucket was created, do not proceed to uploads: report the bucket and offer to retry or delete it (the bucket is empty).
 3. Run the existing `InspectPrivacy` (`cli/privacy.go`, `storage/privacy.go`) so the result screen can show a verified "Block Public Access is on" row. This is stronger than R2's setup-time check.
-4. **Permissions.** The published least-privilege runtime policy deliberately lacks `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock`. So this needs a profile with those actions, used at setup time only. Setup then prints the runtime policy from [bucket permissions](../../docs/security/bucket-permissions.md) for the user to attach to a runtime identity; it does **not** create IAM users or keys. If the chosen profile is itself the runtime profile and cannot create buckets, say so and fall back to the existing "pick an existing bucket" flow.
-5. Retention: optionally set an S3 lifecycle expiration rule via `PutBucketLifecycleConfiguration` with the same caveat as R2 (only on the bucket setup just created; it replaces existing rules).
+4. **Permissions.** The published least-privilege runtime policy deliberately lacks `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock`. So this needs a profile with those actions, used at setup time only. Setup then prints the runtime policy from [bucket permissions](../../../docs/security/bucket-permissions.md) for the user to attach to a runtime identity; it does **not** create IAM users or keys. If the chosen profile is itself the runtime profile and cannot create buckets, say so and fall back to the existing "pick an existing bucket" flow.
+5. Retention (dropped, like the R2 lifecycle rule in 2a step 7: it contradicts the backstop docs): optionally set an S3 lifecycle expiration rule via `PutBucketLifecycleConfiguration` with the same caveat as R2 (only on the bucket setup just created; it replaces existing rules).
 
 This differs from R2 in one important way: S3 setup does not mint a new scoped credential. It reuses the user's profile. That is simpler and safer to build, but the user's profile is usually broader than least privilege; document a recommendation to use a separate runtime profile.
 
@@ -165,7 +194,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 - Move the "import past sessions" offer (`offerSetupImport`) after the first successful capture check, not straight after commit.
 - Replace the manual `help` text in `promptStorage` (`setup.go:975-983`) with the creation menu, and keep `docs/getting-started/bucket.md` as the manual path.
 - Validate a pasted R2 key pair immediately with a cheap `ListObjectsV2` (max 1) before the full round trip, so a wrong account ID or key fails in seconds with the existing diagnosis (`storage/diagnose.go`).
-- Fix the cloud-mode overlap early: cloud mode ([cloud-capture.md](cloud-capture.md)) configures storage by environment variables and never runs `setup`. Guided creation produces exactly the values that mode needs (bucket, endpoint, key pair). After creation, print the `AGENT_ARCHIVE_*` variables for a cloud environment, next to the existing "set up another Mac" command (`printNextSteps`, `setup.go:783-839`), and offer to make a **separate** bucket-scoped token for cloud use rather than reuse the workstation's key (a cloud VM's environment variables are readable by anyone with access to the environment, per the cloud proposal). The R2 flow can mint that second token with the same bootstrap token in one extra call.
+- Fix the cloud-mode overlap early: cloud mode ([cloud-capture.md](../cloud-capture.md)) configures storage by environment variables and never runs `setup`. Guided creation produces exactly the values that mode needs (bucket, endpoint, key pair). After creation, print the `AGENT_ARCHIVE_*` variables for a cloud environment, next to the existing "set up another Mac" command (`printNextSteps`, `setup.go:783-839`), and offer to make a **separate** bucket-scoped token for cloud use rather than reuse the workstation's key (a cloud VM's environment variables are readable by anyone with access to the environment, per the cloud proposal). The R2 flow can mint that second token with the same bootstrap token in one extra call.
 
 **Status (package S1, implemented):**
 
@@ -173,7 +202,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 - The past-sessions offer now follows the next steps ("Check progress with `agent-archive status`"), not the "Configuration saved." line. It stays skippable, and `setup --yes` is unchanged. It is not tied to a first successful capture check: at that moment no session has been captured yet, so nothing there could be checked.
 - The manual storage help is two lines pointing at `docs/getting-started/bucket.md`; `guidedStorageOptions` (`setup.go`) is the slot where "Create a new bucket for me" goes (S2, S3).
 - `storage.Probe` (one `ListObjectsV2` with max keys 1 under the `.setup-test/` folder, no writes) runs before `VerifyAccess` in `verifyStorage`, so it covers R2 keys, S3 profiles, and `setup --yes` alike. It runs at the storage check, straight after the key is entered, not inside the key prompt: the pasted secret is staged in the credential store first and the store reads it from there.
-- **Not done: the `AGENT_ARCHIVE_*` printout.** Cloud mode is not implemented (`AGENT_ARCHIVE_CLOUD` appears nowhere in `internal/`), so printing those variables would describe a feature that does not exist. TODO when cloud mode ships: in `printAnotherMachine` (`setup.go`), print the variables named in [cloud-capture.md](cloud-capture.md) "Cloud mode configuration" for the configured provider, bucket, prefix, endpoint, and region, with `<access key id>` and `<secret access key>` placeholders (never the values), and one line saying that a cloud environment's variables are readable by anyone with access to it, so it needs a separate bucket-scoped key.
+- **Not done: the `AGENT_ARCHIVE_*` printout.** Cloud mode is not implemented (`AGENT_ARCHIVE_CLOUD` appears nowhere in `internal/`), so printing those variables would describe a feature that does not exist. TODO when cloud mode ships: in `printAnotherMachine` (`setup.go`), print the variables named in [cloud-capture.md](../cloud-capture.md) "Cloud mode configuration" for the configured provider, bucket, prefix, endpoint, and region, with `<access key id>` and `<secret access key>` placeholders (never the values), and one line saying that a cloud environment's variables are readable by anyone with access to it, so it needs a separate bucket-scoped key.
 
 ### Interaction with `--yes`
 
@@ -216,7 +245,7 @@ Independent of creation, these are sequencing changes over existing defaults:
 
 ### Scope
 
-Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.
+Persistent capture on a Linux workstation or server: hooks, a scheduled collector, credentials, Cursor paths, install. This is distinct from [cloud-capture.md](../cloud-capture.md), which designs ephemeral cloud VMs with env-var configuration and, for Linux, makes `setup` an error. The two share the Linux build, checksums, installer, and credential abstraction; they diverge on scheduler, config source, and `setup`. Resolve the conflict by gating `setup` on "a working scheduler exists", not on `runtime.GOOS`, and on `AGENT_ARCHIVE_CLOUD` for cloud mode.
 
 ### What already works
 
@@ -288,14 +317,14 @@ The capture core is portable: hooks, collector, adapters, storage, the S3 client
 
 ## Sequencing
 
-Value order for the launch story: **Part 1**, then **Part 2** (guided creation), then **Part 3**, with the cloud-capture work ([cloud-capture.md](cloud-capture.md)) able to start after Linux PRs 1-2.
+Value order for the launch story: **Part 1**, then **Part 2** (guided creation), then **Part 3**, with the cloud-capture work ([cloud-capture.md](../cloud-capture.md)) able to start after Linux PRs 1-2.
 
 Dependencies and shared seams:
 
 - Part 1 is self-contained and unblocks the handoff demo. It also lays the `repo_key` that `cloud-capture.md` schema v2 already wants (`repo_key` in the cloud design), so implement it once and reuse it there.
 - The cloud-capture Phase 1 needs Linux PRs 1-2 only; it does not need 3c-3e.
 - 3c's store-neutral wording and 3e's terminology pass both edit `setup.go` and `setup_flags.go` strings. Do 3c's wording first, and land 3e quickly after agreement to limit rebase conflicts.
-- Guided R2 creation (2a) mints a key pair that must be stored through the credential store, so on Linux it depends on the 3c credential abstraction. On macOS it works with the Keychain as is. Ship it on macOS first; enable it on Linux after 3c.
+- Guided R2 creation (2a) mints a key pair that must be stored through the credential store, so on Linux it depends on the 3c credential abstraction. On macOS it works with the Keychain as is. Ship it on macOS first; enable it on Linux after 3c. It is experimental, offered only with `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`, until the live acceptance checklist in `dev/contributing/testing.md` is done; remove the gate then.
 - Guided creation also produces the values cloud mode needs (bucket, endpoint, key), so it directly serves the cloud-capture work; see 2c.
 
 ## Risks and open questions

@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // ErrNoTranscript means a registration names no transcript file yet, or the
@@ -27,6 +28,7 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // (empty means the one under the user's home), through a snapshot of its
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string) (archive.SourceBundle, error) {
+	defer trace.Start("read local transcript").End()
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase})
 	if !ok {
 		return archive.SourceBundle{}, ErrNoTranscript
@@ -84,6 +86,9 @@ var readCursorLastUpdated = cursorstore.ReadLastUpdated
 // session ID, reading the Cursor database once for all of its chats rather
 // than once each. A registration whose activity can't be read is left out.
 func LastActivities(ctx context.Context, regs []archive.SessionRegistration, cursorDatabase string) map[string]time.Time {
+	span := trace.Start("local activity")
+	span.Count("sessions", len(regs))
+	defer span.End()
 	out := make(map[string]time.Time, len(regs))
 	// sessions maps each Cursor chat to the archive sessions reading it.
 	sessions := map[string][]string{}

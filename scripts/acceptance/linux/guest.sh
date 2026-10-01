@@ -142,6 +142,8 @@ check_not_out "the host ID is not the machine ID itself" "$(tr -d '\n' </etc/mac
 check_out "the manager's service environment has the recorded PATH" '/home/ada/\.local/bin' as_ada systemctl --user show $REF.service -p Environment
 check_out "status says the job is loaded" '"background": "loaded"' aa status --json
 check_not_out "status has no warning about XDG or another machine from the setup shell" 'XDG_|different machine' aa_xdg status
+check_not_out "status sees no network filesystem (the home is on the machine's own disk)" 'network filesystem' aa status
+check_not_out "config.json records no network-home opt-in" 'allow_network_home' cat $DATA/config.json
 
 echo "== 3. a synthetic Claude Code session through the installed hook command"
 CLAUDE_HOOK=$(grep -o "'/home/ada/.local/bin/agent-archive' _hook --harness claude" /home/ada/.claude/settings.json | head -1)

@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -35,6 +36,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -104,6 +106,9 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// currentBranch, set only by tests, replaces the git lookup of the
+	// branch checked out in a directory (see gitBranch).
+	currentBranch func(dir string) string
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults
@@ -133,9 +138,15 @@ type Env struct {
 	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
 	// for profile, in region. Defaults to S3 with the profile's credentials.
 	AWSBucketCreator func(profile, region string) (BucketCreator, error)
-	WorkingDir       func() (string, error)
-	Home             func() (string, error)
-	Now              func() time.Time
+	// Cloudflare makes the client guided R2 creation uses for the pasted
+	// bootstrap API token. Defaults to the real Cloudflare API.
+	Cloudflare func(token string) cloudflare.API
+	// Pause waits between guided R2 creation's checks of a key Cloudflare
+	// has only just made. Defaults to sleeping; tests skip the wait.
+	Pause      func(time.Duration)
+	WorkingDir func() (string, error)
+	Home       func() (string, error)
+	Now        func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
@@ -163,6 +174,12 @@ type Env struct {
 	// directory copied from another machine. Defaults to
 	// local.HostFingerprint; it is read only on Linux.
 	HostFingerprint func() string
+	// MountTable returns this machine's mount table in the format of
+	// /proc/self/mountinfo, which setup, setup --refresh and status read on
+	// Linux to tell whether the data directory or the systemd unit directory
+	// is on a network filesystem. Defaults to reading /proc/self/mountinfo; it
+	// is read only on Linux, and a table that cannot be read stops nothing.
+	MountTable func() ([]byte, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -191,6 +208,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// UnsetEnv removes a variable from the process environment, so programs
+	// setup starts later do not inherit it. Guided R2 creation uses it for
+	// CLOUDFLARE_API_TOKEN once it has read it. Defaults to os.Unsetenv.
+	UnsetEnv func(string) error
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
@@ -306,6 +327,13 @@ func (e Env) fileOwner(path string) (uid int, ok bool) {
 	return fileOwner(path)
 }
 
+func (e Env) unsetEnv(key string) error {
+	if e.UnsetEnv != nil {
+		return e.UnsetEnv(key)
+	}
+	return os.Unsetenv(key)
+}
+
 func (e Env) lookupEnv(key string) (string, bool) {
 	if e.LookupEnv != nil {
 		return e.LookupEnv(key)
@@ -335,6 +363,7 @@ func (e Env) now() time.Time {
 }
 
 func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -342,6 +371,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -524,6 +554,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 			return 2
 		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			startTrace("list", stderr, env)
+			defer finishTraceNow()
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {
@@ -541,6 +573,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
+	startTrace(args[0], stderr, env)
+	defer finishTraceNow()
 
 	switch args[0] {
 	case "-h", "--help", "help":

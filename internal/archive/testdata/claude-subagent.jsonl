@@ -1,0 +1,2 @@
+{"version":"2.1.0","type":"user","uuid":"sub-a","sessionId":"native-parent","agentId":"agent-synthetic1","isSidechain":true,"timestamp":"2026-09-30T11:00:00Z","message":{"role":"user","content":"List the retention tests that touch the clock"}}
+{"version":"2.1.0","type":"assistant","uuid":"sub-b","parentUuid":"sub-a","sessionId":"native-parent","agentId":"agent-synthetic1","isSidechain":true,"timestamp":"2026-09-30T11:00:08Z","message":{"role":"assistant","content":[{"type":"text","text":"Two tests use the fake clock."}]}}

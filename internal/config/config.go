@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // SchemaVersion is bumped only when Config's on-disk shape changes
@@ -74,6 +75,10 @@ type Config struct {
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
 	Paused bool `json:"paused"`
+	// PauseGeneration changes with each pause/resume transition. Deferred
+	// hook admissions must belong to the same uninterrupted capture window.
+	// Empty is the legacy window, valid until the first transition.
+	PauseGeneration string `json:"pause_generation,omitempty"`
 	// Harnesses lists which applications setup installed hooks for
 	// (values match archive.Harness.Name: "codex", "claude", "cursor").
 	Harnesses []string `json:"harnesses,omitempty"`
@@ -118,6 +123,15 @@ type Config struct {
 	// and on a Linux system with no machine ID to read. It is local: it is
 	// not in any published file.
 	HostID string `json:"host_id,omitempty"`
+	// AllowNetworkHome records that the person allowed this installation's
+	// data directory or systemd unit directory to be on a network
+	// filesystem (setup --allow-network-home), which setup and setup
+	// --refresh otherwise refuse on Linux, since a home shared between
+	// machines shares one machine ID, cannot rely on file locks and runs the
+	// background job on every machine. Setup records it only while a
+	// directory is on one. Status warns of the network filesystem whether or
+	// not it is set. Absent otherwise, and always on macOS.
+	AllowNetworkHome bool `json:"allow_network_home,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this
@@ -189,6 +203,7 @@ func path(home string) string { return filepath.Join(home, "config.json") }
 // longer decodes, the way out: every command needs it, so nothing else can
 // say which file stopped it.
 func Load(home string) (cfg Config, found bool, err error) {
+	defer trace.Start("load config").End()
 	err = local.Read(path(home), &cfg)
 	if errors.Is(err, os.ErrNotExist) {
 		return Config{}, false, nil
@@ -227,8 +242,9 @@ func Save(home string, cfg Config) error {
 	return local.Write(path(home), cfg)
 }
 
-// SetPaused updates only the Paused flag, preserving the rest of an existing
-// configuration. It fails if setup has not run yet: pausing before there is
+// SetPaused updates the Paused flag and rotates PauseGeneration at a state
+// transition, preserving the rest of an existing configuration. It fails if
+// setup has not run yet: pausing before there is
 // anything to pause is not a meaningful state.
 func SetPaused(home string, paused bool) (Config, error) {
 	cfg, found, err := Load(home)
@@ -237,6 +253,12 @@ func SetPaused(home string, paused bool) (Config, error) {
 	}
 	if !found {
 		return Config{}, errors.New("not set up yet; run `agent-archive setup` first")
+	}
+	if cfg.Paused != paused {
+		cfg.PauseGeneration, err = local.ID()
+		if err != nil {
+			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
+		}
 	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,8 +22,12 @@ type prompter struct {
 	in     *bufio.Reader
 	out    io.Writer
 	source io.Reader
-	now    func() time.Time
-	style  textStyle
+	// handBack, when set, takes the input that a key-reading browser read
+	// but did not use (what was typed ahead of the prompts after it), so
+	// that in reads it first.
+	handBack func([]byte)
+	now      func() time.Time
+	style    textStyle
 	// spaceAfterAnswer separates interactive setup answers from what follows.
 	// Other commands use this prompter too and retain their existing output.
 	spaceAfterAnswer bool
@@ -35,6 +40,11 @@ type prompter struct {
 	// createdBuckets are the S3 buckets setup created in this run (see
 	// setup_s3_create.go); in memory only.
 	createdBuckets []createdS3Bucket
+	// guided is a guided R2 bucket creation whose key setup has yet to
+	// stage; created is every bucket and key such creations left in the
+	// person's Cloudflare account in this run.
+	guided  *r2Handoff
+	created []*r2Created
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.
@@ -299,8 +309,12 @@ func (p *prompter) secret(label string) (string, error) {
 			}
 		}()
 		terminal.Print(p.out, p.labelText(label))
-		value, err := term.ReadPassword(fd)
+		value, err := readSecret(fd)
 		terminal.Println(p.out)
+		if errors.Is(err, io.EOF) {
+			// As for a line: no more input is an error, never a blank.
+			return "", fmt.Errorf("no more input: %w", err)
+		}
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}
@@ -351,4 +365,49 @@ func (p *prompter) required(label, def string) (string, error) {
 		}
 		terminal.Println(p.out, "This value is required.")
 	}
+}
+
+// typedInput is a command's standard input for the prompts that read answers:
+// one buffered reader, so an answer typed (or scripted) ahead for a later
+// prompt is not lost to an earlier one's, and the input behind it, which the
+// key browser reads a key at a time and hands back what it read but did not
+// use.
+type typedInput struct {
+	answers *bufio.Reader
+	file    io.Reader
+	back    *handedBack
+}
+
+// handedBack is the input beneath a command's answers: stdin, preceded by
+// what a browser that read keys handed back.
+type handedBack struct {
+	r    io.Reader
+	text []byte
+}
+
+func (h *handedBack) Read(p []byte) (int, error) {
+	if len(h.text) > 0 {
+		n := copy(p, h.text)
+		h.text = h.text[n:]
+		return n, nil
+	}
+	return h.r.Read(p)
+}
+
+// give puts text before the input not read yet.
+func (h *handedBack) give(text []byte) {
+	h.text = append(slices.Clone(text), h.text...)
+}
+
+func newTypedInput(stdin io.Reader) *typedInput {
+	back := &handedBack{r: stdin}
+	return &typedInput{answers: bufio.NewReader(back), file: stdin, back: back}
+}
+
+// prompter is a prompter that reads the answers, and whose browser reads keys
+// from the input itself and hands back what it did not use.
+func (t *typedInput) prompter(out io.Writer) *prompter {
+	p := newPrompter(t.answers, out)
+	p.source, p.handBack = t.file, t.back.give
+	return p
 }

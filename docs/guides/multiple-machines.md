@@ -16,10 +16,13 @@ hooks, collector, and local state.
   they see every machine's sessions. Each session's metadata records the
   `machine_id` that captured it.
 - **Handoff across machines.** `agent-archive handoff --latest` on another
-  machine downloads the session from the archive. It matches the project only
-  when the repository is checked out at the same path; otherwise use a session
-  ID from `list`. Push your branch first: uncommitted changes stay on the
-  machine that made them. See [handoff](handoff.md).
+  machine downloads the session from the archive. It finds it by the
+  repository's `origin` remote, so the repository can be at a different path
+  on each machine (a directory with no `origin` still needs the same path, or
+  a session ID from `list`). Because a repository chooses its own remote,
+  `handoff` names a session it found this way and asks before using it. Push
+  your branch first: uncommitted changes stay on the machine that made them.
+  See [handoff](handoff.md#finding-a-session-by-repository).
 - **Retention is per machine too.** Each machine's retention setting applies
   to the sessions it owns. Set the same value on every machine if you want one
   policy.
@@ -100,16 +103,61 @@ it fires:
 - It is a false positive after an operating system reinstall over the same
   home, which is why removing `host_id` is the way out.
 
-### A home directory shared across machines is not supported
+### A home directory shared across machines
 
-A home directory that several Linux machines mount at once (NFS, say) is not
-supported: each machine would find the others' hooks, `config.json`, local
-state and ownership records in the one data directory, and the machines would
-believe they own the same sessions. Give each machine its own data directory,
-on local storage (`AGENT_ARCHIVE_HOME`, set for its hooks and background
-job), and a home of its own for the apps' hook files too.
+A home directory that several Linux machines mount at once (NFS, say) breaks
+what this program assumes: each machine would find the others' hooks,
+`config.json`, local state and ownership records in the one data directory and
+claim the same sessions under one machine ID; file locks (`flock`) are not
+reliable between machines, so two collectors can corrupt local state; and
+every machine's systemd user manager loads the same unit from
+`~/.config/systemd/user`, so every machine runs the collector against the same
+files.
 
-If you do share one, expect this:
+So on Linux, `agent-archive setup` and `setup --refresh` refuse, before any
+question and changing nothing, when the data directory or the systemd unit
+directory is on a network filesystem. It looks at the filesystem type the
+kernel reports (`/proc/self/mountinfo`) for each directory, or for the
+nearest directory above it that exists, since setup has not made them yet. The
+types it treats as network are `nfs`, `nfs4`, `cifs`, `smb3`, `smbfs`, `ceph`,
+`glusterfs`, `afs`, `lustre`, `gpfs`, `beegfs`, `pvfs2` (OrangeFS), the
+cluster filesystems `gfs2` and `ocfs2`, and the FUSE ones that name a remote
+(`fuse.sshfs`, `fuse.rclone`, `fuse.s3fs`, `fuse.gcsfuse`, `fuse.glusterfs`,
+`fuse.ceph-fuse`, `fuse.mfs` (MooseFS), `fuse.juicefs`). It does not treat as
+network a local disk, `tmpfs`, an `overlay`, an encrypted view of local files
+(`ecryptfs`, `fuse.gocryptfs`), a plain `fuse`, or `virtiofs` and `9p`, which
+share a host's folders with one virtual machine and are what WSL mounts
+Windows drives with. A home that autofs mounts on demand is looked at once it
+is mounted (the check mounts it, as setup would). It is a guard, not proof: a
+network filesystem under another name, or a system whose
+`/proc/self/mountinfo` cannot be read, is not noticed. macOS is never checked,
+and there `--allow-network-home` is accepted and does nothing, so one setup
+command can serve both systems.
+
+The refusal names the directory, the filesystem and why it matters, and gives
+two ways out:
+
+- Put the data directory on local disk: set `AGENT_ARCHIVE_HOME` (for the shell
+  that runs setup, and so for its hooks and background job) to a path there,
+  and give each machine a home of its own for the apps' hook files and
+  the unit directory. `AGENT_ARCHIVE_HOME` does not move the unit directory,
+  which is under the home directory, so a home that is shared stays refused
+  because of it.
+- If the home is only ever mounted on **one** machine (a home that is network
+  storage for a single computer, or a diskless workstation), run
+  `agent-archive setup --allow-network-home`. Setup then goes ahead, says on its
+  checklist that it was allowed, and records `allow_network_home` in
+  `config.json` (only while a directory is on a network filesystem), so
+  `setup --refresh` and later runs do not refuse again. `status` keeps warning
+  that the home is on a network filesystem, in its warnings and in `status
+  --json`'s `warnings`, so the risk stays visible.
+
+An installation made before the check, on a network home, is not changed:
+`status` warns, and `setup --refresh` stops, changing nothing, until you run
+`agent-archive setup --allow-network-home` (or move the data directory to local
+disk).
+
+If you opt in on a home that several machines do mount, expect this:
 
 - The clone warning fires on every machine but the first, since only the
   first one's ID is recorded in the shared `config.json`.

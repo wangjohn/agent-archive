@@ -26,7 +26,10 @@ explicitly.
   listing (`--harness`, `--model`, `--since`, `--skill`, `--complete`,
   `--imported`, `--limit`, …). Each item is an instance of
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
-  `null`.
+  `null`. With words (`list "<words>" --json`), `sessions` is the first tier
+  of the search that has a match, as in the table: the scope's top-level
+  sessions, then every project's, then subagent sessions (in the scope, then
+  everywhere), so a subagent appears only when no top-level session matches.
 - `limit` is the `--limit` value (`50` by default; `0` means no cap).
   `returned` is `sessions.length`. `total_matched_known` says whether the
   count is exact. When false, `total_matched` is omitted and `truncated` is
@@ -40,7 +43,8 @@ explicitly.
   it was not applied (`--all-projects`, or the scope held nothing);
   `fell_back` is true when it held nothing and all projects are listed;
   `outside_matches` is how many more sessions the same filters match outside
-  it. Outside any project there is no `scope` and every session is listed.
+  it (with words, how many sessions of the answering tier match outside it).
+  Outside any project there is no `scope` and every session is listed.
   Scripts that want every session pass `--all-projects`. The field is
   additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on
@@ -153,12 +157,17 @@ From parser `0.17.0` a sidecar may also carry three optional fields that
 say what to call the session:
 
 - `name`: the title the agent gave the session, collapsed to one line and cut
-  to 72 characters like `title`. For Claude Code it is the session name in
-  its sidebar (set from your prompt, or by `/rename`; the last one wins), and
-  for Cursor the chat's name. `title` keeps its meaning, a preview of the
-  first prompt. Absent when the session has no name, including one whose
-  transcript is gone and so could not be re-read after the privacy filter
-  began keeping names (filter 13).
+  to 128 characters from parser `0.17.1` (72 in older metadata), like `title`.
+  For Claude Code it is the session name in its sidebar (set from your prompt,
+  or by `/rename`; the last one wins), and for Cursor the chat's name. Codex
+  titles are not captured yet. From parser `0.18.0` a Claude Code subagent's
+  name is the description its parent gave the task, which Claude Code keeps
+  beside the subagent's transcript and the privacy filter keeps since
+  filter 14 (a `custom-title`, which a subagent does not normally have, wins
+  over it). `title` keeps its meaning, a preview of the first prompt. Absent
+  when the session has no name, including one whose transcript is gone and so
+  could not be re-read after the privacy filter began keeping names (filter
+  13, or 14 for a subagent).
 - `branch`: the last git branch the transcript recorded. Absent when none was
   recorded, or it is `HEAD` (a detached checkout).
 - `pull_requests`: up to 20 pull requests the session was linked to (Claude
@@ -368,7 +377,7 @@ Treat an absent field and `null` the same way.
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this machine only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |
-| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, another installation's hooks in this one's hook files, and on Linux a data directory set up on a different machine (see [`host_id`](configuration.md)) and a shell whose `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` differs from the background job's. |
+| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, another installation's hooks in this one's hook files, and on Linux a data directory or systemd unit directory on a network filesystem (allowed or not, see [`allow_network_home`](configuration.md)), a data directory set up on a different machine (see [`host_id`](configuration.md)) and a shell whose `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` differs from the background job's. |
 
 Before setup, `state` says setup is needed, `background` is `missing`, and
 `authentication` is `not_configured`. When a command has held the collector
@@ -383,6 +392,12 @@ IDs, or content, but project folders are absolute paths: `projects[].root`,
 `projects[].kept_out`, `projects[].kept_out_unchecked`, and `filters.projects`. `storage_checked` is always
 `false`, because a dry run writes nothing and the storage check writes a test
 object; only an import checks storage, before it asks.
-`handoff --format json` prints the handoff document. Both follow the same
-add-only rule but are not yet versioned documents; prefer the text output for
-anything a person reads.
+`handoff --format json` prints the handoff document. Its `workspace` object
+holds `directory` and `branch` as the transcript recorded them and, when the
+command knew the checkout the handoff is for (not with `--worktree` or
+`--file`), two more, both omitted when not true: `elsewhere` (`true` when the
+recorded directory is neither that checkout nor a directory containing it or
+inside it) and `current_branch` (the branch that checkout is on, when it
+differs from the recorded one). Both commands follow the same add-only rule
+but are not yet versioned documents; prefer the text output for anything a
+person reads.

@@ -2,16 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -371,7 +374,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
-	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --harness codex --max-bytes 0"} {
+	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --source archive --harness codex --max-bytes 0"} {
 		if !strings.Contains(*document, want) {
 			t.Errorf("document missing %q:\n%s", want, *document)
 		}
@@ -548,5 +551,83 @@ func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
 	published := pickerLine(t, out, id)
 	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
 		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// The filter's search over the picker's sessions reads the transcripts of
+// sessions not uploaded yet only within its bound, as the picker and a title
+// search do; an archived session past the bound is still searched.
+func TestHandoffPickerReadLimitBoundsTranscriptReads(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	older := f.addSession(t, "codex", "native-older", "Older not uploaded", f.env.now().Add(-3*time.Hour))
+	regs, err := state.OpenReadOnly(f.home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's own session is archived; the rest are only here.
+	archived := []archive.Metadata{{SessionID: f.both, Harness: archive.Harness{Name: "codex"}, Title: "Archived and here", CapturedAt: f.env.now().Add(-2 * time.Hour)}}
+	picker := handoffPicker{ctx: context.Background(), env: f.env, home: f.home, archiveRead: true}
+	ids := func(rows []handoffPickerRow) []string {
+		var out []string
+		for _, row := range rows {
+			out = append(out, row.metadata.SessionID)
+		}
+		return out
+	}
+	all, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(all); !sameStrings(got, []string{f.notUploaded, f.both, older}) {
+		t.Fatalf("unbounded rows %v", got)
+	}
+	picker.readLimit = 1
+	bounded, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(bounded); !sameStrings(got, []string{f.notUploaded, f.both}) {
+		t.Fatalf("bounded rows %v, want the first not uploaded and the archived one", got)
+	}
+}
+
+// touchFirst is stdin that runs touch before its first read: what happens on
+// the machine while the picker waits for an answer.
+type touchFirst struct {
+	r     io.Reader
+	touch func()
+}
+
+func (t *touchFirst) Read(p []byte) (int, error) {
+	if t.touch != nil {
+		t.touch()
+		t.touch = nil
+	}
+	return t.r.Read(p)
+}
+
+// The filter reads this machine's sessions again, after the table did; a
+// session active in between keeps the number the table gave it, so the number
+// the person saw hands off the session they saw it on.
+func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	later := f.env.now().Add(3 * time.Hour)
+	stdin := &touchFirst{r: strings.NewReader("codex\n3\np\n"), touch: func() {
+		must(t, os.Chtimes(filepath.Join(f.project, "codex.jsonl"), later, later))
+	}}
+	var out, errOut bytes.Buffer
+	env := f.env
+	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	var pager string
+	env.RunPager = copyPager(&pager)
+	if code := Run([]string{"handoff"}, stdin, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "session "+f.both+" · source: local") {
+		t.Fatalf("3, the table's number of %s, handed off another session:\n%s", f.both[:minShortSessionID], out.String())
+	}
+	_, filtered, found := strings.Cut(out.String(), `"codex" matches 3`)
+	filtered, _, _ = strings.Cut(filtered, "Continue in:")
+	if !found {
+		t.Fatalf("the filter was not drawn:\n%s", out.String())
+	}
+	if line := pickerLine(t, filtered, f.both); !strings.HasPrefix(line, "3 ") {
+		t.Fatalf("the filter renumbered %s: %q", f.both[:minShortSessionID], line)
 	}
 }

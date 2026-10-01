@@ -79,7 +79,7 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 		return archive.FilteredTranscript{}, stat, fmt.Errorf("find complete transcript boundary: %w", err)
 	}
 	limited := &recordLimitReader{r: io.NewSectionReader(file, 0, jsonBoundary), limit: recordLimit}
-	filtered, err := adapter.FilterJSONL(limited)
+	filtered, err := filterReader(adapter, reg, limited)
 	if err == nil {
 		return filtered, stat, checkFilteredSize(filtered, maxBytes)
 	}

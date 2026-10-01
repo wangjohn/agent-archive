@@ -148,6 +148,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return 1
 		}
 	}
+	// Before anything is created or locked: the data directory's lock is a file
+	// lock, and a network filesystem is what makes it unreliable.
+	if code, refused := refuseNetworkHome(opts, stdout, stderr, env); refused {
+		return code
+	}
 	if opts.yes {
 		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "Setup incomplete: %v\n", err)
@@ -167,7 +172,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice()); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice(), opts.allowNetworkHome); err != nil {
 		// The checks above already name each blocker, marked ✗, so the exit
 		// only says what to do. setup --yes names them again on standard
 		// error, which is what a script reads.
@@ -195,8 +200,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 
 // setup is interactive setup. verbose prints a failed storage check's own
 // error under its diagnosis; skills is --no-skills or --skills, which no
-// question follows.
-func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice) error {
+// question follows; allowNetworkHome is --allow-network-home.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills skillsChoice, allowNetworkHome bool) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -276,10 +281,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
+	draft.Config.AllowNetworkHome = env.networkHomeOptIn(home, userHome, allowNetworkHome, existing)
 	err = runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
 	// However setup ended, a bucket it created and did not keep is not left
 	// without a word.
 	noteUnusedCreatedBuckets(p, home)
+	noteUnusedCreatedR2(p, home)
 	return err
 }
 
@@ -474,37 +481,54 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		// The storage questions asked for a failed region again.
 		draft.FailedRegion = ""
 		if saveSecret {
-			keychain, e := env.credentialStore()
-			if e != nil {
-				return false, openCredentialStoreError(credentialOS, e)
+			if e = stageStorageSecret(draft, save, env, &cfg, secret); e != nil {
+				return false, p.rollbackGuidedCreation(e)
 			}
-			id, e := local.ID()
-			if e != nil {
-				return false, e
-			}
-			cfg.R2CredentialRef = "setup-" + id
-			draft.CredentialRef = cfg.R2CredentialRef
-			draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
-			// Journal the opaque reference before storing, so cancellation/crash is recoverable.
-			draft.Config.Storage = cfg
-			if e = save(); e != nil {
-				return false, e
-			}
-			if e = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); e != nil {
-				return false, fmt.Errorf("save staged credential: %w", e)
-			}
-
 		}
 		draft.Config.Storage = cfg
+		if p.guided != nil && p.guided.c.privacy.CheckedAt != nil {
+			report := p.guided.c.privacy
+			report.ConfigurationID = privacyConfigurationID(draft.Config)
+			draft.Config.BucketPrivacy = &report
+		}
 		draft.Step = 2
 		if err = save(); err != nil {
-			return false, err
+			return false, p.rollbackGuidedCreation(err)
 		}
+		// A key guided bucket creation made is staged: its bootstrap token
+		// is no longer needed.
+		p.finishGuidedCreation()
 	}
 	if err = save(); err != nil {
 		return false, err
 	}
 	return verifySetupDraftStorage(p, draft, save, savedPath, userHome, env, known, verifiedStorage, verbose)
+}
+
+// stageStorageSecret stores a key typed in, or made by guided bucket
+// creation, under a new staged reference: the opaque reference is journaled in
+// the draft before the Keychain is written, so a crash between them is
+// recoverable. cfg gets the reference.
+func stageStorageSecret(draft *setupDraft, save func() error, env Env, cfg *credentials.Config, secret credentials.R2Credentials) error {
+	keychain, err := env.credentialStore()
+	if err != nil {
+		return openCredentialStoreError(credentialOS, err)
+	}
+	id, err := local.ID()
+	if err != nil {
+		return err
+	}
+	cfg.R2CredentialRef = "setup-" + id
+	draft.CredentialRef = cfg.R2CredentialRef
+	draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
+	draft.Config.Storage = *cfg
+	if err = save(); err != nil {
+		return err
+	}
+	if err = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); err != nil {
+		return fmt.Errorf("save staged credential: %w", err)
+	}
+	return nil
 }
 
 func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
@@ -532,12 +556,23 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 		}
 		draft.FailedRegion = ""
 		terminal.Println(p.out, "")
+		guidedPrivacy := p.guidedR2Privacy(draft.Config)
 		e := runStorageCheck(p, &draft.Config, env)
 		if errors.Is(e, errStorageCheckInterrupted) {
 			return false, e
 		}
 		if e != nil {
 			return recoverSetupStorageFailure(p, draft, save, savedPath, userHome, env, known, e, verbose)
+		}
+		report := p.guidedR2Privacy(draft.Config)
+		if report == nil {
+			report = guidedPrivacy
+		}
+		if report != nil {
+			draft.Config.BucketPrivacy = report
+			if e := save(); e != nil {
+				return false, e
+			}
 		}
 		*verifiedStorage = draft.Config.Storage
 	}
@@ -546,6 +581,7 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 
 func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, checkErr error, verbose bool) (bool, error) {
 	d := printStorageFailure(p, draft.Config.Storage, checkErr, verbose, "agent-archive setup --verbose")
+	printGuidedLeftovers(p, draft.Config.Storage)
 	// Saved to ask the storage questions again, so that
 	// "Continue where you left off" never repeats a check that just failed.
 	if err := local.Write(savedPath, reopenStorage(*draft, d)); err != nil {
@@ -605,8 +641,9 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 		return false, e
 	}
 	if action == "check" {
-		// The storage check runs again too, which reads the bucket's
-		// public-access settings again.
+		// The storage check runs again. S3 privacy is read again; guided R2
+		// retains its setup-time management-API check because the bootstrap
+		// token has been discarded.
 		*verifiedStorage = credentials.Config{}
 		return false, nil
 	}
@@ -830,6 +867,12 @@ func setupExitCode(err error) int {
 	var interrupted *storageCheckInterruptedError
 	if errors.As(err, &interrupted) {
 		if s, ok := interrupted.sig.(syscall.Signal); ok {
+			return 128 + int(s)
+		}
+	}
+	var guided *guidedInterruptedError
+	if errors.As(err, &guided) {
+		if s, ok := guided.sig.(syscall.Signal); ok {
 			return 128 + int(s)
 		}
 	}
@@ -1239,7 +1282,7 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
+// (dev/proposals/implemented/portable-handoff-and-onboarding.md, Part 2).
 func guidedStorageOptions() []option {
 	return []option{{storageChoiceS3New, storageLabelS3New}}
 }
@@ -1247,7 +1290,7 @@ func guidedStorageOptions() []option {
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
-	providers := storageMenuOptions()
+	providers := storageMenuFor(env)
 	// A saved provider wins, so discovery runs only when there is none.
 	defaultProvider := existing.Provider
 	if defaultProvider == "" {
@@ -1262,6 +1305,13 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	if choice == guidedR2Choice {
+		cfg, secret, saved, e := createR2Bucket(p, env)
+		if !errors.Is(e, errChooseStorageAgain) {
+			return cfg, secret, saved, e
+		}
+		return promptStorage(p, existing, env, failedRegion)
 	}
 	createS3 := choice == storageChoiceS3New
 	if createS3 {

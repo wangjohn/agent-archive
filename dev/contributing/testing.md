@@ -16,6 +16,7 @@ python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
+python3 scripts/test_ci_workflow.py                      # real-systemd keeps its name and pinned image
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
@@ -24,9 +25,10 @@ CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
 line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
-runs the Linux scheduler against a real systemd user manager on Ubuntu (see
-[below](#never-test-against-your-real-machine)); it is its own check, not a
-required one. `go test ./...` also checks the docs:
+runs the Linux scheduler against a real systemd user manager on Ubuntu 24.04
+(see [below](#never-test-against-your-real-machine)); it is meant to be a
+required check, and its name must stay `real-systemd`, because branch
+protection matches it by name. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -165,14 +167,20 @@ In Go tests, everything goes through injection:
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that
   already has such units. CI runs them in the `real-systemd` job on
-  `ubuntu-latest` (a virtual machine with systemd: it enables lingering for the
-  runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  `ubuntu-24.04` (a virtual machine with systemd 255: it enables lingering for
+  the runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
   waits up to two and a half minutes for the timer's first run). That job is
-  its own check and is not among the branch's required ones, so a change to the
-  runner image does not stop unrelated pull requests; a failure in it is a real
-  finding about the adapter. To run it yourself, never on your own machine or
-  login, use a disposable Linux container with systemd as PID 1 (Docker on
-  macOS runs it in a Linux VM) and a non-root user (or run
+  intended to be a required check, so it is pinned to the image it was
+  validated on rather than `ubuntu-latest`, whose move to a new image would
+  change the systemd version and defaults under a required check. Bump the pin
+  deliberately, re-validating on the new image with
+  `scripts/acceptance/linux` first. The job's name must stay `real-systemd`,
+  because branch protection matches the required check by name
+  (`scripts/test_ci_workflow.py` fails on a rename or an unpinned image). A
+  failure in it is a real finding about the adapter. To run it yourself, never
+  on your own machine or login, use a disposable Linux container with
+  systemd as PID 1 (Docker on macOS runs it in a Linux VM) and a non-root
+  user (or run
   `scripts/acceptance/linux/host.sh`, which does all of this and more; see
   [the Linux live acceptance run](#the-linux-live-acceptance-run)):
 
@@ -238,6 +246,12 @@ In Go tests, everything goes through injection:
   answer; `TestOnlyPlatformReadsRuntimeGOOS` fails a production file that reads
   `runtime.GOOS` itself. An unknown system fails closed (no Cursor location, no
   credential store) and each caller's choice is pinned by a test.
+- The mount table the Linux network-home check reads (`/proc/self/mountinfo`)
+  is `Env.MountTable` in `internal/cli`, and the package's isolation replaces
+  its default with one that reads nothing, so no test sees the machine's own
+  mounts: a test of a network home passes a table (`mountTableWith`), and an
+  unreadable one stops nothing. `local.FilesystemProbe` takes the same table
+  and its own symlink resolver.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`). The real root is a choice of `platform.Locations` over
@@ -369,32 +383,55 @@ each check):
   no files, no link and no running timer.
 - The real-manager Go tests (`AGENT_ARCHIVE_REAL_SYSTEMD=1`) as a second lingering
   user, and `cursorstore`'s snapshot tests on a real Linux account.
+- On the container's own disk, `status` reports no network filesystem and
+  `config.json` records no `allow_network_home` opt-in. A real network home
+  remains untested live.
 
 **What it does not cover:** the real Cursor application, `cursor-agent` and the
 Cursor database layout on Linux (the database is hand-made after macOS's and VS
 Code's layout, so a real Cursor's Linux paths and its hook approval are
-unverified); Claude Code itself (the hook payloads are hand-written); any distribution
-other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
-252 and 255 for the adapter's parsing, but only 255 has run live); amd64, unless a run
-below says otherwise; a manager without lingering over a real logout (the
-no-user-bus session is simulated by unsetting the bus variables); real R2 or
+unverified); the real Claude Code and Codex apps (only hand-written Claude Code
+hook payloads are exercised); any distribution other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
+252 and 255 for the adapter's parsing, but only 255 has run live); a manager
+without lingering over a real logout (the no-user-bus session is simulated by unsetting the bus variables); real R2 or
 AWS (MinIO stands in); WSL; Linux running as the machine's only user session
 with a desktop; and anything about upgrades from an earlier release.
 
-**Last run** (record each run that follows a change to what it covers: date,
+**Recorded runs** (record each run that follows a change to what it covers: date,
 commit, systemd, architecture, result):
 
 - 2026-09-30, the tree of the pull request that added the run (on top of 5c's
   enable-link and clone-warning change), Ubuntu 24.04.5 LTS, systemd 255
   (255.4-1ubuntu8.17), linux/arm64 (Docker in a colima VM on an Apple silicon
   Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
-  the product. amd64 has not been run (the script builds for Docker's
-  architecture; on an amd64 host it would run as is).
+  the product. At that point amd64 had not been run.
 - 2026-09-30, the same pull request after review (the Go test binaries must
   report each named test passed, a root-only `cursorstore` test added), same
   machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
   (the enable link left out of uninstall's paths, and the clone warning turned
   off) failed 8 checks, in sections 6, 9, 11 and 12.
+- 2026-10-01, the network-home guard's pull request after review (section 2
+  also checks that `status` sees no network filesystem and `config.json`
+  records no `allow_network_home` on the container's own disk), same machine:
+  **91 passed, 0 failed**, 103 seconds. A home on a real network filesystem is
+  not run live (the container cannot fake an NFS mount's type); the unit
+  tests cover it with injected mount tables.
+- 2026-10-01, clean commit `61d068b785a6d554bad8400ae8ab69023e355dad`,
+  Ubuntu 24.04.5 LTS, systemd 255 (255.4-1ubuntu8.17), linux/amd64 (Docker in
+  the x86-64 Colima `levenshtein` VM on macOS): **91 passed, 0 failed**,
+  exit 0, 341 seconds including guest image preparation. This establishes
+  live harness coverage on amd64 as well as arm64. The first attempt stopped
+  before any checks because Quay returned 401 for the default MinIO image;
+  Docker Hub images were also unavailable and official binary downloads
+  returned 410. The successful retry used `MINIO_IMAGE` and `MC_IMAGE` with
+  temporary Alpine 3.24 images built from official source pins:
+  `github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c` and
+  `github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540`, cross-built with
+  Go 1.27.1, `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`. Product code and checks
+  were unchanged; the run's resources and temporary MinIO images were removed.
+  Local evidence (not committed):
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-retry.log` and
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-summary.txt`.
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product
@@ -502,6 +539,100 @@ of a path, and macOS's per-user temporary folder can hold thousands of
 entries. (The product calls it only from setup, status and uninstall, on
 paths under your home folder, never from a hook or a collector pass.)
 
+## Live acceptance: guided R2 creation
+
+Guided R2 creation (`internal/cloudflare`, `internal/cli/setup_r2_create.go`)
+is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
+request and response shapes come from Cloudflare's API reference, read on
+2026-09-29, and the fake cannot confirm the points the documentation leaves
+open. **None of the items below has been run against a real account: the
+feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+(`experimentalR2Create` in `internal/cli/setup_r2_create.go`), until each is
+checked.** Remove the gate (that function and its one use in `storageMenuFor`,
+and the switch's mentions in the docs and CHANGELOG) once every box is ticked. Use a scratch
+Cloudflare account (never one with real archives), and the sandbox recipe
+below, so nothing touches your real Mac; create the bootstrap token with
+exactly the two permissions setup prints, then run `agent-archive setup` and
+choose "Cloudflare R2: create a new bucket for me" (with
+`AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
+open-source acceptance record.
+
+- [ ] **Secret encoding (blocker).** The derived key
+      (`cloudflare.DeriveS3Credentials`: Access Key ID = the token's `id`,
+      Secret Access Key = lowercase hex SHA-256 of its `value`) passes the
+      storage check (probe, write, read, list, delete). Cloudflare's docs say
+      only "SHA-256 hash". If the check fails there, try the other encodings
+      (base64, raw bytes) in that one function; it is the only place to
+      change.
+- [ ] **Key activation delay.** How long after the token is created the key is
+      accepted. Setup makes up to `r2VerifyAttempts` checks, `r2VerifyPause`
+      apart; tune them to what you see.
+- [ ] **`GET /accounts` with only the two permissions.** Whether it lists the
+      account (else setup asks for the account ID, which is the fallback).
+- [ ] **Public-access reads.** Whether `GET .../domains/managed` and
+      `GET .../domains/custom` work with only Workers R2 Storage Write
+      (else setup says "couldn't check"; adjust its wording if a Read
+      permission is needed), and that `result.enabled` and
+      `result.domains[]` are the fields read, and that a bucket with no
+      custom domains answers with an empty `domains` list and not without
+      the field (setup treats a missing `enabled` or `domains`, like any
+      success without a result, as unreadable, never as "off" or "none").
+      Turn r2.dev on for a scratch
+      bucket and confirm the warning and the "What now?" menu (Enter
+      revokes the key and returns to the storage question; "Check again"
+      sees the dashboard change).
+- [ ] **Token expiry.** A token created without `expires_on` has no expiry in
+      the dashboard.
+- [ ] **Token revoke.** `DELETE /accounts/{account}/tokens/{id}` with the
+      bootstrap token revokes the key. Exercise the failure path (for
+      example a scratch build with a wrong derivation): the key is revoked,
+      and nothing is stored.
+- [ ] **Delete-token 404.** What `DELETE /accounts/{account}/tokens/{id}`
+      returns for a token that is already gone or was never created (setup
+      says "Cloudflare says that token doesn't exist" and tells the person to
+      check the dashboard, since the meaning is unconfirmed), and that a
+      second delete of the same ID behaves the same.
+- [ ] **Prefix scoping unavailable.** The runtime token reaches the whole
+      bucket, and only it: it cannot read or list another bucket, create a
+      bucket, or set a lifecycle rule. The docs describe bucket-level scope
+      only; setup treats prefix scoping as unavailable.
+- [ ] **Bucket name collision.** Creating a name that is taken returns what
+      `cloudflare.Error.AlreadyExists` expects: HTTP 409 with R2 error code
+      10073 (BucketConflict, "Bucket name already exists.", from
+      Cloudflare's R2 error-code page; an earlier plan guessed 10004, which
+      that page does not list). Any other answer is shown as Cloudflare's own
+      message and is not retried as a name collision, so confirm the real
+      status and code, and that the retry with a new name works.
+- [ ] **Jurisdictions.** For each of `eu`, `us`, and `fedramp` (the ones setup
+      offers): a bucket created with the jurisdiction, and its token resource
+      string `..._<jurisdiction>_<bucket>`, pass the storage check at
+      `<account>.<jurisdiction>.r2.cloudflarestorage.com`, and the saved
+      endpoint works after setup finishes. `fedramp-high` is documented only
+      for the create header, so setup does not offer it; add it only once its
+      resource string and endpoint are confirmed.
+- [ ] **Non-administrator member.** Token creation by a member who lacks a
+      permission is refused with a 403 that the message covers.
+- [ ] **Permission group listing.** The lookup by name returns the
+      bucket-item-write group with `is_selectable`, the paging parameter is
+      accepted (or ignored harmlessly), and the `name` filter matches the
+      exact name (setup also compares names itself, so a fuzzy filter is
+      harmless, an over-strict one is not).
+- [ ] **R2 not enabled.** On an account where R2 is not enabled (or needs a
+      payment method), what bucket creation returns. Setup maps a 403 to "needs
+      Workers R2 Storage Write" and adds a hint to enable R2; confirm the
+      status and message, and give that case its own text if it is not a 403.
+- [ ] **Public-access response shape.** `GET .../domains/managed` returns
+      `result.enabled` (Cloudflare's reference page for it was unavailable when
+      this was written; the shape comes from its summary).
+- [ ] **Rate limits.** A 429 carries `Retry-After` in whole seconds, as the
+      client reads it.
+- [ ] **Orphan token name.** The name printed before creation is the name the
+      dashboard shows for the token.
+- [ ] **No leftovers.** After a run, search the sandbox (data directory, hook
+      files, LaunchAgent plist, `setup-draft.json`) for the bootstrap token;
+      it appears nowhere. The automated search
+      (`TestGuidedR2NeverPersistsTheBootstrapToken`) covers the fake only.
+
 ## Terminal tests
 
 What a real terminal does (echo, key mode, Ctrl-C, Ctrl-Z, a resize, a
@@ -536,6 +667,8 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
 | `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
+| `FuzzSubagentMeta` | any `.meta.json` bytes beside a subagent transcript | no failure; at most one `subagent-meta` record, first, holding only a bounded string of valid UTF-8; the transcript's own records unchanged; the output refilters unchanged |
+| `FuzzSubagentMetaDropsSecrets` | a secret in a description, among filler so the cap can fall in or beside it | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |

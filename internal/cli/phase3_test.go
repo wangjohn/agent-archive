@@ -112,18 +112,6 @@ func TestListKeepsProjectsWithSameNameSeparate(t *testing.T) {
 	}
 }
 
-func TestMatchSessionsByQueryPrefersExactShortID(t *testing.T) {
-	t.Parallel()
-	sessions := []archive.Metadata{
-		{SessionID: "abcdef0123456789abcdef0123456789", Title: "abcdef something"},
-		{SessionID: "zzzzzzzz111111111111111111111111", Title: "other"},
-	}
-	got := matchSessionsByQuery(sessions, "abcdef01")
-	if len(got) != 1 || got[0].SessionID != sessions[0].SessionID {
-		t.Fatalf("got=%v", got)
-	}
-}
-
 func TestShowAmbiguousHarnessDoesNotFuzzyMatch(t *testing.T) {
 	t.Parallel()
 	env, mem, id := publishedFixture(t)

@@ -6,8 +6,38 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The handoff picker, `show --json` with no ID, and the pickers for an
+  ambiguous `show` or `handoff` query open the browser's alternate screen on a
+  terminal, so their list is gone once you choose, as `list`'s is.
+  `show "<words>"` with several matches on a terminal browses them (and shows
+  the details itself) unless `--json` or `--transcript` asks for one session
+  to print. The picker lists every match of an ambiguous query, not the first
+  20 (a pipe or an agent still gets 20 and a count). The line-mode prompt says
+  words filter, and an answer that is not a row number, an ID, or a command (`q`,
+  `n`, `p`, `a`) no longer reports a bad answer but filters.
+- `list`, `show`, and handoff keep up to 128 characters of a session's saved
+  name or first-prompt preview, instead of 72. Parser `0.17.1` refreshes
+  existing metadata from retained source bundles on the next collector scan;
+  sessions whose source is unavailable keep their existing preview.
+
 ### Added
 
+- **One session browser, with a filter you type into.** The handoff picker,
+  `show --json` with no ID, and a `show` or `handoff` query that matches
+  several sessions now open the same browser as `list` and bare `show`
+  (`agent-archive list`, `show`, `handoff`), instead of a numbered list you
+  answer with a line. Press `/` to narrow the rows as you type, with the words
+  `list "<words>"` takes (a topic, a PR number, a branch, a project name):
+  the first match is marked `▸`, ↑ and ↓ move the mark, Enter acts on it (shows
+  it in `list` and `show`, hands it off in `handoff`), and Esc clears the
+  filter. Rows keep their numbers while filtered, and a subagent session that
+  matches is shown under its parent. `list "<words>"` and an ambiguous query
+  open the browser with the words already in the filter. Where keys cannot be
+  read, an answer that is not a row number, an ID, or a command is words to filter
+  by, and an empty answer clears them. A handoff picked with the keys still
+  reads an answer typed ahead for the `Continue in:` question.
 - **Linux is supported for persistent capture** (x86-64 and arm64), on a
   machine with systemd 240 or newer and a user manager (RHEL 8 and its
   rebuilds from 8.3). macOS behavior, its plist, Keychain items and
@@ -45,7 +75,15 @@ follow [Semantic Versioning](https://semver.org/).
     machine ID, on Linux; `status` and `setup` warn when the data directory
     was set up on a different machine (a cloned VM or image). It is best
     effort; see [multiple machines](docs/guides/multiple-machines.md#cloned-machines-on-linux).
-    A home directory shared by several machines is not supported.
+  - **Network homes.** `setup` and `setup --refresh` refuse, before any
+    question and changing nothing, when the data directory or the systemd unit
+    directory is on a network filesystem (NFS, SMB/CIFS, Ceph, sshfs and the
+    like; read from `/proc/self/mountinfo`), since machines that share a home
+    share one machine ID, cannot rely on file locks and each run the
+    collector. Set `AGENT_ARCHIVE_HOME` to local disk, or for a home only one
+    machine mounts run `setup --allow-network-home`, which is recorded as
+    `allow_network_home` in `config.json`; `status` warns either way. See
+    [multiple machines](docs/guides/multiple-machines.md#a-home-directory-shared-across-machines).
   - **Not verified on Linux:** the real Cursor app and `cursor-agent` hooks
     (a Cursor forum report says they may fail silently, so Cursor capture is
     best effort and its version is not detected), the real Claude Code and
@@ -81,6 +119,21 @@ follow [Semantic Versioning](https://semver.org/).
   If setup ends without using a bucket it created, it says so. Setup does
   not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
+- **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
+  bucket for me** at the storage question, then paste one Cloudflare API token
+  (Workers R2 Storage Write and Account API Tokens Write, or set
+  `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
+  no public access by default) and a key that can read and write only that
+  bucket, checks it, and keeps the key in the Keychain. The token you pasted
+  is used during setup and then dropped, never saved, and setup revokes the
+  new key's token if it fails its check or can't be stored. It also reads
+  whether the bucket's public `r2.dev` URL or a custom domain is on, and if so
+  stops and asks: check again, choose other storage (the default, which
+  revokes the new key), or continue anyway. Not available with
+  `setup --yes`. It has not yet been run against every kind of Cloudflare
+  account, which is why it is behind the switch. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -179,9 +232,8 @@ follow [Semantic Versioning](https://semver.org/).
   [privacy page](docs/security/privacy.md) explains what a hash of a known
   address does and does not hide. Parser version is now `0.16.0`, so existing
   sessions gain the field on the next metadata refresh, on the Mac that
-  captured them and only while the repository is still there. Nothing uses it
-  yet: a later release matches `handoff` to a session by repository rather
-  than checkout path.
+  captured them and only while the repository is still there. `handoff
+  --latest` uses it (see Changed).
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -346,8 +398,43 @@ follow [Semantic Versioning](https://semver.org/).
   `show`'s `--no-pager` now covers the summary too. Piped output is
   unchanged.
 
+- **`agent-archive list "<words>"` searches.** One or two words find a
+  session: every word must appear, in any case, in some field of it (its name,
+  title, branch, project name, harness, or the first 4 or more characters of its
+  ID), and words may match different fields, so `list "linux 212"` finds the
+  session named for Linux that opened PR 212. `#212`, or a bare number of 1 to 6
+  digits, also matches a pull request number, any the session linked or created.
+  On a terminal it opens the browser over the matches; piped it prints the
+  table; `list "<words>" --json` prints the same document, narrowed, with the
+  same `scope` object. `handoff "<words>"` and `show "<words>"` use the same
+  matcher and the same order, so a person and an agent get the same answer: this
+  repository's top-level sessions first, then every project's, then subagent
+  sessions (in the repository, then everywhere); the first that has a match
+  answers, and a note says how many more match in other projects.
+- When several sessions match and nothing can ask (`handoff` or `show` piped,
+  or inside a coding agent), the table of candidates gains a PR column, labels
+  a subagent `subagent of <parent ID>`, and ends with the exact command to run
+  next (`Next: agent-archive handoff d7a77938 --harness claude`, or
+  `agent-archive show d7a77938`) and the `list "<words>" --json` that shows
+  them as data. The agent skill says so, and that the words may be a topic, a
+  PR number, a branch, or a project name.
+
 ### Changed
 
+- **Privacy filter 14: a subagent's task description is now archived.**
+  When Claude Code starts a subagent, its parent gives the task a short
+  description ("find the retention tests"), which Claude Code keeps in an
+  `agent-<id>.meta.json` file beside the subagent's transcript. That
+  description is now kept, with the subagent's session, and is its name in
+  `list` and `show`. It passes the same redaction as your
+  prompts and is cut to 512 bytes. Nothing else in that file is kept (the
+  path of a worktree, for one), and a subagent with no such file, or one that
+  cannot be read, is archived as before. The next sync re-reads and
+  republishes each subagent whose transcript is still on the machine, so it can
+  carry its description; a file that appears later is picked up when the
+  subagent's transcript next changes. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - **"Mac" became "machine" wherever the text is not about macOS**, now that
   Linux is supported: in `agent-archive help` and the [CLI
   reference](docs/reference/cli.md) ("sessions already on this machine"), in
@@ -372,6 +459,27 @@ follow [Semantic Versioning](https://semver.org/).
   below. See the
   [filter changelog](dev/specs/privacy-filter-changelog.md) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list` and the browser show top-level sessions only.** A session's
+  subagents are no longer rows of their own: they are left out before
+  `--limit` counts (so `--limit 50` is 50 sessions), the footer says how many
+  were hidden (`42 sessions (318 subagent sessions hidden; search to find
+  one)`), and a session that has some carries a dim `· 45 subagents` hint, as
+  the handoff picker does. A subagent is found by searching. `list --json`
+  keeps every row, subagents included, so scripts see what they did. The
+  table and the browser now read every session's metadata (the cache keeps it
+  quick) instead of the index's newest page, so that subagents can be left out
+  before the limit; `list --json` without words keeps the index's page outside
+  a project or with `--all-projects`.
+- `handoff "<words>"` and `show "<words>"` match words across a session's
+  fields (above) where they matched the whole text as a substring of the title
+  or the start of an ID. Words that matched a title before still match it,
+  except a `#N` that was only the start of a longer number (`#21` no longer
+  finds `PR #213`). The start of an ID now needs 4 characters or more, and a PR
+  number such as `212` or `#212` never matches one, so it does not also find
+  every session whose random ID happens to start with those digits.
+  `show "<words>"` now offers a subagent session only when no top-level session
+  matches, where it listed both. The table printed for several matches is the
+  one described above.
 - **`list`, `show`, and `handoff` start from the repository you are in.**
   Run inside a project, `agent-archive list` and `list --json` now return
   that repository's sessions (every checkout and worktree of it, and its
@@ -450,6 +558,26 @@ follow [Semantic Versioning](https://semver.org/).
   matches that session itself (as `--latest` skips it).
   `handoff` no longer rejects an argument that is not shaped like a session
   ID up front; one that matches nothing says so and points to `list`.
+- `handoff --latest` now finds sessions from your other computers even when
+  the repository is at a different path. A session matches the current
+  directory by path or by repository (the `origin` remote, so SSH and HTTPS
+  clones agree), from a subdirectory of the repository too; a directory
+  without an `origin` matches by path only, as before, and a fork's `origin`
+  is the fork's. A session that ran at the same path always comes first. A
+  repository chooses its own `origin`, so when `--latest` can only find a
+  session by repository it says so before downloading any of it (machine, project,
+  start time, first prompt) and, on a terminal, asks before going on (default
+  no); where nothing can be asked (a pipe, or inside a coding agent) it
+  refuses, printing only the machine and start time and the `handoff
+  SESSION_ID` command for you to run (`agent-archive list` when the ID is not
+  a normal one). That refusal slows a steered agent; it does not stop one
+  that runs the command. Path matches, explicit session IDs, and the picker
+  behave as before. `--to` launches an archived session from another
+  computer the same way, and the handoff tells the agent the session was on
+  another branch or in another directory when it was. When nothing matches,
+  the message says what was tried and how to make a match possible. See the
+  [handoff guide](docs/guides/handoff.md#finding-a-session-by-repository) and
+  the [threat model](docs/security/privacy.md#threat-model).
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
@@ -511,6 +639,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pager startup failure preserves the complete direct-output fallback, even
+  when the pager consumed its input; regression coverage checks partial and
+  complete reads and reports output write failures.
+
+- `setup`'s hidden prompt for a secret access key no longer spins at full
+  CPU forever on macOS when its terminal goes away without a hangup signal
+  (a closed pseudo-terminal, for example). It now ends as every other prompt
+  does at the end of input, with "no more input", and so does Ctrl-D on an
+  empty answer, which the prompt used to ignore.
 - On a busy Mac, setup no longer warns "Could not prune capture diagnostics
   for excluded projects", leaving a project it had just excluded named in the
   local diagnostics file, when a hook recorded a diagnostic at the same time.
@@ -626,6 +763,13 @@ follow [Semantic Versioning](https://semver.org/).
   prototype's upload job, or a collector under an earlier label) whose label
   another installation now runs: recovery used to stop there, leaving the
   jobs after it stopped, and now puts its plist back and finishes.
+- A Cursor read no longer fails now and then with "lock a Cursor database
+  snapshot directory" when a sweep of leftover snapshots (at the start of
+  every collector pass and every backfill command) runs at the moment the
+  read starts. The sweep checks whether each snapshot is in use by taking
+  its lock for an instant; it could take a new snapshot's lock just before
+  the read did. A read's lock file now appears already locked, so the
+  sweep sees it in use and leaves it alone.
 
 ### Changed
 

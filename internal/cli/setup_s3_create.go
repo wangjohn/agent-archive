@@ -17,7 +17,7 @@ import (
 )
 
 // Guided creation of an Amazon S3 bucket in the person's own AWS account
-// (dev/proposals/portable-handoff-and-onboarding.md, Part 2b).
+// (dev/proposals/implemented/portable-handoff-and-onboarding.md, Part 2b).
 //
 // It uses the AWS profile chosen for storage, at setup time. That profile
 // needs s3:CreateBucket and s3:PutBucketPublicAccessBlock, which the runtime
@@ -233,6 +233,20 @@ func forgetCreatedBucket(p *prompter, name string) {
 	p.createdBuckets = kept
 }
 
+// savedStorageUses says whether the saved configuration (committed) or the
+// saved setup draft (drafted) uses provider's bucket, so a note about a bucket
+// setup created can say whether it is in use.
+func savedStorageUses(home, provider, bucket string) (committed, drafted bool) {
+	uses := func(cfg credentials.Config) bool { return cfg.Provider == provider && cfg.Bucket == bucket }
+	if cfg, found, err := config.Load(home); err == nil && found {
+		committed = uses(cfg.Storage)
+	}
+	if draft, found, problem, err := readDraft(home); err == nil && found && problem == "" {
+		drafted = uses(draft.Config.Storage)
+	}
+	return committed, drafted
+}
+
 // noteUnusedCreatedBuckets says, once setup is over, which buckets it created
 // that the saved configuration does not use, so none is left behind without
 // the person knowing. A bucket that is in use is not mentioned.
@@ -240,19 +254,13 @@ func noteUnusedCreatedBuckets(p *prompter, home string) {
 	if len(p.createdBuckets) == 0 {
 		return
 	}
-	active, drafted := "", ""
-	if cfg, found, err := config.Load(home); err == nil && found && cfg.Storage.Provider == credentials.ProviderS3 {
-		active = cfg.Storage.Bucket
-	}
-	if draft, found, problem, err := readDraft(home); err == nil && found && problem == "" && draft.Config.Storage.Provider == credentials.ProviderS3 {
-		drafted = draft.Config.Storage.Bucket
-	}
 	for _, b := range p.createdBuckets {
-		if b.name == active {
+		active, drafted := savedStorageUses(home, credentials.ProviderS3, b.name)
+		if active {
 			continue
 		}
 		note := "Setup created bucket " + b.name + " in " + b.region + "; it is empty. Delete it in the S3 console if you don't want it."
-		if b.name == drafted {
+		if drafted {
 			note = "Setup created bucket " + b.name + " in " + b.region + "; it is empty. Your saved setup draft uses it, so running setup again will resume with it. To not use it, choose a different bucket there and delete this one in the S3 console."
 		}
 		if !b.secured {

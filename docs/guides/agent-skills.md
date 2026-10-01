@@ -28,17 +28,21 @@ that session as a prompt: filtered as the archive is (injected instructions and
 credentials removed, tool output trimmed), cut to about 120 KB, and addressed
 to the receiving agent. It then does what you asked with it.
 
-- **It finds the session by its words.** A title substring or a short session
-  ID works, in this machine's sessions first (no network), then the archive's, so a
-  session from an hour ago needs no bucket access. A title is the session's
-  first prompt, so the agent searches for one or two distinctive words. With no
+- **It finds the session by its words.** Every word must appear in the
+  session's name, title (its first prompt), branch, project name, or app, or
+  start its short session ID, and `#212` or `212` also matches a pull request
+  number, so the words may be a topic, a PR number, a branch, or a project
+  name. It looks in this machine's sessions first (no network), then the
+  archive's, so a session from an hour ago needs no bucket access. The agent
+  searches for one or two distinctive words. With no
   topic ("where my other agent left off") it takes the most recent session for
   the project you are in (`--latest`). It passes over the session it is
   running in when the agent names it to commands it runs, as Claude Code does;
-  Cursor does not, so there a title or `--latest` can match the current chat.
+  Cursor does not, so there words or `--latest` can match the current chat.
 - **It never guesses.** When several sessions match, the agent shows you the
-  candidates (short ID, agent, project, when, title) and asks which. It never
-  picks for you.
+  candidates (short ID, agent, project when they span several, when, pull
+  request, title) and asks which. It never picks for you. It can also read
+  them as data with `list "<words>" --json`.
 - **When nothing matches**, it tries different words, or looks at the last 30
   days with `list --since 30d` and shows you the titles.
 - **It can browse:** `list` for what exists (a short table; `--json` for the

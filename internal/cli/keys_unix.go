@@ -191,9 +191,16 @@ func signalled(signals chan os.Signal) bool {
 }
 
 // readReady reads the input select said is waiting.
-func (t *ttyKeys) readReady(p []byte) (int, error) {
+func (t *ttyKeys) readReady(p []byte) (int, error) { return readTerminal(t.fd, p) }
+
+// readTerminal reads from the terminal fd, again when a signal interrupts
+// the read. A read of no bytes is io.EOF: on macOS a terminal whose other
+// end has closed answers every read with no bytes, and a reader that reads
+// again spins forever. The key browser and the secret prompt both read
+// through it.
+func readTerminal(fd int, p []byte) (int, error) {
 	for {
-		n, err := unix.Read(t.fd, p)
+		n, err := unix.Read(fd, p)
 		switch {
 		case errors.Is(err, unix.EINTR):
 			continue
