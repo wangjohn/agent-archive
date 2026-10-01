@@ -97,7 +97,7 @@ jobs:
           go build ./...
           go vet ./...
       # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which the macOS legs
+      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
       # (cgo on) never compiles.
       - name: Vet darwin without cgo
         env:
