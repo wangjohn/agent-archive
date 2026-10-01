@@ -453,6 +453,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- On a busy Mac, setup no longer warns "Could not prune capture diagnostics
+  for excluded projects", leaving a project it had just excluded named in the
+  local diagnostics file, when a hook recorded a diagnostic at the same time.
+  Hooks that fire together are also far less likely to drop each other's
+  diagnostics.
+  Each writer held the diagnostics lock through its write's disk syncs, which
+  could outlast setup's two-second wait for that lock and a hook's 50 ms one.
+  Writers now sync before taking the lock and hold it only to reread, check
+  and rename the file, and setup waits up to ten seconds for it, since a
+  rename alone can stall for over a second while other programs sync.
 - The `handoff` picker no longer offers archived subagent sessions. They
   filled the first screen under their orchestrator (one had 45 of them) and
   were counted in "Showing 50 of 659", though only top-level sessions can be

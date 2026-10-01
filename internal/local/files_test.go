@@ -64,6 +64,56 @@ func TestWriteCompactIsAtomicCompactJSON(t *testing.T) {
 	}
 }
 
+// A staged file leaves its target alone until Commit, which gives the
+// target Write's bytes and mode; Discard removes a staged file that was not
+// committed, and leaves one that was.
+func TestStagedFileReplacesItsTargetOnlyOnCommit(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "state.json")
+	if e := Write(p, map[string]int{"a": 1}); e != nil {
+		t.Fatal(e)
+	}
+	old, _ := os.ReadFile(p)
+
+	discarded, e := Stage(p, map[string]int{"a": 2})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if now, _ := os.ReadFile(p); string(now) != string(old) {
+		t.Fatalf("staging changed the target to %q", now)
+	}
+	discarded.Discard()
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("Discard left behind %v", entries)
+	}
+
+	value := map[string]int{"a": 3}
+	staged, e := Stage(p, value)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := staged.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	staged.Discard()
+	if e := staged.SyncDir(); e != nil {
+		t.Fatal(e)
+	}
+	want := filepath.Join(dir, "want.json")
+	if e := Write(want, value); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := os.ReadFile(p)
+	if wantBytes, _ := os.ReadFile(want); string(got) != string(wantBytes) {
+		t.Fatalf("replaced with %q, want Write's %q", got, wantBytes)
+	}
+	if st, _ := os.Stat(p); st.Mode().Perm() != 0600 {
+		t.Fatal(st.Mode())
+	}
+	var nothing *Staged
+	nothing.Discard()
+}
+
 func TestLockExcludesOtherCollector(t *testing.T) {
 	home := t.TempDir()
 	unlock, e := Lock(home)
