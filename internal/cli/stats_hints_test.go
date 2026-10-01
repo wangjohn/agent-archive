@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func projectAndModelSessions(n int) []syntheticSession {
 }
 
 // Every "all in ..." hint under a list a screen cuts is true: the command it
-// names really lists every row, and plain --json, which the hint used to name,
+// names really lists every row, and plain --json, which a hint must not name,
 // does not (it keeps the top five projects). The archive has more projects
 // and models than a list screen keeps (500).
 func TestStatsAllInHintsListEveryRow(t *testing.T) {
@@ -75,22 +76,22 @@ func TestStatsAllInHintsListEveryRow(t *testing.T) {
 		t.Parallel()
 		page := mustRunStats(t, env, 100, "--no-cache", "--view", "projects")
 		hint := hintCommand(t, page)
-		if !strings.Contains(page, "+ 5 more (all in --json --by project)") {
+		if !strings.Contains(page, "+ 5 more (all in --json --all)") {
 			t.Errorf("the projects screen says something else about the 5 it leaves out:\n%s", page[len(page)-400:])
 		}
 		doc := runHint(t, env, hint)
-		if doc.Groups == nil || doc.Groups.By != stats.GroupProject || len(doc.Groups.Rows) != projects {
-			t.Fatalf("%v does not list all %d projects: %+v", hint, projects, doc.Groups)
+		if len(doc.Projects) != projects || doc.TotalProjects != projects {
+			t.Fatalf("%v lists %d of %d projects, want all %d", hint, len(doc.Projects), doc.TotalProjects, projects)
 		}
 		// The screen shows the first rows of that same list, in that order.
-		for i, row := range doc.Groups.Rows[:statsMaxListRows] {
-			if !strings.Contains(page, row.Key) {
-				t.Fatalf("row %d of %v, %q, is not on the projects screen", i, hint, row.Key)
+		for i, row := range doc.Projects[:statsMaxListRows] {
+			if !strings.Contains(page, row.Name) {
+				t.Fatalf("row %d of %v, %q, is not on the projects screen", i, hint, row.Name)
 			}
 		}
-		for _, row := range doc.Groups.Rows[statsMaxListRows:] {
-			if strings.Contains(page, row.Key) {
-				t.Errorf("%q is one of the rows the screen says it left out", row.Key)
+		for _, row := range doc.Projects[statsMaxListRows:] {
+			if strings.Contains(page, row.Name) {
+				t.Errorf("%q is one of the rows the screen says it left out", row.Name)
 			}
 		}
 	})
@@ -178,12 +179,7 @@ func TestStatsAllInHintsOnTheInteractiveScreen(t *testing.T) {
 		command string
 		rows    func(statsDocument) int
 	}{
-		{"p", "--json --by project", func(d statsDocument) int {
-			if d.Groups == nil {
-				return 0
-			}
-			return len(d.Groups.Rows)
-		}},
+		{"p", "--json --all", func(d statsDocument) int { return len(d.Projects) }},
 		{"m", "--json", func(d statsDocument) int { return len(d.Models) }},
 	} {
 		for _, days := range []int{7, 30, 90} {
@@ -210,7 +206,7 @@ func TestStatsAllInHintsOnTheInteractiveScreen(t *testing.T) {
 	// Filters the screen was started with are still to be given.
 	run := runScreen(t, screenOptions{width: 100, height: 40, inputs: &inputs, filters: statsFilters{Harness: "claude"}}, "p", "\x1b[F", "q")
 	flat := strings.Join(strings.Fields(ansiEscape.ReplaceAllString(strings.Join(run.frames[len(run.frames)-1], " "), "")), " ")
-	if want := "+ 5 more (quit, then run agent-archive stats --days 30 --json --by project, with the same filters)"; !strings.Contains(flat, want) {
+	if want := "+ 5 more (quit, then run agent-archive stats --days 30 --json --all, with the same filters)"; !strings.Contains(flat, want) {
 		t.Errorf("the interactive screen with a filter lacks %q:\n%s", want, flat)
 	}
 }
@@ -251,7 +247,7 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 		by   stats.Grouping
 		want string
 	}{
-		{"projects", pageProjects, stats.GroupNone, "--json --by project"},
+		{"projects", pageProjects, stats.GroupNone, "--json --all"},
 		{"models", pageModels, stats.GroupNone, "--json"},
 		{"detail by project", pageDetail, stats.GroupProject, "--json --by project"},
 		{"detail by day", pageDetail, stats.GroupDay, "--json --by day"},
@@ -282,6 +278,20 @@ func TestStatsAllInHintsFitTheTerminal(t *testing.T) {
 				}
 				if flat := strings.Join(strings.Fields(out), " "); !strings.Contains(flat, want) {
 					t.Fatalf("%s at %d columns (%+v) lost the command %q:\n%s", tc.name, width, mode, want, out)
+				}
+				// A command is not cut in two: its flags are on one line
+				// ("--by" at the end of one and "project)" at the start of
+				// the next was the bug), and the whole command is too where
+				// a line is wide enough for it.
+				lines := strings.Split(out, "\n")
+				onOneLine := func(text string) bool {
+					return slices.ContainsFunc(lines, func(line string) bool { return strings.Contains(line, text) })
+				}
+				if !onOneLine(tc.want + ")") {
+					t.Fatalf("%s at %d columns (%+v) split the command %q over lines:\n%s", tc.name, width, mode, tc.want, out)
+				}
+				if command := fmt.Sprintf("agent-archive stats --days %d %s)", s.Window.Days, tc.want); mode.interactive && visibleWidth(command) <= width && !onOneLine(command) {
+					t.Fatalf("%s at %d columns (%+v) split the command %q, which fits a line:\n%s", tc.name, width, mode, command, out)
 				}
 			}
 		}

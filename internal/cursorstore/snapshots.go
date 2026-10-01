@@ -254,7 +254,7 @@ func untrackSnapshot(dir string) {
 // RemoveOwnSnapshots removes every snapshot directory this process's
 // Readers created and have not closed, even one a backup is still writing
 // into. It is for a process about to exit on a signal (a second Ctrl-C,
-// SIGTERM, SIGHUP), whose Readers will never be closed: without it the copy
+// SIGTERM, SIGHUP, SIGQUIT), whose Readers will never be closed: without it the copy
 // of every Cursor chat would stay in the temporary folder until a later
 // sweep. A Reader whose directory it removed fails its reads afterwards.
 func RemoveOwnSnapshots() {

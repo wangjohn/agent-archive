@@ -110,7 +110,7 @@ func TestStatsScreenSignalRestoresTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		sig  os.Signal
 		code int
-	}{{os.Interrupt, 130}, {syscall.SIGTERM, 128 + int(syscall.SIGTERM)}, {syscall.SIGHUP, 128 + int(syscall.SIGHUP)}} {
+	}{{os.Interrupt, 130}, {syscall.SIGTERM, 143}, {syscall.SIGHUP, 129}, {syscall.SIGQUIT, 131}} {
 		fake := newFakeKeys("d", string(fakeBlock))
 		signals := make(chan os.Signal, 1)
 		exited := make(chan int, 1)

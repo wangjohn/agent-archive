@@ -1,0 +1,35 @@
+agent-archive stats · last 30 days · 3 agents
+
+  ~$3,989                   93 sessions               10B tokens
+  at list price             673 prompts               97% served from cache
+
+AGENTS  ███████████████████████████████████████████ ████ █
+        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%   of sessions
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHERE IT WENT
+By project                                By model
+agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
+levenshtein    ██████             $751    fable   ███                       $386
+styleprofile   █████              $586    sonnet  ██                        $320
+family_books   ███                $427    + 2 more
++ 6 more
+
+MOST USED
+Skills  code-review 100 · review-pr 99 · docs 98 · cursor-guide 97 · skill-04 96
+        sessions, + 40 more (all in --json --all)
+MCP     github 5,000 · linear 4,993 · server-02 4,986 · server-03 4,979 ·
+        server-04 4,972 calls (Claude Code and Cursor only), + 40 more (all in
+        --json --all)
+
+HEADS UP
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38 subagents
+● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+Estimated at list price, not a bill.   --detail for more · --by project · --html

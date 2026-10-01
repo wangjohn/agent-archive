@@ -481,7 +481,7 @@ it renames the package.
   (`planAgentSkills`), its journal, and its collector, hooks, and setup
   locks, so a failure rolls back. Ownership is unchanged. It waits up to ten
   seconds for a collector pass (the collector starts one every minute)
-  before refusing, and absorbs SIGINT, SIGTERM, and SIGHUP from the moment
+  before refusing, and absorbs SIGINT, SIGTERM, SIGHUP, and SIGQUIT from the moment
   the journal is written until it is gone, so an interrupted installer
   never leaves a transaction to recover. `launchctl` runs in a process group
   of its own, so a terminal's Ctrl-C does not kill it halfway, and

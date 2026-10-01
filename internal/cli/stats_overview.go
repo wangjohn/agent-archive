@@ -422,11 +422,11 @@ func (p *statsPrinter) skillsRow(limit int) []string {
 	if len(shown) == 1 && shown[0].Sessions == 1 {
 		unit = "session"
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
+	atoms := p.usageAtoms(items, unit)
 	if more := max(p.s.TotalDisplaySkills, len(skills)) - len(shown); more > 0 {
-		text += fmt.Sprintf(", + %d more", more)
+		atoms = append(endWith(atoms, ","), p.moreAtoms(more, allUsageHint, p.width-useLabelWidth-2)...)
 	}
-	return p.hang("Skills", useLabelWidth, text, p.dim)
+	return p.hangAtoms("Skills", useLabelWidth, atoms, p.dim)
 }
 
 // mcpRow lists up to limit MCP servers by their calls, with which agents the
@@ -445,14 +445,14 @@ func (p *statsPrinter) mcpRow(limit int) []string {
 	if len(shown) == 1 && shown[0].Calls == 1 {
 		unit = "call"
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
-	if more := max(m.TotalServers, len(m.Servers)) - len(shown); more > 0 {
-		text += fmt.Sprintf(", + %d more", more)
-	}
+	atoms := p.usageAtoms(items, unit)
 	if scope := mcpScopeText(m.Scope); scope != "" {
-		text += " (" + scope + ")"
+		atoms = append(atoms, strings.Fields("("+scope+")")...)
 	}
-	return p.hang("MCP", useLabelWidth, text, p.dim)
+	if more := max(m.TotalServers, len(m.Servers)) - len(shown); more > 0 {
+		atoms = append(endWith(atoms, ","), p.moreAtoms(more, allUsageHint, p.width-useLabelWidth-2)...)
+	}
+	return p.hangAtoms("MCP", useLabelWidth, atoms, p.dim)
 }
 
 // mcpScopeText is which agents an MCP scope names: its first clause, as
