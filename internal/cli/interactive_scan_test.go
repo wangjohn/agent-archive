@@ -98,6 +98,9 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
+	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
+	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires the default-off GA gate and Env.interactive
 	"machines_verify.go":  {"newPrompter": 1},                  // readManagementToken prompts only with env.interactive(stdin), without --yes or --json.
 	"issuance.go":         {"newPrompter": 1},                  // reserveSpare builds a nil-input/discard-output prompter for checkKey diagnostics only; it never reads or asks a question. Selection questions use the caller's source prompter behind its interactive gate.
 	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
@@ -120,8 +123,10 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
-	"pairing_receive.go": {"io.ReadAll": 1}, // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
-	"pairing_ledger.go":  {"io.ReadAll": 1}, // bounded local ledger files, never input
+	"pairing_receive.go": {"io.ReadAll": 1},                       // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
+	"pairing_ledger.go":  {"io.ReadAll": 1},                       // bounded local ledger files, never input
+	"machines_revoke.go": {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin
+
 	// The prompter's own line reader: every prompt (see promptSites); and
 	// handoff's one buffer for its answers (typedInput), read only by the
 	// picker (and the ambiguous-title chooser) and the "Continue in:" prompt,

@@ -110,6 +110,12 @@ func registrationPending(home string, cfg config.Config) bool {
 }
 
 func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
+	if len(args) > 0 && args[0] == "revoke" {
+		return runMachinesRevoke(args[1:], stdin, out, errOut, env)
+	}
+	if len(args) > 0 && args[0] == "own-key" {
+		return runMachinesOwnKey(args[1:], stdin, out, errOut, env)
+	}
 	if len(args) > 0 && args[0] == "rename" {
 		return runMachinesRename(args[1:], out, errOut, env)
 	}

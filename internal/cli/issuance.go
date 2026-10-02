@@ -206,6 +206,11 @@ func (i *keyIssuer) reconcile() error {
 				return err
 			}
 		}
+		// Explicit self-recipient fresh slots belong to own-key's durable
+		// operation, including interrupted creation and cleanup boundaries.
+		if s.Origin == issuance.Fresh && s.RecipientID == i.cfg.MachineID {
+			continue
+		}
 		if s.State == issuance.CreationIntent || s.State == issuance.SecretIntent || s.State == issuance.CleanupPending || (s.State == issuance.Reserved && s.Origin != issuance.Precreated) {
 			if i.cfg.Storage.R2CredentialRef == s.SecretRef || (i.cfg.MachineAssignment != nil && i.cfg.MachineAssignment.AccessKeyID == s.ProviderID) {
 				continue
