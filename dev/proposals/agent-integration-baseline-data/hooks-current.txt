@@ -1,0 +1,24 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/capture
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkHookLocalEffects/fresh-5         	      10	    223349 ns/op	         1.000 repo-probes/op	   37353 B/op	     323 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	      10	    171966 ns/op	         1.000 repo-probes/op	   37358 B/op	     323 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	      10	    275948 ns/op	         1.000 repo-probes/op	   37464 B/op	     323 allocs/op
+BenchmarkHookLocalEffects/stop-5          	      10	    116734 ns/op	         0 repo-probes/op	   22444 B/op	     190 allocs/op
+BenchmarkHookLocalEffects/stop-5          	      10	    178294 ns/op	         0 repo-probes/op	   22444 B/op	     190 allocs/op
+BenchmarkHookLocalEffects/stop-5          	      10	    191382 ns/op	         0 repo-probes/op	   22483 B/op	     191 allocs/op
+BenchmarkHookLocalEffects/subagent-5      	      10	    167959 ns/op	         0 repo-probes/op	   32214 B/op	     259 allocs/op
+BenchmarkHookLocalEffects/subagent-5      	      10	    161420 ns/op	         0 repo-probes/op	   35952 B/op	     263 allocs/op
+BenchmarkHookLocalEffects/subagent-5      	      10	    226799 ns/op	         0 repo-probes/op	   35945 B/op	     261 allocs/op
+BenchmarkHookLocalEffects/disabled-5      	      10	     12627 ns/op	         0 repo-probes/op	    2608 B/op	      15 allocs/op
+BenchmarkHookLocalEffects/disabled-5      	      10	     10496 ns/op	         0 repo-probes/op	    2592 B/op	      15 allocs/op
+BenchmarkHookLocalEffects/disabled-5      	      10	     17657 ns/op	         0 repo-probes/op	    2720 B/op	      17 allocs/op
+BenchmarkHookLocalEffects/paused-5        	      10	    349006 ns/op	         0 repo-probes/op	    2576 B/op	      15 allocs/op
+BenchmarkHookLocalEffects/paused-5        	      10	     10572 ns/op	         0 repo-probes/op	    2576 B/op	      15 allocs/op
+BenchmarkHookLocalEffects/paused-5        	      10	     10447 ns/op	         0 repo-probes/op	    2576 B/op	      15 allocs/op
+BenchmarkHookLocalEffects/ignored-5       	      10	       162.6 ns/op	         0 repo-probes/op	       8 B/op	       1 allocs/op
+BenchmarkHookLocalEffects/ignored-5       	      10	       154.2 ns/op	         0 repo-probes/op	       8 B/op	       1 allocs/op
+BenchmarkHookLocalEffects/ignored-5       	      10	       163.1 ns/op	         0 repo-probes/op	       8 B/op	       1 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/capture	0.114s

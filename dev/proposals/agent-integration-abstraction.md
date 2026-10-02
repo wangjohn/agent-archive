@@ -592,7 +592,7 @@ implementation differences as work proceeds.
 
 | Phase | Deliverable | Completion gate | Status |
 | --- | --- | --- | --- |
-| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | Proposed |
+| 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | [PR #278](https://github.com/wangjohn/agent-archive/pull/278): contracts and measured references; independent review/CI pending. |
 | 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | Proposed |
 | 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | Proposed |
 | 3 | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | Proposed |
@@ -700,9 +700,54 @@ the architecture map and capability documentation with the implementation.
 
 ## Phase-entry artifacts and recommended defaults
 
-Phase 0 should produce a short contract checklist beside this proposal,
+Phase 0 artifacts are the [contract checklist](agent-integration-contracts.md) and
+[performance reference](agent-integration-baseline.md), including the unresolved
+historical growing-file timing difference. Phase 0 should produce a short contract checklist beside this proposal,
 updating these details in place before dependent implementation starts. No
 production abstraction is required to record the examples and baseline.
+
+The contract checklist also records target #277's `transcriptio` verified reads
+and `nativesessions` discovery helpers. Later source/discovery extraction must
+consume those real boundaries and preserve observable-write rejection; the
+performance report retains its earlier pinned measurement context.
+
+Live main at `d05defabb8ee1d7f268ee854882ca98dcfc0bde5` also includes native
+handoff before setup (#280). Later catalog/launch/runtime/source/codec/discovery
+phases must cover its existing read-only native selection, bounded filtered
+previews with explicit partial coverage, complete selected-source filtering,
+identity revalidation, and private temporary launch-file lifecycle. Reuse its
+`nativesessions.Discover` and `transcriptio.Snapshot.Records` boundaries while
+keeping preview framing distinct from full transcript filtering and import
+compatibility. Preview native facts are another phase-5 owner, not permission
+to parse a whole source for every display row. Historical companion measurements
+are not measurements of this newer target; the companion artifacts record
+these additional obligations without changing pinned samples or hashes.
+
+Target `4add976435af4b91d1dfbd31b3c2496316a0d3f4` also includes archived
+handoff no-prompt selection (#257): preserve known-zero versus unavailable
+human-turn counts, local prompts newer than the archive copy, and exact-ID
+accessibility. These remain shared selection policies when the native facts
+and availability move into Analysis.
+
+Target `e3b82989d56903966a0fb1c6a774c18c15f5e838` extends native-handoff
+budget and cancellation behavior: release unused header reservations after
+workers finish, preserve actual cumulative read accounting, and keep verified
+identity-only picker rows available without preview reads after budget exhaustion.
+Cancellation is checked during checkout scoping and before loading previews.
+Incomplete discovery cannot silently choose latest or the current session;
+interactive fallback requires an explicit choice and noninteractive fallback
+offers qualified native-ID/agent/checkout recipes. These remain shared selection
+and resource policies, with no replacement of historical performance samples.
+
+Latest target `0ffa628e84a2b4e6265ffa2ff481788269027567` also introduces
+informational machine registration and independent publication retries, bounded
+portable project matching, revised storage creation/confirmation and filter15
+pairing-bundle redaction. Preserve the target's shared setup, destination,
+credential provenance and capture-scope policies. Discovery extraction must
+retain conservative incomplete matching and bounded native history, while codec
+extraction keeps filter15/adapter0.15.0 redaction and golden output intact.
+Historical timing/instrumentation remains unchanged and does not measure these
+newer filter, setup or registration workloads.
 
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |

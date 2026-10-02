@@ -17,6 +17,7 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```

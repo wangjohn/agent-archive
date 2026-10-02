@@ -1,0 +1,21 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/collector
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkScanChangedCursorChats-5      	       1	 336424884 ns/op	         1.000 snapshot-copies/op	120894792 B/op	  160735 allocs/op
+BenchmarkScanChangedCursorChats-5      	       1	 300392627 ns/op	         1.000 snapshot-copies/op	121072992 B/op	  160847 allocs/op
+BenchmarkScanChangedCursorChats-5      	       1	 347456132 ns/op	         1.000 snapshot-copies/op	120899040 B/op	  160738 allocs/op
+BenchmarkScanLargeUnchangedSession-5   	       1	 254767900 ns/op	39723248 B/op	  194979 allocs/op
+BenchmarkScanLargeUnchangedSession-5   	       1	 252883335 ns/op	39735920 B/op	  194993 allocs/op
+BenchmarkScanLargeUnchangedSession-5   	       1	 589632697 ns/op	39749368 B/op	  194985 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 376515332 ns/op	70048504 B/op	  295593 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 366488599 ns/op	71729872 B/op	  295645 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 350048466 ns/op	70097256 B/op	  295679 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  28194602 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	 5519824 B/op	   43363 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  30921846 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	 5519360 B/op	   43362 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  26711729 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	 5525056 B/op	   43372 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 277434249 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	57361488 B/op	  430764 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 290510677 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	57354216 B/op	  430767 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 365249236 ns/op	         0 bundle-decodes/op	         0 filters/op	         0 remote-reads/op	57351768 B/op	  430776 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/collector	34.560s

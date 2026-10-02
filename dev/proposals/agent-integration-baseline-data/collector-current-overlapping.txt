@@ -1,0 +1,18 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/collector
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkScanLargeUnchangedSession-5   	       1	 253095585 ns/op	39672056 B/op	  194876 allocs/op
+BenchmarkScanLargeUnchangedSession-5   	       1	 244254681 ns/op	39736312 B/op	  195002 allocs/op
+BenchmarkScanLargeUnchangedSession-5   	       1	 275118743 ns/op	39778576 B/op	  195056 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 351129800 ns/op	71701024 B/op	  295768 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 375720425 ns/op	70126416 B/op	  295672 allocs/op
+BenchmarkScanLargeGrowingSession-5     	       1	 367436927 ns/op	71792952 B/op	  295650 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  36017240 ns/op	         0 bundle-decodes/op	         0 filters/op	 5526648 B/op	   43380 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  42785369 ns/op	         0 bundle-decodes/op	         0 filters/op	 5524656 B/op	   43368 allocs/op
+BenchmarkScanSettledRegistrations/sessions-1000-5         	       1	  28968191 ns/op	         0 bundle-decodes/op	         0 filters/op	 5511192 B/op	   43357 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 352358988 ns/op	         0 bundle-decodes/op	         0 filters/op	57358568 B/op	  430777 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 550698010 ns/op	         0 bundle-decodes/op	         0 filters/op	57348488 B/op	  430767 allocs/op
+BenchmarkScanSettledRegistrations/sessions-10000-5        	       1	 286051167 ns/op	         0 bundle-decodes/op	         0 filters/op	57351024 B/op	  430751 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/collector	41.543s
