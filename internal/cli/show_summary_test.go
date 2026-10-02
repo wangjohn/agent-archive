@@ -613,3 +613,22 @@ func TestSessionSummaryToolsWrapBetweenTools(t *testing.T) {
 		}
 	}
 }
+
+// An imported session with no end time is not given a span to the import:
+// its capture time is when backfill ran. The When row and the header both
+// date it by its start.
+func TestSessionSummaryImportWithoutAnEndIsNotSpannedToTheImport(t *testing.T) {
+	t.Parallel()
+	view := summaryFixture()
+	view.EndedAt = nil
+	view.Origin = archive.SessionOriginImport
+	view.StartedAt = summaryNow.Add(-14 * 24 * time.Hour)
+	view.CapturedAt = summaryNow.Add(-time.Hour)
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: summaryWidth}})
+	if want := "  When      " + formatSummaryTime(view.StartedAt, summaryOptions{Now: summaryNow, Location: time.UTC}) + "\n"; !strings.Contains(text, want) {
+		t.Errorf("no When row %q:\n%s", want, text)
+	}
+	if strings.Contains(text, "span") || strings.Contains(text, "1h ago") {
+		t.Errorf("the summary dates an import by the import:\n%s", text)
+	}
+}

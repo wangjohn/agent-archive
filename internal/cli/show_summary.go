@@ -226,14 +226,16 @@ func summaryStatus(m archive.Metadata, s textStyle) string {
 
 // sessionEnd is when the session's recorded activity ends, and whether
 // that is the recorded end of the session: ended_at, the latest record
-// timestamp, when the parser found one. Otherwise it is the capture time,
-// the latest activity the capture can include, shown as a span rather than
-// a duration.
+// timestamp, when the parser found one. Otherwise it is lastActivity, as
+// the header and list's WHEN say: for a hook capture the capture time, the
+// latest activity the capture can include, shown as a span rather than a
+// duration; for an import its start, since its capture time is when
+// backfill ran.
 func sessionEnd(m archive.Metadata) (end time.Time, exact bool) {
 	if m.EndedAt != nil {
 		return *m.EndedAt, true
 	}
-	return m.CapturedAt, false
+	return lastActivity(m), false
 }
 
 // summaryWhen is "Sep 29, 10:14 → 11:02 (48m span)" in opts' location.

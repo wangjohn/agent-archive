@@ -42,7 +42,7 @@ func TestDeriveSessionTitleSkipsEmptyPrompts(t *testing.T) {
 		{Kind: TurnKindAssistant, Text: "hello"},
 		{Kind: TurnKindHumanPrompt, Text: "Real question"},
 	}}
-	if got := deriveSessionTitle(view, nil); got != "Real question" {
+	if got := deriveSessionTitle(view, nil, false); got != "Real question" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestDeriveSessionTitleSkipsEmptyPrompts(t *testing.T) {
 func TestDeriveSessionTitleFromNativeText(t *testing.T) {
 	t.Parallel()
 	texts := []TextTranscript{{Format: "cursor-text", Content: "user: Tighten the intro.\nassistant: Done.\n"}}
-	if got := deriveSessionTitle(NormalizedView{}, texts); got != "Tighten the intro." {
+	if got := deriveSessionTitle(NormalizedView{}, texts, true); got != "Tighten the intro." {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -112,7 +112,22 @@ func TestCursorTitleDropsTheQueryWrapper(t *testing.T) {
 func TestDeriveSessionTitleFromWrappedNativeText(t *testing.T) {
 	t.Parallel()
 	texts := []TextTranscript{{Format: "cursor-text", Content: "user: <timestamp>Sunday, Sep 27, 2026, 10:31 PM (UTC-7)</timestamp>\n<user_query>\nTighten the intro.\n</user_query>\nassistant: Done.\n"}}
-	if got := deriveSessionTitle(NormalizedView{}, texts); got != "Tighten the intro." {
+	if got := deriveSessionTitle(NormalizedView{}, texts, true); got != "Tighten the intro." {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// The wrapper is Cursor's: another harness's prompt that starts with the same
+// tags keeps them in its title.
+func TestNonCursorTitleKeepsTagsAsWritten(t *testing.T) {
+	t.Parallel()
+	const prompt = "<timestamp>noon</timestamp> <user_query>an XML example</user_query>"
+	bundle := claudeLines(t, `{"type":"user","uuid":"u1","sessionId":"s","timestamp":"2026-09-30T10:00:00Z","message":{"role":"user","content":"`+prompt+`"}}`)
+	if got := labelsOf(t, bundle).Title; got != prompt {
+		t.Fatalf("title = %q, want %q", got, prompt)
+	}
+	view := NormalizedView{Turns: []NormalizedTurn{{Kind: TurnKindHumanPrompt, Text: prompt}}}
+	if got := deriveSessionTitle(view, nil, false); got != prompt {
+		t.Fatalf("deriveSessionTitle = %q, want %q", got, prompt)
 	}
 }

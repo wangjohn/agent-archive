@@ -637,14 +637,22 @@ const sessionTitleLimit = 128
 
 // deriveSessionTitle returns a one-line preview of the first human prompt:
 // from normalized JSONL turns when present, otherwise from the first user
-// section of a filtered NativeText transcript (Cursor text sessions). Cursor's
-// wrapper around a query (stripCursorWrapper) is not part of it.
-func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
+// section of a filtered NativeText transcript (Cursor text sessions). For a
+// Cursor session (cursor set), the wrapper Cursor puts around a query
+// (stripCursorWrapper) is not part of it; another harness's prompt is kept as
+// written, tags and all.
+func deriveSessionTitle(view NormalizedView, texts []TextTranscript, cursor bool) string {
+	unwrap := func(text string) string {
+		if cursor {
+			return stripCursorWrapper(text)
+		}
+		return text
+	}
 	for _, turn := range view.Turns {
 		if turn.Kind != TurnKindHumanPrompt {
 			continue
 		}
-		if title := collapseSessionTitle(stripCursorWrapper(turn.Text)); title != "" {
+		if title := collapseSessionTitle(unwrap(turn.Text)); title != "" {
 			return title
 		}
 	}
@@ -661,7 +669,7 @@ func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
 			if len(section.lines) > 1 {
 				parts = append(parts, section.lines[1:]...)
 			}
-			if title := collapseSessionTitle(stripCursorWrapper(strings.Join(parts, "\n"))); title != "" {
+			if title := collapseSessionTitle(unwrap(strings.Join(parts, "\n"))); title != "" {
 				return title
 			}
 		}

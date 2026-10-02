@@ -97,7 +97,9 @@ gave, and Tools lists the most-called tools (`tools_used`). Times are in
 your local time zone. The session ends at `ended_at`, its latest record
 timestamp. Metadata from before parser 0.13.0, or from an app whose records
 carry no timestamps, has no end time, so the summary uses when the session
-was last captured and labels the time since the start a span.
+was last captured and labels the time since the start a span. A session
+`backfill` imported with no end time shows only its start, since it was
+captured when the import ran.
 
 Capture gaps are the parser's notes on what the archived copy leaves out.
 Most are expected: the privacy filter dropping injected instructions and
