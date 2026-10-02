@@ -617,3 +617,83 @@ func TestSetupSharedDestinationTransitions(t *testing.T) {
 		})
 	}
 }
+
+type relocatedNativeSetupHooks struct {
+	agentapi.HookConfigurator
+	path string
+}
+
+func (h relocatedNativeSetupHooks) Location(agentapi.HookLocations) string { return h.path }
+
+// Regression MODE-SWITCH-01: virtual retirement cannot apply native creation
+// permissions to an existing destination retained by actual setup.
+func TestSetupNativeOwnerSwitchKeepsExistingMode(t *testing.T) {
+	t.Parallel()
+	for _, alias := range []bool{false, true} {
+		t.Run(fmt.Sprintf("alias-%t", alias), func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			path := filepath.Join(userHome, "settings")
+			if err := os.WriteFile(path, nil, 0640); err != nil {
+				t.Fatal(err)
+			}
+			nextPath := path
+			if alias {
+				nextPath += "-alias"
+				if err := os.Symlink(path, nextPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var bindings []builtin.Integration
+			for _, d := range agentmeta.Builtins().All() {
+				b, _ := productionAgents.Lookup(string(d.ID))
+				b.Descriptor = agentmeta.Descriptor{ID: d.ID}
+				bindings = append(bindings, b)
+			}
+			first, _ := productionAgents.Lookup("claude")
+			second, _ := productionAgents.Lookup("codex")
+			bindings = append(bindings,
+				builtin.Integration{Descriptor: agentmeta.Descriptor{ID: sharedInstallFirstID}, Hooks: relocatedNativeSetupHooks{HookConfigurator: first.Hooks, path: path}},
+				builtin.Integration{Descriptor: agentmeta.Descriptor{ID: sharedInstallSecondID}, Hooks: relocatedNativeSetupHooks{HookConfigurator: second.Hooks, path: nextPath}})
+			catalog, err := agentmeta.New(append(agentmeta.Builtins().All(), agentmeta.Descriptor{ID: sharedInstallFirstID, DisplayName: "First"}, agentmeta.Descriptor{ID: sharedInstallSecondID, DisplayName: "Second"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry, err := builtin.New(catalog, bindings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+			env.Agents = registry
+			exe, err := env.executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := config.Config{MachineID: "machine", Harnesses: []string{"first"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
+				t.Fatal(err)
+			}
+			saved, _, err := config.Load(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := saved
+			changed.Harnesses = []string{"second"}
+			if err := applySetup(home, userHome, exe, saved, &changed, nil, env); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != 0640 {
+				t.Fatalf("existing native settings mode lost: %v %v", info, err)
+			}
+			current, _, err := config.Load(home)
+			if err != nil || !reflect.DeepEqual(current.Harnesses, changed.Harnesses) || setupjournal.TransactionPending(home) {
+				t.Fatal("owner switch configuration or journal incomplete", err)
+			}
+			installed, err := hooks.Installed(hooks.Files{"second": nextPath}, env.installation(home, userHome).hook(exe), "second")
+			if err != nil || !installed {
+				t.Fatal("next native owner is not installed", err)
+			}
+		})
+	}
+}

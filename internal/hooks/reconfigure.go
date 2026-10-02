@@ -104,6 +104,13 @@ func (destination setupHookDestination) plan() (*Change, error) {
 			}
 		}
 	}
+	// The atomic destination stays on disk when a selected owner replaces it.
+	// A virtual removal may discard its contents, but must not make native
+	// installation apply creation defaults to an existing file's permissions.
+	if !current.Present && destination.before.Present && len(destination.installs) > 0 {
+		current.Present = true
+		current.Regular = destination.before.Regular
+	}
 	var installation *Change
 	for _, owner := range destination.installs {
 		change, err := owner.plan(current, agentapi.HookInstall)
