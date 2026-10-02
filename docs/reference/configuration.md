@@ -3,13 +3,14 @@
 `agent-archive setup` writes the configuration; every other command reads
 it. It lives in `config.json` in the data directory (see
 [local state](local-state.md)) and holds no secrets. Edit it through setup,
-not by hand: setup checks storage, rewrites hooks, and keeps the fields
+not by hand (except the optional MCP display names and handoff preferences below): setup checks storage, rewrites hooks, and keeps the fields
 consistent with each other.
 
 ## Fields
 
 | Field | Meaning |
 | --- | --- |
+| `mcp_server_names` | Optional map, edited by hand; setup keeps it. Exact recorded MCP server IDs mapped to display names, for example `{"opaque-server-id": "GitHub"}`. Stats uses these labels in terminal output and HTML with names included; JSON preserves each original `name` and adds `display_name`. Unknown UUIDs receive neutral labels rather than guessed service names. |
 | `schema_version` | Shape of this file. Currently `1`. |
 | `machine_id` | This machine's random identity, written into every session it captures. Kept across reconfiguration, and copied with the data directory by Migration Assistant, a backup restore, or a VM or container clone; see [multiple machines](../guides/multiple-machines.md#migration-assistant-and-time-machine-macos) and [on Linux](../guides/multiple-machines.md#cloned-machines-on-linux). |
 | `host_id` | Linux only: a digest of the machine ID (`/etc/machine-id`) of the machine setup first ran on, recorded once beside `machine_id` and never uploaded. `status` and `setup` warn when it differs from the machine they run on, which means the data directory was copied (a cloned VM or container image). If the original is retired, or the operating system was reinstalled on the same machine, remove the entry and setup records the current machine. Absent on macOS and where there is no machine ID (or only one made anew at every boot). |
