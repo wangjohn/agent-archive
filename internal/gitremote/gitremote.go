@@ -87,6 +87,57 @@ func RepoKey(ctx context.Context, root string, run Runner) string {
 	return archive.RepoKey(OriginURL(ctx, root, run))
 }
 
+// ProjectKey returns the origin's repository key and whether Git established
+// its identity or absence. Unlike RepoKey, failed or nonportable origins are
+// unknown: they cannot authorize an automatic path fallback. A missing config
+// entry (Git exit 1 with no output) establishes no origin. run is nil for
+// ExecRunner; it must respect ctx. Remote URLs never leave this function.
+func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return "", false
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "config", "--get", "remote.origin.url")
+	if ctx.Err() != nil {
+		return "", false
+	}
+	if err != nil {
+		var status interface{ ExitCode() int }
+		missing := errors.As(err, &status) && status.ExitCode() == 1 && len(out) == 0
+		return "", missing
+	}
+	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	key := archive.RepoKey(raw)
+	return key, raw == "" || key != ""
+}
+
+// ProjectRoot returns Git's checkout top level, or empty when it cannot be
+// established. It never infers full-repository scope from an inherited origin.
+// run is nil for ExecRunner and must respect ctx when supplied.
+func ProjectRoot(ctx context.Context, root string, run Runner) string {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return ""
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "rev-parse", "--show-toplevel")
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	top := strings.TrimSuffix(strings.TrimSuffix(string(out), "\n"), "\r")
+	if !filepath.IsAbs(top) || strings.ContainsAny(top, "\x00\r\n") {
+		return ""
+	}
+	return filepath.Clean(top)
+}
+
 // Resolver derives repository keys and remembers each project root's answer,
 // so a sweep over many sessions of one project asks git once. It is safe for
 // concurrent use. The zero value runs the real git.

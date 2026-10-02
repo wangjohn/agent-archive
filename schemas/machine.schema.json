@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/machine.schema.json",
+  "title": "Informational machine record (untrusted bucket claim)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "machine_id",
+    "name",
+    "platform",
+    "agent_archive_version",
+    "credential",
+    "heartbeat_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "platform": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[^\u0000-\u001f\u007f-\u009f]*$",
+      "minLength": 1
+    },
+    "agent_archive_version": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[^\u0000-\u001f\u007f-\u009f]*$",
+      "minLength": 1
+    },
+    "paired_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "paired_from": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "pairing_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "aws_profile",
+            "r2_unknown",
+            "r2_shared",
+            "r2_own"
+          ]
+        },
+        "access_key_id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f]*$"
+        },
+        "recipient_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "issuer_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "slot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "shared_with": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "r2_own"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "access_key_id",
+              "recipient_id",
+              "issuer_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "r2_shared"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "access_key_id",
+              "shared_with"
+            ]
+          }
+        }
+      ]
+    },
+    "heartbeat_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

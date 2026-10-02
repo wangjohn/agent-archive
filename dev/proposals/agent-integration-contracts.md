@@ -47,6 +47,19 @@ session: interactive use requires an explicit picker choice; noninteractive use
 returns qualified ID/agent/checkout recipes. Preserve these separate discovery,
 preview and shared selection policies through phases 2, 4, 5 and 6.
 
+Live target `0ffa628e84a2b4e6265ffa2ff481788269027567` includes machine-registry
+publication, bounded portable project matching, default storage creation and
+pairing-bundle redaction. Shared filter/adapter versions are now 15/0.15.0:
+preserve `aa-pair1:` redaction at every retained depth, including truncated and
+mixed-case payloads, and the target's golden fixtures. Historical measurements
+remain pinned to their earlier filter versions. Machine credential provenance,
+independent registration retry/status, setup ownership and storage confirmation
+remain shared policy. Project matching retains bounded read-only native history,
+repository/checkout verification, canonical exclusions and explicit-path choices;
+later discovery extraction must not widen capture scope or turn incomplete
+matching into verified admission. These target features are inherited context,
+not new integration capabilities or permission to modify their behavior.
+
 ## Qualified identity and local migration (phase 3a)
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,

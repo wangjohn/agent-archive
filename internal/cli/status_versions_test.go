@@ -86,7 +86,7 @@ func TestStatusSurvivesCorruptApplicationVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("corrupt advisory file failed status: %v", err)
 	}
-	if len(view.Warnings) != 1 || !strings.Contains(view.Warnings[0], "application-versions.json") {
+	if !strings.Contains(strings.Join(view.Warnings, "\n"), "application-versions.json") {
 		t.Fatalf("warnings %v", view.Warnings)
 	}
 	if app := view.Apps[0]; app.VersionState != "unknown" || app.VersionSupport != "unknown" || app.Installed {

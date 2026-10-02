@@ -12,6 +12,22 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"machines": `Usage: agent-archive machines [--json]
+
+List informational machine records from this bucket, without provider checks.
+Anyone with bucket access can forge records; they never authorize revocation.
+Heartbeat is updated at most daily and does not indicate current activity.
+Unreadable records and incomplete listings are reported; those exit with code 1.
+  --json  Write records, omitted objects, and partial-result status as JSON
+`,
+	"machines rename": `Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
+
+Rename this machine only, keeping its immutable machine and credential IDs.
+Use the full MACHINE_ID when a current name is ambiguous. The new name has
+1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.
+Observed duplicate names are refused; concurrent naming can still race.
+A failed publication keeps the local name and the collector retries.
+`,
 	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
        [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
@@ -81,6 +97,8 @@ An interrupted setup is recovered on the next run.
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repo by key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
