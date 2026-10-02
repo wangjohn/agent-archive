@@ -72,12 +72,13 @@ func rawHeaderIdentity(ctx context.Context, q querier, key, name string, index i
 }
 
 type headerReader struct {
-	ctx       context.Context
-	q         querier
-	key, name string
-	index     int64
-	offset    int64
-	chunk     []byte
+	ctx    context.Context
+	q      querier
+	key    string
+	name   string
+	index  int64
+	offset int64
+	chunk  []byte
 }
 
 func (r *headerReader) Read(p []byte) (int, error) {

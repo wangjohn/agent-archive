@@ -1,13 +1,13 @@
 package builtin
 
 import (
-	"github.com/wangjohn/agent-archive/internal/agents/codex"
-	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"reflect"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/sourceio"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
