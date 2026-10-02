@@ -547,6 +547,15 @@ func TestSetupYesPrefixOnlyKeepsR2DestinationAndKey(t *testing.T) {
 	if secret.AccessKeyID != "KEY" || secret.SecretAccessKey != "private-secret" {
 		t.Fatal("prefix change replaced the saved key")
 	}
+	// Changing only the prefix preserves the saved destination, key, and
+	// capture policy rather than rebuilding them from defaults.
+	setupYes(t, env, "", 0, "--yes", "--prefix", "other/")
+	prefixOnly, _, err := config.Load(home)
+	must(t, err)
+	wantStorage.Prefix = "other/"
+	if prefixOnly.Storage != wantStorage || prefixOnly.MachineID != after.MachineID || prefixOnly.RetentionDays != after.RetentionDays || prefixOnly.RequireSkillUse != after.RequireSkillUse || prefixOnly.NoSkills != after.NoSkills || prefixOnly.EffectiveSkillEvidence() != after.EffectiveSkillEvidence() {
+		t.Fatalf("prefix-only changed saved settings: %+v", prefixOnly)
+	}
 	setupYes(t, env, "", 0, "--yes", "--require-skill-use=false")
 	after, _, err = config.Load(home)
 	must(t, err)

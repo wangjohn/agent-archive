@@ -90,94 +90,72 @@ captured. If you finish with no project included, setup asks again.
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
-- **Cloudflare R2: create a new bucket for me** (experimental, and hidden
-  unless `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` is set in the shell that
-  runs setup): setup makes a new bucket and a key for it from one Cloudflare
-  API token you paste (or set as `CLOUDFLARE_API_TOKEN`, with
-  `CLOUDFLARE_ACCOUNT_ID`). It prints the token's permissions first, then asks
-  for the bucket name and an optional data location. It is offered only in
-  this interactive setup, never by `setup --yes`. The [bucket
-  guide](bucket.md#let-setup-create-it-experimental) has the steps, and
-  [privacy](../security/privacy.md#guided-r2-bucket-creation) what happens to
-  the token. If something fails, setup says what to fix, and you can try
-  again with the same bucket, choose another storage option, or stop. A
-  Ctrl-C while it creates and checks the key stops it and revokes that key's
-  token; a Ctrl-C after the key exists, while setup stores it, leaves that
-  key's token in your account (its name was printed when it was created).
-  However else setup ends without using the new bucket and key (you cancel
-  the review, an error, an interrupted storage check), it says they exist and
-  how to remove them, or that your saved setup draft uses them; it says
-  nothing when they are in use.
-- **R2:** enter the account ID, then the bucket, then credentials. Pasting
-  the bucket's URL from the Cloudflare dashboard,
-  `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
-  account and the bucket, so the bucket isn't asked for. Any other S3 API
-  endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
-  on a terminal and stored in the macOS Keychain (on Linux, in a private
-  credentials file).
-- **S3:** choose an existing AWS profile, then the bucket. Setup offers
-  the profiles in your AWS settings. The profiles come
-  from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
-  sets them. The suggested profile is `AWS_PROFILE` when your shell sets it,
-  else `default`, or the only profile, when it has credentials. A profile
-  whose settings name no credentials (no access keys, `credential_process`,
-  SSO, login session, or role it can assume) is marked "no credentials
-  configured", as is a profile the AWS SDK cannot load. Profile discovery
-  only checks which settings are present: it never runs
-  `credential_process`, signs in, or prints or saves a secret.
+The menu has two numbered choices: **Cloudflare R2** and **Amazon S3**.
+After choosing a provider, press Enter to continue with bucket creation, or
+choose **Use an existing bucket** before supplying creation credentials.
+R2 creation still requires `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`; without
+it, R2 guides you directly to connecting an existing bucket.
 
-  With the profile chosen, setup lists the buckets it can see
-  (`s3:ListAllMyBuckets`) and offers them by number, suggesting the saved
-  bucket or else the first named `agent-archive…`; you can also type a
-  name. It then reads the bucket's own region (`s3:GetBucketLocation`) and
-  uses it, so a bucket in another region than the profile's works. When
-  the profile may not list buckets or read the location, setup says why in
-  one line and asks instead: for the bucket name, and for the region unless
-  the profile names one. A typed region must look like one, such as
-  `us-east-1`. These lookups use the profile's credentials only inside the
-  AWS SDK; setup never prints or saves them.
+For R2 creation, supply a temporary setup token. Setup checks archive-key
+permission access before showing a suggested name and automatic location.
+For S3, select a creation profile; its region supplies the default, or setup
+asks for a region if it has none. Both flows show a summary before creating
+anything. Press Enter to create, **Customize** to change the settings, or
+**Back** to return. Existing-bucket access remains available on the summary
+and during error recovery. See the [bucket guide](bucket.md) for credentials
+and permissions.
 
-  **Create a new S3 bucket.** Choose "Amazon S3: create a new bucket for
-  me" at the storage question. After the profile, setup asks for the region
-  (the profile's, unless you type another) and a name, suggesting
-  `agent-archive-` and eight random characters, since bucket names are
-  shared by everyone on AWS. A suggested name that turns out to be in use
-  is replaced once by another random one; a name you typed is asked for
-  again, and after two in-use answers in a row setup also offers to pick an
-  existing bucket instead. Only the standard AWS regions (such as `us-east-1`
-  or `eu-west-2`) are supported here, not China or GovCloud; pick an existing
-  bucket for those.
-  Setup then creates the bucket, turns on all four Block Public Access
-  settings, and reads them back, showing "Checked: Block Public Access is
-  on". It sets no lifecycle rule and no bucket policy, and it never creates
-  IAM users or access keys.
+S3 setup enables and reads back all four Block Public Access settings. It
+prints a narrower runtime policy, but does not create IAM identities or keys.
+The creation profile remains the default archive profile; choose **Choose
+another archive profile** to switch after attaching the policy yourself.
 
-  Creating a bucket needs `s3:CreateBucket` and
-  `s3:PutBucketPublicAccessBlock`, which the [runtime
-  policy](../security/bucket-permissions.md) deliberately does not grant, so
-  use a profile that has them for this step. If the profile is refused,
-  setup says which permissions are missing (an organization policy can also
-  forbid creation) and goes on to pick an existing bucket. If S3 gives no
-  clear answer to the request, setup says the bucket may exist and to check
-  the S3 console; it deletes nothing in that case. If the bucket was created
-  but Block Public Access could not be turned on, setup does not use it: it
-  offers to try again, to delete the empty bucket (after you type its name),
-  or to stop. When it succeeds, setup prints the runtime policy for the new
-  bucket (not for a folder name with characters other than letters, digits
-  and `. _ - /`; it says so and points at the guide) and asks which AWS
-  profile archiving should use. The profile that created the bucket is the
-  default, and it is usually far broader than archiving needs: attach the
-  policy to a separate IAM identity, save it as its own profile, and choose
-  that profile here to archive with less. The usual storage check then
-  verifies whichever you chose. If you choose storage again later in the same
-  run, setup offers the bucket it already created instead of making another,
-  and if setup ends without using a bucket it created, it says so and that
-  the bucket is empty, so you can delete it (or, when your saved setup draft
-  still names it, that running setup again resumes with it). Guided creation is interactive
-  only; `setup --yes` still takes an existing bucket.
+To connect an existing R2 bucket, enter its account ID, bucket and S3 keys.
+Pasting `https://<account-id>.r2.cloudflarestorage.com/<bucket>` fills in both
+account and bucket. Other R2 endpoints, including EU jurisdiction endpoints,
+work too. Secret input is hidden on terminals and saved in the macOS Keychain
+or a private credentials file on Linux.
 
-Setup checks the connection in two steps. (After **Cloudflare R2: create a new
-bucket for me** setup has already made this check on the new key before storing
+For existing S3 storage, select an AWS profile and a bucket. Setup lists
+buckets when allowed, looks up the bucket's region, or asks for these values
+when your profile cannot read them. Profile discovery reads AWS configuration
+only; it does not run credential processes or sign in.
+
+When editing an installed configuration, **Keep current storage** is the
+default. It still verifies the connection. Changing the destination opens the
+provider flow. Saved incomplete setup drafts resume their existing step and
+credentials; they do not automatically create a replacement bucket.
+
+For scripted interactive answers, `r2-existing` and `s3-existing` jump directly
+to the existing-bucket form. `r2-create` (when enabled) and `s3-new` jump to
+creation. Bare `r2` and `s3` now open the provider flow. Noninteractive
+`setup --yes` flags retain their existing behavior.
+
+Creating a bucket needs `s3:CreateBucket` and
+`s3:PutBucketPublicAccessBlock`, which the [runtime
+policy](../security/bucket-permissions.md) deliberately does not grant, so
+use a profile that has them for this step. If the profile is refused,
+setup says which permissions are missing (an organization policy can also
+forbid creation) and offers retry, profile replacement, or an existing bucket. If S3 gives no
+clear answer to the request, setup says the bucket may exist and to check
+the S3 console; it deletes nothing in that case. If the bucket was created
+but Block Public Access could not be turned on, setup does not use it: it
+offers to try again, to delete the empty bucket (after you type its name),
+or to stop. When it succeeds, setup prints the runtime policy for the new
+bucket (not for a folder name with characters other than letters, digits
+and `. _ - /`; it says so and points at the guide) and asks which AWS
+profile archiving should use. The profile that created the bucket is the
+default, and it is usually far broader than archiving needs: attach the
+policy to a separate IAM identity, save it as its own profile, and choose
+that profile here to archive with less. The usual storage check then
+verifies whichever you chose. If you choose storage again later in the same
+run, setup offers the bucket it already created instead of making another,
+and if setup ends without using a bucket it created, it says so and that
+the bucket is empty, so you can delete it (or, when your saved setup draft
+still names it, that running setup again resumes with it). Guided creation is interactive
+only; `setup --yes` still takes an existing bucket.
+
+Setup checks the connection in two steps. (After guided **Cloudflare R2** creation, setup has already made this check on the new key before storing
 it, so a key that doesn't work is revoked at once; the check then runs again on
 the stored key.) First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or
@@ -309,6 +287,10 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
+  `--project-repo REPO_KEY` matches a unique local clone by its origin's hash,
+  independently of `--project`; ambiguous, excluded, or incomplete matches
+  are skipped. See [repository matching](../guides/multiple-machines.md#repository-matching-in-setup-commands)
+  for discovery limits.
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.
@@ -621,16 +603,21 @@ instead.
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
 Setup's last line, after the import offer, is the command that sets up another machine with the same
-storage, apps and projects ([without questions](#set-up-without-questions)),
+storage, capture rules, agent skill installation policy, apps and projects
+([without questions](#set-up-without-questions)),
 ready to copy:
 
 ```text
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --project ~/code/app
+  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/code/app
 ```
 
-Projects in your home folder are written from `~`. For R2 the command never
+Whole repositories with a known origin use `--project-repo` for bounded
+[repository matching](../guides/multiple-machines.md#repository-matching-in-setup-commands).
+Other project paths in your home folder are written from `~`; adjust those
+paths for the new machine. For R2 the command never
 carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
-`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. `--yes` has
-no option for the folder inside the bucket, so when you changed it, setup
-adds a line saying to set it there with `agent-archive setup`.
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. The command
+carries the saved folder with `--prefix`, retention, skill-use capture rule,
+effective skill evidence mode, and whether agent skills are installed.
+Omitting these flags from a scripted reconfiguration keeps the saved settings.

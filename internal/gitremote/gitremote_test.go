@@ -320,3 +320,80 @@ func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
 		t.Errorf("Branch of a plain directory = %q", got)
 	}
 }
+
+type projectExitStatusError int
+
+func (s projectExitStatusError) Error() string { return "synthetic Git exit" }
+
+func (s projectExitStatusError) ExitCode() int { return int(s) }
+
+func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		out   string
+		err   error
+		known bool
+	}{
+		{name: "portable", out: "https://user:synthetic-secret@example.test/acme/repo.git", known: true},
+		{name: "no origin", err: projectExitStatusError(1), known: true},
+		{name: "empty", known: true},
+		{name: "not installed", err: exec.ErrNotFound},
+		{name: "repository failure", err: projectExitStatusError(128)},
+		{name: "malformed", out: "invalid origin"},
+		{name: "nonportable", out: "file:///tmp/source"},
+		{name: "failed with output", out: "invalid", err: projectExitStatusError(1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			key, known := ProjectKey(t.Context(), t.TempDir(), fake.run)
+			if known != tc.known || key != archive.RepoKey(tc.out) || strings.Contains(key, "synthetic-secret") {
+				t.Fatalf("key %q known %t", key, known)
+			}
+		})
+	}
+}
+
+func TestProjectRootEstablishesCheckoutScopeFromSubdirectory(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/repo.git")
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "pkg")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, child} {
+		if got := ProjectRoot(t.Context(), path, nil); got != root {
+			t.Fatalf("ProjectRoot(%q)=%q want %q", path, got, root)
+		}
+	}
+	if got := ProjectRoot(t.Context(), t.TempDir(), nil); got != "" {
+		t.Fatalf("plain directory: %q", got)
+	}
+}
+
+func TestProjectRootWithholdsFailedOrMalformedScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "failed", out: "/repo", err: projectExitStatusError(128)},
+		{name: "relative", out: "repo"},
+		{name: "multiple lines", out: "/repo\n/other\n"},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			if got := ProjectRoot(t.Context(), t.TempDir(), fake.run); got != "" {
+				t.Fatalf("unproven checkout: %q", got)
+			}
+		})
+	}
+}

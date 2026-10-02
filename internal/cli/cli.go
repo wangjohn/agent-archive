@@ -29,6 +29,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
@@ -110,6 +111,10 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// projectGitRunner replaces bounded Git operations in setup tests.
+	projectGitRunner gitremote.Runner
+	// repoKeyContext replaces bounded setup lookups in tests.
+	repoKeyContext func(context.Context, string) string
 	// currentBranch, set only by tests, replaces the git lookup of the
 	// branch checked out in a directory (see gitBranch).
 	currentBranch func(dir string) string
@@ -512,6 +517,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -592,6 +598,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "machines":
+		return runMachinesCommand(args[1:], stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":

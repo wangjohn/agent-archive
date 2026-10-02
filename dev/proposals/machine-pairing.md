@@ -1,6 +1,6 @@
 # Adding a machine: pairing, per-machine keys, and revocation
 
-> **Proposed; not implemented or scheduled.** Prepared and reviewed 2026-10-01 against commit `4de2d07`, without builds or tests. Code wins where references differ. Both reviews are incorporated; [review history](#review-changes) records the rationale.
+> **Proposal; P2c registry is implemented in its draft PR; pairing and management phases remain unimplemented.** Prepared and reviewed 2026-10-01 against commit `4de2d07`, without builds or tests. Code wins where references differ. Both reviews are incorporated; [review history](#review-changes) records the rationale.
 
 Goal: add a computer in under a minute when apps and credentials are ready, without dashboard work, retyping settings, or exposing secrets. Commands:
 

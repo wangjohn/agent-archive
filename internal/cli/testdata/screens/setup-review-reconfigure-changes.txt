@@ -29,21 +29,12 @@ Project path:
 
 Step 2 of 3 · Connect storage
 
-Where should sessions be stored?
-  1) Cloudflare R2
-  2) Amazon S3
-  3) Amazon S3: create a new bucket for me
-  4) Show setup instructions
-Enter 1-4 [2]: 
+Current storage: s3 / team-archive
+Keep your current storage?
+[Enter] Keep current storage
+[c] Change storage
+Choose: 
 
-AWS profile [work]: 
-
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name [2]: 
-
-Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 ✓ Connected to your storage.

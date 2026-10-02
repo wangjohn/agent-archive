@@ -15,7 +15,8 @@ import (
 
 // The parser fuzz targets. Each is seeded from testdata/ (checked-in seeds
 // for failures found so far live in testdata/fuzz/<target>/), and plain `go
-// test` runs the seeds. CI runs each target briefly (.github/workflows/test.yml);
+// test` runs the seeds. Extended CI runs each target briefly
+// (.github/workflows/extended.yml);
 // dev/contributing/testing.md says how to run one for longer.
 
 // fuzzAdapters are the JSONL adapters, indexed by a fuzzed byte.
@@ -183,6 +184,10 @@ var fuzzSecretRecords = []struct {
 	{CodexAdapter{}, `{"type":"response_item","timestamp":"2026-09-01T00:00:00Z","payload":{"type":"function_call_output","call_id":"c","output":"{\"output\":\"password: %s\",\"metadata\":{\"exit_code\":0}}"}}`},
 	{CursorAdapter{}, `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"fill_form","input":{"elements":[{"uid":"1_5","value":"%s"}]}}]}}`},
 	{CursorAdapter{}, `{"role":"user","message":{"content":[{"type":"text","text":"export ANTHROPIC_API_KEY=sk-ant-api03-%s"}]}}`},
+	// Filter 15: bundles in ordinary message text and escaped tool arguments.
+	{ClaudeAdapter{}, `{"type":"user","message":{"role":"user","content":"aa-pair1:%s"}}`},
+	{CodexAdapter{}, `{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"echo aa-pair1:%s\"}"}}`},
+	{CursorAdapter{}, `{"role":"tool","content":"  12→aa-pair1:%s"}`},
 	// Filter 13: a session's name and linked pull request.
 	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"export ANTHROPIC_API_KEY=sk-ant-api03-%s","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"{\"client_secret\":\"%s\"}","sessionId":"s"}`},
