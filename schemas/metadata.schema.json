@@ -188,7 +188,7 @@
     },
     "counts": {
       "type": "object",
-      "description": "Every count is optional: an absent count is unknown, never zero. From parser 0.6.0 'turns' counts human prompts (a user record with text or any non-tool-result content), 'messages' counts those prompts plus assistant records, and 'tool_results' counts observed tool results. From parser 0.7.0 a harness-written user record (isMeta, local-command or shell output, or a slash command no assistant answered) is not a prompt, 'messages' counts distinct assistant message ids (a record without an id counts on its own), and 'user_shell_commands' counts shell commands the person ran directly (Claude Code '!' commands). From parser 0.8.0 a Claude Code compaction summary (a user record marked isCompactSummary) is neither a prompt nor a message, and 'compactions' counts how many times the session was compacted (/compact or auto-compaction), from compact_boundary records or, when none was retained, from compaction summaries; it is present only for Claude Code sessions captured with filter 5 or later. From parser 0.9.0 a harness-written notification (origin.kind 'task-notification') is not a prompt. From parser 0.10.0 Claude Code's '[Request interrupted by user…]' marker is not a prompt, 'tool_calls' no longer counts tool-call shapes found inside another call's arguments, a Cursor text transcript's role sections start only at a header in column 0, and a message Claude Code synthesized itself (model '<synthetic>') names no model and adds no tokens. From parser 0.11.0 a Cursor text transcript's role header is lower case ('user:', not 'User:'), and when its sections are separated by blank lines a role line that does not follow one is content; token totals saturate at 2^53 instead of overflowing. The token counts are summed from whatever the harness exposed, counting only whole numbers from 0 to 2^53 (anything else in a record is ignored), and are absent when it exposed none.",
+      "description": "Every count is optional: an absent count is unknown, never zero. From parser 0.6.0 'turns' counts human prompts (a user record with text or any non-tool-result content), 'messages' counts those prompts plus assistant records, and 'tool_results' counts observed tool results. From parser 0.7.0 a harness-written user record (isMeta, local-command or shell output, or a slash command no assistant answered) is not a prompt, 'messages' counts distinct assistant message ids (a record without an id counts on its own), and 'user_shell_commands' counts shell commands the person ran directly (Claude Code '!' commands). From parser 0.8.0 a Claude Code compaction summary (a user record marked isCompactSummary) is neither a prompt nor a message, and 'compactions' counts how many times the session was compacted (/compact or auto-compaction), from compact_boundary records or, when none was retained, from compaction summaries; it is present only for Claude Code sessions captured with filter 5 or later. From parser 0.9.0 a harness-written notification (origin.kind 'task-notification') is not a prompt. From parser 0.10.0 Claude Code's '[Request interrupted by user\u2026]' marker is not a prompt, 'tool_calls' no longer counts tool-call shapes found inside another call's arguments, a Cursor text transcript's role sections start only at a header in column 0, and a message Claude Code synthesized itself (model '<synthetic>') names no model and adds no tokens. From parser 0.11.0 a Cursor text transcript's role header is lower case ('user:', not 'User:'), and when its sections are separated by blank lines a role line that does not follow one is content; token totals saturate at 2^53 instead of overflowing. The token counts are summed from whatever the harness exposed, counting only whole numbers from 0 to 2^53 (anything else in a record is ignored), and are absent when it exposed none.",
       "properties": {
         "turns": {
           "type": "integer",
@@ -344,8 +344,11 @@
       }
     },
     "origin": {
-      "const": "import",
-      "description": "Present only for a session `agent-archive backfill` imported; absent for a hook-captured session. An imported session also carries the capture gap 'imported_without_hook_evidence': it has no lifecycle events, final-response text, or skill inventory."
+      "enum": [
+        "import",
+        "discovery"
+      ],
+      "description": "Admission provenance. Discovery has no imported_at and preserves a discovered_without_hook_evidence gap; later hooks do not establish earlier lifecycle coverage."
     },
     "imported_at": {
       "type": "string",
@@ -359,7 +362,7 @@
         "file_created",
         "cursor_composer"
       ],
-      "description": "Where started_at came from: 'hook' when a hook observed the start, 'transcript' the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps), and 'cursor_composer' the chat's creation time in Cursor's database (a chat imported from it). Present only with origin 'import'."
+      "description": "Where started_at came from: 'hook' when a hook observed the start, 'transcript' the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps), and 'cursor_composer' the chat's creation time in Cursor's database (a chat imported from it). Present for import and discovery origins."
     }
   },
   "$defs": {
@@ -615,7 +618,8 @@
             "text_structure_partial",
             "unknown_field_omitted",
             "unknown_record_type",
-            "unsupported_value_omitted"
+            "unsupported_value_omitted",
+            "discovered_without_hook_evidence"
           ]
         },
         {

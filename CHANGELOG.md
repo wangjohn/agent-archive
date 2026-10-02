@@ -10,6 +10,13 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Shared local discovery foundations: shared project/worktree facts, durable
+  authorization intervals, immutable admission, and actual hook observation.
+  Automatic Codex discovery remains disabled pending scanner and onboarding
+  integration. Protected discovery configuration makes published older writers
+  refuse rather than discard authorization; existing hook-only configs retain
+  their numeric schema and behavior.
+
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
   plus transaction-based
