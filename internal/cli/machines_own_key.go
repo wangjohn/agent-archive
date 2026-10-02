@@ -293,7 +293,7 @@ func ownKeySlot(home string, checkpoint *ownKeyCheckpoint, issuer *keyIssuer, ap
 	if err != nil {
 		return slot, err
 	}
-	key, err := kc.Load(ctx, slot.SecretRef)
+	key, err := credentials.LoadStored(ctx, kc, slot.SecretRef)
 	if err != nil || key.AccessKeyID != slot.ProviderID {
 		return slot, errors.New("staged dedicated credential missing")
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -991,5 +992,103 @@ func TestDeletedOwnKeySecretRetryKeepsProofWhenSuccessCannotBeJournaled(t *testi
 	must(t, err)
 	if len(slots) != 1 || slots[0].SecretRemovalPending {
 		t.Fatal("absence recovery did not durably clear pending proof")
+	}
+}
+
+func TestOwnKeyStageRequiresStoredCredentialDespiteMatchingEnvironment(t *testing.T) {
+	for _, missingFile := range []bool{false, true} {
+		t.Run(strconv.FormatBool(missingFile), func(t *testing.T) {
+			env, home, cf, oldStore, cfg := ownKeyFixture(t)
+			oldKey, err := oldStore.Load(t.Context(), cfg.Storage.R2CredentialRef)
+			must(t, err)
+			shellKey := credentials.R2Credentials{}
+			lookup := func(name string) (string, bool) {
+				values := map[string]string{
+					credentials.EnvR2AccessKeyID:     shellKey.AccessKeyID,
+					credentials.EnvR2SecretAccessKey: shellKey.SecretAccessKey,
+				}
+				value, ok := values[name]
+				return value, ok && value != ""
+			}
+			dir := credentials.FileStoreDir(home)
+			store, err := credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: lookup})
+			must(t, err)
+			must(t, store.Save(t.Context(), cfg.Storage.R2CredentialRef, oldKey))
+			env.Credentials = func() (credentials.CredentialStore, error) { return store, nil }
+			issuer := fixtureIssuer(t, env, home)
+			checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+			slot, err := ownKeySlot(home, &checkpoint, issuer, issuer.api, env)
+			must(t, err)
+			shellKey, err = credentials.LoadStored(t.Context(), store, slot.SecretRef)
+			must(t, err)
+			if missingFile {
+				must(t, store.Delete(t.Context(), slot.SecretRef))
+				// This actual Linux store can still answer Load from the injected
+				// matching shell key, while its persisted slot is absent.
+				loaded, err := store.Load(t.Context(), slot.SecretRef)
+				must(t, err)
+				if loaded != shellKey {
+					t.Fatal("fixture did not expose matching environment fallback")
+				}
+				if _, err = credentials.LoadStored(t.Context(), store, slot.SecretRef); !errors.Is(err, credentials.ErrCredentialFileNotFound) {
+					t.Fatal("fixture still has persisted stage credential")
+				}
+			}
+			configBefore, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			checkpointBefore, err := os.ReadFile(filepath.Join(home, ownKeyFile))
+			must(t, err)
+			ledgerPath := filepath.Join(home, "issued", "slot-"+slot.SlotID+".json")
+			ledgerBefore, err := os.ReadFile(ledgerPath)
+			must(t, err)
+			loads := 0
+			fakeSched(env).beforeLoad = func(scheduler.Ref) error { loads++; return nil }
+			wantCode := 0
+			if missingFile {
+				wantCode = 1
+			}
+			var output bytes.Buffer
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != wantCode {
+				t.Fatalf("stored-stage boundary: missing=%v code=%d output=%s", missingFile, code, output.String())
+			}
+			if cf.Calls(cloudflaretest.RouteCreateToken) != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 || !providerKeyLive(cf, slot.ProviderID) {
+				t.Fatal("stage retry minted or deleted a provider key")
+			}
+			if missingFile {
+				if loads != 0 {
+					t.Fatal("missing persisted stage reached setup commit")
+				}
+				for _, file := range []struct {
+					path   string
+					before []byte
+				}{{filepath.Join(home, "config.json"), configBefore}, {filepath.Join(home, ownKeyFile), checkpointBefore}, {ledgerPath, ledgerBefore}} {
+					after, err := os.ReadFile(file.path)
+					must(t, err)
+					if !bytes.Equal(after, file.before) {
+						t.Fatal("missing persisted stage changed config or durable stage")
+					}
+				}
+				stored, err := credentials.LoadStored(t.Context(), store, cfg.Storage.R2CredentialRef)
+				must(t, err)
+				if stored != oldKey {
+					t.Fatal("missing persisted stage lost old shared stored access")
+				}
+				// Persisting the original exact key allows normal reuse/commit.
+				must(t, store.Save(t.Context(), slot.SecretRef, shellKey))
+				output.Reset()
+				if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 {
+					t.Fatal("restored persisted stage did not resume", output.String())
+				}
+			}
+			current, _, err := config.Load(home)
+			must(t, err)
+			withoutShell, err := credentials.OpenDefault(credentials.OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: func(string) (string, bool) { return "", false }})
+			must(t, err)
+			persisted, err := credentials.LoadStored(t.Context(), withoutShell, current.Storage.R2CredentialRef)
+			must(t, err)
+			if current.MachineAssignment == nil || current.MachineAssignment.Kind != config.MachineAssignmentR2Own || persisted != shellKey || cf.Calls(cloudflaretest.RouteCreateToken) != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+				t.Fatal("persisted stage was not committed/reused independently of shell credentials")
+			}
+		})
 	}
 }

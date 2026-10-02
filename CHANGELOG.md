@@ -62,6 +62,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   locally after setup changes, while uncertain issuance and secret cleanup
   remain recorded. Confirmed-deleted own-key stages retry exact local secret
   removal after credential-store recovery without deleting the provider again.
+  Own-key commit requires a persisted staged credential even when the shell
+  supplies a matching key.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
