@@ -17,15 +17,13 @@ import (
 // database only to fail the same way.
 func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request) (done bool) {
 	id := reg.ArchiveSessionID
-	if req.Token != "" && reg.SourceKind != archive.SourceKindCursorSQLite {
-		return false
-	}
+
 	unchanged, signature, err := p.unchangedSinceLastScan(reg)
 	if err != nil {
 		p.fail(id, fmt.Errorf("check transcript for changes: %w", err))
 		return true
 	}
-	failed, failure := unchanged && signature.Failed && reg.SourceKind == archive.SourceKindCursorSQLite, ""
+	failed, failure := unchanged && signature.Failed, ""
 	if failed {
 		failure = signature.FailedError
 	}
@@ -38,7 +36,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		// queued, as it does for a transcript file the filter refuses: its
 		// evidence is the only copy, and the chat's next change reads the
 		// chat again with it.
-		p.fail(id, unchangedSinceFailureError{message: failure})
+		p.fail(id, unchangedSinceFailureError{message: failure, cursor: reg.SourceKind == archive.SourceKindCursorSQLite})
 		return true
 	}
 	// Settled, or a recorded gap at the same state. A request on the gap is
@@ -116,11 +114,11 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
 		return false, signature, nil
 	}
-	adapterVersion, known := harnessAdapterVersion(reg.Harness.Name)
+	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
 	if !known {
 		return false, signature, nil
 	}
-	if signature.ParserVersion != p.opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
+	if signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
 	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
@@ -166,7 +164,7 @@ func (s *sessionScan) sourceSettled(reader sourceReader) bool {
 	if err != nil || !settled {
 		return false
 	}
-	adapterVersion, known := harnessAdapterVersion(s.reg.Harness.Name)
+	adapterVersion, known := harnessAdapterVersion(s.opts.Sources, s.reg.Harness.Name)
 	if !known || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		return false
 	}
@@ -234,9 +232,9 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
-		ParserVersion: s.opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
+		ParserVersion: s.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
-		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
+		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 	})
@@ -248,15 +246,15 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 // state (nil) nothing can vouch for the gap, and the signature is removed:
 // the session is scanned again.
 func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observed *sourceState) error {
-	adapterVersion, known := harnessAdapterVersion(s.reg.Harness.Name)
+	adapterVersion, known := harnessAdapterVersion(s.opts.Sources, s.reg.Harness.Name)
 	if observed == nil || !known {
 		return s.local.RemoveScanSignature(s.id())
 	}
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
-		ParserVersion: s.opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
-		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
+		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
+		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,

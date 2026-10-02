@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
@@ -591,3 +592,5 @@ func TestNativeProjectAcceptsSymlinkToCheckout(t *testing.T) {
 		t.Fatalf("directory alias rejected: code=%d out=%s stderr=%s", code, out, errOut)
 	}
 }
+
+func (nativeOnlyDependencies) runtimeLookup() agentapi.RuntimeLookup { return productionAgents }

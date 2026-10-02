@@ -2,19 +2,22 @@ package agentapi
 
 import (
 	"github.com/wangjohn/agent-archive/internal/filechange"
-	"os"
+	"io/fs"
 )
 
 // HookLocations supplies observed native environment locations without host calls.
 type HookLocations struct {
-	UserHome, WorkingDirectory string
-	Environment                map[string]string
+	UserHome         string
+	WorkingDirectory string
+	Environment      map[string]string
 }
 
 // HookOwner identifies the installation whose handlers may be changed.
 type HookOwner struct {
-	Executable, DataHome, DefaultDataHome string
-	Locations                             map[string]string
+	Executable      string
+	DataHome        string
+	DefaultDataHome string
+	Locations       map[string]string
 }
 
 // HookFile is a bounded caller observation, including symlink and permission facts.
@@ -23,13 +26,14 @@ type HookFile struct {
 	Bytes     []byte
 	Present   bool
 	ReadError error
-	Mode      os.FileMode
+	Mode      fs.FileMode
 	Regular   bool
 }
 
 // HookAction selects installation or removal.
 type HookAction uint8
 
+// The following values define the supported typed observations.
 const (
 	HookInstall HookAction = iota + 1
 	HookRemove
@@ -51,6 +55,7 @@ type HookInspectionRequest struct {
 // HookState distinguishes missing, managed, foreign and unreadable configuration.
 type HookState uint8
 
+// The following values define the supported typed observations.
 const (
 	HookAbsent HookState = iota
 	HookOwned

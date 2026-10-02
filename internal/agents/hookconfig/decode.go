@@ -7,17 +7,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
 // DecoderSpec supplies native event and source rules from an integration.
 type DecoderSpec struct {
-	Agent                                                                           agentmeta.ID
-	Events                                                                          map[string]agentapi.EventKind
-	PromptStarts, NullPathFresh, OwnedFilename, NativeObservations, ChildTranscript bool
-	Followups                                                                       map[string]bool
-	StatusFields                                                                    map[string]string
-	StatusValues                                                                    map[string][]string
+	Agent              agentmeta.ID
+	Events             map[string]agentapi.EventKind
+	PromptStarts       bool
+	NullPathFresh      bool
+	OwnedFilename      bool
+	NativeObservations bool
+	ChildTranscript    bool
+	Followups          map[string]bool
+	StatusFields       map[string]string
+	StatusValues       map[string][]string
 }
 
 // Decoder is a pure native payload interpreter with injected format declarations.
@@ -31,6 +36,7 @@ func first(payload map[string]any, keys ...string) string {
 	}
 	return ""
 }
+
 func root(payload map[string]any) string {
 	if v := first(payload, "cwd"); v != "" {
 		return v
@@ -44,29 +50,31 @@ func root(payload map[string]any) string {
 	}
 	return ""
 }
+
 func (d Decoder) freshness(payload map[string]any) agentapi.StartEvidence {
 	if d.Spec.NullPathFresh {
 		value, present := payload["transcript_path"]
 		if !present || value == nil || value == "" {
-			return agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "empty_native_path"}
+			return agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessEmptyPath}
 		}
 		path, ok := value.(string)
 		if !ok {
-			return agentapi.StartEvidence{Reason: "invalid_native_path"}
+			return agentapi.StartEvidence{Reason: agentapi.FreshnessInvalidPath}
 		}
-		return agentapi.StartEvidence{Kind: agentapi.FreshStat, Reason: "inspect_native_path", Path: path}
+		return agentapi.StartEvidence{Kind: agentapi.FreshStat, Reason: agentapi.FreshnessInspectPath, Path: path}
 	}
 	switch strings.ToLower(strings.TrimSpace(first(payload, "source"))) {
 	case "startup", "clear":
-		return agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "explicit_start"}
+		return agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessExplicitStart}
 	case "resume", "compact":
-		return agentapi.StartEvidence{Kind: agentapi.FreshContinuation, Reason: "explicit_continuation"}
+		return agentapi.StartEvidence{Kind: agentapi.FreshContinuation, Reason: agentapi.FreshnessContinuation}
 	case "":
-		return agentapi.StartEvidence{Kind: agentapi.FreshStat, Reason: "inspect_native_path", Path: first(payload, "transcript_path")}
+		return agentapi.StartEvidence{Kind: agentapi.FreshStat, Reason: agentapi.FreshnessInspectPath, Path: first(payload, "transcript_path")}
 	default:
-		return agentapi.StartEvidence{Reason: "unknown_native_source"}
+		return agentapi.StartEvidence{Reason: agentapi.FreshnessUnknownSource}
 	}
 }
+
 func (d Decoder) locator(payload map[string]any, id string) string {
 	path := first(payload, "transcript_path")
 	if !d.Spec.OwnedFilename {
@@ -97,26 +105,35 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 	if id == "" {
 		return nil, errors.New("hook identity unavailable")
 	}
-	session := agentapi.NativeSession{Agent: d.Spec.Agent, NativeID: id}
+	version := ""
+	mode := agentapi.NativeModeUnspecified
 	if d.Spec.NativeObservations {
-		session.Version = first(payload, "cursor_version")
-		session.Mode = first(payload, "composer_mode")
+		version = first(payload, "cursor_version")
+		mode = agentapi.NativeMode(first(payload, "composer_mode"))
 	}
-	event := agentapi.LifecycleEvent{Kind: kind, Session: session, ProjectRoot: root(payload), Reason: strings.ToLower(name), NativeEvent: name, Source: agentapi.SourceRef{Path: d.locator(payload, id)}}
-	if d.Spec.OwnedFilename {
-		event.Locator = agentapi.LocatorFillFile
-	} else {
-		event.Locator = agentapi.LocatorReplaceFile
+	locator := agentapi.LocatorNone
+	if d.Spec.OwnedFilename && (kind == agentapi.EventStart || kind == agentapi.EventTurnStart || d.Spec.Followups[name]) {
+		locator = agentapi.LocatorFillFile
+	} else if !d.Spec.OwnedFilename && kind == agentapi.EventStart {
+		locator = agentapi.LocatorReplaceFile
 	}
+	proof := agentapi.StartEvidence{}
+	deferred := agentapi.DeferredNone
 	if kind == agentapi.EventStart || kind == agentapi.EventTurnStart && d.Spec.PromptStarts {
-		event.Start = d.freshness(payload)
-		event.Deferred = agentapi.DeferredStart
+		proof = d.freshness(payload)
+		deferred = agentapi.DeferredStart
 	}
-	if d.Spec.Followups[name] && event.Source.Path != "" {
-		event.Deferred = agentapi.DeferredFollowup
+	source := agentapi.SourceRef{Path: d.locator(payload, id)}
+	if d.Spec.Followups[name] && source.Path != "" {
+		deferred = agentapi.DeferredFollowup
 	}
+	var child *agentapi.ChildObservation
 	if kind == agentapi.EventSubagent {
-		event.Child = &agentapi.ChildObservation{ID: first(payload, "agent_id"), Path: first(payload, "agent_transcript_path"), Type: archive.SanitizeSubagentType(first(payload, "agent_type")), CaptureTranscript: d.Spec.ChildTranscript}
+		child = &agentapi.ChildObservation{ID: first(payload, "agent_id"), Path: first(payload, "agent_transcript_path"), Type: archive.SanitizeSubagentType(first(payload, "agent_type")), CaptureTranscript: d.Spec.ChildTranscript, MissingDetail: "SubagentStop omitted agent_id"}
+	}
+	session := agentapi.NativeSession{Agent: d.Spec.Agent, NativeID: id, Version: version, Mode: mode}
+	event := agentapi.LifecycleEvent{Kind: kind, Session: session, ProjectRoot: root(payload), Reason: strings.ToLower(name), NativeEvent: name, Source: source, Locator: locator, Start: proof, Deferred: deferred, Child: child}
+	if kind == agentapi.EventSubagent {
 		return []agentapi.LifecycleEvent{event}, nil
 	}
 	lifecycle := kind == agentapi.EventStart || kind == agentapi.EventTurnStart || kind == agentapi.EventStop
@@ -137,6 +154,7 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 	}
 	return []agentapi.LifecycleEvent{event}, nil
 }
+
 func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event string, payload map[string]any, final bool, input agentapi.HookInput) archive.SupplementalEvidence {
 	out := map[string]any{"event_name": first(payload, "hook_event_name")}
 	for _, key := range []string{"message_id", "turn_id", "agent_id", "model", "model_id"} {
@@ -173,19 +191,16 @@ func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event string, p
 	if kind == archive.EvidenceKindLifecycleHook {
 		field := d.Spec.StatusFields[event]
 		v := first(payload, field)
-		for _, allowed := range d.Spec.StatusValues[event] {
-			if v == allowed {
-				out["status"] = v
-				break
-			}
+		if slices.Contains(d.Spec.StatusValues[event], v) {
+			out["status"] = v
 		}
 	}
 	provenance := "hook:" + string(d.Spec.Agent) + ":" + strings.ToLower(event)
 	return archive.SupplementalEvidence{Kind: kind, ObservedAt: input.ObservedAt, Provenance: provenance, Payload: out}
 }
 
-// DecodeLegacy preserves the old stored proof, never restatting a grown source.
-func (d Decoder) DecodeLegacy(old agentapi.LegacyAdmission) ([]agentapi.LifecycleEvent, error) {
+// DecodeLegacy preserves the old stored proof, without inspecting the grown source again.
+func (d Decoder) DecodeLegacy(old agentapi.AdmissionIntent) ([]agentapi.LifecycleEvent, error) {
 	payload := map[string]any{"hook_event_name": old.Event, "session_id": old.NativeSessionID, "cwd": old.ProjectRoot, "transcript_path": old.TranscriptPath, "cursor_version": old.CursorVersion, "composer_mode": old.ComposerMode}
 	events, err := d.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: old.ObservedAt})
 	if err != nil {
@@ -193,16 +208,14 @@ func (d Decoder) DecodeLegacy(old agentapi.LegacyAdmission) ([]agentapi.Lifecycl
 	}
 	var retained []agentapi.LifecycleEvent
 	for _, event := range events {
-		if event.Deferred == agentapi.DeferredStart {
-			event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "retained_hook_proof"}
+		switch event.Deferred {
+		case agentapi.DeferredStart:
+			event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessRetainedProof}
 			retained = append(retained, event)
-		} else if event.Deferred == agentapi.DeferredFollowup {
+		case agentapi.DeferredFollowup:
 			retained = append(retained, event)
+		case agentapi.DeferredNone:
 		}
-	}
-	// A first prompt's turn effect must preserve the historical deferred lifecycle evidence.
-	if len(retained) > 0 && retained[0].Kind == agentapi.EventStart && retained[0].NewOnly {
-		retained[0].Evidence = []archive.SupplementalEvidence{d.evidence(archive.EvidenceKindLifecycleHook, old.Event, payload, false, agentapi.HookInput{ObservedAt: old.ObservedAt})}
 	}
 	return retained, nil
 }

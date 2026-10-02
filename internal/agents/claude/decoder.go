@@ -8,5 +8,5 @@ import (
 
 // Decoder implements native lifecycle and legacy private intent interpretation.
 func Decoder() hookconfig.Decoder {
-	return hookconfig.Decoder{Spec: hookconfig.DecoderSpec{Agent: agentmeta.ID("claude"), ChildTranscript: true, Events: map[string]agentapi.EventKind{"SessionStart": agentapi.EventStart, "UserPromptSubmit": agentapi.EventTurnStart, "Stop": agentapi.EventStop, "SessionEnd": agentapi.EventStop, "SubagentStop": agentapi.EventSubagent, "StopFailure": agentapi.EventStop}}}
+	return hookconfig.Decoder{Spec: hookconfig.DecoderSpec{Agent: agentmeta.Claude, ChildTranscript: true, Events: map[string]agentapi.EventKind{"SessionStart": agentapi.EventStart, "UserPromptSubmit": agentapi.EventTurnStart, "Stop": agentapi.EventStop, "SessionEnd": agentapi.EventStop, "SubagentStop": agentapi.EventSubagent, "StopFailure": agentapi.EventStop}}}
 }

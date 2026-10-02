@@ -41,7 +41,7 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	// starts from the terminal's environment, not spec.Env, so the calling
 	// agent's session variables are unset there.
 	where, err := env.openTerminal(termlaunch.Spec{Dir: spec.Dir, Argv: append([]string{spec.Binary}, spec.Args...),
-		Unset: handoffSessionEnv, ScriptDir: filepath.Dir(spec.HandoffFile)})
+		Unset: launchEnvironmentKeys(env), ScriptDir: filepath.Dir(spec.HandoffFile)})
 	if err != nil {
 		// termlaunch.ErrNoTerminal's message ends with the command to run.
 		return fmt.Errorf("open %s: %w", dest, err)

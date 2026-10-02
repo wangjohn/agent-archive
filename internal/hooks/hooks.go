@@ -3,8 +3,8 @@ package hooks
 
 import (
 	"errors"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
 	"os"
@@ -15,13 +15,16 @@ const Owner = "agent-archive lifecycle capture"
 
 // Hook identifies an installation and its injected configurator lookup.
 type Hook struct {
-	Executable, DataHome, DefaultDataHome string
-	Ports                                 agentapi.HooksLookup
+	Executable      string
+	DataHome        string
+	DefaultDataHome string
+	Ports           agentapi.HooksLookup
 }
 
 func (h Hook) owner() agentapi.HookOwner {
 	return agentapi.HookOwner{Executable: h.Executable, DataHome: h.DataHome, DefaultDataHome: h.DefaultDataHome}
 }
+
 func (h Hook) port(name string) (agentapi.HookConfigurator, error) {
 	if h.Ports == nil {
 		return nil, errors.New("hook configurator lookup required")
@@ -48,54 +51,6 @@ func (h Hook) Command(name string) (string, error) {
 	return c.Command(h.owner())
 }
 
-// Merge delegates pure installation editing after bounded ownership observations.
-func Merge(existing []byte, name string, h Hook) ([]byte, error) {
-	p, err := h.port(name)
-	if err != nil {
-		return nil, err
-	}
-	file := agentapi.HookFile{Path: "/hook-settings", Bytes: existing, Present: len(existing) > 0, Mode: 0600, Regular: true}
-	owner, err := resolveOwners(p, file, h.owner())
-	if err != nil {
-		return nil, err
-	}
-	changes, err := p.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: file, Owner: owner})
-	if err != nil {
-		return nil, err
-	}
-	if len(changes) != 1 {
-		return nil, errors.New("hook install must plan one file")
-	}
-	return changes[0].After, nil
-}
-
-// Remove delegates ownership-preserving removal without writing settings.
-func Remove(existing []byte, name string, h Hook) ([]byte, bool, error) {
-	p, err := h.port(name)
-	if err != nil {
-		return nil, false, err
-	}
-	file := agentapi.HookFile{Path: "/hook-settings", Bytes: existing, Present: true, Mode: 0600, Regular: true}
-	owner, err := resolveOwners(p, file, h.owner())
-	if err != nil {
-		return nil, false, err
-	}
-	changes, err := p.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: file, Owner: owner})
-	if err != nil {
-		return nil, false, err
-	}
-	if len(changes) == 0 {
-		return existing, false, nil
-	}
-	return changes[0].After, true, nil
-}
-
-// Empty is the shared JSON editor's empty-document predicate.
-func Empty(data []byte) bool { return hookconfig.Empty(data) }
-
-// CommandDataHome decodes the common owned command environment prefix.
-func CommandDataHome(command string) (string, bool) { return hookconfig.CommandDataHome(command) }
-
 const maxHookSettingsBytes = 8 << 20
 
 func readSettings(path string) ([]byte, error) {
@@ -110,6 +65,7 @@ func readSettings(path string) ([]byte, error) {
 	}
 	return data, err
 }
+
 func observe(files Files, h Hook, name string) (agentapi.HookFile, agentapi.HookConfigurator, agentapi.HookOwner, error) {
 	p, err := h.port(name)
 	if err != nil {
@@ -119,28 +75,39 @@ func observe(files Files, h Hook, name string) (agentapi.HookFile, agentapi.Hook
 	if err != nil {
 		return agentapi.HookFile{}, nil, agentapi.HookOwner{}, err
 	}
-	data, err := readSettings(path)
-	file := agentapi.HookFile{Path: path, Bytes: data, Present: err == nil, Mode: 0600}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		file.ReadError = err
+	data, readErr := readSettings(path)
+	present := readErr == nil
+	var problem error
+	mode := os.FileMode(0600)
+	regular := false
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		problem = readErr
 	}
-	if file.Present {
+	if present {
 		info, e := os.Stat(path)
 		if e != nil {
-			file.ReadError = e
+			problem = e
 		} else {
-			file.Mode = info.Mode().Perm()
+			mode = info.Mode().Perm()
 		}
 		link, e := os.Lstat(path)
 		if e != nil {
-			file.ReadError = e
+			problem = e
 		} else {
-			file.Regular = link.Mode().IsRegular()
+			regular = link.Mode().IsRegular()
 		}
 	}
+	file := agentapi.HookFile{Path: path, Bytes: data, Present: present, ReadError: problem, Mode: mode, Regular: regular}
+	if problem != nil {
+		return file, p, h.owner(), &readError{path: path, cause: problem}
+	}
 	owner, e := resolveOwners(p, file, h.owner())
+	if e != nil {
+		e = fmt.Errorf("%s: %w", path, e)
+	}
 	return file, p, owner, e
 }
+
 func resolveOwners(p agentapi.HookConfigurator, file agentapi.HookFile, owner agentapi.HookOwner) (agentapi.HookOwner, error) {
 	first, err := p.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
 	if err != nil {

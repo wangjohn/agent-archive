@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
@@ -126,7 +126,7 @@ func (t target) unload() error {
 //
 // It is for a target that resolved: Restore refuses a journal whose
 // collector does not before it changes anything.
-func (t target) removeStranded(changes []hooks.Change) error {
+func (t target) removeStranded(changes []fileapply.Change) error {
 	status := t.sched.Definition(t.site, t.ref)
 	if status.Defined {
 		return nil

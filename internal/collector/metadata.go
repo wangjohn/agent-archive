@@ -2,17 +2,38 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func (o Options) parserVersion() string {
+// parserFor resolves one immutable capability per agent during a collector pass.
+func (o Options) parserFor(name string) agentapi.TranscriptParser {
+	if parser, found := o.parserCache[name]; found {
+		return parser
+	}
+	var parser agentapi.TranscriptParser
+	if o.Parsers != nil {
+		parser, _ = o.Parsers.LookupParser(name)
+	}
+	if o.parserCache != nil {
+		o.parserCache[name] = parser
+	}
+	return parser
+}
+
+func (o Options) parserVersionFor(name string) string {
 	if o.ParserVersion != "" {
 		return o.ParserVersion
 	}
-	return archive.DefaultParserVersion
+	if parser := o.parserFor(name); parser != nil {
+		return parser.Version()
+	}
+	return "unavailable"
 }
 
 // regenerateMetadata is the scan's refresh step: it re-derives the last
@@ -39,7 +60,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		return outcomeSkipped, false, nil
 	}
 	prior := last.metadata
-	sameParser := prior.Parser.Version == s.opts.parserVersion()
+	sameParser := prior.Parser.Version == s.parserVersion()
 	if sameParser && !last.legacy {
 		return outcomeSkipped, false, nil
 	}
@@ -57,7 +78,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	// clears the record.
 	if skipped, found, err := s.local.LoadRefreshSkip(s.id()); err != nil {
 		return outcomeSkipped, false, err
-	} else if found && skipped.ParserVersion == s.opts.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
+	} else if found && skipped.ParserVersion == s.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
 		return outcomeSkipped, false, nil
 	}
 	source, ok := chooseRefreshSource(last.bundle, uploaded, known)
@@ -101,7 +122,11 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 // retried on every pass and status can count it.
 func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.SourceReference) (encoded []byte, changed bool, err error) {
 	prior := last.metadata
-	next, buildErr := archive.BuildMetadata(last.bundle, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.opts.parserVersion()})
+	analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), last.bundle)
+	if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
+		return nil, false, parseErr
+	}
+	next, buildErr := archive.BuildMetadataWithAnalysis(last.bundle, analysis, parseErr, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.parserVersion()})
 	next.ApplyRegistrationProvenance(s.reg)
 	next.ApplyProjectName(s.reg.ProjectRoot)
 	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
@@ -109,7 +134,7 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 		// This build cannot derive metadata from the retained bundle at all
 		// (one cached under an older source schema, say). That is not a
 		// failure of the session.
-		skip := state.RefreshSkip{ParserVersion: s.opts.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
+		skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
 		return nil, false, s.local.SaveRefreshSkip(s.id(), skip)
 	}
 	// Unchanged metadata over the same source needs no publication.
@@ -229,7 +254,7 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		// cost a full read of each.
 		return false
 	}
-	adapter, err := archive.NewAdapter(s.reg.Harness.Name)
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return false
 	}
@@ -248,12 +273,34 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil || same {
 		return false
 	}
-	if s.reg.SourceKind == archive.SourceKindCursorSQLite {
+	semantics, err := sourceSemantics(s.opts.Sources, s.reg)
+	if err != nil {
+		return false
+	}
+	if semantics.Mutation == agentapi.ReplaceableSnapshot {
 		return true
 	}
 	guard := cached
 	if status == state.CacheStatusBlocked {
 		guard = lastPublished
 	}
-	return nativeEvidenceExtends(guard, candidate)
+	return nativeEvidenceExtends(adapter, guard, candidate)
+}
+
+func (s *sessionScan) resolveParser() agentapi.TranscriptParser {
+	if !s.parserResolved {
+		s.parserResolved = true
+		s.parser = s.opts.parserFor(s.reg.Harness.Name)
+	}
+	return s.parser
+}
+
+func (s *sessionScan) parserVersion() string {
+	if s.opts.ParserVersion != "" {
+		return s.opts.ParserVersion
+	}
+	if parser := s.resolveParser(); parser != nil {
+		return parser.Version()
+	}
+	return "unavailable"
 }

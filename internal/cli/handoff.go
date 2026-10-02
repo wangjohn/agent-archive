@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -45,6 +45,9 @@ const handoffFallbackRows = 5
 type handoffTarget struct {
 	native   *nativesessions.Candidate
 	bundle   archive.SourceBundle
+	analysis archive.Analysis
+	parseErr error
+	analyzed bool
 	metadata *archive.Metadata
 	source   string
 	filePath string
@@ -55,20 +58,6 @@ type handoffTarget struct {
 	// only where the transcript records no timestamps.
 	startedAt      time.Time
 	lastActivityAt time.Time
-}
-
-// currentSessionEnv names environment variables an agent sets for the commands
-// it runs, holding its own native session ID, and the harness that sets each.
-// `--latest` skips that session: run from inside an agent, the newest session
-// is always the one asking. `--to` with no selector hands it off instead.
-// CLAUDE_CODE_SESSION_ID is observed in Claude Code; CODEX_THREAD_ID is read
-// if present but has not been observed.
-var currentSessionEnv = []struct {
-	key     string
-	harness string
-}{
-	{"CLAUDE_CODE_SESSION_ID", archive.HarnessClaude},
-	{"CODEX_THREAD_ID", archive.HarnessCodex},
 }
 
 var errHandoffNotSetUp = errors.New("handoff not set up")
@@ -161,7 +150,14 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
 	}
-	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
+	if !target.analyzed {
+		target, err = analyzeTarget(context.Background(), parsersFor(env), target)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+	}
+	h, err := archive.BuildHandoffWithAnalysis(target.bundle, target.analysis, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
 		Checkout: handoffCheckout(opts, env)})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -336,7 +332,7 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	filtered, adapter, err := collector.FilterTranscriptFile(harness, abs, info.ModTime())
+	filtered, adapter, err := collector.FilterTranscriptFile(harness, abs, info.ModTime(), registryFor(env))
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("filter %s: %w", path, err)
 	}
@@ -357,7 +353,7 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, source: "file", filePath: abs, lastActivityAt: info.ModTime()}, nil
+	return analyzeTarget(context.Background(), parsersFor(env), handoffTarget{bundle: bundle, source: "file", filePath: abs, lastActivityAt: info.ModTime()})
 }
 
 // errNotRegisteredHere means a session ID has no registration on this machine,
@@ -365,40 +361,41 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 // beside an archive error.
 var errNotRegisteredHere = errors.New("no session registered on this machine")
 
-// currentSessions returns the native session IDs of the agent this command is
+// currentSessions returns the qualified session identities of the agent this command is
 // running inside, if it says.
-func currentSessions(env currentSessionDependencies) map[string]bool {
-	ids := map[string]bool{}
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && strings.TrimSpace(value) != "" {
-			ids[strings.TrimSpace(value)] = true
+func currentSessions(env currentSessionDependencies) map[agentmeta.SessionKey]bool {
+	ids := map[agentmeta.SessionKey]bool{}
+	for _, observation := range runtimeObservations(env) {
+		if observation.NativeID != "" {
+			key, err := agentmeta.NewSessionKey(string(observation.Agent), observation.NativeID)
+			if err == nil {
+				ids[key] = true
+			}
 		}
 	}
 	return ids
 }
 
+func handoffSessionKey(harness, nativeID string) agentmeta.SessionKey {
+	return agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeID}
+}
+
 // localTarget builds a handoff target from a registration's transcript.
 func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTarget, error) {
-	bundle, err := collector.ReadLocalBundle(r.ctx, r.home, reg, r.env.now().UTC(), r.env.cursorDatabase())
+	bundle, err := collector.ReadLocalBundle(r.ctx, r.home, reg, r.env.now().UTC(), r.env.cursorDatabase(), registryFor(r.env))
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase())
-	return handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt}, nil
+	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase(), registryFor(r.env))
+	return analyzeTarget(r.ctx, parsersFor(r.env), handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt})
 }
 
 // hasPrompt reports whether a bundle holds anything the person said, so
 // `--latest` passes over a session that has only just started. It is
 // archive.SessionLabels's second result, without deriving the labels.
-func hasPrompt(bundle archive.SourceBundle) bool {
-	if len(bundle.NativeText) > 0 {
-		return true
-	}
-	view, err := archive.ParseNormalized(bundle)
-	if err != nil {
-		return false
-	}
-	return slices.ContainsFunc(view.Turns, func(turn archive.NormalizedTurn) bool { return turn.Kind == archive.TurnKindHumanPrompt })
+func hasPrompt(analysis archive.Analysis) bool {
+	_, ok := archive.LabelsFromAnalysis(analysis)
+	return ok
 }
 
 type handoffResolver struct {
@@ -408,9 +405,9 @@ type handoffResolver struct {
 	cfg     config.Config
 	harness string
 	source  string
-	// skip holds native session IDs `--latest` must pass over: the agent
+	// skip holds qualified session identities `--latest` must pass over: the agent
 	// session running the command.
-	skip map[string]bool
+	skip map[agentmeta.SessionKey]bool
 	// repoKey is the key of the repository the current directory is in (a
 	// hash of its origin, see archive.RepoKey), or "" when it has none.
 	repoKey string
@@ -473,7 +470,7 @@ func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe st
 		}
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, metadata: &metadata, source: "archive", describe: describe}, nil
+	return analyzeTarget(r.ctx, parsersFor(r.env), handoffTarget{bundle: bundle, metadata: &metadata, source: "archive", describe: describe})
 }
 
 // latest resolves `--latest`. A session is for the project when it ran at
@@ -553,7 +550,7 @@ type localMatches struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) localMatches {
 	var matches localMatches
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] {
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
 			continue
 		}
 		byPath := sameProject(reg.ProjectRoot, dir)
@@ -565,7 +562,7 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 			continue
 		}
 		active := reg.RegisteredAt
-		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
+		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase(), registryFor(r.env)); ok {
 			active = at
 		}
 		c := localHandoffCandidate{reg: reg, active: active, byRepo: byRepo}
@@ -588,7 +585,7 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time.Time, skipped *[]string) (handoffTarget, bool, error) {
 	for _, c := range candidates {
 		target, err := r.localTarget(c.reg)
-		if err == nil && !hasPrompt(target.bundle) {
+		if err == nil && !hasPrompt(target.analysis) {
 			err = errors.New("no prompt yet")
 		}
 		if err != nil {
@@ -598,7 +595,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 			continue
 		}
 		if c.byRepo {
-			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.bundle)); err != nil {
+			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.analysis)); err != nil {
 				return handoffTarget{}, false, err
 			}
 		}
@@ -610,12 +607,12 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 
 // localRepoMatch describes a registration on this machine that matched only by
 // repository, from what the registration and its transcript say.
-func localRepoMatch(reg archive.SessionRegistration, bundle archive.SourceBundle) repoMatch {
+func localRepoMatch(reg archive.SessionRegistration, analysis archive.Analysis) repoMatch {
 	project := ""
 	if reg.ProjectRoot != "" {
 		project = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
-	labels, _ := archive.SessionLabels(bundle)
+	labels, _ := archive.LabelsFromAnalysis(analysis)
 	return repoMatch{id: reg.ArchiveSessionID, machine: machineThis, started: reg.SessionStartedAt, project: project, title: labels.Title}
 }
 
@@ -676,9 +673,9 @@ func (r handoffResolver) firstArchive(a archiveMatches, candidates []archive.Met
 // otherwise by repository when repoKey is not empty and is its repository
 // key (the same repository, wherever it was checked out). Each list keeps the
 // order given; a session that matches by path is never in byRepo.
-func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[string]bool) (byPath, byRepo []archive.Metadata) {
+func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[agentmeta.SessionKey]bool) (byPath, byRepo []archive.Metadata) {
 	for _, m := range sessions {
-		if skip[m.NativeSessionID] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
+		if skip[handoffSessionKey(m.Harness.Name, m.NativeSessionID)] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
 			continue
 		}
 		switch {

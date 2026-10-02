@@ -217,8 +217,10 @@ same-size/same-mtime weakness; no content hashing is added.
 Cursor token v1 is lowercase hex SHA-256 of
 `ASCII("agent-archive/cursor-signature/v1") || int64BE(lastUpdatedAt) ||
 uint64BE(headerCount) || E(lastBubbleID) || uint64BE(messageRows) ||
-E(lastMessageHash)`; counts must be nonnegative, hash empty or 64 lowercase
-hex bytes. `LastBubbleID` is **unbounded in `cursorstore.decodeHeaders`**;
+E(lastMessageHash)`; counts must be nonnegative, hash empty or 32 lowercase
+hex bytes (the existing store hashes SHA-256 then retains its first 16 bytes;
+the phase-0 64-byte characterization was incorrect). The outer token remains
+64 lowercase hex characters. `LastBubbleID` is **unbounded in `cursorstore.decodeHeaders`**;
 fixed 36/64-byte UUID assumptions or truncation would alter equality. Hashing
 length-prefixed existing fields bounds persisted tokens without truncating
 native values. The digest has the usual cryptographic collision assumption;

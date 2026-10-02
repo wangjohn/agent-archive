@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -176,7 +178,8 @@ func TestObserveSkillsAbsentRootsAreScopedAndLeaveUseKnowledgeUnknown(t *testing
 		}
 	}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: now}, SupplementalEvidence: got}
-	metadata, err := archive.BuildMetadata(bundle, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
+	analysis, parseErr := nativecodec.ParseClaude(context.Background(), bundle)
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
 	if err != nil || metadata.SkillDetection != archive.SkillDetectionUnavailable || len(metadata.SkillsUsed) != 0 {
 		t.Fatalf("metadata=%#v err=%v", metadata, err)
 	}

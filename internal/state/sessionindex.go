@@ -207,33 +207,9 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 		// A committed registration disappeared; its old ID must not be revived.
 	}
 	if !found {
-		legacy, adopted, err := s.legacySessionID(key)
-		if err != nil {
-			return "", false, err
-		}
-		if adopted {
-			err := s.writeIndexUnderRequestLock(legacy, qualifiedSessionIndexPath(s.home, key), func() error {
-				valid, err := s.matchingRegistration(key, legacy)
-				if err != nil {
-					return err
-				}
-				if !valid {
-					return errIndexMoved
-				}
-				return nil
-			}, func(current fileSnapshot) (any, bool, error) {
-				if current.found {
-					return nil, false, errIndexMoved
-				}
-				return indexEntry(key, legacy), true, nil
-			})
-			if err != nil {
-				return "", false, err
-			}
-			if err := s.indexStep("adoption"); err != nil {
-				return "", false, err
-			}
-			return legacy, false, nil
+		legacy, adopted, err := s.adoptLegacySessionIndex(key)
+		if err != nil || adopted {
+			return legacy, false, err
 		}
 	}
 	if err := s.sessionIndexMissAllowed(); err != nil {
@@ -330,7 +306,7 @@ func (s *Store) finishSessionIndex(key agentmeta.SessionKey, id string) error {
 func (s *Store) removeSessionIndex(key agentmeta.SessionKey, id string) error {
 	paths := []string{qualifiedSessionIndexPath(s.home, key), nativeSessionIndexPath(s.home, key.NativeID)}
 	for i, path := range paths {
-		var entry sessionIndexEntry
+		var entryID string
 		if i == 0 {
 			var qualified qualifiedSessionIndexEntry
 			err := local.Read(path, &qualified)
@@ -343,17 +319,19 @@ func (s *Store) removeSessionIndex(key agentmeta.SessionKey, id string) error {
 			if qualified.Agent != key.Agent || qualified.NativeID != key.NativeID {
 				continue
 			}
-			entry.ArchiveSessionID = qualified.ArchiveSessionID
+			entryID = qualified.ArchiveSessionID
 		} else {
-			err := local.Read(path, &entry)
+			var legacy sessionIndexEntry
+			err := local.Read(path, &legacy)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
 				return err
 			}
+			entryID = legacy.ArchiveSessionID
 		}
-		if entry.ArchiveSessionID != id {
+		if entryID != id {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -374,4 +352,36 @@ func (s *Store) writeIndexUnderRequestLock(id, path string, check func() error, 
 	indexStore := *s
 	indexStore.onWriteSync = s.onIndexSync
 	return indexStore.writeUnderRequestLock(id, path, check, change)
+}
+
+func (s *Store) adoptLegacySessionIndex(key agentmeta.SessionKey) (string, bool, error) {
+	legacy, adopted, err := s.legacySessionID(key)
+	if err != nil {
+		return "", false, err
+	}
+	if adopted {
+		err := s.writeIndexUnderRequestLock(legacy, qualifiedSessionIndexPath(s.home, key), func() error {
+			valid, err := s.matchingRegistration(key, legacy)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return errIndexMoved
+			}
+			return nil
+		}, func(current fileSnapshot) (any, bool, error) {
+			if current.found {
+				return nil, false, errIndexMoved
+			}
+			return indexEntry(key, legacy), true, nil
+		})
+		if err != nil {
+			return "", false, err
+		}
+		if err := s.indexStep("adoption"); err != nil {
+			return "", false, err
+		}
+		return legacy, true, nil
+	}
+	return "", false, nil
 }

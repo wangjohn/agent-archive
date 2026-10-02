@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,13 +51,7 @@ func TestLastActivitiesReadsTheCursorDatabaseOnce(t *testing.T) {
 		regs = append(regs, archive.SessionRegistration{ArchiveSessionID: "s-nofile", Harness: archive.Harness{Name: "codex"}, TranscriptPath: filepath.Join(t.TempDir(), "gone.jsonl")})
 
 		reads := 0
-		previous := readCursorLastUpdated
-		readCursorLastUpdated = func(ctx context.Context, dbPath string, ids []string) (map[string]int64, error) {
-			reads++
-			return previous(ctx, dbPath, ids)
-		}
-		got := LastActivities(context.Background(), regs, db.path)
-		readCursorLastUpdated = previous
+		got := LastActivities(context.Background(), regs, db.path, activitySources{base: testSources, reads: &reads})
 
 		if reads != 1 {
 			t.Fatalf("running=%v: %d reads of the Cursor database", running, reads)
@@ -68,7 +63,7 @@ func TestLastActivitiesReadsTheCursorDatabaseOnce(t *testing.T) {
 			t.Fatalf("running=%v: shared chat %v, file %v", running, got["s-again"], got["s-file"])
 		}
 		for _, reg := range regs {
-			want, ok := LastActivity(context.Background(), reg, db.path)
+			want, ok := LastActivity(context.Background(), reg, db.path, testSources)
 			if got[reg.ArchiveSessionID] != want || ok != !got[reg.ArchiveSessionID].IsZero() {
 				t.Fatalf("running=%v: %s: LastActivities %v, LastActivity %v (%v)", running, reg.ArchiveSessionID, got[reg.ArchiveSessionID], want, ok)
 			}
@@ -99,8 +94,31 @@ func TestLastActivitiesManyChats(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got := LastActivities(context.Background(), regs, db.path)
+	got := LastActivities(context.Background(), regs, db.path, testSources)
 	if len(got) != len(regs) || !got["s-1199"].Equal(time.UnixMilli(1767225601199)) {
 		t.Fatalf("%d activities for %d chats; s-1199 = %v", len(got), len(regs), got["s-1199"])
 	}
+}
+
+type activitySources struct {
+	base  agentapi.SourcesLookup
+	reads *int
+}
+
+func (s activitySources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	p, f, ok := s.base.LookupSources(name)
+	if name == archive.HarnessCursor {
+		p = activityCountProvider{SourceProvider: p, reads: s.reads}
+	}
+	return p, f, ok
+}
+
+type activityCountProvider struct {
+	agentapi.SourceProvider
+	reads *int
+}
+
+func (p activityCountProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
+	*p.reads++
+	return p.SourceProvider.(agentapi.ActivityProvider).Activities(ctx, e, refs)
 }

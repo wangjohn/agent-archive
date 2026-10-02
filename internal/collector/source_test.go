@@ -167,7 +167,7 @@ func settleCursorSession(t *testing.T, local *state.Store, reg archive.SessionRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
+	adapter, err := testAdapter(reg.Harness.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	db.chat("chat-1", 1000, "b1", "b2")
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 
 	reg := cursorRegistration("cursor-session", "chat-1")
 	if err := local.SaveRegistration(reg); err != nil {
@@ -315,7 +315,7 @@ func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path}
 	for i := range 4 {
 		id := fmt.Sprintf("chat-%d", i)
 		db.chat(id, 1, "m")
@@ -375,7 +375,7 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 			if err := local.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
-			opts := Options{MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
 			for pass := range 3 {
 				result, copies := run(t, local, storagetest.NewMemoryStore(), opts, passes)
 				want := 0
@@ -402,7 +402,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path}
 	settleCursorSession(t, local, reg, opts)
 	root, err := cursorstore.SnapshotRoot()
 	if err != nil {
@@ -442,4 +442,23 @@ func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
 
 func contains(list []string, s string) bool {
 	return slices.Contains(list, s)
+}
+
+// Stored native names retain case, while one resolved provider owns the pass.
+func TestCursorSourceNamesShareOneSerialPass(t *testing.T) {
+	local := newTestStore(t)
+	db := newCursorDB(t, true)
+	for i, name := range []string{"cursor", "CURSOR"} {
+		id := fmt.Sprintf("case-chat-%d", i)
+		db.chat(id, 1, "message")
+		reg := cursorRegistration("case-session-"+id, id)
+		reg.Harness.Name = name
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, copies := run(t, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}, countSnapshots(t))
+	if len(result.Errors) != 0 || len(result.Published) != 2 || copies != 1 {
+		t.Fatalf("case names split source pass: %+v copies=%d", result, copies)
+	}
 }

@@ -4,6 +4,8 @@ package builtin
 import (
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -16,6 +18,11 @@ import (
 type Integration struct {
 	Descriptor      agentmeta.Descriptor
 	Launcher        agentapi.Launcher
+	Parser          agentapi.TranscriptParser
+	Preview         agentapi.RecordPreviewer
+	Sources         agentapi.SourceProvider
+	Filter          agentapi.TranscriptFilter
+	Runtime         agentapi.RuntimeDetector
 	Hooks           agentapi.HookConfigurator
 	Decoder         agentapi.HookDecoder
 	Skills          agentapi.SkillProvider
@@ -33,9 +40,12 @@ type Integration struct {
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
-	catalog    agentmeta.Catalog
-	bindings   map[agentmeta.ID]Integration
-	supporting map[agentmeta.Operation][]Integration
+	catalog        agentmeta.Catalog
+	sourceBindings map[string]Integration
+	bindings       map[agentmeta.ID]Integration
+	supporting     map[agentmeta.Operation][]Integration
+	runtime        []Integration
+	sessionKeys    []string
 }
 
 // New binds each identity exactly once and derives operations from actual ports.
@@ -43,7 +53,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 	if identities == nil || nilImplementation(identities) {
 		return nil, fmt.Errorf("missing identity catalog")
 	}
-	r := &Registry{bindings: make(map[agentmeta.ID]Integration), supporting: make(map[agentmeta.Operation][]Integration)}
+	r := &Registry{bindings: make(map[agentmeta.ID]Integration), sourceBindings: map[string]Integration{}, supporting: make(map[agentmeta.Operation][]Integration)}
 	for _, b := range bindings {
 		d, ok := identities.Lookup(string(b.Descriptor.ID))
 		if !ok || d.ID != b.Descriptor.ID {
@@ -52,20 +62,16 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if _, ok := r.bindings[d.ID]; ok {
 			return nil, fmt.Errorf("duplicate binding %q", d.ID)
 		}
-		if b.Launcher == nil || nilImplementation(b.Launcher) {
-			return nil, fmt.Errorf("agent %s has no launcher", d.ID)
-		}
-		// Declaration metadata and operation promises cannot override the catalog.
-		if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
-			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
-		}
-		operations, err := implementedOperations(b)
+		var err error
+		d, err = boundDescriptor(b, d)
 		if err != nil {
 			return nil, err
 		}
-		d.Operations = operations
 		b.Descriptor = d
 		r.bindings[d.ID] = b
+		for _, name := range append([]string{string(d.ID)}, d.Aliases...) {
+			r.sourceBindings[name] = b
+		}
 	}
 	ds := identities.All()
 	for i, d := range ds {
@@ -74,9 +80,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
-		for _, op := range b.Descriptor.Operations {
-			r.supporting[op] = append(r.supporting[op], b)
-		}
+		r.addOperations(b)
 	}
 	var err error
 	r.catalog, err = agentmeta.New(ds)
@@ -84,44 +88,6 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		return nil, err
 	}
 	return r, nil
-}
-
-// implementedOperations validates optional ports and derives promises only from
-// actual implementations. Multiple project ports contribute one capability.
-func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
-	ports := []struct {
-		name           string
-		operation      agentmeta.Operation
-		implementation any
-	}{
-		{"hooks", agentmeta.ManagedHooks, b.Hooks},
-		{"skills", agentmeta.Skills, b.Skills},
-		{"native headers", agentmeta.NativeInspection, b.NativeHeaders},
-		{"version inspector", agentmeta.VersionInspection, b.Version},
-		{"evidence provider", "", b.Evidence},
-		{"native paths", agentmeta.NativeProjects, b.NativePaths},
-		{"worktrees", agentmeta.NativeProjects, b.Worktrees},
-		{"workspace", agentmeta.NativeProjects, b.Workspace},
-		{"import inspector", agentmeta.HistoricalInspection, b.Imports},
-		{"children", agentmeta.ChildDiscovery, b.Children},
-		{"database catalog", agentmeta.DatabaseInspection, b.DatabaseCatalog},
-		{"discovery", agentmeta.HistoricalDiscovery, b.Discovery},
-	}
-	operations := []agentmeta.Operation{agentmeta.Launch}
-	seen := map[agentmeta.Operation]bool{}
-	for _, port := range ports {
-		if port.implementation == nil {
-			continue
-		}
-		if nilImplementation(port.implementation) {
-			return nil, fmt.Errorf("typed nil %s for %s", port.name, b.Descriptor.ID)
-		}
-		if port.operation != "" && !seen[port.operation] {
-			seen[port.operation] = true
-			operations = append(operations, port.operation)
-		}
-	}
-	return operations, nil
 }
 
 func nilImplementation(v interface{}) bool {
@@ -160,14 +126,72 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	return r
+}
+
+// LookupParser resolves only the parser needed by retained-source derivation.
+func (r *Registry) LookupParser(name string) (agentapi.TranscriptParser, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Parser, ok && b.Parser != nil
+}
+
+// LookupPreview resolves a bounded safe-record preview decoder.
+func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Preview, ok && b.Preview != nil
+}
+
+// Launcher resolves the native launch operation without exposing other ports.
+func (r *Registry) Launcher(name string) (agentapi.Launcher, bool) {
+	b, ok := r.Lookup(name)
+	return b.Launcher, ok && b.Launcher != nil
+}
+
+// Observations visits the precomputed runtime projection in presentation order.
+func (r *Registry) Observations(env agentapi.RuntimeEnvironment) []agentapi.AgentRuntime {
+	out := make([]agentapi.AgentRuntime, 0, len(r.runtime))
+	for _, b := range r.runtime {
+		observation := b.Runtime.Detect(env)
+		if observation.PresenceKey != "" {
+			out = append(out, agentapi.AgentRuntime{Agent: b.Descriptor.ID, RuntimeObservation: observation})
+		}
+	}
+	return out
+}
+
+// SessionEnvironmentKeys returns the defensive cleanup union built at composition.
+func (r *Registry) SessionEnvironmentKeys() []string { return slices.Clone(r.sessionKeys) }
+
+// Launchers returns the implemented launch projection in presentation order.
+func (r *Registry) Launchers() []agentapi.AgentLauncher {
+	bindings := r.Supporting(agentmeta.Launch)
+	out := make([]agentapi.AgentLauncher, 0, len(bindings))
+	for _, b := range bindings {
+		out = append(out, agentapi.AgentLauncher{Agent: b.Descriptor.ID, Launcher: b.Launcher})
+	}
+	return out
+}
+
+func (r *Registry) addOperations(b Integration) {
+	for _, op := range b.Descriptor.Operations {
+		r.supporting[op] = append(r.supporting[op], b)
+	}
+	if b.Runtime == nil {
+		return
+	}
+	r.runtime = append(r.runtime, b)
+	for _, key := range b.Runtime.SessionEnvironmentKeys() {
+		if !slices.Contains(r.sessionKeys, key) {
+			r.sessionKeys = append(r.sessionKeys, key)
+		}
+	}
 }
 
 // LookupHooks returns only the managed configuration port.
@@ -189,6 +213,44 @@ func (r *Registry) HookAgents() []string {
 func (r *Registry) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
 	b, ok := r.Lookup(name)
 	return b.Decoder, ok && b.Decoder != nil
+}
+
+// LookupSources resolves only source and filter ports.
+func (r *Registry) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Sources, b.Filter, ok && b.Sources != nil && b.Filter != nil
+}
+
+// SweepSources invokes only provider-declared abandoned-resource cleanup.
+func (r *Registry) SweepSources() {
+	for _, b := range r.bindings {
+		if p, ok := b.Sources.(interface{ Sweep() }); ok {
+			p.Sweep()
+		}
+	}
+}
+
+func boundDescriptor(b Integration, d agentmeta.Descriptor) (agentmeta.Descriptor, error) {
+	if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
+		return agentmeta.Descriptor{}, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
+	}
+	operations, err := implementedOperations(b)
+	if err != nil {
+		return agentmeta.Descriptor{}, err
+	}
+	if len(operations) == 0 {
+		return agentmeta.Descriptor{}, fmt.Errorf("agent %s has no operations", d.ID)
+	}
+	if b.Sources != nil || b.Filter != nil {
+		if b.Sources == nil || b.Filter == nil {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
+		}
+		if b.Filter.Name() != string(d.ID) {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has filter for %s", d.ID, b.Filter.Name())
+		}
+	}
+	d.Operations = operations
+	return d, nil
 }
 
 // LookupSkills resolves a native skill provider.
@@ -309,4 +371,49 @@ func (r *Registry) LookupChildren(name string) (agentapi.ChildDiscoverer, bool) 
 func (r *Registry) LookupImport(name string) (agentapi.ImportInspector, bool) {
 	b, ok := r.Lookup(name)
 	return b.Imports, ok && b.Imports != nil
+}
+
+// implementedOperations validates optional ports and derives promises only from
+// actual implementations. Multiple project ports contribute one capability.
+func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
+	ports := []struct {
+		name           string
+		operation      agentmeta.Operation
+		implementation any
+	}{
+		{"launcher", agentmeta.Launch, b.Launcher},
+		{"runtime", agentmeta.Runtime, b.Runtime},
+		{"parser", agentmeta.Parse, b.Parser},
+		{"preview", "", b.Preview},
+		{"sources", agentmeta.Source, b.Sources},
+		{"filter", "", b.Filter},
+		{"decoder", agentmeta.LifecycleHooks, b.Decoder},
+		{"hooks", agentmeta.ManagedHooks, b.Hooks},
+		{"skills", agentmeta.Skills, b.Skills},
+		{"native headers", agentmeta.NativeInspection, b.NativeHeaders},
+		{"version inspector", agentmeta.VersionInspection, b.Version},
+		{"evidence provider", "", b.Evidence},
+		{"native paths", agentmeta.NativeProjects, b.NativePaths},
+		{"worktrees", agentmeta.NativeProjects, b.Worktrees},
+		{"workspace", agentmeta.NativeProjects, b.Workspace},
+		{"import inspector", agentmeta.HistoricalInspection, b.Imports},
+		{"children", agentmeta.ChildDiscovery, b.Children},
+		{"database catalog", agentmeta.DatabaseInspection, b.DatabaseCatalog},
+		{"discovery", agentmeta.HistoricalDiscovery, b.Discovery},
+	}
+	var operations []agentmeta.Operation
+	seen := map[agentmeta.Operation]bool{}
+	for _, port := range ports {
+		if port.implementation == nil {
+			continue
+		}
+		if nilImplementation(port.implementation) {
+			return nil, fmt.Errorf("typed nil %s for %s", port.name, b.Descriptor.ID)
+		}
+		if port.operation != "" && !seen[port.operation] {
+			seen[port.operation] = true
+			operations = append(operations, port.operation)
+		}
+	}
+	return operations, nil
 }

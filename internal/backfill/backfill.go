@@ -244,6 +244,7 @@ type Environment struct {
 	Workspaces       agentapi.WorkspaceLookup
 	Children         agentapi.ChildrenLookup
 	Imports          agentapi.ImportsLookup
+	Sources          agentapi.SourcesLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// NativeDirectories are observed current and previously configured native locations.

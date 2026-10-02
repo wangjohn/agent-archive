@@ -1,10 +1,13 @@
 package builtin
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 const (
@@ -73,5 +76,85 @@ func TestRegistryConstructorMatrix(t *testing.T) {
 	}
 	if len(r.Supporting(unimplementedOperation)) != 0 {
 		t.Fatal("fabricated operation")
+	}
+}
+
+type fakeRuntime struct{}
+
+func (*fakeRuntime) Detect(agentapi.RuntimeEnvironment) agentapi.RuntimeObservation {
+	return agentapi.RuntimeObservation{NativeID: "native", PresenceKey: "TEST_RUNTIME"}
+}
+
+func (*fakeRuntime) SessionEnvironmentKeys() []string { return []string{"TEST_RUNTIME", "TEST_PARENT"} }
+
+func TestRuntimeProjectionAndCleanupUnion(t *testing.T) {
+	t.Parallel()
+	c, err := agentmeta.New([]agentmeta.Descriptor{{ID: testID, DisplayName: "Test"}, {ID: aliasID, DisplayName: "Alias"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := []Integration{{Descriptor: agentmeta.Descriptor{ID: testID}, Runtime: &fakeRuntime{}}, {Descriptor: agentmeta.Descriptor{ID: aliasID}, Launcher: &fakeLauncher{}, Runtime: &fakeRuntime{}}}
+	r, err := New(c, bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Launcher(string(testID)); ok {
+		t.Fatal("runtime-only agent fabricated launcher")
+	}
+	if len(r.Supporting(agentmeta.Runtime)) != 2 || len(r.Supporting(agentmeta.Launch)) != 1 {
+		t.Fatal("wrong operation projection")
+	}
+	d, _ := r.Catalog().Lookup(string(testID))
+	if len(d.Operations) != 1 || d.Operations[0] != agentmeta.Runtime {
+		t.Fatalf("runtime-only projection %+v", d)
+	}
+	observations := r.Observations(agentapi.RuntimeEnvironment{})
+	if len(observations) != 2 || observations[0].Agent != testID || observations[1].Agent != aliasID {
+		t.Fatalf("runtime order %+v", observations)
+	}
+	keys := r.SessionEnvironmentKeys()
+	if len(keys) != 2 || keys[0] != "TEST_RUNTIME" || keys[1] != "TEST_PARENT" {
+		t.Fatalf("cleanup union %q", keys)
+	}
+	keys[0] = "MUTATED"
+	if r.SessionEnvironmentKeys()[0] != "TEST_RUNTIME" {
+		t.Fatal("mutable cleanup union")
+	}
+	var typedNil *fakeRuntime
+	bindings[0].Runtime = typedNil
+	if _, err := New(c, bindings); err == nil {
+		t.Fatal("accepted typed-nil runtime")
+	}
+}
+
+func TestSourceBindingCoherenceAndNarrowLookup(t *testing.T) {
+	catalog, err := agentmeta.New([]agentmeta.Descriptor{{ID: agentmeta.Codex, DisplayName: "Codex", Aliases: []string{"native-codex"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nilProvider *sourceio.FileProvider
+	var nilFilter *codex.Filter
+	for _, binding := range []Integration{
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Sources: codex.SourceProvider{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Filter: codex.Filter{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Sources: nilProvider, Filter: codex.Filter{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Sources: codex.SourceProvider{}, Filter: nilFilter},
+	} {
+		if _, err := New(catalog, []Integration{binding}); err == nil {
+			t.Fatal("accepted incoherent source binding")
+		}
+	}
+	r, err := New(catalog, []Integration{{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Supporting(agentmeta.Source)) != 1 || len(r.Supporting(agentmeta.Launch)) != 0 {
+		t.Fatal("operation promise without implementation")
+	}
+	if _, _, ok := r.LookupSources(" NATIVE-CODEX "); !ok {
+		t.Fatal("source alias unresolved")
+	}
+	if n := testing.AllocsPerRun(100, func() { r.LookupSources("native-codex") }); n != 0 {
+		t.Fatalf("source lookup allocates %g", n)
 	}
 }

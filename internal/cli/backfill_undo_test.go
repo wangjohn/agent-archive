@@ -18,7 +18,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -463,7 +462,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumedAt := backfillNow.Add(time.Hour)
-	if err := capture.HandleEvent(f.data, "claude", map[string]any{
+	if err := handleTestHookEvent(f.data, "claude", map[string]any{
 		"hook_event_name": "Stop", "session_id": "c-lev-1", "cwd": reg.ProjectRoot, "transcript_path": reg.TranscriptPath,
 		"last_assistant_message": "Done again.",
 	}, resumedAt); err != nil {

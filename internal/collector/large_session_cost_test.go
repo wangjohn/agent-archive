@@ -132,7 +132,7 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	}
 	remote := &countingStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)

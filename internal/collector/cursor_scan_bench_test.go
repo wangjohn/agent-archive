@@ -28,7 +28,7 @@ func BenchmarkScanChangedCursorChats(b *testing.B) {
 	}
 	copies := 0
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "synthetic", CursorDatabase: db.path, afterCursorPass: func(n int) { copies = n }, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", CursorDatabase: db.path, afterCursorPass: func(n int) { copies = n }, Now: func() time.Time { return now }}
 	remote := storagetest.NewMemoryStore()
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 100 || copies != 1 {

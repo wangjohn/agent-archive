@@ -32,7 +32,7 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": resumed}},
 		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}},
 	} {
-		if err := HandleEvent(home, tc.harness, tc.payload, now); err != nil {
+		if err := HandleEvent(home, tc.harness, tc.payload, now, WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,7 +105,7 @@ func TestHandleHookEventRegistersEligibleSessionStart(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := HandleEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,7 +132,7 @@ func TestHandleHookEventSkipsIneligibleProject(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/somewhere/else"}
-	if err := HandleEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -152,7 +152,7 @@ func TestHandleHookEventSkipsResumeOfUnknownClaudeSession(t *testing.T) {
 		"hook_event_name": "SessionStart", "session_id": "native-old", "source": "resume",
 		"cwd": "/work/widget",
 	}
-	if err := HandleEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -173,7 +173,7 @@ func TestHandleHookEventSkipsResumeOfUnknownCodexSession(t *testing.T) {
 			"hook_event_name": "SessionStart", "session_id": "native-old-" + source, "source": source,
 			"cwd": "/work/widget",
 		}
-		if err := HandleEvent(home, "codex", payload, now); err != nil {
+		if err := HandleEvent(home, "codex", payload, now, WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -195,7 +195,7 @@ func TestHandleHookEventRegistersCodexStartup(t *testing.T) {
 			"hook_event_name": "SessionStart", "session_id": "native-" + source, "source": source,
 			"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 		}
-		if err := HandleEvent(home, "codex", payload, now); err != nil {
+		if err := HandleEvent(home, "codex", payload, now, WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -217,13 +217,13 @@ func TestHandleHookEventCodexCompactPreservesOriginalStartTime(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "session_id": "native-1", "source": "startup", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "codex", payload, firstStart); err != nil {
+	if err := HandleEvent(home, "codex", payload, firstStart, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
 	compactAt := firstStart.Add(2 * time.Hour)
 	compactPayload := map[string]any{"hook_event_name": "SessionStart", "session_id": "native-1", "source": "compact", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "codex", compactPayload, compactAt); err != nil {
+	if err := HandleEvent(home, "codex", compactPayload, compactAt, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,7 +243,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl"}
-	if err := HandleEvent(home, "claude", payload, firstStart); err != nil {
+	if err := HandleEvent(home, "claude", payload, firstStart, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,7 +252,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 		"hook_event_name": "SessionStart", "session_id": "native-1", "source": "resume",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t2.jsonl",
 	}
-	if err := HandleEvent(home, "claude", resumePayload, resumeAt); err != nil {
+	if err := HandleEvent(home, "claude", resumePayload, resumeAt, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,16 +275,16 @@ func TestHandleHookEventStopWritesRequestWithEvidence(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	startPayload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "claude", startPayload, start); err != nil {
+	if err := HandleEvent(home, "claude", startPayload, start, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
 	stopAt := start.Add(time.Minute)
 	stopPayload := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "model": "claude-opus-5"}
-	if err := HandleEvent(home, "claude", stopPayload, stopAt); err != nil {
+	if err := HandleEvent(home, "claude", stopPayload, stopAt, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1"}, stopAt.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1"}, stopAt.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -321,11 +321,11 @@ func TestHandleHookEventCapturesSupportedFinalTextAfterFiltering(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "model": "gpt-x", "last_assistant_message": "done token=synthetic-secret-value"}
-	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -349,11 +349,11 @@ func TestHandleHookEventLabelsSubagentFinalGapWithoutClaimingRedaction(t *testin
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "agent_id": "sub-1", "last_assistant_message": "plain final text"}
-	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -389,11 +389,11 @@ func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.
 		t.Fatal(err)
 	}
 	start := map[string]any{"hook_event_name": "sessionStart", "conversation_id": "native-1", "workspace_roots": []any{"/work/widget"}, "cursor_version": "1.7.2", "composer_mode": "agent", "model": "label", "model_id": "model-x", "model_params": []any{map[string]any{"id": "effort", "value": "high"}}}
-	if err := HandleEvent(home, "cursor", start, now); err != nil {
+	if err := HandleEvent(home, "cursor", start, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	response := map[string]any{"hook_event_name": "afterAgentResponse", "conversation_id": "native-1", "generation_id": "generation-1", "text": "finished", "model": "label", "model_id": "model-x", "model_params": []any{map[string]any{"id": "effort", "value": "high"}}}
-	if err := HandleEvent(home, "cursor", response, now.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "cursor", response, now.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ := store.LoadRegistrations()
@@ -416,7 +416,7 @@ func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "Stop", "session_id": "never-registered"}
-	if err := HandleEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -464,7 +464,7 @@ func TestHandleHookEventIgnoresUnrelatedEvent(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -479,7 +479,7 @@ func TestHandleHookEventNoopWhenNotConfigured(t *testing.T) {
 	home := t.TempDir() // no config.Save call
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -500,7 +500,7 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := HandleEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -554,7 +554,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 				"cwd": cwd, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 			}
-			if err := HandleEvent(home, "claude", start, now); err != nil {
+			if err := HandleEvent(home, "claude", start, now, WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			store, _ := state.Open(home)
@@ -574,7 +574,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 			// The consequence this guards: an unregistered start makes every
 			// later lifecycle event a no-op, so the session is never published.
 			stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1"}
-			if err := HandleEvent(home, "claude", stop, now.Add(time.Minute)); err != nil {
+			if err := HandleEvent(home, "claude", stop, now.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			requests, err := store.LoadRequests()
@@ -613,7 +613,7 @@ func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": filepath.Join(nested, "sub"), "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := HandleEvent(home, "claude", start, now); err != nil {
+	if err := HandleEvent(home, "claude", start, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -641,7 +641,7 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": outside, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := HandleEvent(home, "claude", start, now); err != nil {
+	if err := HandleEvent(home, "claude", start, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -692,7 +692,7 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 			if path := tc.transcript(t); path != "" {
 				payload["transcript_path"] = path
 			}
-			if err := HandleEvent(home, "cursor", payload, now); err != nil {
+			if err := HandleEvent(home, "cursor", payload, now, WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			store, _ := state.Open(home)
@@ -746,7 +746,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 				if tc.source != "" {
 					payload["source"] = tc.source
 				}
-				if err := HandleEvent(home, harness, payload, now); err != nil {
+				if err := HandleEvent(home, harness, payload, now, WithDecoders(testDecoders)); err != nil {
 					t.Fatal(err)
 				}
 				store, _ := state.Open(home)
@@ -769,10 +769,10 @@ func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
 	}
 	// Outside every configured project, and a non-start event inside one.
 	outside := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "n1", "cwd": t.TempDir()}
-	if err := HandleEvent(home, "claude", outside, now); err != nil {
+	if err := HandleEvent(home, "claude", outside, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now); err != nil {
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
@@ -803,7 +803,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": worktree, "transcript_path": transcript,
 	}
-	if err := HandleEvent(home, "claude", start, started); err != nil {
+	if err := HandleEvent(home, "claude", start, started, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -816,7 +816,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 			"hook_event_name": "SessionStart", "source": source, "session_id": "native-1",
 			"cwd": worktree, "transcript_path": transcript,
 		}
-		if err := HandleEvent(home, "claude", continuation, started.Add(time.Hour)); err != nil {
+		if err := HandleEvent(home, "claude", continuation, started.Add(time.Hour), WithDecoders(testDecoders)); err != nil {
 			t.Fatalf("%s from the worktree conflicted with its own registration: %v", source, err)
 		}
 	}
@@ -846,7 +846,7 @@ func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
 		"hook_event_name": "sessionStart", "conversation_id": "conv-1",
 		"workspace_roots": []any{project}, "transcript_path": "not-created-yet.jsonl",
 	}
-	if err := HandleEvent(home, "cursor", payload, now); err != nil {
+	if err := HandleEvent(home, "cursor", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -865,18 +865,18 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/transcript.jsonl"}
-	if err := HandleEvent(home, "claude", payload, at); err != nil {
+	if err := HandleEvent(home, "claude", payload, at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	delete(payload, "transcript_path")
 	payload["source"] = "resume"
-	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -906,12 +906,12 @@ func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/t1.jsonl"}
-	if err := HandleEvent(home, "claude", start, at); err != nil {
+	if err := HandleEvent(home, "claude", start, at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	// The agent `cd`'d into a subdirectory; Claude Code's hook cwd follows it.
 	compact := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "s", "cwd": "/work/widget/internal/cli", "transcript_path": "/synthetic/t2.jsonl", "model": "model-x"}
-	if err := HandleEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", compact, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatalf("compact from a subdirectory of the registered project was rejected: %v", err)
 	}
 	store, _ := state.Open(home)
@@ -930,7 +930,7 @@ func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
 	}
 	// A continuation reported from a different configured project is still a conflict.
 	compact["cwd"] = "/work/other/sub"
-	if err := HandleEvent(home, "claude", compact, at.Add(2*time.Minute)); err == nil {
+	if err := HandleEvent(home, "claude", compact, at.Add(2*time.Minute), WithDecoders(testDecoders)); err == nil {
 		t.Fatal("cross-project identity accepted")
 	}
 	regs, _ = store.LoadRegistrations()

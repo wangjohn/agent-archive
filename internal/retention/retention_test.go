@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -60,14 +61,14 @@ func publishTwice(t *testing.T, local *state.Store, store storage.ObjectStore, i
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	firstMeta := fetchMetadata(t, store, id)
 
 	writeTranscript(t, dir, id+".jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	t1 := t0.Add(10 * time.Minute)
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
 		t.Fatal(err)
 	}
 	return firstMeta.SourceBundle.Key
@@ -165,7 +166,7 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	meta := fetchMetadata(t, store, "s1")
@@ -201,7 +202,7 @@ func TestSweepWithinRetentionWindowLeavesSessionAlone(t *testing.T) {
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +269,7 @@ func publishThird(t *testing.T, local *state.Store, store storage.ObjectStore, i
 	if err := os.WriteFile(path, append(data, []byte("\n"+`{"type":"response_item","id":"m3","payload":{"type":"message","role":"user","content":"third"}}`)...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return at }})
+	result, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}

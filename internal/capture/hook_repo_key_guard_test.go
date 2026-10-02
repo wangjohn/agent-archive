@@ -76,7 +76,7 @@ func TestHookNeverAsksForARepoKeyForAStartCaptureWillNotAdmit(t *testing.T) {
 			l := newKeyLookup()
 			// Events that need a registration to succeed may return an error; only
 			// whether git was asked matters here.
-			_ = HandleEvent(home, tc.harness, tc.payload, guardNow, WithRepoKey(l.lookup))
+			_ = HandleEvent(home, tc.harness, tc.payload, guardNow, WithRepoKey(l.lookup), WithDecoders(testDecoders))
 			if l.asked != 0 {
 				t.Errorf("the lookup ran %d times for %s, want never", l.asked, tc.name)
 			}
@@ -93,7 +93,7 @@ func TestHookAsksOnceForACursorConversationsFirstPrompt(t *testing.T) {
 	l := newKeyLookup()
 	for range 3 {
 		payload := cursorDesktopPayload("beforeSubmitPrompt", "conversation-1", "/work/widget", nil)
-		if err := HandleEvent(home, "cursor", payload, guardNow, WithRepoKey(l.lookup)); err != nil {
+		if err := HandleEvent(home, "cursor", payload, guardNow, WithRepoKey(l.lookup), WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,7 +120,7 @@ func TestHookStillAsksWhenTheIndexHasAnEntryButNoRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := newKeyLookup()
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), guardNow, WithRepoKey(l.lookup)); err != nil {
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), guardNow, WithRepoKey(l.lookup), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := store.LoadRegistrations()

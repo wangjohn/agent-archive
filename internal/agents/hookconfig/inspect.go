@@ -17,24 +17,24 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 	}
 	app := spec
 	if app.Version {
-		if v, _ := doc.root.get("version"); !isOne(v) {
+		if v, _ := doc.Root.Get("version"); !isOne(v) {
 			return false, nil
 		}
 	}
-	hs, err := hooksObject(doc.root)
+	hs, err := hooksObject(doc.Root)
 	if err != nil || hs == nil {
 		return false, err
 	}
 	names := spec.Events
 	for _, event := range names {
-		if _, ok := hs.get(event); !ok {
+		if _, ok := hs.Get(event); !ok {
 			return false, nil
 		}
 	}
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
+	for _, m := range hs.Members {
+		groups, ok := m.Value.([]any)
 		if !ok {
-			return false, fmt.Errorf("invalid hook list for %s", m.key)
+			return false, fmt.Errorf("invalid hook list for %s", m.Key)
 		}
 		handlers, err := handlerList(groups, app)
 		if err != nil {
@@ -45,15 +45,15 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
 				continue
 			}
-			got, _ := handler.get("command")
-			kind, _ := handler.get("type")
+			got, _ := handler.Get("command")
+			kind, _ := handler.Get("type")
 			if got != command || (!app.Flat && kind != "command") {
 				return false, nil
 			}
 			ours++
 		}
 		want := 0
-		if slices.Contains(names, m.key) {
+		if slices.Contains(names, m.Key) {
 			want = 1
 		}
 		if ours != want {
@@ -68,17 +68,17 @@ func otherInstallations(data []byte, spec Spec, hook Hook) ([]agentapi.HookOther
 	if err != nil {
 		return nil, nil, err
 	}
-	hs, err := hooksObject(doc.root)
+	hs, err := hooksObject(doc.Root)
 	if err != nil || hs == nil {
 		return nil, nil, err
 	}
 	app := spec
 	var others []agentapi.HookOtherOwner
 	var locations []string
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
+	for _, m := range hs.Members {
+		groups, ok := m.Value.([]any)
 		if !ok {
-			return nil, nil, fmt.Errorf("invalid hook list for %s", m.key)
+			return nil, nil, fmt.Errorf("invalid hook list for %s", m.Key)
 		}
 		handlers, err := handlerList(groups, app)
 		if err != nil {

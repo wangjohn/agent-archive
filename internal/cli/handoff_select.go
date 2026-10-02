@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -48,8 +47,8 @@ func chooseHandoffSession(opts *handoffOptions, home string, interactive bool, i
 			terminal.Printf(stderr, "handoff: using the session this command runs in, %s\n", id)
 			opts.sessionID = id
 			return 0, false
-		case inCursorAgent(env) && (opts.harness == "" || opts.harness == archive.HarnessCursor):
-			opts.latest, opts.harness = true, archive.HarnessCursor
+		case projectRuntime(env, opts.harness) != "":
+			opts.latest, opts.harness = true, projectRuntime(env, opts.harness)
 			return 0, false
 		case !interactive:
 			env.newCommandFlags("handoff", stderr).usageError("%s", noCurrentSessionMessage)
@@ -65,15 +64,14 @@ func chooseHandoffSession(opts *handoffOptions, home string, interactive bool, i
 }
 
 // currentHandoffSession finds the registered session named by the calling
-// agent's session variable (currentSessionEnv). ok is false when no variable
+// agent's exact runtime observation. ok is false when no variable
 // is set or none names a session registered on this machine.
 func currentHandoffSession(env currentSessionDependencies, home string, opts handoffOptions) (sessionID string, ok bool, err error) {
 	var regs []archive.SessionRegistration
 	loaded := false
-	for _, v := range currentSessionEnv {
-		value, set := env.lookupEnv(v.key)
-		value = strings.TrimSpace(value)
-		if !set || value == "" || (opts.harness != "" && opts.harness != v.harness) {
+	for _, observation := range runtimeObservations(env) {
+		value := observation.NativeID
+		if value == "" || (opts.harness != "" && opts.harness != string(observation.Agent)) {
 			continue
 		}
 		if !loaded {
@@ -86,7 +84,7 @@ func currentHandoffSession(env currentSessionDependencies, home string, opts han
 		// registration is the one running.
 		var found *archive.SessionRegistration
 		for i, reg := range regs {
-			if topLevelRegistration(reg) && reg.NativeSessionID == value && archive.CanonicalHarness(reg.Harness.Name) == v.harness &&
+			if topLevelRegistration(reg) && reg.NativeSessionID == value && archive.CanonicalHarness(reg.Harness.Name) == string(observation.Agent) &&
 				(found == nil || reg.RegisteredAt.After(found.RegisteredAt)) {
 				found = &regs[i]
 			}
@@ -96,11 +94,6 @@ func currentHandoffSession(env currentSessionDependencies, home string, opts han
 		}
 	}
 	return "", false, nil
-}
-
-func inCursorAgent(env currentSessionDependencies) bool {
-	value, ok := env.lookupEnv(cursorAgentEnv)
-	return ok && strings.TrimSpace(value) != ""
 }
 
 func topLevelRegistration(reg archive.SessionRegistration) bool {
@@ -136,7 +129,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	if err == nil {
 		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
 	}
-	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
+	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
@@ -207,12 +200,24 @@ func archivedWithoutPrompt(m archive.Metadata) bool {
 	return m.Counts.Turns != nil && *m.Counts.Turns == 0
 }
 
+type localLabelKey struct {
+	sessionID string
+	active    time.Time
+}
+
+type localLabelResult struct {
+	metadata  archive.Metadata
+	hasPrompt bool
+}
+
 type handoffPicker struct {
-	ctx     context.Context
-	env     handoffSelectDependencies
-	home    string
-	harness string
-	source  string
+	// Shared by picker scope/search views; only small safe row facts are cached.
+	localLabels map[localLabelKey]localLabelResult
+	ctx         context.Context
+	env         handoffSelectDependencies
+	home        string
+	harness     string
+	source      string
 	// archiveRead is false when the archive could not be listed, so a
 	// session missing from it is not known to be missing.
 	archiveRead bool
@@ -266,7 +271,7 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		}
 		return !p.scope.contains(registrationMetadata(reg), &reg)
 	})
-	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase())
+	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase(), registryFor(p.env))
 	for _, reg := range regs {
 		active, ok := activity[reg.ArchiveSessionID]
 		if !ok {
@@ -319,11 +324,27 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 // from its transcript as it is now. ok is false when the transcript cannot be
 // read or holds no prompt yet.
 func (p handoffPicker) localMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
-	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase())
+	key := localLabelKey{sessionID: reg.ArchiveSessionID, active: active}
+	if result, ok := p.localLabels[key]; ok {
+		return result.metadata, result.hasPrompt
+	}
+	metadata, ok := p.buildLocalMetadata(reg, active)
+	if p.localLabels != nil {
+		p.localLabels[key] = localLabelResult{metadata: metadata, hasPrompt: ok}
+	}
+	return metadata, ok
+}
+
+func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool) {
+	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
 	if err != nil {
 		return archive.Metadata{}, false
 	}
-	labels, ok := archive.SessionLabels(bundle)
+	analysis, err := analyzeSource(p.ctx, parsersFor(p.env), bundle)
+	if err != nil {
+		return archive.Metadata{}, false
+	}
+	labels, ok := archive.LabelsFromAnalysis(analysis)
 	if !ok {
 		return archive.Metadata{}, false
 	}

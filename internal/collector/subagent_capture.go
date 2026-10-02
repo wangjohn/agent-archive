@@ -220,11 +220,12 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 }
 
 func validateCandidateTranscript(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options, now time.Time) (archive.SessionRegistration, error) {
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
-	filtered, _, err := filterTranscript(ctx, adapter, reg, opts.maxTranscriptBytes())
+	source, _ := newSourceReader(reg, opts)
+	filtered, _, err := source.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if ctx.Err() != nil {
 		return reg, ctx.Err()
 	}

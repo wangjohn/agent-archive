@@ -22,9 +22,19 @@ type Operation string
 
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
+const Parse Operation = "parse"
+
+// Source means an integration provides bounded sources and native filtering.
+const Source Operation = "source"
+
+// Runtime means an integration implements native runtime observation.
+const Runtime Operation = "runtime"
 
 // ManagedHooks means pure hook planning and inspection are implemented.
 const ManagedHooks Operation = "managed-hooks"
+
+// LifecycleHooks means native hook decoding is implemented.
+const LifecycleHooks Operation = "lifecycle-hooks"
 
 // Skills means native skill planning and inspection are implemented.
 const Skills Operation = "skills"
@@ -87,7 +97,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != ManagedHooks && op != Skills && op != NativeInspection && op != VersionInspection && op != HistoricalDiscovery && op != DatabaseInspection && op != NativeProjects && op != ChildDiscovery && op != HistoricalInspection) || seen[op] {
+			if (op != Parse && op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks && op != Source && op != Skills && op != NativeInspection && op != VersionInspection && op != HistoricalDiscovery && op != DatabaseInspection && op != NativeProjects && op != ChildDiscovery && op != HistoricalInspection) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

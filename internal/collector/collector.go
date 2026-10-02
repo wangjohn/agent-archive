@@ -20,10 +20,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -32,6 +32,13 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// Parsers resolves pure derivation separately from native source access.
+	Parsers      agentapi.ParsersLookup
+	parserCache  map[string]agentapi.TranscriptParser
+	Sources      agentapi.SourcesLookup
+	sourcePasses *sourcePassSet
+	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
+	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
 	ParserVersion string
 	AcceptSession func(archive.SessionRegistration) bool
@@ -83,8 +90,6 @@ type Options struct {
 
 	// repoKeys is the pass's memory of RepoKey's answers, set by Run.
 	repoKeys *repoKeyCache
-	// cursorPass is the pass's Reader of Cursor's database, set by Run.
-	cursorPass *cursorstore.Reader
 	// afterCursorPass, set by a test, runs as a pass ends with how many
 	// snapshots of Cursor's database the pass took.
 	afterCursorPass func(snapshots int)
@@ -189,6 +194,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
@@ -199,14 +205,16 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
 		recoveryErr = nil
 	}
-	replayErr := capture.ReplayAdmissionIntents(local.Home(), now)
+	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
 	local.RemoveStaleTemps()
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
-	cursorstore.RemoveStaleSnapshots()
+	if sweeper, ok := opts.Sources.(agentapi.SourceSweeper); ok {
+		sweeper.SweepSources()
+	}
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
@@ -502,7 +510,7 @@ func (p *pass) saveStatus() error {
 		PendingCount:           p.pending,
 		LastPublishedAt:        lastPublishedAt,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
-		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
+		UnrefreshableSummaries: p.countRefreshSkips(),
 		WaitingSubagents:       len(p.result.WaitingSubagents),
 		RunningSubagents:       len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
@@ -551,10 +559,22 @@ const cursorTextSourceFormat = "cursor-text"
 
 // harnessAdapterVersion returns the version of the adapter that reads
 // harness, or known=false when no adapter does.
-func harnessAdapterVersion(harness string) (string, bool) {
-	adapter, err := archive.NewAdapter(harness)
+func harnessAdapterVersion(sources agentapi.SourcesLookup, harness string) (string, bool) {
+	adapter, err := sourceAdapter(sources, harness)
 	if err != nil {
 		return "", false
 	}
 	return adapter.Version(), true
+}
+
+// countRefreshSkips matches the parser actually bound to each registration.
+func (p *pass) countRefreshSkips() int {
+	n := 0
+	for _, reg := range p.registrations {
+		skipped, found, err := p.local.LoadRefreshSkip(reg.ArchiveSessionID)
+		if err == nil && found && skipped.ParserVersion == p.opts.parserVersionFor(reg.Harness.Name) {
+			n++
+		}
+	}
+	return n
 }

@@ -31,14 +31,14 @@ func TestSubagentStopRecordsASanitizedAgentType(t *testing.T) {
 			at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
 			setUpTestConfig(t, home, project, at.Add(-time.Hour))
 			parentPath := writeTestTranscript(t, "parent.jsonl", "")
-			if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-parent", "cwd": project, "transcript_path": parentPath}, at); err != nil {
+			if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-parent", "cwd": project, "transcript_path": parentPath}, at, WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			stop := map[string]any{"hook_event_name": "SubagentStop", "session_id": "native-parent", "agent_id": "agent-1", "agent_transcript_path": "/never/written.jsonl"}
 			if tc.agentType != nil {
 				stop["agent_type"] = tc.agentType
 			}
-			if err := HandleEvent(home, "claude", stop, at.Add(time.Minute)); err != nil {
+			if err := HandleEvent(home, "claude", stop, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			store, err := state.Open(home)

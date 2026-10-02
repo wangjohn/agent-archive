@@ -3,10 +3,13 @@ package hookconfig
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"testing"
 )
 
 const Owner = "agent-archive lifecycle capture"
+
 const prototypeOwner = "Recording private skill-run evidence"
 
 type testHook struct{ Executable string }
@@ -14,21 +17,25 @@ type testHook struct{ Executable string }
 func fuzzSpec(name string) Spec {
 	flat := name == "cursor"
 	events := []string{"SessionStart", "UserPromptSubmit", "Stop", "SessionEnd", "SubagentStop"}
-	if name == "claude" {
+	switch agentmeta.ID(name) {
+	case agentmeta.Claude:
 		events = append(events, "StopFailure")
-	} else if name == "codex" {
+	case agentmeta.Codex:
 		events = append(events, "Interrupt")
-	} else {
+	case agentmeta.Cursor:
 		events = []string{"sessionStart", "beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd", "subagentStop"}
 	}
 	return Spec{Name: name, Events: events, Flat: flat, Version: flat, Owner: Owner, PrototypeOwner: prototypeOwner}
 }
+
 func Merge(data []byte, name string, h testHook) ([]byte, error) {
 	return merge(data, fuzzSpec(name), Hook{Executable: h.Executable})
 }
+
 func Remove(data []byte, name string, h testHook) ([]byte, bool, error) {
 	return remove(data, fuzzSpec(name), Hook{Executable: h.Executable})
 }
+
 func FuzzMergeRemove(f *testing.F) {
 	for _, seed := range []string{
 		"", "{}", "{}\n", `{"model":"opus"}`, "{\n\t\"model\": \"opus\"\n}\n",
@@ -70,14 +77,14 @@ func FuzzMergeRemove(f *testing.F) {
 		if err != nil {
 			t.Fatalf("merge accepted what parse refuses: %v", err)
 		}
-		_, hadHooks := original.root.get("hooks")
-		version, hadVersion := original.root.get("version")
+		_, hadHooks := original.Root.Get("hooks")
+		version, hadVersion := original.Root.Get("version")
 		// An object with no members at all is laid out afresh when the hooks
 		// go in, so only its emptiness comes back, not the whitespace inside
 		// its braces.
 		// Cursor's lone "version" goes with the hooks, since it is what
 		// setup adds to a file it creates (see Remove).
-		empty := len(original.root.members) == 0 || harness == "cursor" && !hadHooks && len(usersMembers(original.root).members) == 0
+		empty := len(original.Root.Members) == 0 || harness == "cursor" && !hadHooks && len(usersMembers(original.Root).Members) == 0
 		if empty && !Empty(removed) {
 			t.Fatalf("an empty file came back with %q", removed)
 		}
@@ -90,7 +97,7 @@ func FuzzMergeRemove(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !sameJSON(usersMembers(original.root), usersMembers(left.root)) {
+		if !sameJSON(usersMembers(original.Root), usersMembers(left.Root)) {
 			t.Fatalf("the user's settings changed:\n%q\n---\n%q", input, removed)
 		}
 	})
@@ -99,10 +106,10 @@ func FuzzMergeRemove(f *testing.F) {
 // usersMembers is root without the members setup owns, in file order.
 func usersMembers(root *object) *object {
 	out := &object{}
-	for _, m := range root.members {
+	for _, m := range root.Members {
 		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; these two are setup's
-		if m.key != "hooks" && m.key != "version" {
-			out.members = append(out.members, m)
+		if m.Key != "hooks" && m.Key != "version" {
+			out.Members = append(out.Members, m)
 		}
 	}
 	return out
@@ -114,3 +121,5 @@ func sameJSON(a, b any) bool {
 }
 
 // Regression: hook ownership review, 2026-09 (1a9420b).
+
+func encodeValue(dst *bytes.Buffer, v any) error { return jsonedit.EncodeValue(dst, v) }

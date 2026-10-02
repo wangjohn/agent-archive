@@ -3,6 +3,7 @@ package retention
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +86,7 @@ func (r *recordingStore) Put(ctx context.Context, key string, data []byte) error
 
 func collect(t *testing.T, local *state.Store, store storage.ObjectStore, at time.Time) collector.Result {
 	t.Helper()
-	result, err := collector.Run(context.Background(), local, store, collector.Options{
+	result, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(),
 		MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1},
 	})
 	if err != nil {

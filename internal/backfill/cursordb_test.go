@@ -265,7 +265,7 @@ func TestCursorDatabaseReader(t *testing.T) {
 			if want := map[string][]string{"parent": {"sub1"}, "draft": {"sub2"}}; !reflect.DeepEqual(res.Subagents, want) {
 				t.Errorf("subagents %v, want %v", res.Subagents, want)
 			}
-			if res.ReadChat == nil || res.Close == nil {
+			if res.ReadSnapshot == nil || res.Close == nil {
 				t.Fatal("a checked result can't read its chats")
 			}
 			if err := res.Close(); err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -17,8 +18,9 @@ import (
 const sessionIndexMarkerFile = "session-index.json"
 
 type sessionIndexMarker struct {
-	Version  int  `json:"version"`
-	Complete bool `json:"complete"`
+	Version    int    `json:"version"`
+	Complete   bool   `json:"complete"`
+	Generation string `json:"generation,omitempty"`
 }
 
 func (s *Store) sessionIndexMissAllowed() error {
@@ -36,7 +38,35 @@ func (s *Store) sessionIndexMissAllowed() error {
 // MarkSessionIndexRecoveryNeeded records known damaged or incomplete migration
 // evidence. It does not claim released old binaries understand this marker.
 func (s *Store) MarkSessionIndexRecoveryNeeded() error {
-	return local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1})
+	_, err := s.beginSessionIndexRecovery()
+	return err
+}
+
+// Collector/retention marker writes are serialized by collector.lock; requests
+// already hold hooks.lock. Completion takes hooks.lock only for compare/rename,
+// so it cannot erase a newer request. No request lock acquires hooks.lock here.
+func (s *Store) beginSessionIndexRecovery() (string, error) {
+	generation, err := local.ID()
+	if err != nil {
+		return "", err
+	}
+	err = local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Generation: generation})
+	return generation, err
+}
+
+func (s *Store) completeSessionIndexRecovery(generation string) error {
+	return s.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
+		path: filepath.Join(s.home, sessionIndexMarkerFile),
+		change: func(current fileSnapshot) (any, bool, error) {
+			var marker sessionIndexMarker
+			if !current.found || json.Unmarshal(current.data, &marker) != nil || marker.Version != 1 || marker.Complete || marker.Generation != generation {
+				return nil, false, ErrSessionIndexRecoveryRequired
+			}
+			marker.Complete = true
+			return marker, true, nil
+		},
+	})
 }
 
 // RequestSessionIndexRecovery retains the damaged key so a complete census
@@ -68,43 +98,16 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-begin"); err != nil {
 		return err
 	}
-	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
+	generation, err := s.beginSessionIndexRecovery()
+	if err != nil {
 		return err
 	}
 	if err := s.indexStep("recovery-incomplete"); err != nil {
 		return err
 	}
-	ids, err := s.listJSONStems("registrations")
+	inventory, err := s.sessionRegistrationInventory(ctx)
 	if err != nil {
-		return fmt.Errorf("recover session identities: %w", err)
-	}
-	inventory := make(map[agentmeta.SessionKey][]string, len(ids))
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(id)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrSessionIndexRecoveryRequired
-		}
-		key, err := registrationKey(reg)
-		if err != nil || reg.Validate() != nil || reg.ArchiveSessionID != id || !safeFileComponent(id) {
-			return fmt.Errorf("invalid registration identity %q: %w", id, ErrSessionIndexRecoveryRequired)
-		}
-		inventory[key] = append(inventory[key], id)
-	}
-	// Do not turn a quarantined registration into proof that no identity exists.
-	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
-	}
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == quarantineSuffix {
-			return ErrSessionIndexRecoveryRequired
-		}
 	}
 	if err := s.indexStep("recovery-enumerated"); err != nil {
 		return err
@@ -172,16 +175,16 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := errors.Join(failures...); err != nil {
 		return err
 	}
-	if err := s.recoverRequestedMisses(ctx, inventory); err != nil {
+	if err := s.recoverCandidateIndexes(ctx); err != nil {
 		return err
 	}
-	if err := s.recoverCandidateIndexes(ctx); err != nil {
+	if err := s.recoverRequestedMisses(ctx, inventory); err != nil {
 		return err
 	}
 	if err := s.indexStep("recovery-completing"); err != nil {
 		return err
 	}
-	if err := local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Complete: true}); err != nil {
+	if err := s.completeSessionIndexRecovery(generation); err != nil {
 		return err
 	}
 	return s.indexStep("recovery-complete")
@@ -214,10 +217,10 @@ func (s *Store) recoverCandidateIndexes(ctx context.Context) error {
 			return ErrSessionIndexRecoveryRequired
 		}
 		entry, found, err := s.readQualifiedIndex(key)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 			return err
 		}
-		if found {
+		if found && !entry.Absent {
 			if entry.ArchiveSessionID != candidate.ArchiveSessionID {
 				return ErrSessionIdentityConflict
 			}
@@ -255,7 +258,10 @@ func (s *Store) recoverCandidateIndexes(ctx context.Context) error {
 			return nil
 		}, func(current fileSnapshot) (any, bool, error) {
 			if current.found {
-				return nil, false, ErrSessionIndexRecoveryRequired
+				var latest qualifiedSessionIndexEntry
+				if err := json.Unmarshal(current.data, &latest); err == nil && latest.validate(key) == nil && !latest.Absent {
+					return nil, false, ErrSessionIndexRecoveryRequired
+				}
 			}
 			return next, true, nil
 		}); err != nil {
@@ -319,4 +325,37 @@ func (s *Store) recoverRequestedMisses(ctx context.Context, inventory map[agentm
 		}
 	}
 	return nil
+}
+
+func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta.SessionKey][]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.home, "registrations"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("recover session identities: %w", err)
+	}
+	inventory := make(map[agentmeta.SessionKey][]string, len(entries))
+	for _, file := range entries {
+		if filepath.Ext(file.Name()) == quarantineSuffix {
+			return nil, ErrSessionIndexRecoveryRequired
+		}
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(file.Name(), ".json")
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, ErrSessionIndexRecoveryRequired
+		}
+		key, err := registrationKey(reg)
+		if err != nil || reg.Validate() != nil || reg.ArchiveSessionID != id || !safeFileComponent(id) {
+			return nil, fmt.Errorf("invalid registration identity %q: %w", id, ErrSessionIndexRecoveryRequired)
+		}
+		inventory[key] = append(inventory[key], id)
+	}
+	return inventory, nil
 }

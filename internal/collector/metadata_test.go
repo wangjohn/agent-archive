@@ -37,7 +37,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 	}
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
@@ -85,7 +85,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", SkillEvidence: config.SkillEvidenceMetadata, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", SkillEvidence: config.SkillEvidenceMetadata, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -133,7 +133,7 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
@@ -236,7 +236,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
 			remote := storagetest.NewMemoryStore()
 			now := reg.RegisteredAt.Add(time.Hour)
-			opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
 			// State written before metadata was cached locally.
 			if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
@@ -269,7 +269,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
 	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", MinUploadInterval: 3 * time.Minute, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", MinUploadInterval: 3 * time.Minute, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
 
 	writeTranscript(t, dir, "s.jsonl", grownCodexTranscript)
@@ -354,7 +354,7 @@ func TestParserUpgradeWithNewContentReadsTheTranscriptOnce(t *testing.T) {
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
 
 	writeTranscript(t, dir, "s.jsonl", grownCodexTranscript)
@@ -382,7 +382,7 @@ func TestParserUpgradeOverAnUnchangedTranscriptDoesNotReadIt(t *testing.T) {
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
 
 	now = now.Add(10 * time.Minute)
@@ -407,7 +407,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
 
 	// A rewrite blocks the session; the blocked candidate is cached beside
@@ -463,7 +463,7 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 	}
 	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", MaxTranscriptBytes: 8, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", MaxTranscriptBytes: 8, Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
