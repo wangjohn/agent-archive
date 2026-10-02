@@ -2,7 +2,7 @@ $ agent-archive setup
 Checking installed applications...
   \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
   \e[32m✓\e[0m Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
@@ -13,12 +13,11 @@ On the review screen: Edit a setting adds projects, drops apps, and changes how 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should sessions be stored?\e[0m
+\e[1mWhere should your archive live?\e[0m
   1) Cloudflare R2
   2) Amazon S3
-  3) Amazon S3: create a new bucket for me
-  4) Show setup instructions
-Enter 1-4 [\e[1m1\e[0m] › 2
+[h] Setup instructions
+Choose [\e[1m1\e[0m] › s3-existing
 
 \e[1mAWS profile\e[0m › work
 
@@ -48,12 +47,14 @@ Checking your storage connection…
 \e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
   \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mStart archiving?\e[0m
   1) Yes, start archiving
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [\e[1m1\e[0m] › 
+  4) Name this machine (optional)
+Enter 1-4 [\e[1m1\e[0m] › 
 
 
 Configuration saved.
