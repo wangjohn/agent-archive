@@ -2,6 +2,7 @@ package cursorstore
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,8 @@ func FuzzSignatureHeaderConformance(f *testing.F) {
 		"{\"fullConversationHeadersOnly\":[{\"bubbleId\":\"\xff\xfe\"}]}",
 		`{"fullConversationHeadersOnly":[{"bubbleId":7,"bubbleId":"b"}]}`,
 		`{"lastUpdatedAt":1e400}`,
+		"{}\x00",
+		`{"unknown":` + strings.Repeat("[", 1001) + `0` + strings.Repeat("]", 1001) + `}`,
 	} {
 		f.Add(seed)
 	}
@@ -32,6 +35,10 @@ func FuzzSignatureHeaderConformance(f *testing.F) {
 		got, gotErr := signatureOnly(t.Context(), db, "c")
 		if (wantErr == nil) != (gotErr == nil) || wantErr == nil && want != got {
 			t.Fatalf("SQL signature differs from legacy decoding: got=%+v err=%v want=%+v err=%v", got, gotErr, want, wantErr)
+		}
+		got, gotErr = signatureJSONFallback(t.Context(), db, "composerData:c", "c")
+		if (wantErr == nil) != (gotErr == nil) || wantErr == nil && want != got {
+			t.Fatalf("streamed signature differs from legacy decoding: got=%+v err=%v want=%+v err=%v", got, gotErr, want, wantErr)
 		}
 	})
 }

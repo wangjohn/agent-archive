@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -10,6 +12,46 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
+
+func TestLocalBundleMissingSourceRetainsCleanupFailure(t *testing.T) {
+	fault := errors.New("synthetic source cleanup fault")
+	reg := archive.SessionRegistration{TranscriptPath: "/synthetic/transcript.jsonl", Harness: archive.Harness{Name: "codex"}}
+	_, err := ReadLocalBundle(t.Context(), t.TempDir(), reg, time.Time{}, "", missingCleanupSources{fault: fault})
+	if !errors.Is(err, fault) || !agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, ErrNoTranscript) {
+		t.Fatalf("missing source hid cleanup or allowed archive fallback: %v", err)
+	}
+	_, err = ReadLocalBundle(t.Context(), t.TempDir(), reg, time.Time{}, "", missingCleanupSources{})
+	if !errors.Is(err, ErrNoTranscript) {
+		t.Fatalf("ordinary missing source no longer allows archive fallback: %v", err)
+	}
+}
+
+type missingCleanupSources struct{ fault error }
+
+func (s missingCleanupSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	_, f, ok := testSources.LookupSources(name)
+	return missingCleanupProvider{fault: s.fault}, f, ok
+}
+
+type missingCleanupProvider struct {
+	sourceio.FileProvider
+	fault error
+}
+
+func (p missingCleanupProvider) OpenPass(context.Context, agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	return missingCleanupPass{fault: p.fault}, nil
+}
+
+type missingCleanupPass struct {
+	agentapi.SourcePass
+	fault error
+}
+
+func (p missingCleanupPass) Read(context.Context, agentapi.SourceRef, agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	return nil, agentapi.Wrap(agentapi.Missing, os.ErrNotExist)
+}
+
+func (p missingCleanupPass) Close() error { return agentapi.Wrap(agentapi.Cleanup, p.fault) }
 
 func TestLimitWithTransientVerificationDoesNotSettle(t *testing.T) {
 	for _, kind := range []agentapi.FailureKind{agentapi.Changed, agentapi.Unavailable, agentapi.Cleanup} {

@@ -803,14 +803,19 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 	key := "composerData:" + id
 	var valid sql.NullBool
 	var kind sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT json_valid(value), CASE WHEN json_valid(value) THEN json_type(value) END FROM cursorDiskKV WHERE key = ?`, key).Scan(&valid, &kind)
+	// SQLite JSON treats a raw NUL as end-of-input; encoding/json rejects it.
+	// Escaped JSON NUL characters remain valid native identity bytes.
+	err := q.QueryRowContext(ctx, `SELECT json_valid(value) AND instr(CAST(value AS BLOB),x'00') = 0, CASE WHEN json_valid(value) THEN json_type(value) END FROM cursorDiskKV WHERE key = ?`, key).Scan(&valid, &kind)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && !valid.Valid {
 		return Signature{}, ErrComposerNotFound
 	}
 	if err != nil {
 		return Signature{}, err
 	}
-	if !valid.Bool || sqliteValueKind(kind.String) != sqliteObject {
+	if !valid.Bool {
+		return signatureJSONFallback(ctx, q, key, id)
+	}
+	if sqliteValueKind(kind.String) != sqliteObject {
 		return Signature{}, NotChecked(UnknownFormat)
 	}
 	field := func(name string) (sqliteValueKind, any, error) {
