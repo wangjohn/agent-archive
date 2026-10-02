@@ -30,16 +30,18 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 	if err != nil {
 		return nil, err
 	}
-	return &sourcePass{file: file, reader: cursorstore.NewReader(e.Database), database: e.Database, live: map[*chatSnapshot]bool{}}, nil
+	return &sourcePass{file: file, reader: cursorstore.NewReader(e.Database), database: e.Database, live: map[*chatSnapshot]bool{}, signature: cursorstore.ReadSignature}, nil
 }
 
 type sourcePass struct {
-	file     agentapi.SourcePass
-	reader   *cursorstore.Reader
-	database string
-	live     map[*chatSnapshot]bool
-	closed   bool
-	closeErr error
+	file        agentapi.SourcePass
+	reader      *cursorstore.Reader
+	database    string
+	live        map[*chatSnapshot]bool
+	closed      bool
+	closeErr    error
+	signature   func(context.Context, string, string) (cursorstore.Signature, error)
+	lastChecked string
 }
 
 func (p *sourcePass) Signature(ctx context.Context, r agentapi.SourceRef) (agentapi.SourceObservation, error) {
@@ -52,10 +54,12 @@ func (p *sourcePass) Signature(ctx context.Context, r agentapi.SourceRef) (agent
 	if r.Kind == archive.SourceKindFile {
 		return p.file.Signature(ctx, r)
 	}
-	sig, err := cursorstore.ReadSignature(ctx, p.database, r.Key)
+	p.lastChecked = ""
+	sig, err := p.signature(ctx, p.database, r.Key)
 	if err != nil {
 		return agentapi.SourceObservation{}, sourceio.Classify(err)
 	}
+	p.lastChecked = r.Key
 	return chatObservation(sig), nil
 }
 func chatObservation(sig cursorstore.Signature) agentapi.SourceObservation {
@@ -75,9 +79,17 @@ func (p *sourcePass) Read(ctx context.Context, r agentapi.SourceRef, l agentapi.
 	if r.Kind == archive.SourceKindFile {
 		return p.file.Read(ctx, r, l)
 	}
-	if _, err := cursorstore.ReadSignature(ctx, p.database, r.Key); err != nil {
-		return nil, sourceio.Classify(err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	if p.lastChecked != r.Key {
+		if _, err := p.signature(ctx, p.database, r.Key); err != nil {
+			return nil, sourceio.Classify(err)
+		}
+	}
+	// Admission of this live key is not snapshot evidence. Read and limit failures
+	// always carry the actual checked snapshot's own signature.
+	p.lastChecked = ""
 	c, sig, err := p.reader.ReadComposerLimited(ctx, r.Key, l.RawBytes, l.RecordBytes)
 	if errors.Is(err, cursorstore.ErrComposerNotFound) {
 		err = cursorstore.NotChecked(cursorstore.ChangedDuringRead)
