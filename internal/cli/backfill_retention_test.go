@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"strings"
 	"testing"
 	"time"
@@ -177,7 +178,7 @@ func addOldHookSession(t *testing.T, f *backfillFixture, days int) {
 		t.Fatal(err)
 	}
 	admitted := backfillNow.Add(-time.Duration(days) * 24 * time.Hour).UTC()
-	if _, err := store.RegisterNewSession("old-hook-session", func(id string) archive.SessionRegistration {
+	if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "old-hook-session"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id,
 			NativeSessionID:  "old-hook-session",

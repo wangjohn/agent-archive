@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -48,8 +47,8 @@ func chooseHandoffSession(opts *handoffOptions, home string, interactive bool, i
 			terminal.Printf(stderr, "handoff: using the session this command runs in, %s\n", id)
 			opts.sessionID = id
 			return 0, false
-		case inCursorAgent(env) && (opts.harness == "" || opts.harness == archive.HarnessCursor):
-			opts.latest, opts.harness = true, archive.HarnessCursor
+		case projectRuntime(env, opts.harness) != "":
+			opts.latest, opts.harness = true, projectRuntime(env, opts.harness)
 			return 0, false
 		case !interactive:
 			env.newCommandFlags("handoff", stderr).usageError("%s", noCurrentSessionMessage)
@@ -65,15 +64,14 @@ func chooseHandoffSession(opts *handoffOptions, home string, interactive bool, i
 }
 
 // currentHandoffSession finds the registered session named by the calling
-// agent's session variable (currentSessionEnv). ok is false when no variable
+// agent's exact runtime observation. ok is false when no variable
 // is set or none names a session registered on this machine.
 func currentHandoffSession(env currentSessionDependencies, home string, opts handoffOptions) (sessionID string, ok bool, err error) {
 	var regs []archive.SessionRegistration
 	loaded := false
-	for _, v := range currentSessionEnv {
-		value, set := env.lookupEnv(v.key)
-		value = strings.TrimSpace(value)
-		if !set || value == "" || (opts.harness != "" && opts.harness != v.harness) {
+	for _, observation := range runtimeObservations(env) {
+		value := observation.NativeID
+		if value == "" || (opts.harness != "" && opts.harness != string(observation.Agent)) {
 			continue
 		}
 		if !loaded {
@@ -86,7 +84,7 @@ func currentHandoffSession(env currentSessionDependencies, home string, opts han
 		// registration is the one running.
 		var found *archive.SessionRegistration
 		for i, reg := range regs {
-			if topLevelRegistration(reg) && reg.NativeSessionID == value && archive.CanonicalHarness(reg.Harness.Name) == v.harness &&
+			if topLevelRegistration(reg) && reg.NativeSessionID == value && archive.CanonicalHarness(reg.Harness.Name) == string(observation.Agent) &&
 				(found == nil || reg.RegisteredAt.After(found.RegisteredAt)) {
 				found = &regs[i]
 			}
@@ -96,11 +94,6 @@ func currentHandoffSession(env currentSessionDependencies, home string, opts han
 		}
 	}
 	return "", false, nil
-}
-
-func inCursorAgent(env currentSessionDependencies) bool {
-	value, ok := env.lookupEnv(cursorAgentEnv)
-	return ok && strings.TrimSpace(value) != ""
 }
 
 func topLevelRegistration(reg archive.SessionRegistration) bool {

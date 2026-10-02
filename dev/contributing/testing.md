@@ -17,6 +17,7 @@ python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
@@ -564,7 +565,7 @@ and the switch's mentions in the docs and CHANGELOG) once every box is ticked. U
 Cloudflare account (never one with real archives), and the sandbox recipe
 below, so nothing touches your real Mac; create the bootstrap token with
 exactly the two permissions setup prints, then run `agent-archive setup` and
-choose "Cloudflare R2: create a new bucket for me" (with
+choose "Cloudflare R2", then "Continue" (with
 `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
 open-source acceptance record.
 

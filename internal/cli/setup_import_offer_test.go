@@ -18,7 +18,7 @@ import (
 // setupImportAnswers set Claude Code up in ~/src/web-app, storing in S3,
 // and answer the import offer with importAnswer.
 func setupImportAnswers(importAnswer string) string {
-	return strings.Join([]string{"", "2", "work", "2", "", importAnswer}, "\n") + "\n"
+	return strings.Join([]string{"", "s3-existing", "work", "2", "", importAnswer}, "\n") + "\n"
 }
 
 // newImportOfferFixture is a Mac with Claude Code, run from ~/src/web-app,
@@ -179,7 +179,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		if strings.Contains(out, secret) || strings.Contains(out, keyID) {
 			t.Fatalf("output carries the key:\n%s", out)
 		}
-		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --project "
+		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project "
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
@@ -188,7 +188,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {
@@ -218,7 +218,7 @@ func TestAnotherMachineCommand(t *testing.T) {
 		}},
 	}
 	got := anotherMachineCommand(cfg, "/Users/alex")
-	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
+	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -320,11 +320,24 @@ func TestAnotherMachineCommandCustomEndpointAndFolder(t *testing.T) {
 	var out bytes.Buffer
 	printAnotherMachine(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
 	got := out.String()
-	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --project ~/src/app\nThen run agent-archive setup there and set the folder inside the bucket to team/.\n"
+	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --prefix team/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project ~/src/app\n"
 	if !strings.HasSuffix(got, want) || strings.Contains(got, "ref-123") {
 		t.Fatalf("got:\n%s", got)
 	}
 	if loc, err := credentials.ParseR2Location(endpoint); err != nil || loc.Endpoint != endpoint {
 		t.Fatalf("the endpoint does not read back: %+v %v", loc, err)
+	}
+}
+
+func TestAnotherMachineCommandCarriesCapturePolicies(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		Storage:       credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", Prefix: "private/", AWSProfile: "p"},
+		RetentionDays: 14, RequireSkillUse: true, SkillEvidence: config.SkillEvidenceNone, NoSkills: true,
+	}
+	got := anotherMachineCommand(cfg, "")
+	want := "--prefix private/ --retention-days 14 --require-skill-use --skill-evidence none --no-skills"
+	if !strings.Contains(got, want) {
+		t.Fatalf("capture policy missing: %s", got)
 	}
 }

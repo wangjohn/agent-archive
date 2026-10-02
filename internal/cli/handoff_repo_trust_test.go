@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -484,7 +483,7 @@ func addCursorSession(t *testing.T, f handoffFixture, conversation string, activ
 		name string
 		path any
 	}{{"beforeSubmitPrompt", nil}, {"stop", transcript}} {
-		if err := capture.HandleEvent(f.home, "cursor", cursorDesktopPayload(event.name, conversation, f.project, event.path), active); err != nil {
+		if err := handleTestHookEvent(f.home, "cursor", cursorDesktopPayload(event.name, conversation, f.project, event.path), active); err != nil {
 			t.Fatalf("%s: %v", event.name, err)
 		}
 	}

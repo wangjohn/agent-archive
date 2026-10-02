@@ -10,12 +10,33 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Draft experimental revocation with verified immutable selection, per-key
+  recovery journals, serialized issuance selection and independent publication,
+  plus transaction-based
+  `machines own-key` migration. General availability and first-run pairing
+  remain disabled pending combined and live provider acceptance.
+
+- Draft experimental dedicated R2 issuance for `machines add` and guided bucket
+  creation: exact immutable provider identities, verified fresh keys, default
+  two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
+  Creation, reservation, delivery, and uncertain cleanup are tracked durably;
+  management tokens are never persisted. This phase remains gated and unmerged
+  pending live provider acceptance and integrated revocation/recovery review.
+
 - Handoff before setup discovers Claude Code and Codex native conversations in
   the current checkout, with filtered batches of 50 previews, explicit older
   loading, native ID selection and modification-time latest selection. It writes
   no archive or configuration; private launch files have seven-day best-effort
   cleanup on later local handoffs. Disposable real-app acceptance is still
   unverified on macOS and Linux.
+- Experimental read-only `machines --verify` provider observations, gated by
+  `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1`, and an interactive argv-based
+  `cloudflare_token_command` source shared with guided setup. Provider inventory
+  visibility and machine ownership remain explicitly unknown.
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
 
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
@@ -25,8 +46,24 @@ Planned for v0.2.0. This release has not been tagged or published.
   statistics with estimated costs.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
+- Informational `machines` records, bounded listing, optional first-setup naming
+  and local rename. The list shows pairing dates and shared-key claims. Setup
+  publishes after commit; the collector independently retries registration and
+  refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
+
+- Draft machine revocation rejects forged self labels, leaves registry commands
+  usable after progress publication, and preserves unverified request targets.
+  Own-key migrations retire completed checkpoints and disclose shared access
+  retained through retired local credential aliases. Staged migration retries
+  refuse a shared credential reference replaced by later setup, retaining the
+  stage for safe cancellation. Pre-slot interruptions can be safely retired
+  locally after setup changes, while uncertain issuance and secret cleanup
+  remain recorded. Confirmed-deleted own-key stages retry exact local secret
+  removal after credential-store recovery without deleting the provider again.
+  Own-key commit requires a persisted staged credential even when the shell
+  supplies a matching key.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
@@ -36,9 +73,21 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Changed
 
+- Interactive storage setup has two provider choices, R2 and S3. Creating a
+  bucket is the main flow, with a summary before creation and secondary
+  Customize, Use an existing bucket, and Back actions. R2 creation retains
+  its experimental flag. Installed storage can be kept without re-entering
+  settings. Interactive `r2` and `s3` follow the provider flow;
+  `r2-existing` and `s3-existing` jump to existing storage. `setup --yes`
+  keeps its existing flags and behavior.
+
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
 - Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
 - The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
 
 - Listings default to the current project when available and return at most 50
   sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
@@ -55,6 +104,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 setup validates pasted replacement management tokens before
+  creating a client, matching its environment, command and initial prompt sources.
+- Experimental provider verification identifies existing permissions without
+  requiring permission to create a new token with them.
 - `list`, `show` and `handoff` line up their columns when color is on: a
   dimmed hint such as `· 18 subagents` no longer pushes the rest of its row
   out of line.
@@ -91,6 +144,10 @@ the release behavior.
 
 #### Changed
 
+- Scripted setup accepts `--prefix`, `--retention-days`, and explicit skill-use
+  capture choices. The command printed for another machine now carries these
+  settings, skill evidence, and the agent skill installation policy.
+
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a
   terminal, so their list is gone once you choose, as `list`'s is.
@@ -106,6 +163,10 @@ the release behavior.
   sessions whose source is unavailable keep their existing preview.
 
 #### Added
+
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches
@@ -187,8 +248,7 @@ the release behavior.
   skills and MCP servers now say `+ N more (all in --json --all)`, and the
   one under the projects screen `--json --all` too. See
   [JSON output](docs/reference/json-output.md#stats---json).
-- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
-  new bucket for me" at the storage question. It creates the bucket
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3", then Continue at the storage question. It creates the bucket
   in your own AWS account with the profile you pick (region and name are
   asked, the name suggested as `agent-archive-` and random characters),
   turns on all four Block Public Access settings, and reads them back, then
@@ -203,8 +263,9 @@ the release behavior.
   not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
 - **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
-  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
-  bucket for me** at the storage question, then paste one Cloudflare API token
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to enable creation after choosing
+  **Cloudflare R2**, then **Continue** at the storage question, then paste one
+  Cloudflare API token
   (Workers R2 Storage Write and Account API Tokens Write, or set
   `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
   no public access by default) and a key that can read and write only that

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"sort"
 	"strconv"
@@ -344,7 +345,7 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	if v.imported && v.hookCaptured {
 		return listOptions{}, fs.usageError("choose one of --imported and --hook-captured")
 	}
-	canonical, ok := harnessFlag(v.harness)
+	canonical, ok := harnessFlagWithCatalog(fs.catalog, v.harness)
 	if !ok {
 		return listOptions{}, fs.usageError("%s", harnessFlagError(v.harness))
 	}
@@ -427,12 +428,15 @@ func newListDocument(sessions []archive.Metadata, limit, totalMatched int, trunc
 // harnessFlag checks a --harness value and returns its canonical name, as
 // archived metadata records it ("claude-code" is Claude). An empty value
 // means no filter.
-func harnessFlag(value string) (string, bool) {
+func harnessFlagWithCatalog(c agentmeta.Catalog, value string) (string, bool) {
+	if c == nil {
+		c = productionAgents.Catalog()
+	}
 	if value == "" {
 		return "", true
 	}
-	if name, known := archive.KnownHarness(value); known {
-		return name, true
+	if d, known := c.Lookup(value); known {
+		return string(d.ID), true
 	}
 	return "", false
 }
@@ -534,7 +538,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if !ok {
 		return 2
 	}
-	canonical, ok := harnessFlag(*harness)
+	canonical, ok := harnessFlagWithCatalog(catalogFor(env), *harness)
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}

@@ -87,6 +87,9 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	}
 	address, detail := storageAddress(cfg.Storage)
 	rows = append(rows, reviewRow{label: "Storage", values: []string{address}, detail: detail})
+	if cfg.MachineAssignment != nil && cfg.MachineAssignment.Kind == config.MachineAssignmentR2Own {
+		rows = append(rows, reviewRow{label: "R2 keys", values: []string{fmt.Sprintf("Own dedicated key · %d unused spares (target %d)", len(cfg.SpareCredentialRefs), cfg.SpareTarget())}})
+	}
 	days := fmt.Sprintf("%d days", cfg.RetentionDays)
 	if cfg.RetentionDays == 1 {
 		days = "1 day"
@@ -404,7 +407,7 @@ func privacyReasonText(reason string) string {
 // y, n, and e still work for scripted input. When the checklist is blocked
 // (a row is ✗), starting is neither offered nor accepted: the first choice
 // checks again instead, returning check.
-func reviewAction(p *prompter, reconfiguring, blocked bool) (string, error) {
+func reviewAction(p *prompter, reconfiguring, blocked, offerName bool) (string, error) {
 	label, first := "Start archiving?", option{"yes", "Yes, start archiving"}
 	if reconfiguring {
 		label, first = "Save these changes?", option{"yes", "Yes, save"}
@@ -412,10 +415,11 @@ func reviewAction(p *prompter, reconfiguring, blocked bool) (string, error) {
 	if blocked {
 		label, first = "Fix what is marked ✗ above first.", option{"check", "Check again"}
 	}
-	choice, err := p.menu("\n"+label, first.Key,
-		first,
-		option{"edit", "Edit a setting"},
-		option{"no", "Cancel (your setup draft is kept)"})
+	options := []option{first, {"edit", "Edit a setting"}, {"no", "Cancel (your setup draft is kept)"}}
+	if offerName {
+		options = append(options, option{"machine", "Name this machine (optional)"})
+	}
+	choice, err := p.menu("\n"+label, first.Key, options...)
 	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
 	case "yes":

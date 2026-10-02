@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -14,11 +15,14 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -79,6 +83,14 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	// release is idempotent so the deferred calls cannot unlock twice.
 	release = releaseOnce(release)
 	defer release()
+	// Issuance takes issued.lock before the collector lock. A purge follows
+	// that order and refuses before changing hooks, credentials or lineage.
+	// Ordinary uninstall keeps issuance state and does not need this lock.
+	releaseIssued, err := lockUninstallIssuance(home, purge)
+	if err != nil {
+		return err
+	}
+	defer releaseIssued()
 	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
@@ -117,12 +129,12 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found))
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports))
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, uninstallHookApps(in.owner().Ports, hookFiles, nil, nil)) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
@@ -163,17 +175,34 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		releaseAdmission = releaseOnce(releaseAdmission)
 		defer releaseAdmission()
 		// The purge releases the locks once their files are gone.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); release() }); err != nil {
+		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); releaseIssued(); release() }); err != nil {
 			return err
 		}
 	}
+	printUninstallSummary(out, unverified)
+	return nil
+}
+
+// lockUninstallIssuance excludes key creation only when its lineage will be purged.
+func lockUninstallIssuance(home string, purge bool) (func(), error) {
+	if !purge {
+		return func() {}, nil
+	}
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		return nil, fmt.Errorf("key issuance is running; retry local-data purge when it finishes: %w", err)
+	}
+	return releaseOnce(release), nil
+}
+
+func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
+	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	if len(unverified) > 0 {
 		printUnverifiedJobs(out, unverified)
 		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
-		return nil
+		return
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
-	return nil
 }
 
 // confirmUninstall says what uninstall is about to do and asks, twice for a
@@ -366,6 +395,16 @@ func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 // remains in it.
 func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, releaseLocks func()) error {
 	refs := map[string]bool{}
+	if slots, err := issuance.List(home); err == nil {
+		for _, slot := range slots {
+			refs[slot.SecretRef] = true
+		}
+	} else {
+		terminal.Println(out, "Issuance ledger unreadable; additional credential references may remain in the credential store.")
+	}
+	for _, ref := range cfg.SpareCredentialRefs {
+		refs[ref] = true
+	}
 	for _, ref := range cfg.RetiredCredentialRefs {
 		refs[ref] = true
 	}
@@ -474,11 +513,44 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 // installedApps is the apps whose hooks setup installed, per the committed
 // configuration. An empty list in a configuration means every app (see
 // config.Config.Harnesses); with no configuration at all, none is known.
-func installedApps(cfg config.Config, found bool) []string {
+func installedApps(cfg config.Config, found bool, lookups ...agentapi.HooksLookup) []string {
 	if found && len(cfg.Harnesses) == 0 {
+		if len(lookups) > 0 {
+			return uninstallHookApps(lookups[0], hooks.Files(cfg.HookFiles), nil, nil)
+		}
 		return allHarnesses
 	}
 	return cfg.Harnesses
+}
+
+// uninstallHookApps starts with injected managed-hook owners and then includes
+// recorded paths and installed owners. Codex keeps its established first position.
+func uninstallHookApps(ports agentapi.HooksLookup, files, legacy hooks.Files, installed []string) []string {
+	if ports == nil {
+		ports = productionAgents
+	}
+	apps := append([]string(nil), ports.HookAgents()...)
+	for i, app := range apps {
+		if app == string(agentmeta.Codex) {
+			copy(apps[1:i+1], apps[:i])
+			apps[0] = app
+			break
+		}
+	}
+	var recorded []string
+	for app := range files {
+		recorded = append(recorded, app)
+	}
+	for app := range legacy {
+		recorded = append(recorded, app)
+	}
+	sort.Strings(recorded)
+	for _, app := range append(recorded, installed...) {
+		if !containsString(apps, app) {
+			apps = append(apps, app)
+		}
+	}
+	return apps
 }
 
 // planUninstallHooks plans removing owner's handlers (see hooks.Hook) from
@@ -490,9 +562,15 @@ func installedApps(cfg config.Config, found bool) []string {
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
 func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	for _, app := range allHarnesses {
+	for _, app := range uninstallHookApps(owner.Ports, files, legacy, installed) {
 		for i, set := range []hooks.Files{files, legacy} {
-			if i == 1 && legacy[app] == files[app] {
+			if set[app] == "" {
+				if i == 0 && containsString(installed, app) {
+					return nil, nil, fmt.Errorf("missing installed hook settings path for %s", app)
+				}
+				continue
+			}
+			if i == 1 && local.CanonicalPath(legacy[app]) == local.CanonicalPath(files[app]) {
 				continue
 			}
 			change, found, err := hooks.PlanRemovalOf(set, owner, app)
@@ -504,7 +582,23 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 				continue
 			}
 			if found {
-				changes = append(changes, change)
+				duplicate := false
+				for _, prior := range changes {
+					// Hardlinks remain separate atomic-replacement destinations.
+					if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+						continue
+					}
+					// Distinct owners may select one file only when their complete plans
+					// agree. Otherwise refuse rather than lose handlers or apply stale bytes.
+					if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.After, change.After) || !bytes.Equal(prior.Before, change.Before) {
+						return nil, nil, fmt.Errorf("hook owners have conflicting removal plans for %s", change.Path)
+					}
+					duplicate = true
+					break
+				}
+				if !duplicate {
+					changes = append(changes, change)
+				}
 			}
 		}
 	}
@@ -516,7 +610,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 // agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
 func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
+	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome, in.owner().Ports), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
 	removals, kept, err := agentskills.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
@@ -562,7 +656,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "setup.lock"}
+var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -638,11 +732,11 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"config.json", "setup-draft.json", "setup-transaction.json", "imports",
+	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
-	"cache", handoffDir, "purge-plans",
+	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
 	credentials.CredentialsDirName,
 }
@@ -668,7 +762,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" {
+		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {

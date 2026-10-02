@@ -64,20 +64,22 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
-	"registrations":       quarantineUnderLock,
-	"requests":            quarantineUnderLock,
-	"subagent-candidates": quarantineUnderLock,
-	"published":           quarantineInPass,
-	"pending":             quarantineInPass,
-	"superseded":          quarantineInPass,
-	"scan-signatures":     readAsAbsent,
-	refreshSkipDir:        readAsAbsent,
-	"pending-scans":       readAsPending,
-	"sessions":            rebuiltFromRegistrations,
-	"forgotten":           readAsRemoved,
-	"status.json":         replacedByNextPass,
-	storageClockFile:      readAsAbsent,
-	"request-locks":       holdsNoContent,
+	"registrations":        quarantineUnderLock,
+	"requests":             quarantineUnderLock,
+	"subagent-candidates":  quarantineUnderLock,
+	"published":            quarantineInPass,
+	"pending":              quarantineInPass,
+	"superseded":           quarantineInPass,
+	"scan-signatures":      readAsAbsent,
+	refreshSkipDir:         readAsAbsent,
+	"pending-scans":        readAsPending,
+	"sessions":             rebuiltFromRegistrations,
+	"sessions-v1":          rebuiltFromRegistrations,
+	sessionIndexMarkerFile: rebuiltFromRegistrations,
+	"forgotten":            readAsRemoved,
+	"status.json":          replacedByNextPass,
+	storageClockFile:       readAsAbsent,
+	"request-locks":        holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.

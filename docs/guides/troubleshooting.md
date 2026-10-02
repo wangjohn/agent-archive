@@ -60,6 +60,9 @@ find none say so without creating the data directory.
 - Reducing retention shows how many locally owned sessions are affected and
   the cutoff before it asks. The collector applies the new policy.
 
+Session identity recovery and older-version data-home restrictions are described
+in [Local session identity and recovery](../reference/session-identity.md).
+
 ## Reading status
 
 ```sh

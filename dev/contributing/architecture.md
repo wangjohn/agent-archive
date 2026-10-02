@@ -47,6 +47,11 @@ flowchart LR
 
 | Package | Owns |
 | --- | --- |
+| `agentmeta` | Standard-library-only canonical identities, aliases and immutable catalogs; unknown archive names remain representable. |
+| `agentapi` | Narrow launch and runtime ports. Native argv and environment observations are pure; shared CLI owns executable resolution, selection policy, environment cleanup, file lifetime and execution. |
+| `agents/claude`, `agents/codex`, `agents/cursor` | Native executable preferences, argv rules, exact-session or project-presence detection and explicit session environment cleanup keys. Cleanup keys do not imply runtime presence. |
+| `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |
+| `testutil/agenttest` | Launch and runtime conformance suites called by each native integration's tests. |
 | `archive` | The privacy filter and adapters (one per app), source bundles, metadata derivation, the normalized view, and handoff rendering. No filesystem, network, or CLI dependencies, so it is fully testable on fixtures. |
 | `nativesessions` | Read-only Claude/Codex layouts, bounded identity discovery, checkout scoping, coverage and deterministic modification-time catalog ordering. No config, state, storage, collector or CLI dependency. |
 | `transcriptio` | Verified regular-file snapshots, captured read boundaries and complete-record bounded head/tail windows. No native discovery or archive policy. |

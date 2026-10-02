@@ -19,9 +19,10 @@ import (
 
 // prompter handles terminal and redirected input without echoing secrets.
 type prompter struct {
-	in     *bufio.Reader
-	out    io.Writer
-	source io.Reader
+	tokenCommand []string
+	in           *bufio.Reader
+	out          io.Writer
+	source       io.Reader
 	// handBack, when set, takes the input that a key-reading browser read
 	// but did not use (what was typed ahead of the prompts after it), so
 	// that in reads it first.
@@ -217,6 +218,60 @@ func (p *prompter) heading(question string) {
 type option struct {
 	Key   string
 	Label string
+}
+
+// actionOption is a visible, unnumbered action at a storage prompt.
+type actionOption struct {
+	Key      string
+	Shortcut string
+	Label    string
+}
+
+// actions keeps primary choices numbered and renders navigation separately.
+// Hidden aliases are accepted only here, never by secret or name inputs.
+func (p *prompter) actions(question, def string, primary []option, secondary []actionOption, aliases ...option) (string, error) {
+	p.heading(question)
+	choices := append([]option(nil), primary...)
+	for i, o := range primary {
+		terminal.Printf(p.out, "  %d) %s\n", i+1, o.Label)
+	}
+	for _, o := range secondary {
+		key := o.Shortcut
+		if o.Key == def {
+			key = "Enter"
+		}
+		terminal.Printf(p.out, "[%s] %s\n", key, o.Label)
+		choices = append(choices, option{o.Key, o.Label})
+	}
+	choices = append(choices, aliases...)
+	displayDefault := ""
+	for i, o := range primary {
+		if o.Key == def {
+			displayDefault = strconv.Itoa(i + 1)
+		}
+	}
+	for {
+		answer, err := p.choose("Choose", displayDefault)
+		if err != nil {
+			return "", err
+		}
+		answer = strings.ToLower(answer)
+		if answer == "" {
+			return def, nil
+		}
+		if n, err := strconv.Atoi(answer); err == nil && n > 0 && n <= len(primary) {
+			return primary[n-1].Key, nil
+		}
+		for _, o := range secondary {
+			if o.Shortcut != "" && answer == o.Shortcut {
+				return o.Key, nil
+			}
+		}
+		if key, ok := matchOption(answer, choices); ok {
+			return key, nil
+		}
+		terminal.Println(p.out, "Choose a listed number or action, or press Enter for the default.")
+	}
 }
 
 // menu prints a question with numbered options and returns the chosen key.

@@ -113,7 +113,7 @@ func TestOnlyTheseStatsTextsReachThePage(t *testing.T) {
 		return paths
 	}
 	common := []string{
-		"Stats.Agents[].Label", "Stats.Daily[].Date", "Stats.Groups.By", "Stats.Highlights.BusiestDay.Date",
+		"Stats.Coverage.FirstRecordedDay", "Stats.Agents[].Label", "Stats.Daily[].Date", "Stats.Groups.By", "Stats.Highlights.BusiestDay.Date",
 		"Stats.HeadsUp[].ByAgent[].Label", "Stats.PeakSpend.Date",
 		"Stats.MCP.Scope",
 		"Stats.Prices.AsOf", "Stats.Prices.Currency", "Stats.Prices.Version",
@@ -122,7 +122,7 @@ func TestOnlyTheseStatsTextsReachThePage(t *testing.T) {
 	named := []string{
 		"Stats.DisplaySkills[].Name", "Stats.Groups.Rows[].Key", "Stats.HeadsUp[].Project",
 		"Stats.Highlights.CostliestSession.Project", "Stats.Highlights.FavoriteModel.Label",
-		"Stats.MCP.Servers[].Name", "Stats.Models[].Label", "Stats.Projects[].Name",
+		"Stats.MCP.Servers[].DisplayName", "Stats.MCP.Servers[].Name", "Stats.Models[].Label", "Stats.Projects[].Name",
 	}
 	if got, want := reached(true), slices.Sorted(slices.Values(slices.Concat(common, named))); !slices.Equal(got, want) {
 		t.Errorf("with names shown, the stats texts on the page are\n  %q\nwant\n  %q", got, want)

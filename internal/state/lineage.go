@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"sort"
@@ -150,20 +151,26 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // after a crash in between, the record sits beside a registration, where
 // nothing reads it: backfill consults removal records only for sessions
 // that are not registered.
-func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
+func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	if err := key.Validate(); err != nil {
+		return false, err
+	}
+	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
+		return false, ErrSessionIdentityConflict
+	}
 	takeBack := func() error { return nil }
 	if removal != nil {
-		if takeBack, err = s.recordRemovalRevocably(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+		if takeBack, err = s.recordRemovalRevocably(removal.Harness, key.NativeID, removal.Reason, removal.At); err != nil {
 			return false, err
 		}
 		if s.afterRemovalRecord != nil {
 			s.afterRemovalRecord()
 		}
 	}
-	started, err := s.forgetIdleLocked(archiveSessionID, nativeSessionID, deferForWork)
+	started, err := s.forgetIdleLocked(archiveSessionID, key, deferForWork)
 	if started {
 		// A forget that failed part way keeps its record: the session may
 		// be unregistered already.
@@ -182,7 +189,7 @@ func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, defe
 // forgetIdleLocked is the part of ForgetIdleSession done under the request
 // lock: the recheck, then the forget. started reports whether the forget
 // began removing the session's own records.
-func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, deferForWork bool) (started bool, err error) {
+func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -207,7 +214,7 @@ func (s *Store) forgetIdleLocked(archiveSessionID, nativeSessionID string, defer
 	case busy:
 		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
-	return true, s.forgetSession(archiveSessionID, nativeSessionID, false)
+	return true, s.forgetSession(archiveSessionID, key, false)
 }
 
 // hasWork reports whether a session has a request or a pending publication:
@@ -307,7 +314,7 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	case busy:
 		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
-	if err := s.forgetSession(archiveSessionID, "", false); err != nil {
+	if err := s.forgetSession(archiveSessionID, agentmeta.SessionKey{}, false); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -334,15 +341,30 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // registration and the index entry are already gone, so saveRequest refuses
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
-func (s *Store) ForgetSession(archiveSessionID, nativeSessionID string) error {
-	return s.forgetSession(archiveSessionID, nativeSessionID, true)
+func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	return s.forgetSession(archiveSessionID, key, true)
 }
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
-func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCandidates bool) error {
+func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
+	}
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
+		}
 	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
@@ -360,9 +382,7 @@ func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCand
 		s.refreshSkipPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
-	if nativeSessionID != "" {
-		paths = append(paths, nativeSessionIndexPath(s.home, nativeSessionID))
-	}
+
 	// The session's own candidate is gone (removed above, under this lock),
 	// so its lock file goes too. Unlinking a lock file is safe:
 	// local.NamedLock only reports a lock held once the path still names the
@@ -376,10 +396,21 @@ func (s *Store) forgetSession(archiveSessionID, nativeSessionID string, withCand
 	// fresh file at once, so everything a hook rechecks under that lock (the
 	// registration, the request, and the native-session index a new
 	// registration would reuse) must already be gone by then.
-	paths = append(paths, filepath.Join(s.home, requestLockName(archiveSessionID)))
+	requestLockPath := filepath.Join(s.home, requestLockName(archiveSessionID))
+	paths = append(paths, requestLockPath)
 	for _, path := range paths {
+		// Keep registration deletion before index deletion: interrupted expiry
+		// must never leave an admitted owner invisible to bounded lookup.
+		if path == requestLockPath && key.NativeID != "" {
+			if err := s.removeSessionIndex(key, archiveSessionID); err != nil {
+				return err
+			}
+			if err := s.indexStep("forget-indexes"); err != nil {
+				return err
+			}
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove %q: %w", path, err)
+			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}
 	}
 	// Drop the per-session directory only once nothing else lives in it;

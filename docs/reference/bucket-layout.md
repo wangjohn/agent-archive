@@ -5,6 +5,8 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
 
 ```text
 <prefix>/
+  machines/
+    <machine_id>.json               informational machine name, platform, credential claim, daily heartbeat
   sessions/
     <harness>/                       claude, codex, or cursor
       <archive-session-id>/
@@ -102,3 +104,33 @@ explains how to apply a plan with every uploading machine paused.
 Object keys are built only from the app name and the archive session ID,
 both checked to be safe key components; no path or native ID from a
 transcript ever becomes part of a key.
+
+## Machine records
+
+`machines/` stores informational records under canonical machine IDs. The
+[machine record schema](../../schemas/machine.schema.json) describes the format.
+They contain chosen names, OS/architecture, application version, nonsecret
+credential provenance and pairing details when locally committed, plus a daily
+heartbeat. They contain no project paths or session content. Any bucket writer
+can modify them, so they are not an authorization source. Session listing,
+retention and privacy purge ignore this folder. Records remain after uninstall;
+include `machines/` when deleting the entire archive.
+
+Pairing bundles are transported separately and are never bucket objects. The
+`aa-pair1:` wire prefix uses a 74-byte authenticated header: version byte, big
+endian Argon2id time (3) and memory KiB (65536), threads byte (4), 16-byte salt,
+24-byte XChaCha20-Poly1305 nonce, 16-byte pairing ID, and signed 64-bit Unix expiry.
+Gzipped whitelist JSON is the encrypted body; the entire header is associated
+data. A final big endian CRC32 IEEE covers header and ciphertext before unpadded
+base64url encoding. CRC checks transport damage before requesting a code; only
+successful AEAD authentication establishes header integrity. Encoded input is
+limited to 64 KiB and decompressed JSON to 256 KiB. Unknown and duplicate JSON
+fields, unknown KDF settings, inconsistent IDs/expiry, and unsafe scope paths are
+rejected. See `schemas/pairing-payload.schema.json`; semantic validation also
+checks scope references, time bounds and provider-specific credential policy.
+
+The local `issued/<pairing-id>.json` ledger follows
+`schemas/pairing-ledger.schema.json`. It contains provenance and delivery state,
+without bundle, code, decrypted payload, or credential secret. Machine records
+remain untrusted informational claims; a matching claim only changes local
+ledger observation, never grants permission to delete or revoke access.

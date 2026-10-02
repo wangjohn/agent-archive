@@ -1,4 +1,5 @@
-package hooks
+// Package jsonedit preserves unrelated bytes while editing ordered JSON members.
+package jsonedit
 
 import (
 	"bytes"
@@ -6,67 +7,61 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 )
 
-// The hook files setup edits belong to the user and to their applications,
-// which rewrite them too. Setup therefore never round-trips a whole file
-// through a Go map: that would sort every key, HTML-escape strings (every
-// "&" and "<" becoming a \u escape) and round large integers through
-// float64. A document instead keeps the file's bytes and splices in only
-// the top-level members setup owns ("hooks", and Cursor's "version");
-// everything else, formatting included, is left byte for byte. The spliced
-// value is encoded from an order-preserving tree (object, below) with the
-// file's own indentation, numbers kept as their literal text and HTML
-// escaping off, so a user's own handlers inside "hooks" also keep their key
-// order and values.
+// A Document keeps original bytes and replaces only caller-selected top-level
+// members. Ordered values preserve key order, literal numbers, and indentation
+// without HTML escaping. Unrelated preferences retain their exact bytes.
 
-// object is a JSON object that keeps its members in file order.
-type object struct{ members []member }
+// Object is a JSON Object that keeps its members in file order.
+type Object struct{ Members []Member }
 
-type member struct {
-	key   string
-	value any
+// Member is an ordered JSON key and value.
+type Member struct {
+	Key   string
+	Value any
 }
 
-// get returns the value of key. JSON parsers conventionally keep the last of
-// duplicate keys, and so does get.
-func (o *object) get(key string) (any, bool) {
-	for i := len(o.members) - 1; i >= 0; i-- {
-		if o.members[i].key == key {
-			return o.members[i].value, true
+// Get returns the value of key. JSON parsers conventionally keep the last of
+// duplicate keys, and so does Get.
+func (o *Object) Get(key string) (any, bool) {
+	for i := len(o.Members) - 1; i >= 0; i-- {
+		if o.Members[i].Key == key {
+			return o.Members[i].Value, true
 		}
 	}
 	return nil, false
 }
 
-// set replaces every member named key with one holding value, in the place
+// Set replaces every Member named key with one holding value, in the place
 // of the first, or appends it.
-func (o *object) set(key string, value any) {
-	for i := range o.members {
-		if o.members[i].key == key {
-			o.members[i].value = value
-			o.remove(key, i+1)
+func (o *Object) Set(key string, value any) {
+	for i := range o.Members {
+		if o.Members[i].Key == key {
+			o.Members[i].Value = value
+			o.Remove(key, i+1)
 			return
 		}
 	}
-	o.members = append(o.members, member{key, value})
+	o.Members = append(o.Members, Member{key, value})
 }
 
-// remove deletes every member named key at or after index from.
-func (o *object) remove(key string, from int) {
-	kept := o.members[:from]
-	for _, m := range o.members[from:] {
-		if m.key != key {
+// Remove deletes every Member named key at or after index from.
+func (o *Object) Remove(key string, from int) {
+	kept := o.Members[:from]
+	for _, m := range o.Members[from:] {
+		if m.Key != key {
 			kept = append(kept, m)
 		}
 	}
-	o.members = kept
+	o.Members = kept
 }
 
 // decodeValue reads one JSON value from dec, which must have UseNumber set:
-// objects become *object, arrays []any, numbers json.Number.
+// objects become *Object, arrays []any, numbers json.Number.
 func decodeValue(dec *json.Decoder) (any, error) {
 	token, err := dec.Token()
 	if err != nil {
@@ -78,7 +73,7 @@ func decodeValue(dec *json.Decoder) (any, error) {
 	}
 	switch delim {
 	case '{':
-		o := &object{}
+		o := &Object{}
 		for dec.More() {
 			keyToken, err := dec.Token()
 			if err != nil {
@@ -92,7 +87,7 @@ func decodeValue(dec *json.Decoder) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			o.members = append(o.members, member{key, value})
+			o.Members = append(o.Members, Member{key, value})
 		}
 		_, err = dec.Token()
 		return o, err
@@ -111,8 +106,9 @@ func decodeValue(dec *json.Decoder) (any, error) {
 	return nil, errors.New("unexpected JSON delimiter")
 }
 
-// encodeValue writes value as compact JSON without HTML escaping.
-func encodeValue(buf *bytes.Buffer, value any) error {
+// EncodeValue writes value as compact JSON without HTML escaping.
+// EncodeValue encodes an ordered JSON tree without HTML escaping.
+func EncodeValue(buf *bytes.Buffer, value any) error {
 	switch v := value.(type) {
 	case nil:
 		buf.WriteString("null")
@@ -132,22 +128,22 @@ func encodeValue(buf *bytes.Buffer, value any) error {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			if err := encodeValue(buf, item); err != nil {
+			if err := EncodeValue(buf, item); err != nil {
 				return err
 			}
 		}
 		buf.WriteByte(']')
-	case *object:
+	case *Object:
 		buf.WriteByte('{')
-		for i, m := range v.members {
+		for i, m := range v.Members {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			if err := encodeString(buf, m.key); err != nil {
+			if err := encodeString(buf, m.Key); err != nil {
 				return err
 			}
 			buf.WriteByte(':')
-			if err := encodeValue(buf, m.value); err != nil {
+			if err := EncodeValue(buf, m.Value); err != nil {
 				return err
 			}
 		}
@@ -169,23 +165,23 @@ func encodeString(buf *bytes.Buffer, s string) error {
 	return nil
 }
 
-// document is a JSON file whose top level is an object, with the byte span
-// of each top-level member so single members can be replaced, added, or
+// Document is a JSON file whose top level is an Object, with the byte span
+// of each top-level Member so single members can be replaced, added, or
 // removed without touching the rest of the file.
-type document struct {
+type Document struct {
 	src     []byte
-	root    *object
-	spans   []memberSpan // one per top-level member, in file order
+	Root    *Object
+	spans   []memberSpan // one per top-level Member, in file order
 	open    int          // offset of the root '{'
 	close   int          // offset of the root '}'
 	indent  string       // whitespace before each top-level key; "" when compact
 	newline string       // the file's line ending, "\r\n" or "\n"
-	created bool         // the file was empty, so the whole document is new
+	created bool         // the file was empty, so the whole Document is new
 	edits   []edit
 }
 
 type memberSpan struct {
-	key      string
+	Key      string
 	keyStart int
 	valStart int
 	valEnd   int
@@ -197,7 +193,10 @@ type edit struct {
 	text  string
 }
 
-var errInvalidConfiguration = errors.New("invalid existing hook configuration")
+// ErrInvalidConfiguration identifies a refused JSON Document.
+var ErrInvalidConfiguration = errors.New("invalid existing hook configuration")
+
+var errInvalidConfiguration = ErrInvalidConfiguration
 
 // configError is errInvalidConfiguration for one file. Its message is what
 // setup shows; it also keeps apart the parts that message runs together,
@@ -292,8 +291,8 @@ func invalid(src []byte, err error) error {
 	}
 }
 
-// parseDocument reads src, which must be empty or a single JSON object.
-func parseDocument(src []byte) (*document, error) {
+// Parse reads src, which must be empty or a single JSON Object.
+func Parse(src []byte, ownedKeys ...string) (*Document, error) {
 	newline := "\n"
 	if bytes.Contains(src, []byte("\r\n")) {
 		newline = "\r\n"
@@ -303,7 +302,7 @@ func parseDocument(src []byte) (*document, error) {
 	if created {
 		src, indent = []byte("{}"), "  "
 	}
-	d := &document{
+	d := &Document{
 		src:     src,
 		newline: newline,
 		created: created,
@@ -319,7 +318,7 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, refused(d.src, skipSpace(d.src, 0), "the file must hold one JSON object")
 	}
 	d.open = int(dec.InputOffset()) - 1
-	d.root = &object{}
+	d.Root = &Object{}
 	for dec.More() {
 		before := int(dec.InputOffset())
 		keyToken, err := dec.Token()
@@ -333,9 +332,8 @@ func parseDocument(src []byte) (*document, error) {
 		keyStart := skipUntil(d.src, before, '"')
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
-		// so a duplicate of a member it owns is refused.
-		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; only these two are setup's
-		if _, dup := d.span(key); dup && (key == "hooks" || key == "version") {
+		// so a duplicate of a Member it owns is refused.
+		if _, dup := d.span(key); dup && slices.Contains(ownedKeys, key) {
 			return nil, refused(d.src, keyStart, fmt.Sprintf("more than one top-level %q key; remove the duplicate", key))
 		}
 		valStart := skipSpace(d.src, skipSpace(d.src, int(dec.InputOffset()))+1)
@@ -343,7 +341,7 @@ func parseDocument(src []byte) (*document, error) {
 		if err != nil {
 			return nil, invalid(d.src, err)
 		}
-		d.root.members = append(d.root.members, member{key, value})
+		d.Root.Members = append(d.Root.Members, Member{key, value})
 		d.spans = append(d.spans, memberSpan{key, keyStart, valStart, int(dec.InputOffset())})
 	}
 	if token, err = dec.Token(); err != nil {
@@ -352,7 +350,7 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, refused(d.src, -1, "the file must hold one JSON object")
 	}
 	d.close = int(dec.InputOffset()) - 1
-	// After the object, only the end of the file: text the decoder cannot
+	// After the Object, only the end of the file: text the decoder cannot
 	// read there, such as a comment or a comma, is reported as what it is.
 	var syntaxErr *json.SyntaxError
 	if _, err = dec.Token(); errors.As(err, &syntaxErr) {
@@ -367,11 +365,11 @@ func parseDocument(src []byte) (*document, error) {
 }
 
 // memberIndent is the whitespace a top-level key is indented with: that of
-// the first member that starts a line of its own, so a file whose first key
+// the first Member that starts a line of its own, so a file whose first key
 // shares the opening brace's line ({"a": 1,\n  "b": 2}) still gets its
-// new members on lines of their own. It is "" for a compact file (no member
-// starts a line), and two spaces for an empty object.
-func (d *document) memberIndent() string {
+// new members on lines of their own. It is "" for a compact file (no Member
+// starts a line), and two spaces for an empty Object.
+func (d *Document) memberIndent() string {
 	if len(d.spans) == 0 {
 		return "  "
 	}
@@ -402,10 +400,10 @@ func skipUntil(src []byte, i int, b byte) int {
 	return i
 }
 
-// render encodes value as it would appear as a top-level member's value.
-func (d *document) render(value any) (string, error) {
+// render encodes value as it would appear as a top-level Member's value.
+func (d *Document) render(value any) (string, error) {
 	var compact bytes.Buffer
-	if err := encodeValue(&compact, value); err != nil {
+	if err := EncodeValue(&compact, value); err != nil {
 		return "", err
 	}
 	if d.indent == "" {
@@ -419,23 +417,24 @@ func (d *document) render(value any) (string, error) {
 	return strings.ReplaceAll(out.String(), "\n", d.newline), nil
 }
 
-func (d *document) span(key string) (int, bool) {
+func (d *Document) span(key string) (int, bool) {
 	for i := len(d.spans) - 1; i >= 0; i-- {
-		if d.spans[i].key == key {
+		if d.spans[i].Key == key {
 			return i, true
 		}
 	}
 	return 0, false
 }
 
-// set replaces the value of a top-level member in place, or adds the member
+// Set replaces the value of a top-level Member in place, or adds the Member
 // after the last one.
-func (d *document) set(key string, value any) error {
+// Set replaces or appends a top-level member while retaining unrelated bytes.
+func (d *Document) Set(key string, value any) error {
 	text, err := d.render(value)
 	if err != nil {
 		return err
 	}
-	d.root.set(key, value)
+	d.Root.Set(key, value)
 	if i, ok := d.span(key); ok {
 		d.edits = append(d.edits, edit{d.spans[i].valStart, d.spans[i].valEnd, text})
 		return nil
@@ -459,7 +458,7 @@ func (d *document) set(key string, value any) error {
 		d.edits = append(d.edits, edit{end, end, "," + entry})
 		return nil
 	}
-	// An empty root object: lay it out afresh, keeping any members added
+	// An empty root Object: lay it out afresh, keeping any members added
 	// before this one in the same edit.
 	if n := len(d.edits); n > 0 && d.edits[n-1].start == d.open+1 && d.edits[n-1].end == d.close {
 		d.edits[n-1].text = strings.TrimSuffix(d.edits[n-1].text, d.newline) + "," + entry + d.newline
@@ -469,12 +468,12 @@ func (d *document) set(key string, value any) error {
 	return nil
 }
 
-// setBefore adds the member key just before the existing member before, or
-// like set when there is no such member. key must not exist yet.
-func (d *document) setBefore(before, key string, value any) error {
+// SetBefore adds the Member key just before the existing Member before, or
+// like set when there is no such Member. key must not exist yet.
+func (d *Document) SetBefore(before, key string, value any) error {
 	i, ok := d.span(before)
 	if !ok {
-		return d.set(key, value)
+		return d.Set(key, value)
 	}
 	text, err := d.render(value)
 	if err != nil {
@@ -484,9 +483,9 @@ func (d *document) setBefore(before, key string, value any) error {
 	if err := encodeString(&name, key); err != nil {
 		return err
 	}
-	for j, m := range d.root.members {
-		if m.key == before {
-			d.root.members = append(d.root.members[:j], append([]member{{key, value}}, d.root.members[j:]...)...)
+	for j, m := range d.Root.Members {
+		if m.Key == before {
+			d.Root.Members = append(d.Root.Members[:j], append([]Member{{key, value}}, d.Root.Members[j:]...)...)
 			break
 		}
 	}
@@ -498,15 +497,16 @@ func (d *document) setBefore(before, key string, value any) error {
 	return nil
 }
 
-// remove deletes a top-level member together with the separator before it
-// (or, for the first member, the one after it), so a member set added is
+// Remove deletes a top-level Member together with the separator before it
+// (or, for the first Member, the one after it), so a Member set added is
 // removed without a trace.
-func (d *document) remove(key string) {
+// Remove deletes one top-level member while retaining unrelated bytes.
+func (d *Document) Remove(key string) {
 	i, ok := d.span(key)
 	if !ok {
 		return
 	}
-	d.root.remove(key, 0)
+	d.Root.Remove(key, 0)
 	s := d.spans[i]
 	switch {
 	case i > 0:
@@ -518,16 +518,16 @@ func (d *document) remove(key string) {
 	}
 }
 
-// clear empties the root object, replacing every edit made so far.
-func (d *document) clear() {
-	d.root.members = nil
+// Clear empties the root Object, replacing every edit made so far.
+func (d *Document) Clear() {
+	d.Root.Members = nil
 	d.edits = []edit{{d.open + 1, d.close, ""}}
 }
 
-// bytes applies the edits. Edits never overlap: each touches one member.
+// Bytes applies the edits. Edits never overlap: each touches one Member.
 // Two insertions at one offset keep the order they were made in: the later
 // is applied first, so it ends up after the earlier.
-func (d *document) bytes() []byte {
+func (d *Document) Bytes() []byte {
 	edits := make([]edit, 0, len(d.edits))
 	for i := len(d.edits) - 1; i >= 0; i-- {
 		edits = append(edits, d.edits[i])
@@ -541,4 +541,13 @@ func (d *document) bytes() []byte {
 		out = append(out, '\n')
 	}
 	return out
+}
+
+// Problem extracts structured refusal details from an editor error.
+func Problem(err error) (line, column int, reason string) {
+	var e *configError
+	if errors.As(err, &e) {
+		return e.line, e.column, e.reason
+	}
+	return 0, 0, ""
 }

@@ -31,6 +31,7 @@ func (p *statsPrinter) overviewPage() [][]string {
 		p.whereItWent(),
 		p.mostUsed(),
 		p.headsUp(),
+		p.coverageNotes(),
 		p.footer("--detail for more", "--by project", "--html"),
 	}
 }
@@ -439,7 +440,7 @@ func (p *statsPrinter) mcpRow(limit int) []string {
 	shown := m.Servers[:min(len(m.Servers), limit)]
 	items := make([]string, len(shown))
 	for i, srv := range shown {
-		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(srv.Name), statsNameLimit), statsfmt.CommaInt(srv.Calls))
+		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(srv.Label()), statsNameLimit), statsfmt.CommaInt(srv.Calls))
 	}
 	unit := "calls"
 	if len(shown) == 1 && shown[0].Calls == 1 {
@@ -468,6 +469,9 @@ func mcpScopeText(scope string) string {
 func (p *statsPrinter) headsUp() []string {
 	var lines []string
 	for _, n := range p.s.HeadsUp {
+		if n.Kind == stats.NoteUnmeteredSessions {
+			continue
+		}
 		text := p.noteText(n)
 		if text == "" {
 			continue
@@ -479,7 +483,7 @@ func (p *statsPrinter) headsUp() []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	return append([]string{p.bold("HEADS UP")}, lines...)
+	return append([]string{p.bold("FINDINGS")}, lines...)
 }
 
 // noteText words a heads-up note. Subagent work is "runs", never "sessions".
@@ -564,4 +568,20 @@ func (p *statsPrinter) unmeteredText(n stats.Note) string {
 		text += " (" + strings.Join(by, ", ") + ")"
 	}
 	return text
+}
+
+// coverageNotes separates missing data from findings about how agents were used.
+func (p *statsPrinter) coverageNotes() []string {
+	var notes []string
+	if text := p.unknownTokenText(); text != "" {
+		notes = append(notes, text)
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	lines := []string{p.bold("COVERAGE")}
+	for _, note := range notes {
+		lines = append(lines, p.dimAll(p.wrap(note))...)
+	}
+	return lines
 }

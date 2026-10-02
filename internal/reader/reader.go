@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,9 +102,15 @@ func (l Limits) uncompressed() int {
 	return 128 << 20
 }
 
-// Harnesses are the harness segments this build publishes metadata under:
-// every sidecar key is "sessions/<harness>/<id>/metadata.json".
-var Harnesses = []string{"claude", "codex", "cursor"}
+var defaultFinder = NewMetadataFinder(agentmeta.Builtins())
+
+// MetadataFinder caches known-agent probes once, preserving unknown-agent fallback.
+type MetadataFinder struct{ harnesses []string }
+
+// NewMetadataFinder builds known-agent probes from an injected catalog.
+func NewMetadataFinder(c agentmeta.Catalog) *MetadataFinder {
+	return &MetadataFinder{harnesses: agentmeta.Names(c)}
+}
 
 // listConcurrency bounds how many sidecars a listing downloads at once. The
 // sidecars are small and independent, so a sequential read spends almost all
@@ -342,14 +349,19 @@ func decodeMetadata(key string, data []byte) (archive.Metadata, error) {
 // one harness, which a caller should treat as ambiguous. A read error other
 // than not-found is returned rather than falling back.
 func FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]string, error) {
+	return defaultFinder.FindMetadataKeys(ctx, store, prefix, archiveSessionID)
+}
+
+// FindMetadataKeys probes known identities, then lists for unknown archived agents.
+func (f *MetadataFinder) FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]string, error) {
 	if archiveSessionID == "" || strings.Contains(archiveSessionID, "/") {
 		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
 	}
-	if _, err := archive.MetadataObjectKey(Harnesses[0], archiveSessionID); err != nil {
+	if _, err := archive.MetadataObjectKey("probe", archiveSessionID); err != nil {
 		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
 	}
 	var keys []string
-	for _, harness := range Harnesses {
+	for _, harness := range f.harnesses {
 		key := strings.TrimPrefix(listPrefixFor(prefix, harness)+archiveSessionID+"/metadata.json", "/")
 		if _, err := store.Get(ctx, key); err == nil {
 			keys = append(keys, key)

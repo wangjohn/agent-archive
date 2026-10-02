@@ -30,6 +30,28 @@ linters:
   settings:
     depguard:
       rules:
+        integration-composition-only-at-cli:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/cli/*.go"
+            - "!**/internal/agents/builtin/*.go"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/builtin
+              desc: CLI owns operational composition; core consumers receive narrow ports
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/claude
+              desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/codex
+              desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
+              desc: only builtin composes concrete integrations
+        identity-is-standard-library-only:
+          files:
+            - "**/internal/agentmeta/*.go"
+            - "!$test"
+          list-mode: strict
+          allow:
+            - $gostd
         native-reads-are-isolated:
           files:
             - "**/internal/nativesessions/*.go"

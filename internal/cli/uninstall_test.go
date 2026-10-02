@@ -217,7 +217,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	// The state a setup that failed at config.Save, and whose rollback also
 	// failed, would leave: a plist and hooks but no config.
 	executable := "/opt/agent-archive/bin/agent-archive"
-	changes, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), env.installation(home, userHome).hook(executable), []string{"cursor"})
+	changes, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv, productionAgents), env.installation(home, userHome).hook(executable), []string{"cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}

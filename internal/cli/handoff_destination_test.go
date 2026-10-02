@@ -105,7 +105,7 @@ func TestChooseDestinationAnswers(t *testing.T) {
 	} {
 		var out bytes.Buffer
 		def := defaultDestination(tc.installed, "claude", config.HandoffConfig{})
-		got, err := chooseDestination(newPrompter(strings.NewReader(tc.answer), &out), tc.installed, def, true)
+		got, err := chooseDestination(newPrompter(strings.NewReader(tc.answer), &out), tc.installed, def, true, productionAgents.Catalog())
 		if err != nil || got != tc.want {
 			t.Errorf("%s: got %+v, %v; want %+v\n%s", tc.name, got, err, tc.want, out.String())
 		}
@@ -116,7 +116,7 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	installed := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
 	want := "Continue in:\n  1) Codex (default)\n  2) Claude Code\n  3) Cursor\n  p) print\n  c) copy to the clipboard\n  w) write to a file\n  q) quit\nEnter 1-3, p, c, w, or q [1]: "
@@ -124,14 +124,14 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 		t.Fatalf("prompt:\n%q\nwant\n%q", out.String(), want)
 	}
 	out.Reset()
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(out.String(), "  q) quit\nEnter p, c, w, or q [p]: ") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
 	}
 	out.Reset()
-	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true); err != nil {
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(out.String(), "\nEnter 1, p, c, w, or q [1]: ") {

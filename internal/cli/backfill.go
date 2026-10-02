@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"os"
 	"path/filepath"
@@ -736,7 +738,7 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // has one the configuration no longer accepts. An index entry without a
 // registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
-	archiveID, found, err := s.store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := s.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 	if err != nil {
 		return "", err
 	}

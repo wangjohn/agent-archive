@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,7 +105,7 @@ func TestForgettingASessionDoesNotWaitForAnUndecodableCandidatesLock(t *testing.
 				t.Fatal(err)
 			}
 			waits := recordLockWaits(local)
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, tc.deferForWork, nil)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, tc.deferForWork, nil)
 			unlock()
 			if len(*waits) != 0 {
 				t.Fatalf("the forget waited for %v under the request lock", *waits)

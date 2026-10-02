@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +32,7 @@ func TestForgetIdleSessionKeepsASessionThatGainedWork(t *testing.T) {
 			if err := local.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
 				t.Fatal(err)
 			}
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, tc.deferForWork, nil)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, tc.deferForWork, nil)
 			if err != nil || forgotten != tc.forgotten {
 				t.Fatalf("forgotten=%t err=%v, want %t", forgotten, err, tc.forgotten)
 			}
@@ -53,7 +54,7 @@ func TestForgetIdleSessionKeepsASessionWithAPendingPublication(t *testing.T) {
 	if err := local.SavePending(reg.ArchiveSessionID, PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, nil); err != nil || forgotten {
+	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, nil); err != nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 }
@@ -67,7 +68,7 @@ func TestSaveRequestForAForgottenSessionLeavesNoOrphan(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, nil); err != nil || !forgotten {
+	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, nil); err != nil || !forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 	err := local.SaveRequest(reg.ArchiveSessionID, "stop", time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
@@ -119,7 +120,7 @@ func TestForgetIdleSessionWritesTheRemovalRecordOutsideTheRequestLock(t *testing
 				unlock()
 				hookErr = local.SaveRequest(reg.ArchiveSessionID, "stop", at)
 			}
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)
 			if hookErr != nil {
 				t.Fatalf("the hook could not write its request while the record was written: %v", hookErr)
 			}
@@ -144,7 +145,7 @@ func TestForgetIdleSessionWritesTheRemovalRecordOutsideTheRequestLock(t *testing
 			if _, err := local.CompleteRequest(reg.ArchiveSessionID, mustRequestToken(t, local, reg.ArchiveSessionID)); err != nil {
 				t.Fatal(err)
 			}
-			if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
+			if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err != nil || !forgotten {
 				t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
 			}
 			if record, found, err := local.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != RemovalReasonRetention || !record.At.Equal(at) {
@@ -177,7 +178,7 @@ func TestForgetIdleSessionTakesTheRecordBackWhenTheLockIsBusy(t *testing.T) {
 	}
 	defer unlock()
 	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)}
-	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal)
+	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)
 	if !errors.Is(err, aalocal.ErrBusy) || forgotten {
 		t.Fatalf("forgotten=%t err=%v, want ErrBusy", forgotten, err)
 	}
@@ -201,7 +202,7 @@ func TestForgetIdleSessionKeepsTheRecordWhenTheForgetFailsPartWay(t *testing.T) 
 		t.Fatal(err)
 	}
 	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)}
-	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal)
+	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)
 	if err == nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v, want a failure", forgotten, err)
 	}
@@ -240,7 +241,7 @@ func TestForgetIdleSessionDoesNotWaitForASubagentCandidateLock(t *testing.T) {
 			// durable write before it can take seconds on a loaded machine.
 			var started time.Time
 			local.afterRemovalRecord = func() { started = time.Now() }
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, removal)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, deferForWork, removal)
 			took := time.Since(started)
 			local.afterRemovalRecord = nil
 			unlock()
@@ -263,7 +264,7 @@ func TestForgetIdleSessionDoesNotWaitForASubagentCandidateLock(t *testing.T) {
 			}
 
 			// Once the lock is free, the session and its candidate go.
-			if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, removal); err != nil || !forgotten {
+			if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, deferForWork, removal); err != nil || !forgotten {
 				t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
 			}
 			if ids, err := local.subagentCandidatesForSession(reg.ArchiveSessionID); err != nil || len(ids) != 0 {

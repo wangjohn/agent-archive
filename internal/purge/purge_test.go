@@ -239,3 +239,15 @@ func TestApplyFailsClosedOnNewAmbiguousMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestInventoryIgnoresMachineRecords(t *testing.T) {
+	t.Parallel()
+	store, now := fixture(t)
+	if e := store.Put(context.Background(), "machines/"+session+".json", []byte("untrusted machine data")); e != nil {
+		t.Fatal(e)
+	}
+	plan, e := Inventory(context.Background(), store, "destination", "bucket", "archive/", ModeOldFilter, "11", now)
+	if e != nil || len(plan.Candidates) != 1 || plan.Candidates[0].Key != sourceB {
+		t.Fatalf("%+v %v", plan, e)
+	}
+}

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +26,7 @@ func (f *backfillFixture) hookStart(t *testing.T, native, cwd string) bool {
 	payload := `{"hook_event_name":"SessionStart","session_id":"` + native + `","cwd":"` + cwd + `","transcript_path":"` + filepath.Join(f.userHome, ".claude", "projects", "x", native+".jsonl") + `"}`
 	var errOut bytes.Buffer
 	runHookCommand([]string{"--harness", "claude"}, strings.NewReader(payload), &errOut, env)
-	_, found, err := state.OpenReadOnly(f.data).ArchiveSessionID(native)
+	_, found, err := state.OpenReadOnly(f.data).ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native})
 	if err != nil {
 		t.Fatal(err)
 	}

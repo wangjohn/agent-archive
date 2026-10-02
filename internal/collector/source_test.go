@@ -25,7 +25,7 @@ import (
 // -wal and -shm files exist and every chat read needs a snapshot; closed,
 // each write opens and closes the database, leaving no side file.
 type cursorDB struct {
-	t    *testing.T
+	t    testing.TB
 	path string
 	held *sql.DB
 }
@@ -36,18 +36,18 @@ type cursorDB struct {
 // parallel tests: every pass sweeps it, and a sweep's probe of a copy's lock
 // file, landing between a new read creating that file and locking it, fails
 // the read ("lock a Cursor database snapshot directory").
-func newCursorDB(t *testing.T, running bool) *cursorDB {
-	t.Helper()
-	ownSnapshotFolder(t)
-	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
+func newCursorDB(tb testing.TB, running bool) *cursorDB {
+	tb.Helper()
+	ownSnapshotFolder(tb)
+	d := &cursorDB{t: tb, path: filepath.Join(tb.TempDir(), "state.vscdb")}
 	if running {
 		d.held = d.open()
 		if _, err := d.held.ExecContext(context.Background(), `PRAGMA wal_autocheckpoint=0`); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
-		t.Cleanup(func() {
+		tb.Cleanup(func() {
 			if err := d.held.Close(); err != nil {
-				t.Error(err)
+				tb.Error(err)
 			}
 		})
 	}
@@ -58,11 +58,11 @@ func newCursorDB(t *testing.T, running bool) *cursorDB {
 // that reads Cursor's database, checks what is in the folder, or checks what
 // a sweep of it did. It assigns cursorstore.SnapshotTempDirForTesting, so the
 // test must not be parallel.
-func ownSnapshotFolder(t *testing.T) {
-	t.Helper()
+func ownSnapshotFolder(tb testing.TB) {
+	tb.Helper()
 	previous := cursorstore.SnapshotTempDirForTesting
-	cursorstore.SnapshotTempDirForTesting = t.TempDir()
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
+	cursorstore.SnapshotTempDirForTesting = tb.TempDir()
+	tb.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
 }
 
 func (d *cursorDB) open() *sql.DB {

@@ -20,6 +20,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -32,6 +33,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
+	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
 	ParserVersion string
 	AcceptSession func(archive.SessionRegistration) bool
@@ -192,7 +195,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
-	replayErr := capture.ReplayAdmissionIntents(local.Home(), now)
+	var recoveryErr error
+	if ctx.Err() == nil {
+		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	}
+	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+		recoveryErr = nil
+	}
+	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -210,6 +220,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		now:              now,
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
+	}
+	if recoveryErr != nil {
+		p.result.Errors["session-index"] = recoveryErr
 	}
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr

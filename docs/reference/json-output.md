@@ -347,6 +347,12 @@ at the top level. Read the rules below before using a number:
   prints a document with zero sessions. Usage errors (exit 2) print no JSON.
   `--json` is never paged.
 
+Stats `coverage.first_recorded_day` is the earliest available session day,
+clamped to the requested window start if earlier history exists. Charts omit
+preceding days; `daily` retains the full requested window, with leading zero
+placeholders that do not establish measured inactivity. `mcp.servers[].name`
+remains the recorded ID; optional `display_name` supplies a friendly label.
+
 ## `status --json`
 
 Top-level fields (versioned by `schema_version`, currently `3`):
@@ -381,6 +387,7 @@ Treat an absent field and `null` the same way.
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this machine only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |
+| `machine_registration_pending` | Present and true when local machine-record publication is pending for this destination. The collector retries independently of capture; paused installations need not send heartbeats. |
 | `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, another installation's hooks in this one's hook files, and on Linux a data directory or systemd unit directory on a network filesystem (allowed or not, see [`allow_network_home`](configuration.md)), a data directory set up on a different machine (see [`host_id`](configuration.md)) and a shell whose `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` differs from the background job's. |
 
 Before setup, `state` says setup is needed, `background` is `missing`, and
@@ -405,3 +412,42 @@ inside it) and `current_branch` (the branch that checkout is on, when it
 differs from the recorded one). Both commands follow the same add-only rule
 but are not yet versioned documents; prefer the text output for anything a
 person reads.
+
+## machines --json
+
+The document has `schema_version: 1` and contains `records` (each with `schema_version: 1` as defined by the
+[machine record schema](../../schemas/machine.schema.json)), `unreadable`
+(object key and a bounded safe reason), `partial`, and `provider_verified`
+(always false until a provider verification command is implemented). Unreadable
+records and partial listings exit with code 1 while preserving readable records.
+Records are untrusted bucket claims. Heartbeats are at most daily, not current
+activity; credential kinds do not establish provider-verified ownership.
+
+`machines --verify --json` adds a `verification` object: `checked_at`,
+`pagination_complete`, `account_inventory_complete` (currently always false),
+`visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
+`observations` and optional `claim_not_observed` token IDs. Observations contain
+`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+is true only when pagination and all observed checks complete without partial
+results; it never asserts ownership, account completeness or revocation.
+States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
+`scope_unknown_or_mismatch`, `provider_key_not_active`,
+`issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
+`local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
+`local_committed_binding`. Failures return available observations and exit 1.
+
+`machines --json` additionally includes optional `pairing_warnings`, an array of
+secret-free local pending, uncertain-delivery or expired pairing descriptions.
+These warnings require no conversation scan or provider-management credential.
+An observed matching bucket claim does not prove machine ownership or revocation.
+
+`machines revoke --json` writes schema-1 revocation operation metadata and its
+exact selected `keys`, whose outcomes are `pending`, `confirmed` or
+`failed-or-unknown`. `publication_pending` describes the distinct bucket write,
+not provider success. `account_inventory_complete` is always false;
+`request_only` means no verified deletion selection. The optional
+`requested_selector` retains the explicitly **unverified** caller request as a
+bounded `kind` (`name`, `machine_id`, `recipient_id`, or `pairing_id`) and `value`.
+It is informational, never deletion authority; request-only operations cannot
+be retried as verified selections. Provider success confirms
+only the selected set, never all possible shared/legacy/creator-hidden access.

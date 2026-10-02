@@ -27,6 +27,9 @@ import (
 )
 
 func discardDraft(home string, draft setupDraft, active config.Config, env Env) error {
+	if err := abandonGuidedStage(home, draft, active); err != nil {
+		return err
+	}
 	refs := append([]string{}, draft.StagedRefs...)
 	if draft.CredentialRef != "" && !containsString(refs, draft.CredentialRef) {
 		refs = append(refs, draft.CredentialRef)
@@ -316,12 +319,31 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			}
 		}
 	}
-	next.MachineID = old.MachineID
+	if old.MachineID != "" {
+		next.MachineID = old.MachineID
+	} else if !config.ValidMachineID(next.MachineID) {
+		next.MachineID = ""
+	}
 	if next.MachineID == "" {
 		next.MachineID, err = local.ID()
 		if err != nil {
 			return err
 		}
+	}
+	if next.MachineAssignment != nil && (next.MachineAssignment.DestinationID != next.DestinationID() || (old.Storage.R2CredentialRef != next.Storage.R2CredentialRef && reflect.DeepEqual(next.MachineAssignment, old.MachineAssignment))) {
+		next.MachineAssignment = nil
+	}
+	if next.MachineName == "" {
+		next.MachineName = "unnamed"
+		if config.ValidMachineID(next.MachineID) {
+			next.MachineName = "unnamed-" + next.MachineID[:4]
+		}
+	}
+	if err := next.ValidateCloudflareTokenCommand(); err != nil {
+		return err
+	}
+	if err := next.ValidateMachine(); err != nil {
+		return err
 	}
 	// The machine this data directory was set up on, recorded once beside the
 	// machine ID and kept when it differs from this one's (see

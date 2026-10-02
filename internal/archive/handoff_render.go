@@ -389,7 +389,7 @@ func displayValue(v reflect.Value) reflect.Value {
 	return v
 }
 
-// oneLine collapses every run of whitespace, newlines included, to one space.
+// DisplayLine collapses every run of whitespace, newlines included, to one space.
 // DisplayLine returns text as one line that is safe to print to a terminal
 // or a table cell: displayText's normalization (no escape sequences or other
 // controls), then every run of whitespace, newlines and tabs included, as one

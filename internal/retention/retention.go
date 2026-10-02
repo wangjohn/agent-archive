@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -219,6 +219,8 @@ func (s *sweeper) orphans(keep map[string]bool) {
 	}
 }
 
+var knownHarnesses = agentmeta.Names(agentmeta.Builtins())
+
 func (s *sweeper) orphan(id string) error {
 	ageFrom := s.local.OrphanChangedAt(id)
 	summary, found, err := s.local.LoadPublishedSummary(id)
@@ -233,7 +235,7 @@ func (s *sweeper) orphan(id string) error {
 	}
 	harnesses := s.local.OrphanHarnesses(id)
 	if len(harnesses) == 0 {
-		harnesses = reader.Harnesses
+		harnesses = knownHarnesses
 	}
 	for _, harness := range harnesses {
 		if err := DeleteWholeSession(s.ctx, s.store, harness, id); err != nil {
@@ -582,7 +584,7 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 // for the next sweep to retry, and takes it back from a session a hook kept
 // alive.
 func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
-	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
+	return local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, deferForWork, &state.RemovalRecord{
 		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,
 	})
 }

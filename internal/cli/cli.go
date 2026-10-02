@@ -14,6 +14,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"io"
 	"os"
 	"os/signal"
@@ -29,6 +30,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
@@ -93,6 +95,8 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// Agents overrides immutable production composition, including its catalog.
+	Agents            *builtin.Registry
 	handoffConfigLoad func(string) (config.Config, bool, error)
 	nativeFS          nativesessions.FileSystem
 	nativeStoreRoots  []nativesessions.StoreRoot
@@ -110,6 +114,10 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// projectGitRunner replaces bounded Git operations in setup tests.
+	projectGitRunner gitremote.Runner
+	// repoKeyContext replaces bounded setup lookups in tests.
+	repoKeyContext func(context.Context, string) string
 	// currentBranch, set only by tests, replaces the git lookup of the
 	// branch checked out in a directory (see gitBranch).
 	currentBranch func(dir string) string
@@ -145,6 +153,8 @@ type Env struct {
 	// Cloudflare makes the client guided R2 creation uses for the pasted
 	// bootstrap API token. Defaults to the real Cloudflare API.
 	Cloudflare func(token string) cloudflare.API
+	// RunTokenCommand replaces the bounded explicit management-token subprocess.
+	RunTokenCommand func(context.Context, []string, []string) (string, error)
 	// Pause waits between guided R2 creation's checks of a key Cloudflare
 	// has only just made. Defaults to sleeping; tests skip the wait.
 	Pause      func(time.Duration)
@@ -269,6 +279,14 @@ type Env struct {
 	// Clipboard replaces the clipboard's contents. Defaults to pbcopy on
 	// macOS, or wl-copy, xclip, or xsel for a connected Linux desktop.
 	Clipboard func([]byte) error
+	// PairingClipboardRead reads clipboard contents for conditional cleanup only.
+	PairingClipboardRead func() ([]byte, error)
+	// PairingTerminal opens the private terminal for redirected bundle input.
+	PairingTerminal func() (io.ReadWriteCloser, error)
+	// PairingCode supplies hidden interactive code input in isolated tests.
+	PairingCode func() (string, error)
+	// PairingRepoRoot is a bounded source scope lookup, injected by tests.
+	PairingRepoRoot func(context.Context, string) (string, error)
 	// Interrupts delivers the signals that stop a command while it runs
 	// (backfill while it plans, registers, and uploads, the full-screen
 	// views until they restore the terminal, setup's storage check), and
@@ -512,6 +530,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -570,6 +589,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		terminal.Print(stdout, usage)
 		return 0
 	}
+	if err := pairingInvocationError(args, env); err != nil {
+		terminal.Println(stderr, err.Error())
+		return 1
+	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
 	}
@@ -592,6 +615,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "machines":
+		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,7 +213,7 @@ func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T
 	// pass. (A missing transcript used to stand in here; it is now a recorded
 	// capture gap instead of an error, see TestMissingTranscript*.)
 	badReg := registration(t, writeTranscript(t, dir, "unsafe.jsonl", `{"type":"unrecognized_record"}`+"\n"))
-	badReg.ArchiveSessionID = "bad-session"
+	badReg.ArchiveSessionID, badReg.NativeSessionID = "bad-session", "bad-native"
 	if err := local.SaveRegistration(badReg); err != nil {
 		t.Fatal(err)
 	}
@@ -1133,13 +1134,13 @@ func TestForgetSessionRemovesRequestLock(t *testing.T) {
 	if _, err := os.Stat(lock); err != nil {
 		t.Fatalf("request lock was not created: %v", err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("request lock leaked after ForgetSession: %v", err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatalf("forgetting twice must be a no-op: %v", err)
 	}
 }
@@ -1154,7 +1155,7 @@ func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "verification.json"), []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -1168,7 +1169,7 @@ func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(other, "notes.txt"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ForgetSession("session-2", ""); err != nil {
+	if err := store.ForgetSession("session-2", agentmeta.SessionKey{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(other, "notes.txt")); err != nil {
@@ -1270,21 +1271,21 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 func TestEnsureArchiveSessionIDPersistsAndReuses(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
-	id1, created1, err := local.EnsureArchiveSessionID("native-abc")
+	id1, created1, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !created1 || id1 == "" {
 		t.Fatalf("id1=%q created1=%v", id1, created1)
 	}
-	id2, created2, err := local.EnsureArchiveSessionID("native-abc")
+	id2, created2, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created2 || id2 != id1 {
 		t.Fatalf("expected reuse: id1=%q id2=%q created2=%v", id1, id2, created2)
 	}
-	id3, created3, err := local.EnsureArchiveSessionID("native-xyz")
+	id3, created3, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-xyz"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1303,7 +1304,7 @@ func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
 	// A native session ID is harness-controlled input; it must not be usable
 	// to escape the sessions/ directory even though it is only ever hashed,
 	// not used directly as a path component.
-	id, _, err := local.EnsureArchiveSessionID("../../etc/passwd")
+	id, _, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "../../etc/passwd"})
 	if err != nil {
 		t.Fatal(err)
 	}
