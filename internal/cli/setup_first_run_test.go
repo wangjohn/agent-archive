@@ -57,7 +57,7 @@ func TestSetupOffersProjectsFromAppHistory(t *testing.T) {
 	writeClaudeSession(t, userHome, "two", newer, now.Add(-time.Hour))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.BackfillTempDirs = []string{}
-	input := strings.Join([]string{"y", "n", "n", "9", "1 2", typed, "", "s3", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", "n", "n", "9", "1 2", typed, "", "s3-existing", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	first, second := strings.Index(output, "1) "+newer), strings.Index(output, "2) "+older)
 	if first < 0 || second < first || !strings.Contains(output, "today") || !strings.Contains(output, "3 days ago") || !strings.Contains(output, "Enter numbers from 1 to 2") {
@@ -91,7 +91,7 @@ func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 			if add {
 				answers = []string{"y", "n", "n", "2", ""}
 			}
-			input := strings.Join(append(answers, "s3", "b", "profile", "us-east-1", "y"), "\n") + "\n"
+			input := strings.Join(append(answers, "s3-existing", "b", "profile", "us-east-1", "y"), "\n") + "\n"
 			output := setupRun(t, env, input, 0)
 			cfg, _, _ := config.Load(home)
 			want := 1
@@ -113,7 +113,7 @@ func TestSetupTakesAccountAndBucketFromTheR2BucketURL(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
-	input := strings.Join([]string{"y", "n", "n", project, "", "r2",
+	input := strings.Join([]string{"y", "n", "n", project, "", "r2-existing",
 		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket/folder",
 		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket",
 		"ACCESS", "secret-value", "y"}, "\n") + "\n"
