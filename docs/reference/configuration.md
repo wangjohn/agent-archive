@@ -106,6 +106,17 @@ Resuming an ordinary setup draft keeps the latest committed machine name and
 credential provenance for unchanged credentials. Changing the destination or
 credential reference clears old provenance; a draft cannot restore it.
 
+### Experimental dedicated key spares
+
+`spare_keys` is an optional integer from 0 through 5; absence means 2. Zero
+suppresses spare reservation/refill without deleting existing provider keys.
+`spare_credential_refs` contains only opaque `issued-<32 lowercase hex>` references
+and is an advisory index. Validated private `issued/slot-<id>.json` records own
+eligibility and immutable destination/recipient/issuer/slot lineage. Refilling occurs
+only during explicit `machines add` or experimental guided R2 creation while a
+management token is available. Listing, collection and revocation never refill.
+This dedicated issuance phase remains a gated draft pending live acceptance.
+
 ## Experimental management token source
 
 `cloudflare_token_command` is an optional argv array, for example

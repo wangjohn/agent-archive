@@ -902,6 +902,25 @@ variables. Ordinary machine listing and collection never acquire a management
 token. Provider inventory can be restricted to creator-owned keys, so missing
 metadata never proves that access was removed.
 
+#### Dedicated key issuance draft
+
+The experimental issuance ledger under `issued/` is mode 0600 and contains immutable
+recipient, issuer and slot IDs, destination binding, provider key ID/name, opaque
+credential references, labels, timestamps and lifecycle/cleanup outcomes. It contains
+no management token, object secret, pairing code or encrypted bundle. Unused spare
+object credentials remain in the configured credential store; the config's
+`spare_credential_refs` is advisory and cannot grant eligibility. Default target two,
+configurable zero through five. Spares can outlive the issuer's main key.
+
+Creation/reservation/delivery intents are journaled before external effects. Lost API
+responses leave explicit cleanup work; provider inventory cannot recover the token's
+one-time value. Ambiguous exposure is never returned to the spare pool. Removing the
+issuer-local delivered secret retains lineage, because an issuer could have copied
+any secret it created. Bucket claims remain informational and cannot establish
+ownership or authorize deletion. The management token is acquired for one explicit
+command, never saved, never sent to storage, and discarded afterward. Live provider
+acceptance and revocation integration are still pending for this draft.
+
 ## Encrypted shared-key pairing beta
 
 A pairing bundle carries the destination, app/capture and retention settings,

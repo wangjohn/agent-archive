@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -371,6 +372,16 @@ func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 // remains in it.
 func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, releaseLocks func()) error {
 	refs := map[string]bool{}
+	if slots, err := issuance.List(home); err == nil {
+		for _, slot := range slots {
+			refs[slot.SecretRef] = true
+		}
+	} else {
+		terminal.Println(out, "Issuance ledger unreadable; additional credential references may remain in the credential store.")
+	}
+	for _, ref := range cfg.SpareCredentialRefs {
+		refs[ref] = true
+	}
 	for _, ref := range cfg.RetiredCredentialRefs {
 		refs[ref] = true
 	}

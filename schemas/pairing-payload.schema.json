@@ -246,6 +246,17 @@
           "affected"
         ]
       }
+    },
+    "slot_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "kind": {
+      "enum": [
+        "r2_own",
+        "r2_shared",
+        "aws_profile"
+      ]
     }
   },
   "required": [
@@ -264,5 +275,24 @@
     "skill_evidence",
     "no_skills",
     "inclusions"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "r2_own"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "slot_id"
+        ]
+      }
+    }
   ]
 }
