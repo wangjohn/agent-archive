@@ -56,7 +56,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.
   Own-key migrations retire completed checkpoints and disclose shared access
-  retained through retired local credential aliases.
+  retained through retired local credential aliases. Staged migration retries
+  refuse a shared credential reference replaced by later setup, retaining the
+  stage for safe cancellation.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.

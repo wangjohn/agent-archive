@@ -416,7 +416,12 @@ With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1`, run
 `agent-archive machines own-key` to migrate shared/legacy R2 access. The exact
 slot is checkpointed before minting, verified/staged privately, and committed
 through setup's rollback-capable transaction. The existing machine ID is its
-immutable recipient. Retry resumes the exact staged slot. Only after commit
+immutable recipient. Retry resumes the exact staged slot only while its original
+pre-migration credential reference remains active. A later setup that replaces
+that reference blocks resume before token/provider or setup work, even if the
+new reference loads the same shared key. The staged key remains recorded; use
+safe `own-key --cancel` before starting a new migration. Recovery after the
+exact staged slot has already committed still finishes its cleanup. Only after commit
 can the obsolete shared local secret be deleted; another local destination's
 reference, a matching retired alias, an unreadable binding, or a cleanup failure
 keeps access explicitly present. Completed cleanup retires its checkpoint so a

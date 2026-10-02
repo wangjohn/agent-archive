@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -479,5 +480,120 @@ func TestOwnKeyCompletedRetryPublishesWithoutMinting(t *testing.T) {
 	must(t, err)
 	if !bytes.Contains(raw, []byte(cfg.MachineAssignment.AccessKeyID)) {
 		t.Fatal("completed retry did not publish committed ownership")
+	}
+}
+
+// Ordinary setup can replace a shared key while an own-key migration is staged.
+func TestOwnKeyStagedRetryRefusesChangedSharedReference(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		t.Run(strconv.FormatBool(alias), func(t *testing.T) {
+			env, home, cf, kc, cfg := ownKeyFixture(t)
+			issuer := fixtureIssuer(t, env, home)
+			checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+			slot, err := ownKeySlot(home, &checkpoint, issuer, issuer.api, env)
+			must(t, err)
+			replacement, err := kc.Load(t.Context(), cfg.Storage.R2CredentialRef)
+			must(t, err)
+			if !alias {
+				replacement = credentials.R2Credentials{AccessKeyID: strings.Repeat("f", 32), SecretAccessKey: "replacement-shared-canary"}
+			}
+			next := cfg
+			next.Storage.R2CredentialRef = "replacement-shared"
+			next.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: replacement.AccessKeyID, SharedWith: strings.Repeat("b", 32)}
+			must(t, kc.Save(t.Context(), next.Storage.R2CredentialRef, replacement))
+			userHome, err := env.userHomeDir()
+			must(t, err)
+			executable, err := env.executable()
+			must(t, err)
+			must(t, applySetup(home, userHome, executable, cfg, &next, nil, env))
+			configBefore, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			checkpointBefore, err := os.ReadFile(filepath.Join(home, ownKeyFile))
+			must(t, err)
+			ledgerPath := filepath.Join(home, "issued", "slot-"+slot.SlotID+".json")
+			ledgerBefore, err := os.ReadFile(ledgerPath)
+			must(t, err)
+			creates := cf.Calls(cloudflaretest.RouteCreateToken)
+			deletes := cf.Calls(cloudflaretest.RouteDeleteToken)
+			providerCalls, tokenReads, loads := 0, 0, 0
+			provider := env.Cloudflare
+			env.Cloudflare = func(token string) cloudflare.API {
+				providerCalls++
+				return provider(token)
+			}
+			env.UnsetEnv = func(string) error { tokenReads++; return nil }
+			fakeSched(env).beforeLoad = func(scheduler.Ref) error { loads++; return nil }
+			var output bytes.Buffer
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 1 || providerCalls != 0 || tokenReads != 0 || loads != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates || cf.Calls(cloudflaretest.RouteDeleteToken) != deletes {
+				t.Fatalf("stale stage resumed after shared reference changed: code=%d provider=%d token=%d loads=%d output=%s", code, providerCalls, tokenReads, loads, output.String())
+			}
+			for _, file := range []struct {
+				path   string
+				before []byte
+			}{{filepath.Join(home, "config.json"), configBefore}, {filepath.Join(home, ownKeyFile), checkpointBefore}, {ledgerPath, ledgerBefore}} {
+				after, readErr := os.ReadFile(file.path)
+				must(t, readErr)
+				if !bytes.Equal(after, file.before) {
+					t.Fatal("rejection changed committed config, checkpoint or staged ledger")
+				}
+			}
+			stored, err := kc.Load(t.Context(), next.Storage.R2CredentialRef)
+			must(t, err)
+			if stored != replacement || !providerKeyLive(cf, slot.ProviderID) {
+				t.Fatal("rejection lost replacement access or staged key")
+			}
+			// A changed shared reference blocks resume, but safe cancellation can
+			// still remove the uncommitted staged key without consuming B or A.
+			output.Reset()
+			if code := Run([]string{"machines", "own-key", "--cancel", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != deletes+1 || providerKeyLive(cf, slot.ProviderID) {
+				t.Fatalf("safe stale-stage cancellation refused: %d %s", code, output.String())
+			}
+			stored, err = kc.Load(t.Context(), next.Storage.R2CredentialRef)
+			must(t, err)
+			if stored != replacement {
+				t.Fatal("cancellation consumed replacement shared access")
+			}
+			if _, err = kc.Load(t.Context(), checkpoint.OldRef); err != nil {
+				t.Fatal("cancellation consumed original shared access")
+			}
+			if _, err = os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+				t.Fatal("safe cancelled checkpoint retained")
+			}
+		})
+	}
+}
+
+func TestOwnKeyRecoversExactCommittedSlotBeforeCheckpointPromotion(t *testing.T) {
+	env, home, cf, kc, cfg := ownKeyFixture(t)
+	issuer := fixtureIssuer(t, env, home)
+	checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+	slot, err := ownKeySlot(home, &checkpoint, issuer, issuer.api, env)
+	must(t, err)
+	next := cfg
+	next.Storage.R2CredentialRef = slot.SecretRef
+	next.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Own, AccessKeyID: slot.ProviderID, RecipientID: slot.RecipientID, IssuerID: slot.IssuerID, SlotID: slot.SlotID}
+	userHome, err := env.userHomeDir()
+	must(t, err)
+	executable, err := env.executable()
+	must(t, err)
+	must(t, applySetup(home, userHome, executable, cfg, &next, nil, env))
+	// The setup commit succeeded, but the process stopped before marking its
+	// checkpoint committed. Exact-slot recovery needs no management token.
+	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+	creates := cf.Calls(cloudflaretest.RouteCreateToken)
+	var output bytes.Buffer
+	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+		t.Fatalf("exact committed slot recovery refused: %d %s", code, output.String())
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	if len(slots) != 1 || slots[0].State != issuance.Own || !providerKeyLive(cf, slot.ProviderID) {
+		t.Fatal("exact committed slot was not promoted and retained")
+	}
+	if _, err = kc.Load(t.Context(), checkpoint.OldRef); !errors.Is(err, credentials.ErrMissingCredential) {
+		t.Fatal("exact committed-slot cleanup left obsolete shared secret")
+	}
+	if _, err = os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+		t.Fatal("exact committed recovery did not retire completed checkpoint")
 	}
 }

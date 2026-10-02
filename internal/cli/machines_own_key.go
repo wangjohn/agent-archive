@@ -58,7 +58,7 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return machineCommandError(errOut, err)
 	}
 	defer issuedRelease()
-	checkpoint, err := readOwnKeyCheckpoint(home, cfg)
+	checkpoint, err := ownKeyCheckpointForCommand(home, cfg, *cancelOwn)
 	if err != nil {
 		return machineCommandError(errOut, err)
 	}
@@ -125,6 +125,21 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return machineCommandError(errOut, errors.New("dedicated key committed; cleanup checkpoint pending, retry own-key"))
 	}
 	return finishOwnKey(home, checkpoint, out, errOut, env)
+}
+
+// A staged migration belongs to its exact pre-migration reference. Ordinary
+// setup can replace that reference without changing the destination. Refuse a
+// stale resume before token acquisition, but preserve safe cancellation and
+// recovery after the exact staged slot has already committed.
+func ownKeyCheckpointForCommand(home string, cfg config.Config, cancelStage bool) (ownKeyCheckpoint, error) {
+	checkpoint, err := readOwnKeyCheckpoint(home, cfg)
+	if err != nil || cancelStage || checkpoint.Committed || cfg.Storage.R2CredentialRef == checkpoint.OldRef {
+		return checkpoint, err
+	}
+	if checkpoint.SlotID != "" && cfg.Storage.R2CredentialRef == "issued-"+checkpoint.SlotID {
+		return checkpoint, nil
+	}
+	return checkpoint, errors.New("staged own-key source credential changed; stage retained, cancel it safely with own-key --cancel before starting a new migration")
 }
 
 func readOwnKeyCheckpoint(home string, cfg config.Config) (ownKeyCheckpoint, error) {
