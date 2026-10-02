@@ -107,12 +107,6 @@ func (r *Registry) Lookup(name string) (Integration, bool) {
 		return Integration{}, false
 	}
 	b := r.bindings[d.ID]
-	if b.Hooks != nil {
-		d.Operations = append(d.Operations, agentmeta.ManagedHooks)
-	}
-	if b.Decoder != nil {
-		d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
-	}
 	b.Descriptor = d
 	return b, true
 }

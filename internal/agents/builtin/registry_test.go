@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -122,5 +123,24 @@ func TestRuntimeProjectionAndCleanupUnion(t *testing.T) {
 	bindings[0].Runtime = typedNil
 	if _, err := New(c, bindings); err == nil {
 		t.Fatal("accepted typed-nil runtime")
+	}
+}
+
+func TestHookOperationProjectionsAgreeWithCatalog(t *testing.T) {
+	t.Parallel()
+	r := NewBuiltins()
+	for _, want := range r.Catalog().All() {
+		got, ok := r.Lookup(string(want.ID))
+		if !ok || !reflect.DeepEqual(got.Descriptor, want) {
+			t.Fatalf("lookup differs from derived catalog: %+v, want %+v", got.Descriptor, want)
+		}
+	}
+	for _, operation := range []agentmeta.Operation{agentmeta.ManagedHooks, agentmeta.LifecycleHooks} {
+		for _, got := range r.Supporting(operation) {
+			want, _ := r.Catalog().Lookup(string(got.Descriptor.ID))
+			if !reflect.DeepEqual(got.Descriptor, want) {
+				t.Fatalf("%s projection differs from catalog: %+v, want %+v", operation, got.Descriptor, want)
+			}
+		}
 	}
 }
