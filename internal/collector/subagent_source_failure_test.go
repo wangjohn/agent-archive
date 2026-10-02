@@ -49,10 +49,11 @@ func TestSubagentSourceFailuresPreserveRetryAndCause(t *testing.T) {
 				t.Fatal(err)
 			}
 			closes := 0
-			sources := candidateFaultSources{read: tc.read}
+			var files transcriptio.Opener
 			if tc.close {
-				sources.files = candidateCloseFiles{fault: fault, closes: &closes}
+				files = candidateCloseFiles{fault: fault, closes: &closes}
 			}
+			sources := candidateFaultSources{read: tc.read, files: files}
 			outcome := materializeSubagentCandidates(t.Context(), store, Options{Sources: sources}, candidate.ObservedAt.Add(subagentTranscriptGrace))
 			if tc.close && closes != 1 {
 				t.Fatalf("builtin descriptor closed %d times", closes)
