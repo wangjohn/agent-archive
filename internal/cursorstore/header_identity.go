@@ -9,7 +9,8 @@ import (
 )
 
 // rawHeaderIdentity preserves encoding/json's handling of malformed UTF-8 and
-// surrogate escapes without returning the header's message content into Go.
+// surrogate escapes by streaming raw headers through bounded 64KiB chunks.
+// It discards unknown values without retaining their full content.
 func rawHeaderIdentity(ctx context.Context, q querier, key, name string, index int64) (string, error) {
 	r := bufio.NewReader(&headerReader{ctx: ctx, q: q, key: key, name: name, index: index})
 	if first, err := jsonNonspace(r); err != nil || first != '{' {
