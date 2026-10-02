@@ -496,6 +496,10 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 			if !found {
 				return state.ErrSessionNotRegistered
 			}
+			reg, err = completeReplayStart(store, cfg, intent, event, reg, after)
+			if err != nil {
+				return err
+			}
 			if err := adoptLocator(store, &reg, event, after); err != nil {
 				return err
 			}
@@ -523,6 +527,40 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 		return state.ErrSessionNotRegistered
 	}
 	return nil
+}
+
+// Complete later native start observations after an interrupted registration
+// create, while preserving a newer live continuation and NewOnly semantics.
+func completeReplayStart(store *state.Store, cfg config.Config, intent admissionIntent, event agentapi.LifecycleEvent, reg archive.SessionRegistration, after func(effectName) error) (archive.SessionRegistration, error) {
+	if event.NewOnly || !sameReplayAdmission(reg, intent.ObservedAt) {
+		return reg, nil
+	}
+	updated, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
+		if !cfg.AcceptSession(*current) || current.NativeSessionID != intent.NativeSessionID || archive.CanonicalHarness(current.Harness.Name) != archive.CanonicalHarness(intent.Harness) || filepath.Clean(current.ProjectRoot) != filepath.Clean(intent.ProjectRoot) {
+			return errContinuationDeclined
+		}
+		if sameReplayAdmission(*current, intent.ObservedAt) {
+			applyLocator(current, event)
+			applyObservation(&current.Harness, event.Session)
+		}
+		reg = *current
+		return nil
+	})
+	if err != nil {
+		return reg, err
+	}
+	if !updated {
+		return reg, state.ErrSessionNotRegistered
+	}
+	return reg, effectBoundary(after, effectRegistrationUpdate)
+}
+
+// Existing replay provenance has observation-time granularity, not an intent ID.
+// Only a hook admission whose three timestamps still match can be completed by
+// an old start; an imported or subsequently refreshed registration is kept.
+func sameReplayAdmission(reg archive.SessionRegistration, observed time.Time) bool {
+	return reg.Origin == archive.SessionOriginHook && reg.StartedAtSource == archive.StartedAtSourceHook &&
+		reg.AdmittedAt.Equal(observed) && reg.SessionStartedAt.Equal(observed) && reg.RegisteredAt.Equal(observed)
 }
 
 func applyWaitingReplayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, waiting []agentapi.LifecycleEvent, after func(effectName) error) error {

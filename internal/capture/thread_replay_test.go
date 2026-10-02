@@ -347,3 +347,158 @@ func TestOrderedBatchBeforeActivationKeepsDeclinedStartDiagnostic(t *testing.T) 
 		t.Fatalf("preactivation intent %v %v", entries, err)
 	}
 }
+
+const (
+	replayModeA    agentapi.NativeMode = "mode-A"
+	replayModeB    agentapi.NativeMode = "mode-B"
+	replayModeLive agentapi.NativeMode = "mode-live"
+)
+
+// Regression OIR-ORDER-START-01: one admission batch can carry later native
+// start observations after the effect that durably created its registration.
+func twoReplayStarts(project string, at time.Time) []agentapi.LifecycleEvent {
+	first := agentapi.LifecycleEvent{
+		Kind:        agentapi.EventStart,
+		Session:     agentapi.NativeSession{Agent: syntheticHookAgent, NativeID: "two-start-owner", Version: "version-A", Mode: replayModeA},
+		ProjectRoot: project, Source: agentapi.SourceRef{Kind: archive.SourceKindFile, Path: "/synthetic/source-A"}, Locator: agentapi.LocatorReplaceFile,
+		Start: agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessExplicitStart}, Deferred: agentapi.DeferredStart,
+		Reason: "first", NativeEvent: "first",
+	}
+	second := first
+	second.Source.Path = "/synthetic/source-B"
+	second.Session.Version, second.Session.Mode = "version-B", replayModeB
+	second.Reason, second.NativeEvent = "second", "second"
+	for _, event := range []*agentapi.LifecycleEvent{&first, &second} {
+		event.Evidence = []archive.SupplementalEvidence{minimalReplayEvidence(archive.EvidenceKindLifecycleHook, *event, at)}
+	}
+	return []agentapi.LifecycleEvent{first, second}
+}
+
+func TestMultipleDeferredStartsReplayPreservesNativeOrder(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, boundary := range []effectName{"", effectRegistrationCreate, effectRegistrationUpdate, effectEvidenceSave, effectIntentAck} {
+		t.Run(string(boundary), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			batch := twoReplayStarts(project, at)
+			if _, err := validateBatch("synthetic", batch, at); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := loadHookCaptureWindow(home, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+			if err != nil || !queued {
+				t.Fatalf("queue %t %v", queued, err)
+			}
+			interrupted := false
+			err = replayAdmissionIntents(home, at.Add(time.Second), nil, func(name effectName) error {
+				if boundary != "" && name == boundary && !interrupted {
+					interrupted = true
+					return errors.New("partial multi-start replay")
+				}
+				return nil
+			})
+			if boundary == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err == nil || !interrupted {
+					t.Fatalf("durable interruption not exercised: %v", err)
+				}
+				entries, err := os.ReadDir(admissionIntentDir(home))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if boundary != effectIntentAck && len(entries) != 1 {
+					t.Fatalf("partial batch lost: %v", entries)
+				}
+			}
+			for range 2 {
+				if err := ReplayAdmissionIntents(home, at.Add(2*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil || len(regs) != 1 {
+				t.Fatalf("registrations %v %v", regs, err)
+			}
+			reg := regs[0]
+			if reg.NativeSessionID != batch[0].Session.NativeID || reg.Harness.Name != "synthetic" || reg.ProjectRoot != project || reg.DestinationID != cfg.DestinationID() || !sameReplayAdmission(reg, at) {
+				t.Fatalf("admission provenance changed: %+v", reg)
+			}
+			if reg.TranscriptPath != batch[1].Source.Path || reg.Harness.Version != batch[1].Session.Version || reg.Harness.Mode != string(batch[1].Session.Mode) {
+				t.Fatalf("later native start permanently skipped: %+v", reg)
+			}
+			requests, err := state.OpenReadOnly(home).LoadRequests()
+			if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) != 2 {
+				t.Fatalf("evidence %v %v", requests, err)
+			}
+			entries, err := os.ReadDir(admissionIntentDir(home))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("acknowledgement %v %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestMultiStartReplayPreservesNewOnlyAndNewerLiveObservations(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, newer := range []bool{false, true} {
+		home, project := t.TempDir(), t.TempDir()
+		setUpTestConfig(t, home, project, at.Add(-time.Hour))
+		batch := twoReplayStarts(project, at)
+		batch[1].NewOnly = !newer
+		cfg, _, err := loadHookCaptureWindow(home, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+		if err != nil || !queued {
+			t.Fatalf("queue %t %v", queued, err)
+		}
+		err = replayAdmissionIntents(home, at.Add(time.Second), nil, func(name effectName) error {
+			if name == effectRegistrationCreate {
+				return errors.New("first registration durable")
+			}
+			return nil
+		})
+		if err == nil {
+			t.Fatal("missing interruption")
+		}
+		expected := batch[0]
+		expectedRegisteredAt := at
+		if newer {
+			live := batch[1]
+			live.Source.Path = "/synthetic/source-live"
+			live.Session.Version, live.Session.Mode = "version-live", replayModeLive
+			live.Start = agentapi.StartEvidence{Kind: agentapi.FreshContinuation, Reason: agentapi.FreshnessContinuation}
+			live.Deferred = agentapi.DeferredNone
+			live.Evidence = nil
+			expectedRegisteredAt = at.Add(time.Minute)
+			if err := HandleBatch(home, "synthetic", []agentapi.LifecycleEvent{live}, expectedRegisteredAt); err != nil {
+				t.Fatal(err)
+			}
+			expected = live
+		}
+		for range 2 {
+			if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		regs, err := state.OpenReadOnly(home).LoadRegistrations()
+		if err != nil || len(regs) != 1 {
+			t.Fatalf("registrations %v %v", regs, err)
+		}
+		reg := regs[0]
+		if reg.TranscriptPath != expected.Source.Path || reg.Harness.Version != expected.Session.Version || reg.Harness.Mode != string(expected.Session.Mode) || !reg.RegisteredAt.Equal(expectedRegisteredAt) || !reg.AdmittedAt.Equal(at) || !reg.SessionStartedAt.Equal(at) || reg.DestinationID != cfg.DestinationID() || reg.Origin != archive.SessionOriginHook {
+			t.Fatalf("newer=%t replay replaced protected facts: %+v", newer, reg)
+		}
+		entries, err := os.ReadDir(admissionIntentDir(home))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("acknowledgement %v %v", entries, err)
+		}
+	}
+}
