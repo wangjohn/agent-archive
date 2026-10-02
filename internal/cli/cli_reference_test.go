@@ -73,6 +73,7 @@ func referenceCommandOrder(t *testing.T) []string {
 // TestCLIReferenceIsCurrent, so a new command arrives with a guide.
 var commandGuides = map[string]string{
 	"machines":         "[Multiple machines](../guides/multiple-machines.md)",
+	"machines add":     "[Multiple machines](../guides/multiple-machines.md)",
 	"machines rename":  "[Multiple machines](../guides/multiple-machines.md)",
 	"setup":            "[Set up capture](../getting-started/setup.md)",
 	"status":           "[Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md)",

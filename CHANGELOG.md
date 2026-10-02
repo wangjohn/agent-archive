@@ -16,6 +16,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   no archive or configuration; private launch files have seven-day best-effort
   cleanup on later local handoffs. Disposable real-app acceptance is still
   unverified on macOS and Linux.
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
 
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.

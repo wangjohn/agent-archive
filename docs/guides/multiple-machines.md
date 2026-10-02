@@ -237,3 +237,55 @@ Provider verification, pairing and revocation are not part of these commands.
 not publish a record or write registration state, including when nothing needs
 refreshing. The next collector pass publishes a changed application version
 through its normal fingerprint check, without waiting for the daily heartbeat.
+
+## Encrypted pairing (shared-key beta)
+
+On a configured source, run `agent-archive machines add --name laptop --share-key`
+for R2, or omit `--share-key` for S3. The source checks storage before creating a
+pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
+separate channel. On the receiver run `agent-archive setup --pair`, paste the
+bundle, and enter the code privately. The first three characters of each word
+are sufficient; use `yo-` for `yo-yo`, including the hyphen.
+Review the destination before capture settings: an existing destination change
+requires explicit consent. Source apps that are absent here are skipped.
+
+This beta shares the active R2 key. Cancelling a pairing, expiry, and deleting a
+machine record do not remove access. Replace the shared key on every machine to
+revoke it. S3 bundles contain a profile name and settings, without AWS credentials;
+configure that local profile with `aws configure --profile NAME` or
+`aws configure sso --profile NAME` before receiving. No provider management token
+is requested. Registry claims remain informational and untrusted.
+
+Use `--print` for encrypted bundle output or `--file PATH` for an exclusive private
+0600 file. Interactive source delivery requires terminal input and output;
+codes appear only on a cleared alternate screen and the
+clipboard is cleared on normal exit only when it still contains that exact bundle.
+A crash or interruption leaves delivery uncertain; check `status` or `machines`.
+Do not record or screen-share code display. Delete explicitly saved bundle files
+when no longer needed. The default expiry is 15 minutes; `--expires` accepts 5m
+through 24h, with five minutes of authenticated clock-skew tolerance.
+
+For deliberately scripted use, `machines add --yes --name laptop` prints both
+pieces (or prints the code with `--file`). Receive with `setup --pair-file PATH`
+or `setup --pair-file -`, plus `--yes` and `AGENT_ARCHIVE_PAIRING_CODE`; the receiver
+reads and removes that variable before setup. There is no code command-line flag.
+`--yes` refuses to replace an existing destination. Any presence of
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` refuses pairing before
+home, credential, storage, trace, or output changes, regardless of other overrides.
+
+Repository matching is bounded by one five-second deadline, 128 canonical roots,
+four Git workers, and 250ms per Git lookup. It does not crawl home directories or
+search conversation bodies. Native filesystem calls cannot always be cancelled;
+the deadline prevents new work once they return. Relative subtree paths retain
+inclusion scope after a repository moves. Known origin mismatches never fall back
+to a home path. Ambiguous, incomplete, and unresolved exclusions are skipped under
+`--yes`; local exclusions remain. Choose skipped scopes deliberately with ordinary
+`setup --project DIR`. Unmapped source exclusions withhold affected inclusions.
+
+The receiver keeps its immutable machine ID and commits through ordinary setup's
+credential staging, hook, and scheduler transaction. Interrupted staging retries
+reuse a matching opaque credential reference. Codes, bundles and decrypted payloads
+are never saved in drafts or ledgers. After commit, machine publication failure
+remains pending without disabling capture; the collector can reconstruct paired
+assignment metadata and publish after the bundle expires. App approval and history
+imports remain separate steps.

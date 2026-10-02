@@ -105,3 +105,10 @@ stays pending and is retried by the collector without another setup.
 Resuming an ordinary setup draft keeps the latest committed machine name and
 credential provenance for unchanged credentials. Changing the destination or
 credential reference clears old provenance; a draft cannot restore it.
+
+`AGENT_ARCHIVE_PAIRING_CODE` supplies the six-word pairing code only to
+`setup --pair-file PATH --yes` (or `--pair-file -`). The receiver reads and removes
+it from its process environment; it is never saved. Deliver it separately from
+the encrypted bundle, and clear it in the parent shell afterward. There is no
+code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
+redirected bundle input uses a private terminal for the code and destination review.

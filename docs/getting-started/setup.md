@@ -621,3 +621,8 @@ carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
 carries the saved folder with `--prefix`, retention, skill-use capture rule,
 effective skill evidence mode, and whether agent skills are installed.
 Omitting these flags from a scripted reconfiguration keeps the saved settings.
+
+For another machine, the encrypted shared-key beta can transfer settings through
+`setup --pair` or `setup --pair-file PATH`. Read [Multiple machines](../guides/multiple-machines.md)
+for separate bundle/code delivery, destination consent, scope review, and the
+shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.

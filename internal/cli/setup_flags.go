@@ -28,6 +28,8 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
+	pair                   bool
+	pairFile               string
 	prefix                 string
 	prefixSupplied         bool
 	retentionDays          int
@@ -112,6 +114,8 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
+	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted shared-key beta pairing")
+	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
 	var projects, projectRepos projectList
 	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
 	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
