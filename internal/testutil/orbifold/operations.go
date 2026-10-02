@@ -17,17 +17,21 @@ import (
 )
 
 // Skills declares fixture-owned locations, separately from other integrations.
+
 func Skills() skillconfig.Provider {
 	return skillconfig.Provider{ManagedSuffix: ".orbifold/skills", Roots: []skillconfig.Root{{Suffix: ".orbifold/skills", Scope: "user_orbits"}, {Suffix: ".orbifold/skills", Scope: "project_orbits", Project: true}}}
 }
 
 // Hooks interprets an independent JSON hook settings layout, preserving foreign fields.
+
 type Hooks struct{}
 
 func (Hooks) Location(l agentapi.HookLocations) string {
 	return filepath.Join(l.UserHome, ".orbifold", "starboard.json")
 }
+
 func (Hooks) EnvironmentKeys() []string { return []string{"ORBIT_CONFIG"} }
+
 func hookDocument(f agentapi.HookFile) (map[string]any, error) {
 	if f.ReadError != nil {
 		return nil, f.ReadError
@@ -43,6 +47,7 @@ func hookDocument(f agentapi.HookFile) (map[string]any, error) {
 	}
 	return d, nil
 }
+
 func (Hooks) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookInspection, error) {
 	d, err := hookDocument(r.File)
 	if err != nil {
@@ -59,6 +64,7 @@ func (Hooks) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookInspection,
 	}
 	return agentapi.HookInspection{State: state, Installed: found}, nil
 }
+
 func (h Hooks) Plan(r agentapi.HookPlanRequest) ([]filechange.Change, error) {
 	if r.Action != agentapi.HookInstall && r.Action != agentapi.HookRemove {
 		return nil, errors.New("unknown starboard action")
@@ -91,18 +97,22 @@ func (h Hooks) Plan(r agentapi.HookPlanRequest) ([]filechange.Change, error) {
 }
 
 // Launcher keeps native argv independent of shared process execution.
+
 type Launcher struct{}
 
 func (Launcher) Executables() agentapi.Executables {
 	return agentapi.Executables{Names: []string{"orbit-run"}, Install: "synthetic fixture only"}
 }
+
 func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
 	if r.ProjectDir == "" {
 		return nil, errors.New("landing directory required")
 	}
 	return append([]string{"--landing", r.ProjectDir, "--carry", r.Prompt}, r.ExtraArgs...), nil
 }
+
 func (p *Ports) SessionEnvironmentKeys() []string { return []string{"ORBIT_NATIVE_KEY"} }
+
 func (p *Ports) Detect(e agentapi.RuntimeEnvironment) agentapi.RuntimeObservation {
 	if e.LookupEnv == nil {
 		return agentapi.RuntimeObservation{}
@@ -113,6 +123,7 @@ func (p *Ports) Detect(e agentapi.RuntimeEnvironment) agentapi.RuntimeObservatio
 	}
 	return agentapi.RuntimeObservation{NativeID: id, PresenceKey: "ORBIT_NATIVE_KEY"}
 }
+
 func (p *Ports) ObserveVersion(e agentapi.VersionEnvironment) agentapi.ApplicationDiscovery {
 	out := agentapi.ApplicationDiscovery{VersionState: "unavailable"}
 	if e.Host == nil {
@@ -131,11 +142,13 @@ func (p *Ports) ObserveVersion(e agentapi.VersionEnvironment) agentapi.Applicati
 	}
 	return out
 }
+
 func (p *Ports) CaptureEvidence() agentapi.CaptureCapabilities {
 	validated := agentapi.CapabilityEvidence{State: agentapi.CapabilityFixtureValidated, Evidence: "synthetic Orbifold fixtures only"}
 	unavailable := agentapi.CapabilityEvidence{State: agentapi.CapabilityUnavailable, Evidence: "no child native evidence declared"}
 	return agentapi.CaptureCapabilities{FreshStart: validated, Transcript: validated, Lifecycle: validated, SkillEvidence: validated, SubagentLinkage: unavailable, AdapterFixtures: validated}
 }
+
 func (p *Ports) PreviewRecord(ctx context.Context, raw []byte) (archive.RecordPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.RecordPreview{}, err
@@ -149,18 +162,20 @@ func (p *Ports) PreviewRecord(ctx context.Context, raw []byte) (archive.RecordPr
 	}
 	text, _ := archive.RedactSensitive(pulse.Words)
 	kind := archive.TurnKindAssistant
-	if pulse.Speaker == "pilot" {
+	if pulse.Speaker == SpeakerPilot {
 		kind = archive.TurnKindHumanPrompt
 	}
 	return archive.RecordPreview{Title: text, Kind: kind}, nil
 }
 
 // Discovery owns the unusual native header and filename vocabulary.
+
 type Discovery struct{ Qualified bool }
 
 func (Discovery) DefaultDirectories(home string) []string {
 	return []string{filepath.Join(home, ".orbifold", "constellations")}
 }
+
 func (d Discovery) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryPurpose) []agentapi.NativeStoreRoot {
 	if purpose == agentapi.DiscoveryHandoff {
 		return nil
@@ -175,6 +190,7 @@ func (d Discovery) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryP
 	}
 	return roots
 }
+
 func (Discovery) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
 	var header agentapi.NativeHeader
 	var parseErr error
@@ -189,6 +205,7 @@ func (Discovery) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeH
 	})
 	return header, errors.Join(parseErr, err)
 }
+
 func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, emit func(agentapi.DiscoveryCandidate) error) (agentapi.DiscoveryReport, error) {
 	roots := r.Roots
 	if len(roots) == 0 {
@@ -196,7 +213,7 @@ func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, em
 	}
 	var report agentapi.DiscoveryReport
 	if r.Purpose == agentapi.DiscoveryHandoff {
-		return report, errors.New("Orbifold manifest has no bounded native handoff file view")
+		return report, errors.New("orbifold manifest has no bounded native handoff file view")
 	}
 	for _, root := range roots {
 		coverage, err := discoveryio.Walk(ctx, r.Files, root, r.MaxFiles, func(ref discoveryio.Ref) (bool, error) {
@@ -205,20 +222,20 @@ func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, em
 				return true, err
 			}
 			id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(ref.Path), "orbit-"), ".orbit")
-			c := agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: ID, NativeID: id}, Source: agentapi.SourceRef{Path: ref.Path}, Root: ref.Store, Bytes: info.Size()}
+			source := agentapi.SourceRef{Path: ref.Path}
 			if d.Qualified {
-				c.Source.Kind = Kind
-				c.Source.Key = id
+				source = agentapi.SourceRef{Path: ref.Path, Kind: Kind, Key: id}
 			}
-			if r.Stage == agentapi.DiscoveryIdentities {
-				header, err := d.InspectHeader(agentapi.NativeHeaderRequest{Purpose: r.Purpose, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
+			var header agentapi.NativeHeader
+			var identityError error
+			inspected := r.Stage == agentapi.DiscoveryIdentities
+			if inspected {
+				header, identityError = d.InspectHeader(agentapi.NativeHeaderRequest{Purpose: r.Purpose, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
 					return discoveryio.ScanRecords(ctx, r.Files, ref.Path, r.HeaderBytes, r.RecordBytes, visit)
 				}})
-				c.Header = header
-				c.IdentityInspected = true
-				c.IdentityError = err
-				c.Session.NativeID = header.NativeID
+				id = header.NativeID
 			}
+			c := agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: ID, NativeID: id}, Source: source, Root: ref.Store, Bytes: info.Size(), Header: header, IdentityInspected: inspected, IdentityError: identityError}
 			return true, emit(c)
 		})
 		report.Enumerated += coverage.Enumerated
@@ -233,12 +250,14 @@ func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, em
 }
 
 // ProjectPaths demonstrates a native inventory declaration without probing paths.
+
 func (p *Ports) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
 	return agentapi.NativeProjectPaths{Worktrees: []string{filepath.Join(e.Locations.UserHome, ".orbifold", "landings")}}
 }
 
 // ReadManifestShards is intentionally limited to the caller's synthetic files.
 // Production providers use their own bounded verified reads instead.
+
 func ReadManifestShards(paths []string, open func(string) (io.ReadCloser, error)) ([][]byte, error) {
 	var out [][]byte
 	for _, path := range paths {

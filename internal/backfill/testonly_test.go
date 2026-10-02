@@ -5,8 +5,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"path/filepath"
 	"strings"
-
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // Helpers only tests use, kept out of the production files so deadcode
@@ -15,7 +13,7 @@ import (
 // CursorStateDatabase is where Cursor keeps its chats under home on this
 // machine (see platform.Locations).
 func CursorStateDatabase(home string) string {
-	return cursorstore.StateDatabase(home)
+	return (Environment{Home: home, NativePaths: builtin.NewBuiltins()}).cursorStateDatabase()
 }
 
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under

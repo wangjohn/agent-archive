@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 )
@@ -14,7 +15,12 @@ import (
 // pre-selects setup's prompts, which the user can override either way.
 func detectHarnesses(files hooks.Files) []string {
 	var found []string
-	for _, name := range allHarnesses {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
 		if info, err := os.Stat(filepath.Dir(files[name])); err == nil && info.IsDir() {
 			found = append(found, name)
 		}

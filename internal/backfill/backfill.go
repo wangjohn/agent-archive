@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -201,7 +202,7 @@ func (f Filters) Validate(discovery agentapi.DiscoveryLookup) error {
 			return errors.New("historical discovery integrations are required")
 		}
 		if _, known := discovery.LookupDiscovery(h); !known {
-			return fmt.Errorf("unsupported historical discovery agent %q", h)
+			return fmt.Errorf("--harness must be %s, not %q", historicalChoices(discovery.DiscoveryAgents()), h)
 		}
 	}
 	if slices.Contains(f.Projects, "") {
@@ -454,4 +455,17 @@ func (e Environment) nativeProjectPaths(name string) agentapi.NativeProjectPaths
 		}
 	}
 	return agentapi.NativeProjectPaths{}
+}
+
+func historicalChoices(names []string) string {
+	switch len(names) {
+	case 0:
+		return "a registered historical agent"
+	case 1:
+		return names[0]
+	case 2:
+		return strings.Join(names, " or ")
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
+	}
 }

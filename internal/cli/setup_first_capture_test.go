@@ -32,7 +32,7 @@ func TestOfferFirstCaptureAsksNothingWhenItCannotGuessBoth(t *testing.T) {
 			var out bytes.Buffer
 			p := newPrompter(strings.NewReader(""), &out)
 			cfg := config.Config{}
-			done, err := offerFirstCapture(p, &cfg, tc.detect, tc.current, "/Users/alex", nil)
+			done, err := offerFirstCapture(allHarnesses, p, &cfg, tc.detect, tc.current, "/Users/alex", nil)
 			if done || err != nil || out.Len() != 0 || len(cfg.Harnesses) != 0 || len(cfg.Archive.Projects) != 0 {
 				t.Fatalf("done=%v err=%v cfg=%+v asked:\n%s", done, err, cfg, &out)
 			}
@@ -181,7 +181,7 @@ func TestOfferFirstCaptureGuessesTheCurrentProject(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
 	if !done || err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != "/Users/alex/src/app" || len(cfg.Harnesses) != 1 {
 		t.Fatalf("done=%v err=%v cfg=%+v\n%s", done, err, cfg, &out)
 	}
@@ -241,7 +241,7 @@ func TestOfferFirstCaptureNamesOtherProjects(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", known)
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", known)
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -265,7 +265,7 @@ func TestOfferFirstCaptureSkipsConfiguredSetups(t *testing.T) {
 	} {
 		var out bytes.Buffer
 		p := newPrompter(strings.NewReader(""), &out)
-		done, err := offerFirstCapture(p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
+		done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
 		if done || err != nil || out.Len() != 0 {
 			t.Fatalf("%+v: done=%v err=%v asked:\n%s", cfg, done, err, &out)
 		}

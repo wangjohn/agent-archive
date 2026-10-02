@@ -13,7 +13,7 @@ version. Record the evidence in [capture capabilities](../../docs/reference/capt
 Fixture success establishes fixture coverage; installed-version capture remains
 unverified until a real session is published and read back on that machine.
 
-Declare a canonical `agentmeta.Descriptor` and aliases. Native IDs remain opaque
+Declare a canonical `agentmeta.Descriptor` and aliases in `internal/agentmeta/catalog.go`, then bind actual ports in `builtin.NewBuiltins`. Registry operation projections derive from those ports. Native IDs remain opaque
 UTF-8 values qualified by the canonical agent. Do not apply UUID assumptions,
 case folding, trimming, or filename rules to shared session keys. Consumer
 restrictions, such as native handoff's bounded ASCII IDs, remain separate.
@@ -83,8 +83,7 @@ Unsupported operations remain absent from the registry.
 
 ## Verify the real consumers
 
-Use capability-specific suites in `internal/testutil/agenttest` and synthetic
-fixtures for the implemented ports. Register the shared golden `-update` flag
+Use capability-specific suites in `internal/testutil/agenttest`: `LaunchConformance`, `RuntimeConformance`, `FileSource`, `RecordSource`, `Discovery`, `HistoricalImport`, and `Skills`. Exercise only implemented ports with synthetic fixtures. Register the shared golden `-update` flag
 in every new tested package, including packages without local golden cases.
 Check ordinary registry injection across hook admission, filtering, publication,
 readback, metadata and handoff, plus discovery/backfill and setup/removal where
@@ -95,7 +94,7 @@ permitted replacements and append-only refusal.
 `internal/testutil/orbifold` and `TestFourthNormalRegistryFlow` demonstrate an
 independent test-only vocabulary, record framing and retained format through
 normal ports. They are synthetic extension evidence, not certification of a
-fourth production agent or installed native version. Run the repository's
+fourth production agent or installed native version. The fixture declares archive handoff and historical discovery, while native-file handoff, SQL catalog and child discovery remain unavailable. Its two native shard files feed borrowed records through normal capture; `internal/cli/fourth_flow_test.go` also exercises ordinary setup inventory, setup journals, removal, frozen publication retry and parser-only refresh. Run the repository's
 architecture, normal lint, shipped Levenshtein policy, golden-flag smoke, fuzz
 and platform checks against the final ancestry. See [testing](testing.md) for
 the required commands and review every changed golden before regeneration.

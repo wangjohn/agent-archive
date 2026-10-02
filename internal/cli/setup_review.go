@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"strings"
 	"time"
 
@@ -319,18 +320,27 @@ func printReviewChecklist(p *prompter, checks []reviewCheck) {
 // differs from the one setup saw then, and confirming moves the hooks.
 // recorded is whether the configuration recorded where setup installed
 // them; an earlier release did not, and always used the fixed paths.
-func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, installed []string, recorded bool, userHome string) {
-	variable := map[string]string{"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}
+func reviewHookFiles(ports agentapi.HooksLookup, p *prompter, apps []string, next, previous hooks.Files, installed []string, recorded bool, userHome string) {
 	for _, app := range apps {
 		if !containsString(installed, app) || previous[app] == next[app] {
 			continue
 		}
-		reason := []string{variable[app] + " in this shell differs from when setup last ran.", "To keep them where they are, cancel and run " + p.style.cmd("agent-archive setup")}
+		var variable string
+		if provider, ok := ports.LookupHooks(app); ok {
+			if keys := provider.EnvironmentKeys(); len(keys) > 0 {
+				variable = strings.Join(keys, ", ")
+			}
+		}
+		if variable == "" {
+			p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)), "The native configuration location differs from when setup last ran.", "To keep them where they are, cancel setup and restore its previous configuration location.")
+			continue
+		}
+		reason := []string{variable + " in this shell differs from when setup last ran.", "To keep them where they are, cancel and run " + p.style.cmd("agent-archive setup")}
 		if !recorded {
-			reason = []string{"An earlier release installed them at the fixed path,", "and " + variable[app] + " is set in this shell.", "To keep them there, cancel and run " + p.style.cmd("agent-archive setup")}
+			reason = []string{"An earlier release installed them at the fixed path,", "and " + variable + " is set in this shell.", "To keep them there, cancel and run " + p.style.cmd("agent-archive setup")}
 		}
 		p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)),
-			append(reason, "from a shell without "+variable[app]+".")...)
+			append(reason, "from a shell without "+variable+".")...)
 	}
 }
 
@@ -457,7 +467,7 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 
 // editSetupReview asks which setting to change and asks for it again.
 // known, when not nil, lists the projects the apps' history mentions.
-func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
+func editSetupReview(available []string, p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
 	// Whoever opens the edit menu has found it; the hint about it would be
 	// stale beside what they change.
 	p.reviewHint = ""
@@ -481,7 +491,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
 	case "apps":
-		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
+		if err = chooseHarnesses(available, p, nil, &draft.Config); err != nil {
 			return err
 		}
 		err = promptStopImported(p, draft)

@@ -51,7 +51,7 @@ func TestHarnessAliasIsSpelledOnce(t *testing.T) {
 	allowed := map[string]string{
 		"internal/agentmeta/catalog.go": "the identity declaration",
 		// A folder of Claude's desktop app, not a harness name.
-		"internal/cli/capabilities.go": "a directory name",
+		"internal/agents/claude/version.go": "the native desktop application directory name",
 	}
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()

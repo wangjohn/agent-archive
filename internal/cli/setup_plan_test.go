@@ -19,7 +19,7 @@ func TestSetupPreflightScopeKeepsDraftAppsDuringRecovery(t *testing.T) {
 		Harnesses: []string{"claude"},
 		Storage:   credentials.Config{Provider: credentials.ProviderR2, R2CredentialRef: "staged-ref"},
 	}}
-	scope := setupPreflightScope([]string{"cursor"}, existing, unfinished, true, true)
+	scope := setupPreflightScope(allHarnesses, []string{"cursor"}, existing, unfinished, true, true)
 	if !reflect.DeepEqual(scope.apps, []string{"codex", "claude"}) {
 		t.Fatalf("apps = %v", scope.apps)
 	}
@@ -29,7 +29,7 @@ func TestSetupPreflightScopeKeepsDraftAppsDuringRecovery(t *testing.T) {
 	if !scope.r2 || scope.credentialRef != "staged-ref" {
 		t.Fatalf("R2 preflight = %+v", scope)
 	}
-	withoutDraft := setupPreflightScope([]string{"cursor"}, existing, setupDraft{}, false, true)
+	withoutDraft := setupPreflightScope(allHarnesses, []string{"cursor"}, existing, setupDraft{}, false, true)
 	if !reflect.DeepEqual(withoutDraft.kept, []string{"codex"}) {
 		t.Fatalf("installed apps to keep = %v", withoutDraft.kept)
 	}

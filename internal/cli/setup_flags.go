@@ -297,7 +297,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
-	problems := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	problems := setupApps(env.setupNames(), &cfg, opts.apps, env.detectHarnesses(userHome), installed)
 	if len(problems) == 0 {
 		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
 			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
@@ -389,20 +389,20 @@ func providerName(provider string) string {
 // hooks are installed, since taking them out is a choice for interactive
 // setup, which shows the hooks it removes. It returns every problem with
 // --apps.
-func setupApps(cfg *config.Config, apps string, detected []string, installed bool) []error {
+func setupApps(available []string, cfg *config.Config, apps string, detected []string, installed bool) []error {
 	var chosen, unknown []string
 	switch {
 	case apps != "":
 		for app := range strings.SplitSeq(apps, ",") {
 			app = strings.TrimSpace(app)
-			if !containsString(allHarnesses, app) {
+			if !containsString(available, app) {
 				unknown = append(unknown, strconv.Quote(app))
 			} else if !containsString(chosen, app) {
 				chosen = append(chosen, app)
 			}
 		}
 		if len(unknown) > 0 {
-			return []error{fmt.Errorf("--apps takes codex, claude, and cursor, not %s", strings.Join(unknown, " or "))}
+			return []error{fmt.Errorf("--apps takes %s, not %s", strings.Join(available, ", "), strings.Join(unknown, " or "))}
 		}
 	case len(cfg.Harnesses) > 0:
 		chosen = cfg.Harnesses
@@ -413,7 +413,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(chosen) == 0 {
-			return []error{errors.New("no apps were found on this machine; pass --apps (codex, claude, cursor)")}
+			return []error{fmt.Errorf("no apps were found on this machine; pass --apps (%s)", strings.Join(available, ", "))}
 		}
 	}
 	if installed {
@@ -428,7 +428,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 		}
 	}
 	var ordered, declined []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		if containsString(chosen, app) {
 			ordered = append(ordered, app)
 		} else if containsString(cfg.DeclinedHarnesses, app) {

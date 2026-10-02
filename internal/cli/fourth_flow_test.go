@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +41,6 @@ func fourthRegistry(t *testing.T, ports *orbifold.Ports) *builtin.Registry {
 		integration, _ := base.Lookup(string(d.ID))
 		integration.Descriptor = agentmeta.Descriptor{ID: d.ID}
 		integrations = append(integrations, integration)
-		d.Operations = nil
 	}
 	descriptors = append(descriptors, agentmeta.Descriptor{ID: orbifold.ID, DisplayName: "Orbifold fixture"})
 	catalog, err := agentmeta.New(descriptors)
@@ -52,14 +55,19 @@ func fourthRegistry(t *testing.T, ports *orbifold.Ports) *builtin.Registry {
 	return registry
 }
 
-func TestFourthNormalRegistryFlow(t *testing.T) {
+func TestFourthNormalRegistryFlow(t *testing.T) { fourthNormalRegistryFlow(t, false) }
+
+func TestFourthFrozenPublicationRetry(t *testing.T) { fourthNormalRegistryFlow(t, true) }
+
+func fourthNormalRegistryFlow(t *testing.T, failPublication bool) {
+	t.Helper()
 	t.Parallel()
 	ctx := context.Background()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	nativeID := " collision/λ\x00 "
 	ports := &orbifold.Ports{Mutation: agentapi.ReplaceableSnapshot, Generation: 1}
-	for i, pulse := range []orbifold.NativePulse{{PulseKind: "exchange", Speaker: "pilot", Words: "Map the orbit", NativeIdentity: nativeID, Clock: now.Format(time.RFC3339), Credential: "private-fixture-only"}, {PulseKind: "exchange", Speaker: "oracle", Words: "The orbit is mapped", NativeIdentity: nativeID, Clock: now.Add(time.Second).Format(time.RFC3339)}} {
+	for i, pulse := range []orbifold.NativePulse{{PulseKind: "exchange", Speaker: orbifold.SpeakerPilot, Words: "Map the orbit", NativeIdentity: nativeID, Clock: now.Format(time.RFC3339), Credential: "private-fixture-only"}, {PulseKind: "exchange", Speaker: orbifold.SpeakerOracle, Words: "The orbit is mapped", NativeIdentity: nativeID, Clock: now.Add(time.Second).Format(time.RFC3339)}} {
 		raw, err := json.Marshal(pulse)
 		if err != nil {
 			t.Fatal(err)
@@ -113,15 +121,47 @@ func TestFourthNormalRegistryFlow(t *testing.T) {
 	if err != nil || !found || id != reg.ArchiveSessionID {
 		t.Fatalf("qualified identity: %q %v %v", id, found, err)
 	}
-	remote := storagetest.NewMemoryStore()
-	opts := collector.Options{Sources: registry, Parsers: registry, MachineID: "fourth-machine", Now: func() time.Time { return now.Add(time.Hour) }}
+	failures := 0
+	if failPublication {
+		failures = 1
+	}
+	remote := &fourthPublicationStore{ObjectStore: storagetest.NewMemoryStore(), failures: failures}
+	opts := collector.Options{Sources: registry, Parsers: registry, Retry: storage.RetryPolicy{MaxAttempts: 1}, MachineID: "fourth-machine", Now: func() time.Time { return now.Add(time.Hour) }}
 	ports.TransientReads = 1
 	if _, err := collector.Run(ctx, local, remote, opts); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collector.Run(ctx, local, remote, opts)
-	if err != nil || len(result.Errors) > 0 {
-		t.Fatalf("retry: %+v %v", result, err)
+	var result collector.Result
+	if failPublication {
+		result, err = collector.Run(ctx, local, remote, opts)
+		if err != nil || len(result.Errors) != 1 {
+			t.Fatalf("publication failure was lost: %+v %v", result, err)
+		}
+		pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+		if err != nil || !found {
+			t.Fatalf("frozen publication missing: %v %v", found, err)
+		}
+		frozenReads := ports.Reads
+		result, err = collector.Run(ctx, local, remote, opts)
+		if err != nil || len(result.Errors) > 0 {
+			t.Fatalf("publication retry: %+v %v", result, err)
+		}
+		source, err := remote.Get(ctx, pending.SourceKey)
+		if err != nil || !bytes.Equal(source, pending.SourceBytes) {
+			t.Fatal("retry changed frozen source key or bytes")
+		}
+		metadataBytes, err := remote.Get(ctx, pending.MetadataKey)
+		if err != nil || !bytes.Equal(metadataBytes, pending.MetadataBytes) {
+			t.Fatal("retry changed frozen metadata bytes")
+		}
+		if ports.Reads != frozenReads {
+			t.Fatal("frozen retry reread changed native source")
+		}
+	} else {
+		result, err = collector.Run(ctx, local, remote, opts)
+		if err != nil || len(result.Errors) > 0 {
+			t.Fatalf("publication: %+v %v", result, err)
+		}
 	}
 	metadata := fetchFourthMetadata(t, remote, string(orbifold.ID), reg.ArchiveSessionID)
 	bundle, err := reader.LoadSource(ctx, remote, metadata, reader.Limits{})
@@ -151,6 +191,9 @@ func TestFourthNormalRegistryFlow(t *testing.T) {
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("normal discovery: %v %v", keys, err)
 	}
+	if failPublication {
+		return
+	} // The successful capture scenario owns parser refresh and replacement checks.
 	reads := ports.Reads
 	ports.ParserVersion = "orbifold-parser-2"
 	if _, err := collector.Run(ctx, local, remote, opts); err != nil {
@@ -181,6 +224,7 @@ func writeFourthTranscript(t *testing.T, dir, name, content string) string {
 	}
 	return path
 }
+
 func fetchFourthMetadata(t *testing.T, store storage.ObjectStore, name, id string) archive.Metadata {
 	t.Helper()
 	key, err := archive.MetadataObjectKey(name, id)
@@ -207,7 +251,7 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	registry := fourthRegistry(t, ports)
 	root := filepath.Join(userHome, ".orbifold", "constellations")
 	must(t, os.MkdirAll(root, 0700))
-	pulse := orbifold.NativePulse{PulseKind: "exchange", Speaker: "pilot", Words: "Historical orbit", NativeIdentity: "historical", Clock: at.Add(-time.Hour).Format(time.RFC3339), Landing: project}
+	pulse := orbifold.NativePulse{PulseKind: "exchange", Speaker: orbifold.SpeakerPilot, Words: "Historical orbit", NativeIdentity: "historical", Clock: at.Add(-time.Hour).Format(time.RFC3339), Landing: project}
 	raw, err := json.Marshal(pulse)
 	must(t, err)
 	ports.Shards = [][]byte{raw}
@@ -306,3 +350,108 @@ func TestFourthRecordOwnershipConformance(t *testing.T) {
 	ports := &orbifold.Ports{Generation: 1, Shards: [][]byte{[]byte(`{"pulseKind":"exchange"}`), []byte(`{"pulseKind":"exchange"}`)}}
 	agenttest.RecordSource(t, ports, agentapi.SourceRef{Kind: orbifold.Kind, Key: "fixture"}, agentapi.SourceEnvironment{})
 }
+
+func TestFourthOrdinarySetupInventory(t *testing.T) {
+	t.Parallel()
+	registry := fourthRegistry(t, &orbifold.Ports{})
+	env := Env{Agents: registry}
+	cfg := config.Config{}
+	if problems := setupApps(env.setupNames(), &cfg, string(orbifold.ID), nil, false); len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	if len(cfg.Harnesses) != 1 || cfg.Harnesses[0] != string(orbifold.ID) {
+		t.Fatalf("selection discarded injected app: %v", cfg.Harnesses)
+	}
+	if !slices.Contains(installedApps(env.setupNames(), config.Config{}, true), string(orbifold.ID)) {
+		t.Fatal("legacy installed inventory discarded injected app")
+	}
+	userHome := t.TempDir()
+	files := env.hookFiles(userHome)
+	if err := os.MkdirAll(filepath.Dir(files[string(orbifold.ID)]), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env.detectHarnesses(userHome), string(orbifold.ID)) {
+		t.Fatal("detection discarded injected hook location")
+	}
+	if apps := preflightApps(env.setupNames(), nil, cfg.Harnesses, nil, nil); !slices.Equal(apps, cfg.Harnesses) {
+		t.Fatalf("preflight discarded selected app: %v", apps)
+	}
+}
+
+func TestFourthRuntimeLauncherAndEvidence(t *testing.T) {
+	t.Parallel()
+	ports := &orbifold.Ports{}
+	registry := fourthRegistry(t, ports)
+	env := Env{Agents: registry, LookupEnv: func(key string) (string, bool) { return "same opaque/λ", key == "ORBIT_NATIVE_KEY" }, LookPath: func(name string) (string, error) { return "/synthetic/bin/" + name, nil }, Environ: func() []string { return []string{"ORBIT_NATIVE_KEY=caller", "KEEP=1"} }}
+	key, err := agentmeta.NewSessionKey(string(orbifold.ID), "same opaque/λ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !currentSessions(env)[key] {
+		t.Fatal("runtime inventory did not qualify injected opaque identity")
+	}
+	spec, err := buildLaunchSpec(fourthDestination, "follow the orbit", "/synthetic/handoff", "/synthetic/project", []string{"--verbose"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(spec.Args, []string{"--landing", "/synthetic/project", "--carry", "follow the orbit", "--verbose"}) || !slices.Equal(spec.Env, []string{"KEEP=1"}) {
+		t.Fatalf("native launcher contract was lost: %+v", spec)
+	}
+	evidence := captureCapabilityProfile(registry, string(orbifold.ID))
+	if evidence.FreshStart.State != agentapi.CapabilityFixtureValidated || evidence.SubagentLinkage.State != agentapi.CapabilityUnavailable {
+		t.Fatalf("fixture capability evidence overstated: %+v", evidence)
+	}
+	inspector, ok := registry.LookupVersionInspector(string(orbifold.ID))
+	if !ok {
+		t.Fatal("version capability missing")
+	}
+	observed := inspector.ObserveVersion(agentapi.VersionEnvironment{Host: fourthVersionHost{}})
+	if !observed.Installed || observed.Version != "" || observed.VersionState != "unavailable" {
+		t.Fatalf("unavailable version probe became installed verification: %+v", observed)
+	}
+	preview, ok := registry.LookupPreview(string(orbifold.ID))
+	if !ok {
+		t.Fatal("native preview missing")
+	}
+	raw, _ := json.Marshal(orbifold.NativePulse{PulseKind: "exchange", Speaker: orbifold.SpeakerPilot, Words: "Orbital question"})
+	view, err := preview.PreviewRecord(t.Context(), raw)
+	if err != nil || view.Title != "Orbital question" {
+		t.Fatalf("native preview unavailable: %+v %v", view, err)
+	}
+	discovery, _ := registry.LookupDiscovery(string(orbifold.ID))
+	_, err = discovery.Discover(t.Context(), agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryHandoff}, func(agentapi.DiscoveryCandidate) error { return errors.New("unexpected native handoff candidate") })
+	if err == nil {
+		t.Fatal("fixture unexpectedly advertises native file handoff")
+	}
+
+}
+
+type fourthVersionHost struct{}
+
+func (fourthVersionHost) Exists(string) (bool, bool) { return false, false }
+
+func (fourthVersionHost) ResolveExecutable(name string) (string, bool) {
+	return "/synthetic/bin/" + name, true
+}
+
+func (fourthVersionHost) Directories(string) []agentapi.VersionDirectory { return nil }
+
+func (fourthVersionHost) ProbeVersion(agentapi.VersionProbe) (string, bool) { return "", false }
+
+// A source write succeeds before one transient metadata failure. The next pass
+// must publish the frozen key and bytes without another native read.
+
+type fourthPublicationStore struct {
+	storage.ObjectStore
+	failures int
+}
+
+func (s *fourthPublicationStore) Put(ctx context.Context, key string, data []byte) error {
+	if strings.HasSuffix(key, "/metadata.json") && s.failures > 0 {
+		s.failures--
+		return io.ErrUnexpectedEOF
+	}
+	return s.ObjectStore.Put(ctx, key, data)
+}
+
+const fourthDestination handoffDestination = handoffDestination(orbifold.ID)

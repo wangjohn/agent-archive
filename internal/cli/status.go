@@ -248,8 +248,8 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	app := strings.ToLower(appArg)
-	if appArg != "" && !slices.Contains(allHarnesses, app) {
-		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(allHarnesses, ", "))
+	if appArg != "" && !slices.Contains(env.setupNames(), app) {
+		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(env.setupNames(), ", "))
 	}
 	if app != "" && *jsonOut {
 		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")

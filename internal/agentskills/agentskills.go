@@ -13,6 +13,7 @@ package agentskills
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/skillownership"
 	"io/fs"
@@ -52,6 +53,11 @@ func Files(ports agentapi.SkillsLookup, userHome, claudeDir string, harnesses []
 
 // skillFiles is Files for the skills in registry.
 func skillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
+	files, _ := renderedSkillFiles(ports, registry, userHome, claudeDir, harnesses, executable, dataHome)
+	return files
+}
+
+func renderedSkillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) ([]File, error) {
 	var files []File
 	// Render each skill in historical destination order; merge shared paths.
 	for _, skill := range registry {
@@ -73,7 +79,7 @@ func skillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeD
 			content := skill.Render(dest, executable, dataHome)
 			if i, ok := indexes[path]; ok {
 				if !bytes.Equal(files[i].Content, content) {
-					panic("conflicting skill destinations")
+					return nil, fmt.Errorf("skill %s has conflicting content at %s", skill.Name, path)
 				}
 				files[i].Harnesses = append(files[i].Harnesses, name)
 				continue
@@ -83,7 +89,7 @@ func skillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeD
 		}
 	}
 
-	return files
+	return files, nil
 }
 
 // marker is the line every skill file carries. A file with it is setup's,
@@ -131,7 +137,11 @@ func PlanInstall(ports agentapi.SkillsLookup, userHome, claudeDir string, harnes
 // planInstall is PlanInstall for the skills in registry.
 func planInstall(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
 	wanted := map[string]bool{}
-	for _, f := range skillFiles(ports, registry, userHome, claudeDir, harnesses, executable, dataHome) {
+	files, err := renderedSkillFiles(ports, registry, userHome, claudeDir, harnesses, executable, dataHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range files {
 		wanted[f.Path] = true
 		current, state, err := read(f.Path)
 		if err != nil {
@@ -154,7 +164,15 @@ func planInstall(ports agentapi.SkillsLookup, registry []Skill, userHome, claude
 		changes = append(changes, planned...)
 
 	}
-	for _, f := range append(skillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", ""), skillFiles(ports, registry, userHome, previousClaudeDir, ports.SkillAgents(), "", "")...) {
+	currentFiles, err := renderedSkillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	previousFiles, err := renderedSkillFiles(ports, registry, userHome, previousClaudeDir, ports.SkillAgents(), "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range append(currentFiles, previousFiles...) {
 		if wanted[f.Path] {
 			continue
 		}
@@ -179,7 +197,11 @@ func PlanRemoval(ports agentapi.SkillsLookup, userHome, claudeDir, dataHome stri
 
 // planRemovalOf is PlanRemoval for the skills in registry.
 func planRemovalOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
-	for _, f := range skillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "") {
+	files, err := renderedSkillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range files {
 		change, found, err := planRemoval(ports, f, dataHome)
 		if err != nil {
 			return nil, nil, err

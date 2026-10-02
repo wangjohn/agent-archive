@@ -54,7 +54,7 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 	} {
 		env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home, OS: tc.system, Getenv: func(string) string { return tc.xdg }}
 		wantDir := filepath.FromSlash(tc.wantDir)
-		if got := env.locations().CursorAppDir; got != wantDir {
+		if got := filepath.Dir(filepath.Dir(filepath.Dir(env.cursorStateDatabase()))); got != wantDir {
 			t.Errorf("%s: data folder %q, want %q", tc.name, got, wantDir)
 		}
 		if got, want := cursorWorkspaceStorage(env), filepath.Join(wantDir, "User", "workspaceStorage"); got != want {
@@ -315,8 +315,7 @@ func TestUnknownSystemFailsClosed(t *testing.T) {
 func TestVarTmpIsATemporaryDirectoryOnLinux(t *testing.T) {
 	t.Parallel()
 	tr := newTree(t)
-	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: tr.home, OS: platform.Linux, EvalSymlinks: func(p string) (string, error) { return p, nil }}
-	env.Stat = func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: tr.home, OS: platform.Linux, EvalSymlinks: func(p string) (string, error) { return p, nil }, Stat: func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }}
 	got := newResolver(env, config.Config{}, Filters{}).resolve("/var/tmp/run-1")
 	if got.kind != ProjectKindTemporary || got.skip != SkipTemporaryDirectory {
 		t.Fatalf("/var/tmp/run-1: %+v", got)
@@ -340,7 +339,7 @@ func TestUndoReadsTheLinuxCursorDatabase(t *testing.T) {
 	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home, OS: platform.Linux, Getenv: func(string) string { return "" }}
 
 	// A database only at the macOS location is not seen on Linux.
-	writeCursorDB(t, platform.NewLocations(platform.Darwin, home, nil, platform.LocationDeps{}).CursorStateDB, false, rows)
+	writeCursorDB(t, (Environment{Home: home, OS: platform.Darwin, NativePaths: builtin.NewBuiltins()}).cursorStateDatabase(), false, rows)
 	if resumed, unknown, err := resumedSinceImport(env, store, reg, state.Request{}); err != nil || resumed || unknown {
 		t.Fatalf("macOS-location database on Linux: resumed %v, unknown %v, err %v", resumed, unknown, err)
 	}

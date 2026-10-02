@@ -415,7 +415,7 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile(string(s.parent.t.harness), s.sub.Path, time.Time{}, env.Sources)
+		filtered, _, err := collector.FilterSource(ctx, string(s.parent.t.harness), agentapi.SourceRef{Path: s.sub.Path}, time.Time{}, env.Sources)
 		if err != nil {
 			if fatalSourceFailure(err) {
 				s.sourceErr = err

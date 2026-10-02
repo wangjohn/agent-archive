@@ -118,12 +118,12 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found), env.agentRegistry())
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(env.setupNames(), cfg, found), env.agentRegistry())
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, env.setupNames()) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
@@ -475,9 +475,9 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 // installedApps is the apps whose hooks setup installed, per the committed
 // configuration. An empty list in a configuration means every app (see
 // config.Config.Harnesses); with no configuration at all, none is known.
-func installedApps(cfg config.Config, found bool) []string {
+func installedApps(available []string, cfg config.Config, found bool) []string {
 	if found && len(cfg.Harnesses) == 0 {
-		return allHarnesses
+		return available
 	}
 	return cfg.Harnesses
 }
@@ -491,7 +491,7 @@ func installedApps(cfg config.Config, found bool) []string {
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
 func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	for _, app := range allHarnesses {
+	for _, app := range owner.Ports.HookAgents() {
 		for i, set := range []hooks.Files{files, legacy} {
 			if i == 1 && legacy[app] == files[app] {
 				continue
@@ -516,11 +516,11 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 // installed into (files) and their legacy paths, followed by removing the
 // agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
-func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string, sources ...agentapi.SkillsLookup) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string, sources agentapi.SkillsLookup) (changes []hooks.Change, skipped []string, err error) {
 	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
-	removals, kept, err := agentskills.PlanRemoval(skillPorts(sources), userHome, claudeConfigDir(files), in.commandDataHome())
+	removals, kept, err := agentskills.PlanRemoval(sources, userHome, claudeConfigDir(files), in.commandDataHome())
 	if err != nil {
 		return nil, nil, err
 	}

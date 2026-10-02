@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -36,6 +36,7 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	Sources    agentapi.SourcesLookup
 	Home       string
 	Store      *state.Store
 	Batch      string
@@ -399,13 +400,27 @@ func (r Registration) chatGone(c Candidate) bool {
 	if r.CursorDatabase == "" {
 		return false
 	}
-	_, err := readChatSignature(context.Background(), r.CursorDatabase, c.SourceKey)
+	_, err := observeSource(context.Background(), r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
 	return isNotExist(err)
 }
 
-// readChatSignature is cursorstore.ReadSignature, as a variable only so a
-// test can see when registration reads Cursor's database.
-var readChatSignature = cursorstore.ReadSignature
+// observeSource asks the selected provider and closes its serial owner before
+// registration takes hooks.lock. Cleanup failures remain observable.
+func observeSource(ctx context.Context, sources agentapi.SourcesLookup, environment agentapi.SourceEnvironment, name string, ref agentapi.SourceRef) (observation agentapi.SourceObservation, err error) {
+	if sources == nil {
+		return observation, errors.New("source lookup required")
+	}
+	provider, _, ok := sources.LookupSources(name)
+	if !ok {
+		return observation, errors.New("source capability unavailable")
+	}
+	pass, err := provider.OpenPass(ctx, environment)
+	if err != nil {
+		return observation, err
+	}
+	defer func() { err = errors.Join(err, pass.Close()) }()
+	return pass.Signature(ctx, ref)
+}
 
 // regularFile reports whether path is still a regular file, without
 // following a symlink.

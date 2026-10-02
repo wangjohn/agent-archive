@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -183,9 +184,9 @@ func (p Plan) ExpiresOn() (string, bool) {
 }
 
 // SearchLine is the progress line printed while discovery runs.
-func SearchLine(f Filters) string {
+func SearchLine(f Filters, available []string) string {
 	var names []string
-	for _, h := range harnessOrder {
+	for _, h := range available {
 		if harnessMatches(f.Harnesses, h) {
 			names = append(names, agentLabel(h))
 		}
@@ -319,7 +320,7 @@ func addedProjectMessage(projects []ProjectSummary, harnesses []string) string {
 		return ""
 	}
 	var hooked []string
-	for _, h := range harnessOrder {
+	for _, h := range presentationAgents(harnesses) {
 		if slices.Contains(harnesses, h) {
 			hooked = append(hooked, agentLabel(h))
 		}
@@ -362,6 +363,15 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 		status = "already included"
 	}
 	terminal.Printf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
+	extras := map[string]bool{}
+	for name := range s.Sessions {
+		if !slices.Contains(harnessOrder, name) {
+			extras[name] = true
+		}
+	}
+	for _, name := range sortedAgentKeys(extras) {
+		terminal.Printf(w, "  %s: %d sessions\n", agentLabel(name), s.Sessions[name])
+	}
 	switch s.Kind {
 	case ProjectKindScratch:
 		if p.isCodexWorkspaces(s.Root) {
@@ -569,7 +579,7 @@ func renderSkipped(w io.Writer, p Plan) {
 			terminal.Println(w, "      none of its archived sessions are included.")
 			continue
 		}
-		terminal.Printf(w, "      %s's session folder could not be read (check permissions);\n", harnessNames[h])
+		terminal.Printf(w, "      %s's session folder could not be read (check permissions);\n", agentLabel(h))
 		terminal.Println(w, "      none of its sessions are included.")
 	}
 	if databaseUnchecked {
@@ -598,7 +608,7 @@ func sessionNoun(apps map[string]bool, n int) string {
 			if h == "cursor" {
 				noun = "Cursor chat"
 			} else {
-				noun = harnessNames[h] + " session"
+				noun = agentLabel(h) + " session"
 			}
 		}
 	}
@@ -817,6 +827,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		for _, h := range harnessOrder {
 			sessions[h] = s.Sessions[h]
 		}
+		maps.Copy(sessions, s.Sessions)
 		out.Projects = append(out.Projects, projectJSON{
 			Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
 			Sessions: sessions, Subagents: s.Subagents, Bytes: s.Bytes,
@@ -843,4 +854,16 @@ func agentLabel(name string) string {
 		return label
 	}
 	return name
+}
+
+// presentationAgents preserves existing columns and appends represented extensions.
+func presentationAgents(names []string) []string {
+	ordered := slices.Clone(harnessOrder)
+	extras := map[string]bool{}
+	for _, name := range names {
+		if !slices.Contains(ordered, name) {
+			extras[name] = true
+		}
+	}
+	return append(ordered, sortedAgentKeys(extras)...)
 }

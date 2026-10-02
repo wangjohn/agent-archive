@@ -6,10 +6,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
-	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"maps"
-	"os"
 	"time"
 )
 
@@ -29,12 +27,6 @@ func (SourceProvider) Describe(r agentapi.SourceRef) (agentapi.SourceSemantics, 
 
 // OpenPass creates a lazy serial owner without opening source content.
 func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
-	if e.Database == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			e.Database = (ProjectEvidence{}).ProjectPaths(agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home}, OperatingSystem: platform.Current(), Getenv: os.Getenv}).Database
-		}
-	}
 	file, err := (sourceio.FileProvider{}).OpenPass(ctx, e)
 	if err != nil {
 		return nil, err

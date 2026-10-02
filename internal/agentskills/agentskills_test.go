@@ -1,7 +1,9 @@
 package agentskills
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/agents/skillconfig"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,6 +83,7 @@ func TestSkillContent(t *testing.T) {
 
 // A path the shell would split is quoted in the command, and then no
 // permission rule is written: it would not match the command as run.
+
 func TestSkillQuotesAPathThatNeedsIt(t *testing.T) {
 	t.Parallel()
 	content := string(skillFiles(builtin.NewBuiltins(), handoffOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude"}, "/Users/me/My Tools/agent-archive", "")[0].Content)
@@ -192,6 +195,7 @@ func TestPlanInstallLeavesLinksAndDirectories(t *testing.T) {
 // A linked handoff directory is a skill of the person's own: setup
 // neither writes into it nor removes or lists what is in it. A linked
 // skills directory above it is written through, as hook files are.
+
 func TestLinkedSkillDirectories(t *testing.T) {
 	t.Parallel()
 	home, mine := t.TempDir(), t.TempDir()
@@ -289,6 +293,7 @@ func TestPlanRemovalKeepsWhatSetupDidNotWrite(t *testing.T) {
 
 // A directory holding something else stays, and so does every parent
 // above it; the home folder itself is never removed.
+
 func TestRemoveEmptyDirsStopsAtOneInUse(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -310,6 +315,7 @@ func TestRemoveEmptyDirsStopsAtOneInUse(t *testing.T) {
 
 // A relocated installation's skill runs with its data directory, as its
 // hooks do, since the agent's environment need not have it.
+
 func TestSkillNamesARelocatedDataDirectory(t *testing.T) {
 	t.Parallel()
 	files := skillFiles(builtin.NewBuiltins(), handoffOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, exe, "/tmp/test home")
@@ -326,6 +332,7 @@ func TestSkillNamesARelocatedDataDirectory(t *testing.T) {
 
 // Each installation sharing a HOME (with hook files of its own) replaces,
 // removes, and lists only the skill naming its own data directory.
+
 func TestInstallationsKeepEachOthersSkills(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -358,6 +365,7 @@ func TestInstallationsKeepEachOthersSkills(t *testing.T) {
 // A linked directory (a dotfile manager's ~/.claude/skills, or a handoff
 // skill of the person's own linked in) is never unlinked, even when what
 // it names is empty: os.Remove would remove the link itself.
+
 func TestRemoveEmptyDirsKeepsLinks(t *testing.T) {
 	t.Parallel()
 	home, dotfiles := t.TempDir(), t.TempDir()
@@ -376,6 +384,7 @@ func TestRemoveEmptyDirsKeepsLinks(t *testing.T) {
 
 // A relocated installation's skill stays its own after the executable
 // moves (an upgrade), even with a data directory that needs quoting.
+
 func TestRelocatedSkillSurvivesAMovedExecutable(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -402,6 +411,7 @@ func must(t *testing.T, err error) {
 
 // testSkill is a skill that exists only in tests, the second entry of a
 // registry: its text names the destination and the command it runs.
+
 func testSkill(name string) Skill {
 	return Skill{Name: name, Render: func(dest Destination, executable, dataHome string) []byte {
 		return []byte("---\nname: " + name + "\n---\n" + marker + "\n" + commandLine(executable, dataHome) + " " + name + " " + strconv.Itoa(int(dest)) + "\n")
@@ -410,6 +420,7 @@ func testSkill(name string) Skill {
 
 // handoffOnly is a registry of just /handoff, for the tests that pin its
 // files and how they are installed whatever else is registered.
+
 var handoffOnly = []Skill{handoffSkill}
 
 func twoSkills() []Skill { return []Skill{handoffSkill, testSkill("second")} }
@@ -455,6 +466,7 @@ func TestFilesListEachSkillInRegistryOrder(t *testing.T) {
 // Each skill's files are the setup's own or a foreign one independently: a
 // file of the person's own for one skill leaves the others installed, and
 // uninstalling keeps just that one.
+
 func TestSkillsInstallAndRemoveIndependently(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -499,6 +511,7 @@ func TestSkillsInstallAndRemoveIndependently(t *testing.T) {
 
 // A file no longer wanted for a harness goes for every skill in the
 // registry, not only the first.
+
 func TestPlanInstallRemovesEverySkillOfAnAppNoLongerChosen(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -514,6 +527,7 @@ func TestPlanInstallRemovesEverySkillOfAnAppNoLongerChosen(t *testing.T) {
 
 // Stale is the skill files setup owns whose content this release would
 // render differently: a moved executable, or wording from an earlier release.
+
 func TestStaleReportsOnlyOwnedFilesThatDifferFromThisRender(t *testing.T) {
 	t.Parallel()
 	render := func(executable string) string {
@@ -549,6 +563,7 @@ func TestStaleReportsOnlyOwnedFilesThatDifferFromThisRender(t *testing.T) {
 
 // Each skill is judged on its own file, and a stale file is always one
 // Installed lists.
+
 func TestStaleNamesTheOutdatedSkillOnly(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -580,6 +595,7 @@ func TestStaleNamesTheOutdatedSkillOnly(t *testing.T) {
 
 // Nothing is stale without a recorded executable to compare with, or where
 // there are no files.
+
 func TestStaleWithNothingToCompare(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -596,6 +612,7 @@ func TestStaleWithNothingToCompare(t *testing.T) {
 
 // A skill of the person's own linked in (its directory a link) is not
 // setup's to call out of date, even with the marker line in it.
+
 func TestStaleLeavesALinkedSkillDirectoryAlone(t *testing.T) {
 	t.Parallel()
 	home, elsewhere := t.TempDir(), t.TempDir()
@@ -610,6 +627,7 @@ func TestStaleLeavesALinkedSkillDirectoryAlone(t *testing.T) {
 // Stale follows the installation's data directory as Installed does: a
 // relocated installation's skill is judged against a render naming its
 // directory, and another installation's file is never reported.
+
 func TestStaleFollowsTheDataDirectory(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -632,6 +650,7 @@ func TestStaleFollowsTheDataDirectory(t *testing.T) {
 
 // The exported entry points read the Registry, so what setup installs and
 // what status reports agree with the skills registered.
+
 func TestExportedFunctionsUseTheRegistry(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -654,6 +673,7 @@ func TestExportedFunctionsUseTheRegistry(t *testing.T) {
 
 // A file replaced or removed keeps its permissions in the change, so that a
 // rollback puts the file back as it was, mode and all.
+
 func TestChangesCarryTheFilesPermissions(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -681,6 +701,7 @@ func TestChangesCarryTheFilesPermissions(t *testing.T) {
 
 // When Claude Code's configuration directory moved since setup last ran,
 // the file in the old one goes, and the new one gets its own.
+
 func TestPlanInstallRemovesTheFileInThePreviousClaudeDirectory(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -705,6 +726,7 @@ func TestPlanInstallRemovesTheFileInThePreviousClaudeDirectory(t *testing.T) {
 
 // The marker is a line of its own: a file that only mentions it (quotes it
 // in a sentence) is the person's.
+
 func TestAFileThatOnlyQuotesTheMarkerIsNotSetups(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -717,5 +739,26 @@ func TestAFileThatOnlyQuotesTheMarkerIsNotSetups(t *testing.T) {
 	}
 	if got := installedOf(builtin.NewBuiltins(), handoffOnly, home, claudeDir(home), ""); len(got) != 0 {
 		t.Fatalf("Installed = %v", got)
+	}
+}
+
+type collidingSkillPorts struct{}
+
+func (collidingSkillPorts) SkillAgents() []string { return []string{"plain", "frontmatter"} }
+
+func (collidingSkillPorts) LookupSkills(name string) (agentapi.SkillProvider, bool) {
+	return skillconfig.Provider{ManagedSuffix: "shared-skills", Frontmatter: name == "frontmatter"}, true
+}
+
+func TestConflictingSkillDestinationsRefuseBeforeWriting(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	changes, _, err := PlanInstall(collidingSkillPorts{}, home, "", []string{"plain", "frontmatter"}, exe, "", "")
+	if err == nil || len(changes) > 0 {
+		t.Fatalf("conflicting content produced changes: %v %v", changes, err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("conflicting plan touched host: %v %v", entries, err)
 	}
 }

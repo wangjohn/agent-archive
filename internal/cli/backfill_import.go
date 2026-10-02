@@ -99,7 +99,8 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	activity.set(stopRegister)
 	registration := backfill.Registration{
-		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
+		Sources: env.agentRegistry(),
+		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)

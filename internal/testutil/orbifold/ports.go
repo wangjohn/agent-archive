@@ -6,10 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -18,22 +18,27 @@ import (
 )
 
 const ID agentmeta.ID = "orbifold"
+
 const Kind archive.SourceKind = "orbifold/manifest"
+
 const Frame agentapi.NativeRecordKind = "orbifold-pulse"
+
 const Format = "orbifold-pulse-set"
 
 // NativePulse is intentionally unrelated to existing native schemas.
+
 type NativePulse struct {
-	PulseKind      string `json:"pulseKind"`
-	Speaker        string `json:"speaker"`
-	Words          string `json:"words"`
-	NativeIdentity string `json:"nativeIdentity"`
-	Clock          string `json:"clock"`
-	Landing        string `json:"landing,omitempty"`
-	Credential     string `json:"credential,omitempty"`
+	PulseKind      string  `json:"pulseKind"`
+	Speaker        Speaker `json:"speaker"`
+	Words          string  `json:"words"`
+	NativeIdentity string  `json:"nativeIdentity"`
+	Clock          string  `json:"clock"`
+	Landing        string  `json:"landing,omitempty"`
+	Credential     string  `json:"credential,omitempty"`
 }
 
 // Ports owns a mutable synthetic source; passes freeze its multiple shard values.
+
 type Ports struct {
 	Shards         [][]byte
 	ShardPaths     []string
@@ -46,14 +51,17 @@ type Ports struct {
 	ParserVersion  string
 }
 
-func (p *Ports) Name() string    { return string(ID) }
+func (p *Ports) Name() string { return string(ID) }
+
 func (p *Ports) Version() string { return "orbifold-filter-1" }
+
 func (p *Ports) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics, error) {
 	if ref.Kind != Kind && ref.Kind != archive.SourceKindFile || ref.Kind == Kind && ref.Key == "" {
 		return agentapi.SourceSemantics{}, errors.New("unsupported orbifold locator")
 	}
 	return agentapi.SourceSemantics{Mutation: p.Mutation, Provider: string(Kind)}, nil
 }
+
 func (p *Ports) OpenPass(ctx context.Context, _ agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -81,8 +89,9 @@ func (p *pass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.
 	for _, raw := range p.owner.Shards {
 		size += int64(len(raw))
 	}
-	return agentapi.SourceObservation{Present: true, Empty: len(p.owner.Shards) == 0, Size: size, Activity: time.Date(2026, 9, 1, 0, 0, p.owner.Generation, 0, time.UTC), Signature: agentapi.SourceSignature{Version: 1, Provider: string(Kind), Token: fmt.Sprint(p.owner.Generation)}}, nil
+	return agentapi.SourceObservation{Present: true, Empty: len(p.owner.Shards) == 0, Size: size, Activity: time.Date(2026, 9, 1, 0, 0, p.owner.Generation, 0, time.UTC), Signature: agentapi.SourceSignature{Version: 1, Provider: string(Kind), Token: strconv.Itoa(p.owner.Generation)}}, nil
 }
+
 func (p *pass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	observed, err := p.Signature(ctx, ref)
 	if err != nil {
@@ -113,6 +122,7 @@ func (p *pass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi
 	p.live = append(p.live, s)
 	return s, nil
 }
+
 func (p *pass) Close() error {
 	if !p.closed {
 		p.closed = true
@@ -130,9 +140,11 @@ type snapshot struct {
 }
 
 func (s *snapshot) Observation() agentapi.SourceObservation { return s.observed }
+
 func (s *snapshot) Input() agentapi.NativeInput {
 	return agentapi.NativeInput{Records: &records{owner: s}}
 }
+
 func (s *snapshot) Close() error { s.closed = true; s.shards = nil; return nil }
 
 type records struct {
@@ -152,7 +164,7 @@ func (r *records) Next(ctx context.Context) (agentapi.NativeRecord, bool, error)
 	}
 	i := r.i
 	r.i++
-	return agentapi.NativeRecord{Kind: Frame, Key: fmt.Sprint(i), Raw: r.owner.shards[i]}, true, nil
+	return agentapi.NativeRecord{Kind: Frame, Key: strconv.Itoa(i), Raw: r.owner.shards[i]}, true, nil
 }
 
 func (p *Ports) Filter(ctx context.Context, in agentapi.NativeInput, _ agentapi.FilterContext) (archive.FilteredTranscript, error) {
@@ -176,7 +188,7 @@ func (p *Ports) Filter(ctx context.Context, in agentapi.NativeInput, _ agentapi.
 		if err := json.Unmarshal(record.Raw, &pulse); err != nil {
 			return out, err
 		}
-		if pulse.PulseKind != "exchange" || (pulse.Speaker != "pilot" && pulse.Speaker != "oracle") {
+		if pulse.PulseKind != "exchange" || (pulse.Speaker != SpeakerPilot && pulse.Speaker != SpeakerOracle) {
 			return out, archive.ErrUnsafeSourceFormat
 		}
 		pulse.Credential = ""
@@ -201,6 +213,7 @@ func (p *Ports) Filter(ctx context.Context, in agentapi.NativeInput, _ agentapi.
 	out.FirstEventAt = out.NativeStartAt
 	return out, nil
 }
+
 func (p *Ports) Refilter(ctx context.Context, b archive.SourceBundle, at time.Time) (archive.FilteredTranscript, error) {
 	s := &snapshot{}
 	for _, raw := range b.NativeRecords {
@@ -212,6 +225,7 @@ func (p *Ports) Refilter(ctx context.Context, b archive.SourceBundle, at time.Ti
 	}
 	return p.Filter(ctx, s.Input(), agentapi.FilterContext{StartedAt: at})
 }
+
 func (p *Ports) EvidenceExtends(old, next archive.SourceBundle) bool {
 	if len(old.NativeRecords) > len(next.NativeRecords) {
 		return false
@@ -225,6 +239,7 @@ func (p *Ports) EvidenceExtends(old, next archive.SourceBundle) bool {
 }
 
 // Parser remains independent from the filter's version and source ownership.
+
 type Parser struct{ Owner *Ports }
 
 func (p Parser) Version() string {
@@ -233,6 +248,7 @@ func (p Parser) Version() string {
 	}
 	return p.Owner.ParserVersion
 }
+
 func (p Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	p.Owner.Parses++
 	if err := ctx.Err(); err != nil {
@@ -252,7 +268,7 @@ func (p Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Anal
 			return a, err
 		}
 		role, kind := "user", archive.TurnKindHumanPrompt
-		if pulse.Speaker == "oracle" {
+		if pulse.Speaker == SpeakerOracle {
 			role, kind = "assistant", archive.TurnKindAssistant
 		}
 		at, _ := time.Parse(time.RFC3339, pulse.Clock)
@@ -266,6 +282,7 @@ func (p Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Anal
 	}
 	return a, nil
 }
+
 func (p *Ports) Decode(ctx context.Context, in agentapi.HookInput) ([]agentapi.LifecycleEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -275,27 +292,29 @@ func (p *Ports) Decode(ctx context.Context, in agentapi.HookInput) ([]agentapi.L
 	key, _ := in.Payload["manifest"].(string)
 	signal, _ := in.Payload["pulse"].(string)
 	e := agentapi.LifecycleEvent{Session: agentapi.NativeSession{Agent: ID, NativeID: id}, ProjectRoot: project, Source: agentapi.SourceRef{Path: key}, NativeEvent: signal, Reason: signal}
-	switch signal {
-	case "birth":
+	switch Signal(signal) {
+	case SignalBirth:
 		e.Kind = agentapi.EventStart
 		e.NewOnly = true
 		e.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessExplicitStart}
-	case "resume":
+	case SignalResume:
 		e.Kind = agentapi.EventStart
 		e.NewOnly = true
 		e.Start = agentapi.StartEvidence{Kind: agentapi.FreshContinuation, Reason: agentapi.FreshnessContinuation}
-	case "reply":
+	case SignalReply:
 		e.Kind = agentapi.EventResponse
-	case "rest":
+	case SignalRest:
 		e.Kind = agentapi.EventStop
 	default:
 		return nil, nil
 	}
 	return []agentapi.LifecycleEvent{e}, nil
 }
+
 func (p *Ports) ImportPolicy(agentapi.SourceRef) agentapi.ImportPolicy {
 	return agentapi.ImportPolicy{Start: agentapi.ImportNativeStart}
 }
+
 func (p *Ports) InspectImport(ctx context.Context, in agentapi.ImportInspectionRequest) (agentapi.ImportInspection, error) {
 	if err := ctx.Err(); err != nil {
 		return agentapi.ImportInspection{}, err
@@ -306,3 +325,19 @@ func (p *Ports) InspectImport(ctx context.Context, in agentapi.ImportInspectionR
 	}
 	return out, nil
 }
+
+type Speaker string
+
+const (
+	SpeakerPilot  Speaker = "pilot"
+	SpeakerOracle Speaker = "oracle"
+)
+
+type Signal string
+
+const (
+	SignalBirth  Signal = "birth"
+	SignalResume Signal = "resume"
+	SignalReply  Signal = "reply"
+	SignalRest   Signal = "rest"
+)

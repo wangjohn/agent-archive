@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"path/filepath"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -551,8 +551,8 @@ func (b *Batch) RecordKept(kept []KeptProject) {
 // republishes everything, neither of which is a resume.
 func resumedSinceImport(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (resumed, unknown bool, err error) {
 	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
-		sig, err := cursorstore.ReadSignature(context.Background(), env.cursorStateDatabase(), reg.SourceKey)
-		if err == nil && sig.LastUpdatedAt > reg.AdmittedAt.UnixMilli() {
+		observed, err := observeSource(context.Background(), env.Sources, agentapi.SourceEnvironment{Database: env.cursorStateDatabase()}, reg.Harness.Name, agentapi.SourceRef{Kind: reg.SourceKind, Key: reg.SourceKey})
+		if err == nil && observed.Activity.After(reg.AdmittedAt) {
 			return true, false, nil
 		}
 		// A chat or database that is gone was not resumed; one that could

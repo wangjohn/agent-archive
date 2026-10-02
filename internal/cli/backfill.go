@@ -251,7 +251,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg config.Config, opts backfillCommandOptions, style textStyle) (backfill.Plan, bool) {
 	var stopLooking func()
 	if !opts.jsonOut {
-		label := backfill.SearchLine(opts.filters)
+		label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
 		if style.live {
 			stopLooking = style.spin(stdout, label).stop
 		} else {
@@ -272,7 +272,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	stopLooking()
 	if err != nil {
 		if !opts.jsonOut {
-			label := backfill.SearchLine(opts.filters)
+			label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
 			switch {
 			case interrupted && style.live:
 				terminal.Println(stdout, label+" stopped.")
@@ -306,7 +306,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		return true, 0
 	}
 	if style.live {
-		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters), plan.Found())
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents()), plan.Found())
 	} else {
 		terminal.Printf(stdout, "%d found.\n", plan.Found())
 	}

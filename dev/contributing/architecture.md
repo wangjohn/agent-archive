@@ -64,7 +64,7 @@ flowchart LR
 | `destination`, `sourceidentity` | Pure persisted destination/privacy values and legacy source signature values. Public host-package aliases preserve schemas while config/state avoid credential, network and database client dependencies. |
 | `config` | `config.json`: the one record of how this machine is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
-| `platform` | The one place that knows the operating system: `platform.OS` (`Darwin`, `Linux`, and an `Unknown` that fails closed), `platform.Current` (the only non-test reader of `runtime.GOOS`, `TestOnlyPlatformReadsRuntimeGOOS`), and `Locations`, where the OS keeps Cursor's data, the desktop apps' folders, temporary directories, privacy-protected folders and the Cursor snapshot root. Pure: it runs no program and opens no file (the two inputs that need the system come in as `LocationDeps`), and imports no `credentials` or `hooks` (depguard and `TestPlatformImportBoundary`). |
+| `platform` | The one place that knows the operating system: `platform.OS` (`Darwin`, `Linux`, and an `Unknown` that fails closed), `platform.Current` (the only non-test reader of `runtime.GOOS`, `TestOnlyPlatformReadsRuntimeGOOS`), and `Locations`, shared temporary directories, privacy-protected folders and the Cursor snapshot root; native providers declare application and desktop workspace locations. Pure: it runs no program and opens no file (the two inputs that need the system come in as `LocationDeps`), and imports no `credentials` or `hooks` (depguard and `TestPlatformImportBoundary`). |
 | `hooks` | Checking, planning, installing, and removing the hook entries in the apps' hook files. |
 | `scheduler` | The port to whatever runs the background collector: `Ref`, `Site`, `JobState` (the words `status` reports), the desired state of a job (`Installation`, `JobSpec`, and `Plan`, a pure rendering of a definition as file `Artifact`s), what a scheduler reports (`Status`, with the `Problem` facts and `Words` nouns the commands' messages are filled from), the `Scheduler` interface (`Definer`, `Inspector`, whose `Installed` lists an installation's own job and its aliases, and `Controller`), `Retiree`, the job setup retires, the `NotOwnedError` and `IndeterminateError` an `Unload` refuses with, and the `Runner` an adapter runs its tool through. Pure: it runs no program and imports no `credentials` or `hooks` (depguard and `TestSchedulerImportBoundary`). |
 | `scheduler/launchd` | The macOS adapter: the LaunchAgent plist (planning it and reading its program, environment and data directory back), the collector's labels and every earlier one (`Installed`: the labels earlier releases gave the collector, and the prototype's upload job), and the `launchctl` calls that ask about, load and stop a job, all through the `Runner` it is given. |
@@ -106,9 +106,10 @@ flowchart TD
   retention --> reader & state & storage
   collector --> transcriptio & state & storage & cursorstore
   reader --> storage
-  config --> credentials & storage
-  state --> cursorstore
-  storage --> credentials
+  config --> destination & agentmeta
+  state --> sourceidentity
+  credentials --> destination
+  storage --> credentials & destination
 ```
 
 ## Invariants worth knowing before you change anything
