@@ -4,6 +4,7 @@ package pairing
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"path"
 	"regexp"
 	"slices"
@@ -47,26 +48,28 @@ type Exclusion struct {
 // Payload contains only explicitly transferable settings and provenance.
 // R2 secrets remain in memory until a receiver stages them in its store.
 type Payload struct {
-	Version         int                 `json:"version"`
-	PairingID       string              `json:"pairing_id"`
-	RecipientID     string              `json:"recipient_id"`
-	IssuerID        string              `json:"issuer_id"`
-	IssuerName      string              `json:"issuer_name"`
-	Name            string              `json:"name"`
-	CreatedAt       time.Time           `json:"created_at"`
-	ExpiresAt       time.Time           `json:"expires_at"`
-	Storage         Storage             `json:"storage"`
-	AccessKeyID     string              `json:"access_key_id,omitempty"`
-	SecretAccessKey string              `json:"secret_access_key,omitempty"`
-	Apps            []string            `json:"apps"`
-	RetentionDays   int                 `json:"retention_days"`
-	RequireSkillUse bool                `json:"require_skill_use"`
-	SkillEvidence   string              `json:"skill_evidence"`
-	NoSkills        bool                `json:"no_skills"`
-	HandoffArgs     map[string][]string `json:"handoff_args,omitempty"`
-	HandoffDefault  map[string]string   `json:"handoff_default,omitempty"`
-	Inclusions      []Inclusion         `json:"inclusions"`
-	Exclusions      []Exclusion         `json:"exclusions,omitempty"`
+	Kind            config.MachineAssignmentKind `json:"kind,omitempty"`
+	SlotID          string                       `json:"slot_id,omitempty"`
+	Version         int                          `json:"version"`
+	PairingID       string                       `json:"pairing_id"`
+	RecipientID     string                       `json:"recipient_id"`
+	IssuerID        string                       `json:"issuer_id"`
+	IssuerName      string                       `json:"issuer_name"`
+	Name            string                       `json:"name"`
+	CreatedAt       time.Time                    `json:"created_at"`
+	ExpiresAt       time.Time                    `json:"expires_at"`
+	Storage         Storage                      `json:"storage"`
+	AccessKeyID     string                       `json:"access_key_id,omitempty"`
+	SecretAccessKey string                       `json:"secret_access_key,omitempty"`
+	Apps            []string                     `json:"apps"`
+	RetentionDays   int                          `json:"retention_days"`
+	RequireSkillUse bool                         `json:"require_skill_use"`
+	SkillEvidence   string                       `json:"skill_evidence"`
+	NoSkills        bool                         `json:"no_skills"`
+	HandoffArgs     map[string][]string          `json:"handoff_args,omitempty"`
+	HandoffDefault  map[string]string            `json:"handoff_default,omitempty"`
+	Inclusions      []Inclusion                  `json:"inclusions"`
+	Exclusions      []Exclusion                  `json:"exclusions,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -123,6 +126,9 @@ func invalidSettings() error {
 func (p Payload) validateStorage() error {
 	bad := invalidSettings()
 	s := p.Storage
+	if err := p.validateProvenance(); err != nil {
+		return err
+	}
 	if !slices.Contains([]string{"r2", "s3"}, s.Provider) || s.Bucket == "" || !safeText(s.Bucket) || !safeText(s.Prefix) || strings.HasPrefix(s.Prefix, "/") || strings.Contains(s.Prefix, "\\") || strings.Contains(s.Prefix, "..") {
 		return bad
 	}
@@ -133,10 +139,7 @@ func (p Payload) validateStorage() error {
 	} else if s.AWSProfile == "" || !safeText(s.AWSProfile) || p.AccessKeyID != "" || p.SecretAccessKey != "" || s.R2Account != "" || s.R2Endpoint != "" {
 		return bad
 	}
-	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 1 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
-		return bad
-	}
-	return nil
+	return p.validateCaptureAndLocation()
 }
 
 func (p Payload) validateApplications() error {
@@ -197,6 +200,34 @@ func (p Payload) validateScopes() error {
 		if !RelativePath(exc.Path) || (exc.HomeRelative && exc.InclusionID != "") || (!exc.HomeRelative && !scopes[exc.InclusionID]) {
 			return bad
 		}
+	}
+	return nil
+}
+
+func (p Payload) validateProvenance() error {
+	bad := invalidSettings()
+	if p.Storage.Provider == "r2" {
+		if p.Kind != "" && p.Kind != config.MachineAssignmentR2Shared && p.Kind != config.MachineAssignmentR2Own {
+			return bad
+		}
+		if p.Kind == config.MachineAssignmentR2Own {
+			if !ValidID(p.SlotID) || !ValidID(p.AccessKeyID) {
+				return bad
+			}
+		} else if p.SlotID != "" {
+			return bad
+		}
+	} else if p.SlotID != "" || (p.Kind != "" && p.Kind != config.MachineAssignmentAWSProfile) {
+		return bad
+	}
+	return nil
+}
+
+func (p Payload) validateCaptureAndLocation() error {
+	bad := invalidSettings()
+	s := p.Storage
+	if !safeText(s.Region) || !safeText(s.R2Account) || !safeText(s.R2Endpoint) || p.RetentionDays < 1 || p.RetentionDays > 36500 || !slices.Contains([]string{"none", "metadata", "body"}, p.SkillEvidence) || len(p.Apps) == 0 || len(p.Apps) > 3 {
+		return bad
 	}
 	return nil
 }

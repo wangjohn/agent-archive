@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/pairing"
@@ -47,6 +50,7 @@ func pairingInvocation(args []string) bool {
 
 func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
 	fs := env.newCommandFlags("machines add", errOut)
+	spares := fs.Int("spares", 2, "save target unused dedicated R2 keys, 0..5 (default 2)")
 	name := fs.String("name", "", "new machine name")
 	share := fs.Bool("share-key", false, "explicitly share this R2 key (beta; cannot revoke the recipient independently)")
 	expires := fs.Duration("expires", 15*time.Minute, "pairing expiry, 5m through 24h")
@@ -56,7 +60,13 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if *expires < 5*time.Minute || *expires > 24*time.Hour || (*yes && *name == "") || (*file != "" && *printBundle) {
+	sparesSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "spares" {
+			sparesSet = true
+		}
+	})
+	if *spares < 0 || *spares > 5 || *expires < 5*time.Minute || *expires > 24*time.Hour || (*yes && *name == "") || (*file != "" && *printBundle) {
 		return fs.usageError("use expiry 5m..24h, --name with --yes, and one of --print or --file")
 	}
 	if err := pairingAgentRefusal(env); err != nil {
@@ -84,11 +94,88 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		terminal.Println(errOut, err.Error())
 		return 1
 	}
-	terminal.Println(out, "Storage check passed. Shared-key beta: no independent R2 revocation.")
+	terminal.Println(out, "Storage check passed.")
 	payload, err := sourcePairingPayload(cfg, *name, userHome, *expires, env)
 	if err != nil {
 		terminal.Println(errOut, "cannot prepare portable settings: "+err.Error())
 		return 1
+	}
+	if !sparesSet {
+		*spares = -1
+	}
+	return executePairingAdd(home, cfg, payload, p, env, out, errOut, pairingAddOptions{name: *name, share: *share, spares: *spares, yes: *yes, printBundle: *printBundle, file: *file})
+}
+
+type pairingAddOptions struct {
+	name        string
+	share       bool
+	spares      int
+	yes         bool
+	printBundle bool
+	file        string
+}
+
+func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, p *prompter, env Env, out, errOut io.Writer, opts pairingAddOptions) int {
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		terminal.Println(errOut, "another issuance operation is running")
+		return 1
+	}
+	defer release()
+	// A purge can unlink the lock after source preparation. Recheck the
+	// committed configuration before issuing against an old in-memory snapshot.
+	if err := validatePairingSourceSnapshot(home, cfg); err != nil {
+		terminal.Println(errOut, err.Error())
+		return 1
+	}
+	// Repeat local name checks under the same lock used by every delivery.
+	prior, err := readPairingLedgers(home)
+	if err != nil {
+		terminal.Println(errOut, err.Error())
+		return 1
+	}
+	for _, l := range prior {
+		if l.Name == opts.name && l.State != pairingCancelled && l.State != pairingExpired && !env.now().After(l.ExpiresAt) {
+			terminal.Println(errOut, "that name already has an outstanding pairing")
+			return 1
+		}
+	}
+	if opts.spares >= 0 && cfg.Storage.Provider != credentials.ProviderR2 {
+		return pairingAddError(errOut, "--spares is for R2")
+	}
+	var target *int
+	if opts.spares >= 0 {
+		target = &opts.spares
+		cfg.SpareKeys = &opts.spares
+		if err = saveSpareIndex(home, cfg, target); err != nil {
+			terminal.Println(errOut, "cannot save spare target")
+			return 1
+		}
+	}
+	slot, issuer, err := choosePairingKey(home, cfg, p, env, opts.yes, opts.share, &payload)
+	if err != nil {
+		terminal.Println(errOut, err.Error())
+		return 1
+	}
+	if issuer != nil {
+		defer issuer.api.Discard()
+	}
+	if slot.SlotID != "" {
+		defer func() {
+			releaseUntouchedSlot(home, &slot, issuer)
+			discardDeliveredSecret(home, &slot, env, errOut)
+			if e := saveSpareIndex(home, cfg, nil); e != nil {
+				terminal.Println(errOut, "spare index update pending; ledger remains authoritative")
+			}
+		}()
+		terminal.Println(out, "Dedicated key checked; independent slot retained in issuance ledger.")
+		if slot.Origin == issuance.Precreated {
+			if refs, e := spareRefs(home, cfg); e == nil {
+				terminal.Printf(out, "Used a spare; %d eligible spares remain.\n", len(refs))
+			}
+		}
+	} else if cfg.Storage.Provider == credentials.ProviderR2 {
+		terminal.Println(out, "Shared-key beta: no independent R2 revocation.")
 	}
 	code, err := pairing.NewCode()
 	if err != nil {
@@ -100,55 +187,50 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		terminal.Println(errOut, err.Error())
 		return 1
 	}
-	release, err := local.NamedLock(home, "issued.lock")
-	if err != nil {
-		terminal.Println(errOut, "cannot lock pairing ledger")
-		return 1
-	}
-	defer release()
 	kind := pairingAWSProfile
 	keyID, credentialRef := "", ""
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		kind = pairingSharedR2
+		if slot.SlotID != "" {
+			kind = pairingOwnR2
+		}
 		keyID = payload.AccessKeyID
 		credentialRef = cfg.Storage.R2CredentialRef
+		if slot.SlotID != "" {
+			credentialRef = slot.SecretRef
+		}
 	}
-	ledger := pairingLedger{Version: 1, PairingID: payload.PairingID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, Name: *name, DestinationID: config.DestinationID(cfg.Storage), Kind: kind, State: pairingPrepared, AccessKeyID: keyID, CredentialRef: credentialRef, CreatedAt: payload.CreatedAt, ExpiresAt: payload.ExpiresAt}
+	ledger := pairingLedger{Version: 1, SlotID: slot.SlotID, PairingID: payload.PairingID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, Name: opts.name, DestinationID: config.DestinationID(cfg.Storage), Kind: kind, State: pairingPrepared, AccessKeyID: keyID, CredentialRef: credentialRef, CreatedAt: payload.CreatedAt, ExpiresAt: payload.ExpiresAt}
 	if err = savePairingLedger(home, ledger); err != nil {
 		terminal.Println(errOut, "cannot persist pairing preparation")
 		return 1
 	}
-	ledger.State = pairingDeliveryIntent
-	if err = savePairingLedger(home, ledger); err != nil {
-		terminal.Println(errOut, "cannot persist delivery intent")
-		return 1
+	if !opts.yes && !opts.printBundle && opts.file == "" {
+		defer env.clearPairClipboard(bundle)
 	}
-	// Any failure after durable intent is uncertain delivery, never cancellation.
-	if *file != "" {
-		err = writePairingFile(*file, bundle)
-	} else if *printBundle || *yes {
-		_, err = fmt.Fprintln(out, bundle)
-	} else {
-		err = env.pairClipboardWrite([]byte(bundle))
-		if err == nil {
-			defer env.clearPairClipboard(bundle)
-			terminal.Println(out, "Encrypted bundle copied. Clipboard managers may retain it.")
-		}
+	if result := deliverPairingBundle(home, bundle, &ledger, &slot, issuer, env, out, errOut, opts); result != 0 {
+		return result
 	}
-	if err != nil {
-		terminal.Println(errOut, "pairing delivery failed or is uncertain; its key remains valid and tracked")
-		return 1
-	}
-	ledger.State = pairingDelivered
-	ledger.DeliveredAt = env.now().UTC()
-	if err = savePairingLedger(home, ledger); err != nil {
-		terminal.Println(errOut, "delivery occurred; ledger update pending (delivery intent retained)")
-		return 1
-	}
-	return finishPairingDelivery(p, code, ledger, home, *yes, out, errOut, env)
+	return finishPairingDelivery(p, code, ledger, home, opts.yes, out, errOut, env, &slot, issuer)
 }
 
-func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home string, yes bool, out, errOut io.Writer, env Env) int {
+// validatePairingSourceSnapshot is called with issued.lock held before key effects.
+func validatePairingSourceSnapshot(home string, cfg config.Config) error {
+	current, found, err := config.Load(home)
+	if err != nil || !found || !current.Archive.Enabled {
+		return errors.New("source setup changed; run setup before creating a pairing")
+	}
+	checked := cfg
+	// The source's storage probe refreshes only these observations in memory.
+	checked.StorageVerifiedAt = current.StorageVerifiedAt
+	checked.BucketPrivacy = current.BucketPrivacy
+	if !reflect.DeepEqual(checked, current) {
+		return errors.New("source configuration changed; rerun machines add")
+	}
+	return nil
+}
+
+func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home string, yes bool, out, errOut io.Writer, env Env, slot *issuance.Slot, issuer *keyIssuer) int {
 	if yes {
 		words, err := pairing.CodeWords(code)
 		if err != nil {
@@ -163,7 +245,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 	}
 	terminal.Printf(out, "Bundle expires at %s. On %s, run agent-archive setup --pair.\n", ledger.ExpiresAt.Format(time.RFC3339), ledger.Name)
 	for {
-		choice, err := p.menu("Pairing code", "show", option{"show", "Show code on a cleared alternate screen"}, option{"done", "Done"}, option{"cancel", "Cancel pairing (shared credentials stay active)"})
+		choice, err := p.menu("Pairing code", "show", option{"show", "Show code on a cleared alternate screen"}, option{"done", "Done"}, option{"cancel", "Cancel pairing (dedicated cleanup needs management access)"})
 		if err != nil {
 			terminal.Println(errOut, "pairing remains delivered; code discarded on exit")
 			return 1
@@ -177,7 +259,22 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 				terminal.Println(errOut, "cannot record cancellation")
 				return 1
 			}
-			terminal.Println(out, "Pairing cancelled locally. Shared R2 access remains active; replace the shared key on every user to revoke it.")
+			if slot.SlotID != "" {
+				if issuer != nil {
+					issuer.cancelDelivered(slot)
+				} else {
+					slot.State = issuance.CleanupPending
+					slot.CleanupReason = "explicit-cancellation-token-needed"
+					_ = issuance.Save(home, *slot)
+				}
+				if slot.State == issuance.Deleted {
+					terminal.Println(out, "Dedicated token deletion confirmed; provider propagation remains unverified.")
+				} else {
+					terminal.Println(out, "Pairing cancelled locally; dedicated cleanup pending, access may remain. Use explicit revoke with management access.")
+				}
+			} else {
+				terminal.Println(out, "Pairing cancelled locally. Shared R2 access remains active; replace the shared key on every user to revoke it.")
+			}
 			return 0
 		}
 		if err = showPairingCode(p, code, env); err != nil {
@@ -388,9 +485,7 @@ func preparePairingSource(name string, share bool, env Env) (config.Config, stri
 	if err != nil || !found || !cfg.Archive.Enabled {
 		return bad("run setup on this machine before creating a pairing")
 	}
-	if cfg.Storage.Provider == credentials.ProviderR2 && !share {
-		return bad("Shared-key R2 beta requires --share-key; this recipient cannot be revoked independently.")
-	}
+
 	if cfg.Storage.Provider == credentials.ProviderS3 && share {
 		return bad("--share-key is for R2; S3 transfers settings and a profile name only")
 	}
@@ -437,4 +532,60 @@ func pairingSourceStorage(cfg config.Config, env Env) (pairing.Storage, credenti
 		return storage, key, errors.New("cannot read source R2 credential")
 	}
 	return storage, key, nil
+}
+
+func pairingAddError(out io.Writer, message string) int { terminal.Println(out, message); return 2 }
+
+func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issuance.Slot, issuer *keyIssuer, env Env, out, errOut io.Writer, opts pairingAddOptions) int {
+	var err error
+	if slot.SlotID != "" {
+		intent := *slot
+		intent.State = issuance.DeliveryIntent
+		if err = issuance.Save(home, intent); err != nil {
+			terminal.Println(errOut, "cannot persist dedicated delivery intent")
+			return 1
+		}
+		*slot = intent
+	}
+	ledger.State = pairingDeliveryIntent
+	if err = savePairingLedger(home, *ledger); err != nil {
+		terminal.Println(errOut, "cannot persist delivery intent")
+		return 1
+	}
+	// Any failure after durable intent is uncertain delivery, never cancellation.
+	if opts.file != "" {
+		err = writePairingFile(opts.file, bundle)
+	} else if opts.printBundle || opts.yes {
+		_, err = fmt.Fprintln(out, bundle)
+	} else {
+		err = env.pairClipboardWrite([]byte(bundle))
+		if err == nil {
+			// The outer command retains clipboard/code until it exits.
+			terminal.Println(out, "Encrypted bundle copied. Clipboard managers may retain it.")
+		}
+	}
+	if err != nil {
+		terminal.Println(errOut, "pairing delivery failed or is uncertain; its key remains valid and tracked")
+		return 1
+	}
+	if slot.SlotID != "" {
+		slot.State = issuance.Delivered
+		if err = issuance.Save(home, *slot); err != nil {
+			terminal.Println(errOut, "delivery occurred; dedicated ledger update pending")
+			return 1
+		}
+	}
+	if issuer != nil {
+		if e := issuer.refill(); e != nil {
+			terminal.Println(errOut, "Pairing remains valid; independent spare refill failed or is pending.")
+		}
+	}
+	ledger.State = pairingDelivered
+	ledger.DeliveredAt = env.now().UTC()
+	if err = savePairingLedger(home, *ledger); err != nil {
+		terminal.Println(errOut, "delivery occurred; ledger update pending (delivery intent retained)")
+		return 1
+	}
+
+	return 0
 }

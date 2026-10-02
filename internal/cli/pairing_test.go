@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/pairing"
@@ -440,7 +441,7 @@ func TestPairingDeliveryPreservesHyphenatedCodeWords(t *testing.T) {
 	displayed := "yo-yo aardvark yo-yo abdomen yo-yo abiding"
 	env := Env{LookupEnv: noEnv, IsTerminal: func(any) bool { return true }, Interrupts: func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }}
 	var out, errOut bytes.Buffer
-	if status := finishPairingDelivery(nil, code, pairingLedger{}, "", true, &out, &errOut, env); status != 0 {
+	if status := finishPairingDelivery(nil, code, pairingLedger{}, "", true, &out, &errOut, env, &issuance.Slot{}, nil); status != 0 {
 		t.Fatalf("delivery %d: %s", status, &errOut)
 	}
 	if !strings.Contains(out.String(), displayed) {

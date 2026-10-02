@@ -39,7 +39,8 @@
     "kind": {
       "enum": [
         "r2_shared",
-        "aws_profile"
+        "aws_profile",
+        "r2_own"
       ]
     },
     "state": {
@@ -67,6 +68,19 @@
     "observed_machine_id": {
       "type": "string",
       "pattern": "^[a-f0-9]{32}$"
+    },
+    "slot_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "observed_machine_ids": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{32}$"
+      }
     }
   },
   "required": [
@@ -80,5 +94,24 @@
     "state",
     "created_at",
     "expires_at"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "r2_own"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "slot_id"
+        ]
+      }
+    }
   ]
 }

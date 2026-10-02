@@ -10,6 +10,13 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Draft experimental dedicated R2 issuance for `machines add` and guided bucket
+  creation: exact immutable provider identities, verified fresh keys, default
+  two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
+  Creation, reservation, delivery, and uncertain cleanup are tracked durably;
+  management tokens are never persisted. This phase remains gated and unmerged
+  pending live provider acceptance and integrated revocation/recovery review.
+
 - Handoff before setup discovers Claude Code and Codex native conversations in
   the current checkout, with filtered batches of 50 previews, explicit older
   loading, native ID selection and modification-time latest selection. It writes
