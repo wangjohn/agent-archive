@@ -180,3 +180,9 @@ uninstall` removes them along with the hooks.
 ## If the agent does not use the skill
 
 See [my agent does not use the skill](troubleshooting.md#my-agent-does-not-use-the-skill).
+
+Machine pairing must run in a separate human terminal. Both `machines add` and
+`setup --pair` refuse when `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` is present, including with `--yes` or
+`AGENT_ARCHIVE_NONINTERACTIVE=0`. This prevents code exposure in transcripts and
+unattended destination changes. Do not ask an agent to handle pairing codes.

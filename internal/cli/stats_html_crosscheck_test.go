@@ -265,13 +265,13 @@ func checkPageDaily(t *testing.T, page *node, doc statsDocument) {
 		}
 		return
 	}
-	if len(doc.Daily) > maxDailyBars {
+	if len(doc.ChartDays()) > maxDailyBars {
 		return
 	}
 	table := sec.find(func(m *node) bool { return m.name == "table" })[0]
 	var want [][]string
 	peakCost := stats.Cost{USD: &doc.PeakSpend.USD}
-	for _, d := range doc.Daily {
+	for _, d := range doc.ChartDays() {
 		when, _ := time.Parse("2006-01-02", d.Date)
 		label := when.Format("Jan 2")
 		if doc.Window.Days > 300 {
@@ -312,7 +312,7 @@ func checkPageDaily(t *testing.T, page *node, doc statsDocument) {
 	}
 	// The dearest day of the table is the peak.
 	best := -1.0
-	for _, d := range doc.Daily {
+	for _, d := range doc.ChartDays() {
 		if v, ok := spendDown(d.Cost); ok && v > best {
 			best = v
 		}
@@ -436,8 +436,19 @@ func checkPageMostUsed(t *testing.T, page *node, doc statsDocument) {
 
 func checkPageHeadsUp(t *testing.T, page *node, doc statsDocument) {
 	t.Helper()
+	var findings []stats.Note
+	for _, n := range doc.HeadsUp {
+		if n.Kind == stats.NoteUnmeteredSessions {
+			coverage := pageCard(page, "h-coverage")
+			if coverage == nil || !strings.Contains(coverage.visible(), countOf(*n.Sessions, "session")) {
+				t.Error("missing token data is absent from coverage")
+			}
+		} else {
+			findings = append(findings, n)
+		}
+	}
 	sec := pageCard(page, "h-heads")
-	if len(doc.HeadsUp) == 0 {
+	if len(findings) == 0 {
 		if sec != nil {
 			t.Error("the page has a heads-up section with nothing to say")
 		}
@@ -450,10 +461,10 @@ func checkPageHeadsUp(t *testing.T, page *node, doc statsDocument) {
 	for _, li := range sec.byClass("ul", "alerts")[0].children {
 		got = append(got, li.visible())
 	}
-	if len(got) != len(doc.HeadsUp) {
-		t.Fatalf("%d heads-up lines for %d notes: %q", len(got), len(doc.HeadsUp), got)
+	if len(got) != len(findings) {
+		t.Fatalf("%d heads-up lines for %d notes: %q", len(got), len(findings), got)
 	}
-	for i, n := range doc.HeadsUp {
+	for i, n := range findings {
 		var want []string
 		switch n.Kind {
 		case stats.NoteSubagentShare:

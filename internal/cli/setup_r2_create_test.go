@@ -216,11 +216,15 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	want := []string{
 		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RouteCreateBucket),
 		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
+		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteCreateToken),
 	}
 	if got := routes(g.cf.Requests()); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls %v, want %v", got, want)
 	}
 	cfg := g.savedConfig(t)
+	if cfg.MachineAssignment == nil || cfg.MachineAssignment.Kind != config.MachineAssignmentR2Own || cfg.MachineAssignment.IssuerID != cfg.MachineID || cfg.MachineAssignment.SlotID == "" || len(cfg.SpareCredentialRefs) != 2 {
+		t.Fatal("guided assignment/spare index missing")
+	}
 	if cfg.BucketPrivacy == nil || cfg.BucketPrivacy.State != "verified_private" || cfg.BucketPrivacy.Reason != "r2_public_domains_disabled" ||
 		!slices.Equal(cfg.BucketPrivacy.Checks, []string{"r2_dev_domain", "custom_domains"}) ||
 		cfg.BucketPrivacy.ConfigurationID != privacyConfigurationID(cfg) || cfg.BucketPrivacy.CheckedAt == nil ||
@@ -232,7 +236,7 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 		t.Fatalf("storage %+v", cfg.Storage)
 	}
 	tokens := g.cf.Tokens()
-	if len(tokens) != 1 || len(g.cf.Live()) != 1 {
+	if len(tokens) != 3 || len(g.cf.Live()) != 3 {
 		t.Fatalf("tokens %+v", tokens)
 	}
 	issued := tokens[0]
@@ -241,8 +245,8 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	if err != nil || stored.AccessKeyID != issued.ID || stored.SecretAccessKey != sha256Hex(issued.Value) {
 		t.Fatalf("stored key %+v (%v), want ID %s", stored, err, issued.ID)
 	}
-	if len(g.keychain.items) != 1 {
-		t.Fatalf("the Keychain holds %d items, want the one key", len(g.keychain.items))
+	if len(g.keychain.items) != 3 {
+		t.Fatalf("the Keychain holds %d items, want the own key and two spares", len(g.keychain.items))
 	}
 	// The token has one allow policy, on this bucket only, with the group ID
 	// Cloudflare listed, and no expiry.
@@ -251,7 +255,7 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 	if !strings.Contains(string(body), `"`+resource+`":"*"`) || !strings.Contains(string(body), `"id":"aaaa0000000000000000000000000002"`) || strings.Contains(string(body), "expires_on") {
 		t.Fatalf("token request %s", body)
 	}
-	if !strings.HasPrefix(issued.Name, "agent-archive "+cfg.Storage.Bucket+" ") || !strings.Contains(out, `named "`+issued.Name+`"`) {
+	if len(issued.Name) != 118 || !strings.Contains(out, `named "`+issued.Name+`"`) {
 		t.Fatalf("token name %q; output:\n%s", issued.Name, out)
 	}
 	for _, api := range g.apis {
@@ -398,19 +402,14 @@ func TestGuidedR2RemovesTheTokenVariableFromSetupsEnvironment(t *testing.T) {
 	}
 }
 
-func TestGuidedR2SaysSoWhenTheTokenVariableCannotBeRemoved(t *testing.T) {
+func TestGuidedR2RefusesWhenTheTokenVariableCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.setEnv(map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary})
-	g.env.UnsetEnv = func(string) error { return errors.New("denied") }
-	out := g.run(t, guidedAnswers(acceptedRest...), 0)
-	for _, want := range []string{"Couldn't remove CLOUDFLARE_API_TOKEN from setup's environment", "has dropped it.\n"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "removed the variable") {
-		t.Fatalf("claims a removal that failed:\n%s", out)
+	g.env.UnsetEnv = func(string) error { return errors.New("denied " + bootstrapCanary) }
+	out := g.run(t, guidedAnswers(acceptedRest...), 1)
+	if !strings.Contains(out, "could not remove CLOUDFLARE_API_TOKEN") || strings.Contains(out, bootstrapCanary) || len(g.cf.Requests()) != 0 {
+		t.Fatalf("management operation after failed token removal: %s", out)
 	}
 }
 
@@ -496,6 +495,44 @@ func TestGuidedR2CanReplaceRejectedEnvironmentToken(t *testing.T) {
 	}
 	g.savedConfig(t)
 	g.assertNothingHolds(t, out, rejected, bootstrapCanary)
+}
+
+func TestGuidedR2RejectsMalformedReplacementBeforeCreatingClient(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	g.cf.Fail(cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
+	const malformed = "CANARY:invalid-bearer"
+	out := g.run(t, guidedAnswers(bootstrapCanary, "token", malformed, "stop"), 1)
+	if len(g.apis) != 1 || !strings.Contains(out, "management token is empty or malformed") {
+		t.Fatalf("malformed replacement reached client creation: %d clients\n%s", len(g.apis), out)
+	}
+	if !g.apis[0].discarded || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
+		t.Fatal("malformed replacement retained a client or created provider resources")
+	}
+	g.assertNothingHolds(t, out, malformed, bootstrapCanary)
+}
+
+func TestGuidedR2UsesAndPreservesConfiguredTokenCommand(t *testing.T) {
+	t.Parallel()
+	g := newGuidedR2Fixture(t)
+	command := []string{"synthetic-token-source", "read", "synthetic-reference"}
+	must(t, config.Save(g.home, config.Config{CloudflareTokenCommand: command}))
+	calls := 0
+	g.env.RunTokenCommand = func(ctx context.Context, args, environment []string) (string, error) {
+		calls++
+		if !slices.Equal(args, command) {
+			t.Fatal("guided setup did not use the committed source")
+		}
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 20*time.Second {
+			t.Fatal("token source has no bounded deadline")
+		}
+		return bootstrapCanary, nil
+	}
+	out := g.run(t, guidedAnswers(acceptedRest...), 0)
+	if calls != 1 || !slices.Equal(g.savedConfig(t).CloudflareTokenCommand, command) {
+		t.Fatal("guided setup lost or failed to consume the committed source")
+	}
+	g.assertNothingHolds(t, out, bootstrapCanary)
 }
 
 func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
@@ -669,7 +706,7 @@ func TestGuidedR2ContinuesAnywayWhenToldTo(t *testing.T) {
 	if strings.Contains(out, "off (checked at setup)") || strings.Contains(out, "Custom domains: none") {
 		t.Fatalf("claims access is off:\n%s", out)
 	}
-	if len(g.cf.Live()) != 1 || g.savedConfig(t).Storage.Bucket == "" {
+	if len(g.cf.Live()) != 3 || g.savedConfig(t).Storage.Bucket == "" {
 		t.Fatalf("live %d\n%s", len(g.cf.Live()), out)
 	}
 	if report := g.savedConfig(t).BucketPrivacy; report == nil || report.State != "public_or_risky" || report.Reason != "r2_public_access_enabled" || !strings.Contains(out, "! Bucket is public") {
@@ -915,6 +952,7 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RoutePermissionGroups),
 		string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RouteCreateToken),
 		string(cloudflaretest.RouteManagedDomain), string(cloudflaretest.RouteCustomDomains),
+		string(cloudflaretest.RouteCreateToken), string(cloudflaretest.RouteCreateToken),
 	}
 	if got := routes(g.cf.Requests()); !slices.Equal(got, want) {
 		t.Fatalf("calls %v, want %v", got, want)
@@ -924,7 +962,10 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 	if failed < 0 || confirm < failed || strings.Count(out, "Your archive storage") != 1 || strings.Contains(out, "Try again with the same bucket") {
 		t.Fatalf("lookup retry did not precede creation confirmation:\n%s", out)
 	}
-	g.savedConfig(t)
+	cfg := g.savedConfig(t)
+	if len(cfg.SpareCredentialRefs) != 2 {
+		t.Fatal("guided retry did not retain two spare references")
+	}
 }
 
 // A retry after a failed token step reuses the bucket, and the permission
@@ -934,10 +975,10 @@ func TestGuidedR2RetryReusesTheBucket(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
 	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "retry", "")...), 0)
-	if g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 || g.cf.Calls(cloudflaretest.RoutePermissionGroups) != 1 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 2 {
+	if g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 || g.cf.Calls(cloudflaretest.RoutePermissionGroups) != 1 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 4 {
 		t.Fatalf("calls %v", routes(g.cf.Requests()))
 	}
-	if !strings.Contains(out, "Try again with the same bucket") || len(g.cf.Live()) != 1 {
+	if !strings.Contains(out, "Try again with the same bucket") || len(g.cf.Live()) != 3 {
 		t.Fatalf("output:\n%s", out)
 	}
 	g.savedConfig(t)
@@ -1013,7 +1054,7 @@ func TestGuidedR2RetryAfterFailedVerification(t *testing.T) {
 	}
 	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "retry", "")...), 0)
 	tokens := g.cf.Tokens()
-	if len(tokens) != 2 || len(g.cf.Live()) != 1 || g.cf.Live()[0].ID != tokens[1].ID || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 {
+	if len(tokens) != 4 || len(g.cf.Live()) != 3 || g.cf.Live()[0].ID != tokens[1].ID || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 {
 		t.Fatalf("tokens %+v, calls %v\n%s", tokens, routes(g.cf.Requests()), out)
 	}
 	if tokens[0].Name == tokens[1].Name {
@@ -1197,7 +1238,7 @@ func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
 		g := newGuidedR2Fixture(t)
 		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "no")...), 0)
 		tokens := g.cf.Tokens()
-		if len(tokens) != 1 || len(g.cf.Live()) != 1 {
+		if len(tokens) != 3 || len(g.cf.Live()) != 3 {
 			t.Fatalf("tokens %+v\n%s", tokens, out)
 		}
 		bucket := ""
@@ -1238,7 +1279,7 @@ func TestGuidedR2ReportsEveryPairTheCommittedConfigDoesNotUse(t *testing.T) {
 	input := guidedAnswers(append(append(append(append([]string{}, askToken...), "", "edit", "storage", "change", guidedR2Choice), askToken...), acceptedRest...)...)
 	out := g.run(t, input, 0)
 	tokens := g.cf.Tokens()
-	if len(tokens) != 2 || len(g.cf.Buckets) != 2 {
+	if len(tokens) != 6 || len(g.cf.Buckets) != 2 {
 		t.Fatalf("tokens %+v, buckets %v\n%s", tokens, g.cf.Buckets, out)
 	}
 	used := g.savedConfig(t).Storage.Bucket
@@ -1250,8 +1291,10 @@ func TestGuidedR2ReportsEveryPairTheCommittedConfigDoesNotUse(t *testing.T) {
 		if bucket != used {
 			var name string
 			for _, token := range tokens {
-				if strings.Contains(token.Name, " "+bucket+" ") {
+				raw, _ := json.Marshal(token.Body)
+				if strings.Contains(string(raw), "_default_"+bucket) {
 					name = token.Name
+					break
 				}
 			}
 			if name == "" || !strings.Contains(out, `an API token named "`+name+`" for it. Neither is used`) {
@@ -1475,7 +1518,7 @@ func TestGuidedR2StorageCheckFailureNamesTheBucketAndToken(t *testing.T) {
 	}
 	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "cancel")...), 1)
 	tokens := g.cf.Tokens()
-	if len(tokens) != 1 || len(g.cf.Live()) != 1 {
+	if len(tokens) != 2 || len(g.cf.Live()) != 2 {
 		t.Fatalf("tokens %+v\n%s", tokens, out)
 	}
 	bucket := ""

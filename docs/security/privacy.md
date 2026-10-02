@@ -892,3 +892,56 @@ exclusive key ownership. Uninstall leaves remote records and access unchanged;
 remove access at your storage provider, and include `machines/` when deleting
 the entire archive. Local registration retry state is removed by
 `uninstall --delete-local-data`.
+
+Explicit experimental provider verification reads metadata only. Management
+API tokens remain in memory, are removed from the process environment before
+requests, and are never written to config, setup drafts, journals, credential
+stores or output. Interactive token commands have bounded stdout and discarded
+stderr; child environments exclude token, secret, object and pairing credential
+variables. Ordinary machine listing and collection never acquire a management
+token. Provider inventory can be restricted to creator-owned keys, so missing
+metadata never proves that access was removed.
+
+#### Dedicated key issuance draft
+
+The experimental issuance ledger under `issued/` is mode 0600 and contains immutable
+recipient, issuer and slot IDs, destination binding, provider key ID/name, opaque
+credential references, labels, timestamps and lifecycle/cleanup outcomes. It contains
+no management token, object secret, pairing code or encrypted bundle. Unused spare
+object credentials remain in the configured credential store; the config's
+`spare_credential_refs` is advisory and cannot grant eligibility. Default target two,
+configurable zero through five. Spares can outlive the issuer's main key.
+
+Creation/reservation/delivery intents are journaled before external effects. Lost API
+responses leave explicit cleanup work; provider inventory cannot recover the token's
+one-time value. Ambiguous exposure is never returned to the spare pool. Removing the
+issuer-local delivered secret retains lineage, because an issuer could have copied
+any secret it created. Bucket claims remain informational and cannot establish
+ownership or authorize deletion. The management token is acquired for one explicit
+command, never saved, never sent to storage, and discarded afterward. Live provider
+acceptance and revocation integration are still pending for this draft.
+
+## Encrypted shared-key pairing beta
+
+A pairing bundle carries the destination, app/capture and retention settings,
+repository hashes and portable scope paths, handoff arguments, and, for R2, the
+explicitly shared object credential. S3 carries only its local profile name and
+settings. Argon2id and XChaCha20-Poly1305 protect the bundle with a generated
+six-word code; deliver the two pieces separately. Interactive source delivery
+requires terminal input and output so a redirected file cannot retain the code.
+Alternate-screen clearing cannot protect against recording or screen sharing.
+
+The receiver keeps the decrypted payload in memory and stages R2 secrets only
+in the credential store. Neither side writes the code or bundle to config,
+drafts, journals, registration state or the secret-free `issued/` ledger. Only
+an explicitly requested source `--file` saves an encrypted bundle; delete it
+when no longer needed. Clipboard cleanup checks for the exact bundle before
+clearing; clipboard history can retain it. The ledger retains delivery intent,
+expiry, credential references and informational claim observations, and is
+removed by `uninstall --delete-local-data`.
+
+Pairing refuses inside coding agents. Pasted bundles are redacted before upload,
+but ordinary-word codes cannot be reliably recognized. If either piece may
+have been seen, create new pairing pieces; if both may have been seen, replace
+the shared R2 credential on every machine using it. Expiry and local cancellation
+do not revoke bucket access. This beta has no independent per-machine revocation.

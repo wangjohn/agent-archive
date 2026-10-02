@@ -42,15 +42,37 @@ func (s *Store) MarkSessionIndexRecoveryNeeded() error {
 	return err
 }
 
-// Collector/retention marker writes are serialized by collector.lock; requests
-// already hold hooks.lock. Completion takes hooks.lock only for compare/rename,
-// so it cannot erase a newer request. No request lock acquires hooks.lock here.
+// Recovery requests already hold hooks.lock; retention holds collector.lock
+// and may hold a request lock. This helper must not acquire hooks.lock.
 func (s *Store) beginSessionIndexRecovery() (string, error) {
 	generation, err := local.ID()
 	if err != nil {
 		return "", err
 	}
 	err = local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Generation: generation})
+	return generation, err
+}
+
+// Collector begin commits under hooks.lock so a request's marker and key
+// writes finish before the census starts. Staging and sync stay outside that
+// lock; the shared request/retention helper cannot take it recursively.
+func (s *Store) beginCollectorSessionIndexRecovery(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	generation, err := local.ID()
+	if err != nil {
+		return "", err
+	}
+	err = s.writeUnderLock(lockedWrite{
+		lock:  func() (func(), error) { return s.namedLockWait("hooks.lock", time.Second) },
+		path:  filepath.Join(s.home, sessionIndexMarkerFile),
+		check: ctx.Err,
+		change: func(fileSnapshot) (any, bool, error) {
+			return sessionIndexMarker{Version: 1, Generation: generation}, true, nil
+		},
+		blind: true,
+	})
 	return generation, err
 }
 
@@ -79,6 +101,9 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
 		return err
 	}
+	if err := s.indexStep("recovery-request-marked"); err != nil {
+		return err
+	}
 	entry, found, err := s.readQualifiedIndex(key)
 	if err == nil && found && !entry.Absent {
 		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
@@ -98,7 +123,7 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-begin"); err != nil {
 		return err
 	}
-	generation, err := s.beginSessionIndexRecovery()
+	generation, err := s.beginCollectorSessionIndexRecovery(ctx)
 	if err != nil {
 		return err
 	}

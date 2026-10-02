@@ -157,6 +157,7 @@ func (b *builder) page() page {
 	p.Models = b.models()
 	p.MostUsed = b.mostUsed()
 	p.HeadsUp = b.headsUp()
+	p.Coverage = b.coverageNotes()
 	p.Agents = b.agents()
 	p.Tokens = b.tokens()
 	p.Facts = b.facts()
@@ -372,7 +373,7 @@ func (b *builder) mostUsed() *mostUsed {
 	}
 	if c := b.s.MCP; c != nil {
 		for _, srv := range c.Servers {
-			m.MCP = append(m.MCP, nameCount{Name: b.servers.name(srv.Name), Count: callCount(srv.Calls)})
+			m.MCP = append(m.MCP, nameCount{Name: b.serverLabel(srv), Count: callCount(srv.Calls)})
 		}
 	}
 	if len(m.Skills)+len(m.MCP) == 0 {
@@ -407,6 +408,9 @@ func (b *builder) mostUsed() *mostUsed {
 func (b *builder) headsUp() []string {
 	var out []string
 	for _, n := range b.s.HeadsUp {
+		if n.Kind == stats.NoteUnmeteredSessions {
+			continue
+		}
 		var text string
 		switch n.Kind {
 		case stats.NoteSubagentShare:
@@ -661,4 +665,26 @@ func (b *builder) unpricedModels() string {
 		names = append(names[:3], "…")
 	}
 	return " (" + strings.Join(names, ", ") + ")"
+}
+
+func (b *builder) serverLabel(srv stats.MCPServer) string {
+	if b.opts.IncludeNames {
+		return clean(srv.Label())
+	}
+	return b.servers.name(srv.Name)
+}
+
+func (b *builder) coverageNotes() []string {
+	var out []string
+	for _, n := range b.s.HeadsUp {
+		if n.Kind == stats.NoteUnmeteredSessions {
+			if text := unmeteredNote(n); text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	if text := b.s.ChartCoverageNote(); text != "" {
+		out = append(out, plain(text))
+	}
+	return out
 }

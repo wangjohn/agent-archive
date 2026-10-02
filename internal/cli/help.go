@@ -13,13 +13,47 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"machines": `Usage: agent-archive machines [--json]
+	"machines add": `Usage: agent-archive machines add [--name NAME] [--share-key] [--spares 0..5]
+       [--expires 15m] [--print | --file PATH] [--yes]
 
-List informational machine records from this bucket, without provider checks.
+Create an encrypted pairing bundle after checking the source storage.
+Dedicated R2 issuance is an experimental draft, gated by
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1. An available management token creates
+and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
+implicitly. --share-key explicitly selects shared-key beta without independent
+recipient revocation. Live provider acceptance and revocation remain required.
+S3 transfers settings and a profile name. Configure the profile on the receiver.
+Deliver the bundle and six-word code separately. Pairing refuses in any coding
+agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
+  --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
+  --share-key    Explicitly share the active R2 key (beta)
+  --spares N     Save unused R2 key target, 0..5 (default 2)
+                 Refill with an available management token
+  --expires DURATION  Lifetime from 5m to 24h (default: 15m)
+  --print        Print the encrypted bundle instead of copying it
+  --file PATH    Create a private 0600 bundle file; never overwrite a file
+  --yes          Require --name and deliberately print bundle and code
+                 (with --file, print only the separately delivered code)
+Interactive delivery needs terminal input and output; codes use a cleared
+alternate screen. Clipboard contents are
+cleared on normal exit only if they still equal the bundle. Interrupted delivery
+remains uncertain in the local ledger; dedicated keys are never recycled after
+attempted exposure. Issuer-local delivered secrets are removed on exit; lineage
+remains. Spare refill failure does not invalidate the delivered pairing.
+`,
+	"machines": `Usage: agent-archive machines [--json] [--verify] [--yes]
+
+List informational machine records from this bucket.
+--verify opts into an experimental, read-only Cloudflare metadata check behind
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1. Account inventory completeness
+remains unknown; matching metadata never proves ownership or access removal.
 Anyone with bucket access can forge records; they never authorize revocation.
 Heartbeat is updated at most daily and does not indicate current activity.
 Unreadable records and incomplete listings are reported; those exit with code 1.
-  --json  Write records, omitted objects, and partial-result status as JSON
+  --json    Write records and observations as JSON
+            Never prompt or run a token command
+  --verify  Explicit bounded provider metadata check for this R2 bucket
+  --yes     With --verify, require CLOUDFLARE_API_TOKEN and never prompt
 `,
 	"machines rename": `Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
 
@@ -55,6 +89,8 @@ report next to the plan. A plan expires five minutes after creation.
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--prefix PREFIX] [--retention-days DAYS]
+               [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
        agent-archive setup --refresh [--verbose]
@@ -64,6 +100,11 @@ Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --pair                Receive an encrypted bundle and hidden terminal code
+  --pair-file PATH|-    Read a bounded bundle file or stdin; with --yes read and
+                        unset AGENT_ARCHIVE_PAIRING_CODE. Never a code flag.
+                        Pairing refuses inside coding agents. --yes refuses a
+                        destination change; interactive review requires consent.
   --refresh             After upgrading agent-archive: bring the app hooks, the
                         background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
@@ -97,6 +138,14 @@ An interrupted setup is recovered on the next run.
                         default: keep the saved key)
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
+  --prefix PREFIX       Folder inside the bucket (default: saved folder, else
+                        agent-archive/). May be changed alone with --yes
+  --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
+                        else 90)
+  --require-skill-use   Capture only sessions that use skills
+  --no-require-skill-use
+                        Capture sessions with or without skills (default:
+                        saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
   --project-repo KEY    Capture a unique local repo by key (repeatable)
                        Skip ambiguous, excluded, or incomplete matches

@@ -109,12 +109,14 @@ func registrationPending(home string, cfg config.Config) bool {
 	return err != nil || ack.Pending || ack.DestinationID != cfg.DestinationID()
 }
 
-func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
+func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
 	if len(args) > 0 && args[0] == "rename" {
 		return runMachinesRename(args[1:], out, errOut, env)
 	}
 	fs := env.newCommandFlags("machines", errOut)
 	asJSON := fs.Bool("json", false, "write informational machine records as JSON")
+	verify := fs.Bool("verify", false, "explicit experimental read-only provider check")
+	unattended := fs.Bool("yes", false, "do not prompt or run the configured token command")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
@@ -136,8 +138,18 @@ func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
 		return machineCommandError(errOut, errors.New("could not open archive storage"))
 	}
 	result := machines.List(ctx, store)
+	if *verify {
+		return runMachinesVerify(cfg, result, stdin, out, errOut, env, *asJSON, *unattended)
+	}
+	if *unattended {
+		return fs.usageError("--yes requires --verify")
+	}
+	observePairingClaims(home, cfg.DestinationID(), result, env.now())
 	if *asJSON {
-		if err := json.NewEncoder(out).Encode(result); err != nil {
+		if err := json.NewEncoder(out).Encode(struct {
+			machines.ListResult
+			PairingWarnings []string `json:"pairing_warnings,omitempty"`
+		}{result, pairingWarnings(home, env.now())}); err != nil {
 			return machineCommandError(errOut, err)
 		}
 	} else {
@@ -153,6 +165,9 @@ func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
 		}
 		terminal.Println(out, "Not checked against the provider. Bucket records are untrusted claims, not proof of ownership or access removal.")
 		terminal.Println(out, "Heartbeat is updated at most daily; it does not indicate current activity.")
+		for _, warning := range pairingWarnings(home, env.now()) {
+			terminal.Println(out, warning)
+		}
 	}
 	if result.Partial || len(result.Unreadable) > 0 {
 		return 1
