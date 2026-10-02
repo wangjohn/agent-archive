@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -518,5 +519,168 @@ func TestQualifiedForgetInterruptionCannotLeaveUnindexedRegistration(t *testing.
 	regs, err := s.LoadRegistrations()
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("orphan duplicate: %#v %v", regs, err)
+	}
+}
+
+// Collector begin must wait for a hook's marker and requested-key writes as a
+// unit. Completion-only generation checks cannot cover a request begun earlier.
+// Regression: phase 3a P3A-R7-BEGIN (R3A-BEGIN-01).
+func TestQualifiedRecoveryBeginWaitsForInFlightRequest(t *testing.T) {
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "in-flight-request"}
+	requester := OpenReadOnly(s.home)
+	marked := make(chan struct{})
+	allowed := make(chan struct{})
+	finished := make(chan error, 1)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(allowed) }) }
+	defer release()
+	requester.onIndexStep = func(step string) error {
+		if step == "recovery-request-marked" {
+			close(marked)
+			<-allowed
+		}
+		return nil
+	}
+	go func() {
+		unlock, err := local.NamedLock(s.home, "hooks.lock")
+		if err == nil {
+			err = requester.RequestSessionIndexRecovery(key)
+			unlock()
+		}
+		finished <- err
+	}()
+	select {
+	case <-marked:
+	case err := <-finished:
+		t.Fatalf("request did not reach marker: %v", err)
+	}
+	// A fixed begin releases the paused request before acquiring hooks.lock.
+	// Before the repair, only the completed census reaches this fallback seam.
+	s.onLockWait = func(name string) {
+		if name == "hooks.lock" {
+			release()
+		}
+	}
+	s.onIndexStep = func(step string) error {
+		if step == "recovery-completing" {
+			release()
+		}
+		return nil
+	}
+	recoveryErr := s.RecoverSessionIndex(context.Background())
+	release()
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if recoveryErr != nil {
+		t.Fatal(recoveryErr)
+	}
+	s.onIndexStep, s.onLockWait = nil, nil
+	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
+		t.Fatalf("in-flight request was not recovered: found=%t err=%v", found, err)
+	}
+	if _, created, err := s.EnsureArchiveSessionID(key); err != nil || !created {
+		t.Fatalf("recovered absence stranded: created=%t err=%v", created, err)
+	}
+}
+
+func TestQualifiedRecoveryBeginRetriesBusyHooks(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "busy-request"}
+	unlock, err := local.NamedLock(s.home, "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := s.RequestSessionIndexRecovery(key); err != nil {
+		t.Fatal(err)
+	}
+	var before sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecoverSessionIndex(context.Background()); !errors.Is(err, local.ErrBusy) {
+		t.Fatalf("busy begin: %v", err)
+	}
+	var after sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatal("busy begin replaced requested generation")
+	}
+	unlock()
+	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
+		t.Fatalf("busy retry stranded: found=%t err=%v", found, err)
+	}
+}
+
+func TestQualifiedRecoveryBeginStagingLeavesHooksAvailable(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "request-during-begin-stage"}
+	requested := false
+	s.onWriteSync = func() {
+		unlock, err := local.NamedLock(s.home, "hooks.lock")
+		if err != nil {
+			t.Fatalf("marker sync held hooks lock: %v", err)
+		}
+		defer unlock()
+		if !requested {
+			requested = true
+			if err := s.RequestSessionIndexRecovery(key); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !requested {
+		t.Fatal("begin staging was not observed")
+	}
+	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
+		t.Fatalf("staged begin lost request: found=%t err=%v", found, err)
+	}
+}
+
+func TestQualifiedRecoveryBeginCancellationPreservesRequest(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "cancelled-begin"}
+	if err := s.RequestSessionIndexRecovery(key); err != nil {
+		t.Fatal(err)
+	}
+	var before sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &before); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.onWriteSync = cancel
+	if err := s.RecoverSessionIndex(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled begin: %v", err)
+	}
+	s.onWriteSync = nil
+	var after sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatal("cancelled begin replaced requested generation")
+	}
+	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
+		t.Fatalf("cancelled retry stranded: found=%t err=%v", found, err)
 	}
 }
