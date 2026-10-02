@@ -90,6 +90,10 @@ var errChooseStorageAgain = errors.New("choose another storage option")
 // ends setup as it does at any other prompt.
 var errNeedAnotherName = errors.New("choose another bucket name")
 
+// errConfirmR2Creation asks the retry loop to confirm creation after the
+// permission lookup, outside the request signal handler.
+var errConfirmR2Creation = errors.New("confirm R2 creation")
+
 // guidedInterruptedError is what guided creation returns when a signal
 // stopped it, so setup exits with the shell's status for the signal.
 type guidedInterruptedError struct{ sig os.Signal }
@@ -119,8 +123,9 @@ type r2Creator struct {
 	tokenRemovedFromEnv bool
 	// defaultName is whether the bucket name is the generated one, which
 	// may be replaced by a new one if it collides.
-	defaultName   bool
-	bucketCreated bool
+	defaultName       bool
+	bucketCreated     bool
+	creationConfirmed bool
 	// maybeCreated holds the names of buckets whose creation got no clear
 	// answer, so Cloudflare may have made them.
 	maybeCreated map[string]bool
@@ -171,7 +176,7 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 			c.api.Discard()
 		}
 	}()
-	if err = c.chooseAccount(); err != nil {
+	if err = c.connect(); err != nil {
 		return credentials.Config{}, none, false, err
 	}
 	if err = c.askBucket(); err != nil {
@@ -192,6 +197,71 @@ func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Cre
 	return c.storageConfig(), key, true, nil
 }
 
+// r2ConnectChoice is the recovery action after a bootstrap permission failure.
+type r2ConnectChoice string
+
+const (
+	r2ConnectToken r2ConnectChoice = "token"
+	r2ConnectRetry r2ConnectChoice = "retry"
+	r2ConnectOther r2ConnectChoice = "other"
+	r2ConnectStop  r2ConnectChoice = "stop"
+)
+
+// connect checks the account and archive-key permission before asking for
+// bucket settings. Recovery prompts run outside the request signal handler.
+func (c *r2Creator) connect() error {
+	for {
+		var err error
+		if c.account == "" {
+			err = c.chooseAccount()
+		}
+		if err == nil {
+			_, err = c.attempt()
+			if errors.Is(err, errConfirmR2Creation) {
+				terminal.Println(c.p.out, c.p.style.okMark()+" Archive-key permission lookup succeeded.")
+				return nil
+			}
+		}
+		var interrupted *guidedInterruptedError
+		if errors.As(err, &interrupted) {
+			return err
+		}
+		if !errors.Is(err, errChooseStorageAgain) && err != nil && c.account == "" {
+			return err
+		}
+		choice, err := c.p.menu("What next?", string(r2ConnectToken),
+			option{string(r2ConnectToken), "Paste a different token"},
+			option{string(r2ConnectRetry), "Retry after updating permissions"},
+			option{string(r2ConnectOther), "Back"},
+			option{string(r2ConnectStop), "Stop setup"})
+		if err != nil {
+			return err
+		}
+		switch r2ConnectChoice(choice) {
+		case r2ConnectToken:
+			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
+			if err != nil {
+				return err
+			}
+			if token == "" {
+				return errChooseStorageAgain
+			}
+			c.api.Discard()
+			c.api = c.env.cloudflareAPI(token)
+			c.account, c.groupID = "", ""
+			c.tokenFromEnv = false
+		case r2ConnectRetry:
+			continue
+		case r2ConnectOther:
+			return errChooseStorageAgain
+		case r2ConnectStop:
+			return errors.New("guided bucket creation stopped")
+		default:
+			return errors.New("guided bucket creation stopped")
+		}
+	}
+}
+
 // finishGuidedCreation ends guided creation once setup has staged the key:
 // it discards the bootstrap client, and says so.
 func (p *prompter) finishGuidedCreation() {
@@ -202,6 +272,7 @@ func (p *prompter) finishGuidedCreation() {
 	p.guided = nil
 	h.c.api.Discard()
 	p.created = append(p.created, &r2Created{bucket: h.c.bucket.Name, tokenName: h.c.tokenName, storage: h.c.storageConfig(), privacy: h.c.privacy})
+	terminal.Println(p.out, p.style.okMark()+" Archive key saved.")
 	if h.c.tokenFromEnv {
 		if h.c.tokenRemovedFromEnv {
 			terminal.Println(p.out, "Setup did not save the Cloudflare API token from CLOUDFLARE_API_TOKEN, and has dropped it; it also removed the variable from setup's own environment. Your shell still has it.")
@@ -320,9 +391,15 @@ func printR2BootstrapInstructions(p *prompter) {
 	terminal.Println(out, "Setup needs a Cloudflare API token to create the bucket and key, and won't save it.")
 	terminal.Println(out, "")
 	terminal.Println(out, "Get your token: "+cloudflare.TokenDashboardURL)
-	terminal.Println(out, "Sign in, select your account, choose Create Token, and give it these permissions:")
-	terminal.Println(out, "  - "+cloudflare.PermissionR2Write)
-	terminal.Println(out, "  - "+cloudflare.PermissionTokensWrite)
+	terminal.Println(out, "1. Sign in, select your account, and open Manage account > Account API tokens.")
+	terminal.Println(out, "   If you see Create Account API token and Object Read & Write, return to Manage account: that is the R2-specific form.")
+	terminal.Println(out, "2. Choose Create Token and use the custom token form. Name it agent-archive setup.")
+	terminal.Println(out, "3. Add these two permission rows (choose Edit for each):")
+	terminal.Println(out, "   Account > Workers R2 Storage > Edit")
+	terminal.Println(out, "   Account > Account API Tokens > Edit")
+	terminal.Println(out, "4. Limit access to this account only, review the summary, and create the token.")
+	terminal.Println(out, "5. Copy the API token value and paste it below (not the S3 Access Key ID or Secret Access Key).")
+	terminal.Println(out, "If these permissions aren't available, ask an account administrator or choose existing R2 storage and follow the manual steps: "+bucketDocURL)
 	terminal.Println(out, "")
 }
 
@@ -412,27 +489,15 @@ func parseR2AccountID(input string) (string, error) {
 	return loc.AccountID, nil
 }
 
-// askBucket asks for the bucket's name and its optional location, then for a
-// go-ahead.
+// askBucket asks for the bucket's name and its optional location.
 func (c *r2Creator) askBucket() error {
-	p := c.p
 	suggested := newBucketName()
 	name, err := c.askBucketName("Bucket name", suggested)
 	if err != nil {
 		return err
 	}
 	c.bucket.Name, c.defaultName = name, name == suggested
-	if err = c.askLocation(); err != nil {
-		return err
-	}
-	ok, err := p.yesNo("Create the bucket and its key now?", true)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errChooseStorageAgain
-	}
-	return nil
+	return c.askLocation()
 }
 
 func (c *r2Creator) askBucketName(label, def string) (string, error) {
@@ -452,7 +517,7 @@ func (c *r2Creator) askBucketName(label, def string) (string, error) {
 
 func (c *r2Creator) askLocation() error {
 	p := c.p
-	change, err := p.yesNo("Choose where Cloudflare stores the bucket? Most people skip this.", false)
+	change, err := p.yesNo("Customize storage location? Leave this off for automatic placement.", false)
 	if err != nil || !change {
 		return err
 	}
@@ -492,6 +557,30 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 		key, err := c.attempt()
 		if err == nil {
 			return key, nil
+		}
+		if errors.Is(err, errChooseStorageAgain) {
+			return credentials.R2Credentials{}, err
+		}
+		if errors.Is(err, errConfirmR2Creation) {
+			terminal.Println(c.p.out, "Bucket: "+c.bucket.Name)
+			location := "automatic"
+			if c.bucket.Jurisdiction != "" {
+				location = c.bucket.Jurisdiction
+			}
+			if c.bucket.LocationHint != "" {
+				location += " (hint: " + c.bucket.LocationHint + ")"
+			}
+			terminal.Println(c.p.out, "Location: "+location)
+			terminal.Println(c.p.out, "Setup will leave public access off and create a key for this bucket only.")
+			ok, e := c.p.yesNo("Create the bucket and its key now?", true)
+			if e != nil {
+				return credentials.R2Credentials{}, e
+			}
+			if !ok {
+				return credentials.R2Credentials{}, errChooseStorageAgain
+			}
+			c.creationConfirmed = true
+			continue
 		}
 		var interrupted *guidedInterruptedError
 		if errors.As(err, &interrupted) {
@@ -574,17 +663,24 @@ func (c *r2Creator) attempt() (credentials.R2Credentials, error) {
 }
 
 func (c *r2Creator) attemptWith(ctx context.Context) (credentials.R2Credentials, error) {
+	if c.groupID == "" {
+		terminal.Println(c.p.out, "Checking archive-key permissions with Cloudflare...")
+		id, err := c.lookUpPermissionGroup(ctx)
+		if err != nil {
+			if !c.bucketCreated {
+				terminal.Println(c.p.out, "No bucket or key has been created.")
+			}
+			return credentials.R2Credentials{}, err
+		}
+		c.groupID = id
+	}
+	if !c.creationConfirmed {
+		return credentials.R2Credentials{}, errConfirmR2Creation
+	}
 	if !c.bucketCreated {
 		if err := c.createBucket(ctx); err != nil {
 			return credentials.R2Credentials{}, err
 		}
-	}
-	if c.groupID == "" {
-		id, err := c.lookUpPermissionGroup(ctx)
-		if err != nil {
-			return credentials.R2Credentials{}, err
-		}
-		c.groupID = id
 	}
 	token, name, key, err := c.mintKey(ctx)
 	if err != nil {
@@ -671,6 +767,10 @@ func (c *r2Creator) lookUpPermissionGroup(ctx context.Context) (string, error) {
 		return "", err
 	}
 	terminal.Println(p.out, p.style.failMark()+" Couldn't look up the permission for the bucket's key. "+explainCloudflare(err, tokenWriteHint))
+	var apiErr *cloudflare.Error
+	if errors.As(err, &apiErr) && (apiErr.Unauthorized() || apiErr.Forbidden()) {
+		terminal.Println(p.out, "This checks access to create a separate archive key, not permission to create the bucket. In Manage account > Account API tokens, add Account > Account API Tokens > Edit to this setup token before retrying.")
+	}
 	return "", err
 }
 

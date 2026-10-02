@@ -585,7 +585,10 @@ histories before claiming the first-run flow works on each supported platform.
 1. Measure initial and older-batch preview costs on real histories; retain
    the 50-session starting batch unless measurements justify adjusting it.
    Enforce a per-command cumulative read budget across batches. Exhaustion
-   disables further loading with an explanation rather than silently raising
+   disables further preview loading with an explanation and retains bounded,
+   verified native-ID rows for explicit selection. Completed header inspection
+   releases unused reservations by measured bytes before preview scheduling,
+   rather than silently raising
    the budget; a new invocation starts a new bounded run.
 2. Observe current-session environment variables in actual interactive
    Claude Code and Codex sessions. Test unavailable/ambiguous identity paths
