@@ -2,19 +2,37 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func (o Options) parserVersion() string {
+// parserFor resolves one immutable capability per agent during a collector pass.
+func (o Options) parserFor(name string) agentapi.TranscriptParser {
+	if parser, found := o.parserCache[name]; found {
+		return parser
+	}
+	var parser agentapi.TranscriptParser
+	if o.Parsers != nil {
+		parser, _ = o.Parsers.LookupParser(name)
+	}
+	if o.parserCache != nil {
+		o.parserCache[name] = parser
+	}
+	return parser
+}
+func (o Options) parserVersionFor(name string) string {
 	if o.ParserVersion != "" {
 		return o.ParserVersion
 	}
-	return archive.DefaultParserVersion
+	if parser := o.parserFor(name); parser != nil {
+		return parser.Version()
+	}
+	return "unavailable"
 }
 
 // regenerateMetadata is the scan's refresh step: it re-derives the last
@@ -104,6 +122,9 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.SourceReference) (encoded []byte, changed bool, err error) {
 	prior := last.metadata
 	analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), last.bundle)
+	if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
+		return nil, false, parseErr
+	}
 	next, buildErr := archive.BuildMetadataWithAnalysis(last.bundle, analysis, parseErr, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.parserVersion()})
 	next.ApplyRegistrationProvenance(s.reg)
 	next.ApplyProjectName(s.reg.ProjectRoot)
@@ -262,15 +283,13 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if status == state.CacheStatusBlocked {
 		guard = lastPublished
 	}
-	return nativeEvidenceExtends(guard, candidate)
+	return nativeEvidenceExtends(adapter, guard, candidate)
 }
 
 func (s *sessionScan) resolveParser() agentapi.TranscriptParser {
 	if !s.parserResolved {
 		s.parserResolved = true
-		if s.opts.Parsers != nil {
-			s.parser, _ = s.opts.Parsers.LookupParser(s.reg.Harness.Name)
-		}
+		s.parser = s.opts.parserFor(s.reg.Harness.Name)
 	}
 	return s.parser
 }

@@ -424,7 +424,7 @@ func countGaps(gaps []CaptureGap) []HandoffGap {
 	return out
 }
 
-// cursorTimestamp matches the <timestamp> line Cursor prepends to a prompt.
+// lineCount counts visible lines, excluding trailing line separators.
 func lineCount(text string) int {
 	if text == "" {
 		return 0

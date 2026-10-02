@@ -54,7 +54,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) || nilImplementation(b.Sources) || nilImplementation(b.Filter) {
 			return nil, fmt.Errorf("agent %s has a typed-nil implementation", d.ID)
 		}
-		if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil {
+		if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil && b.Parser == nil {
 			return nil, fmt.Errorf("agent %s has no operations", d.ID)
 		}
 		// Declaration metadata and operation promises cannot override the catalog.
@@ -169,13 +169,13 @@ func NewBuiltins() *Registry {
 
 // LookupParser resolves only the parser needed by retained-source derivation.
 func (r *Registry) LookupParser(name string) (agentapi.TranscriptParser, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
 	return b.Parser, ok && b.Parser != nil
 }
 
 // LookupPreview resolves a bounded safe-record preview decoder.
 func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
 	return b.Preview, ok && b.Preview != nil
 }
 

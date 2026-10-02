@@ -99,7 +99,9 @@ func (l *recordReader) Read(p []byte) (int, error) {
 }
 
 // RefilterJSONL streams existing retained records without another whole bundle.
-func RefilterJSONL(ctx context.Context, a archive.Adapter, b archive.SourceBundle) (archive.FilteredTranscript, error) {
+func RefilterJSONL(ctx context.Context, a interface {
+	FilterJSONL(io.Reader) (archive.FilteredTranscript, error)
+}, b archive.SourceBundle) (archive.FilteredTranscript, error) {
 	r := &retainedReader{ctx: ctx, records: b.NativeRecords}
 	return a.FilterJSONL(r)
 }

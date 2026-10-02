@@ -118,7 +118,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if !known {
 		return false, signature, nil
 	}
-	if signature.ParserVersion != p.opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
+	if signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
 	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
@@ -232,7 +232,7 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
-		ParserVersion: s.opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
+		ParserVersion: s.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
@@ -253,7 +253,7 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
-		ParserVersion: s.opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
+		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,

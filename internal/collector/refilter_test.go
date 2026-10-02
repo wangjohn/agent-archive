@@ -238,7 +238,7 @@ func TestRefilterBundleFiltersCursorTextAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle.NativeText[0].Content += "user: DB_PASSWORD=" + plantedSecret + "\n"
-	refiltered, err := refilterBundle(reg, adapter, bundle)
+	refiltered, err := refilterBundle(context.Background(), reg, adapter, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}

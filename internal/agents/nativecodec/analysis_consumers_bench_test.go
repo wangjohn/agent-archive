@@ -1,6 +1,7 @@
 package nativecodec
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -21,17 +22,21 @@ func BenchmarkAnalysisConsumers(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, ok := SessionLabels(bundle); !ok {
-			b.Fatal("labels have no prompt")
-		}
-		metadata, err := BuildMetadata(bundle, "synthetic", time.Unix(1, 0), time.Unix(3, 0), reference, ParserInfo{})
+		analysis, err := ParseClaude(context.Background(), bundle)
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := BuildTranscript(bundle, HandoffOptions{}); err != nil {
+		if _, ok := LabelsFromAnalysis(analysis); !ok {
+			b.Fatal("labels have no prompt")
+		}
+		metadata, err := BuildMetadataWithAnalysis(bundle, analysis, nil, "synthetic", time.Unix(1, 0), time.Unix(3, 0), reference, ParserInfo{})
+		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := BuildHandoff(bundle, &metadata, HandoffOptions{}); err != nil {
+		if _, err := BuildTranscriptWithAnalysis(bundle, analysis, HandoffOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := BuildHandoffWithAnalysis(bundle, analysis, &metadata, HandoffOptions{}); err != nil {
 			b.Fatal(err)
 		}
 	}

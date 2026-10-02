@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"os"
 	"path/filepath"
 	"strings"
@@ -715,11 +716,11 @@ func TestNativeEvidenceExtendsYieldsToVersionChange(t *testing.T) {
 		NativeRecords: []map[string]any{{"a": 1}},
 		Capture:       archive.SourceCapture{AdapterVersion: "1"},
 	}
-	if nativeEvidenceExtends(previous, candidate) {
+	if nativeEvidenceExtends(claude.Filter{}, previous, candidate) {
 		t.Fatal("same-version truncation must still be caught")
 	}
 	candidate.Capture.AdapterVersion = "2"
-	if !nativeEvidenceExtends(previous, candidate) {
+	if !nativeEvidenceExtends(claude.Filter{}, previous, candidate) {
 		t.Fatal("adapter version change must not read as a rewrite")
 	}
 }

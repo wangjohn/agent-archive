@@ -65,8 +65,8 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // (FuzzFilterJSONL, FuzzCursorText), so under newer rules only what they
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
-func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	filtered, err := refilterNative(reg, adapter, bundle)
+func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -80,12 +80,12 @@ func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bu
 
 // refilterNative runs a snapshot's native records, or its native text, back
 // through the filter.
-func refilterNative(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
+func refilterNative(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
 	f, ok := adapter.(agentapi.TranscriptFilter)
 	if !ok {
 		return archive.FilteredTranscript{}, errors.New("native refilter port required")
 	}
-	return f.Refilter(context.Background(), bundle, reg.SessionStartedAt)
+	return f.Refilter(ctx, bundle, reg.SessionStartedAt)
 }
 
 // mergeCaptureGaps is first followed by each gap of second not already in
@@ -112,12 +112,12 @@ func (s *sessionScan) refilterRewritten(read sourceRead, snapshot, candidate arc
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(s.reg, read.adapter, snapshot)
+	refiltered, err := refilterBundle(s.ctx, s.reg, read.adapter, snapshot)
 	if err != nil {
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))
 		return candidate, false, nil
 	}
-	if nativeEvidenceExtends(refiltered, candidate) {
+	if nativeEvidenceExtends(read.adapter, refiltered, candidate) {
 		// Filtered the same way now, the two compare record for record, and
 		// the transcript holds everything the snapshot did after all (a
 		// file restored since its rewrite gap was recorded).

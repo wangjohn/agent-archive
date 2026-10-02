@@ -8,6 +8,9 @@ import (
 
 // analyzeSource resolves the pure parser once at a read operation boundary.
 func analyzeSource(ctx context.Context, parsers agentapi.ParsersLookup, bundle archive.SourceBundle) (archive.Analysis, error) {
+	if parsers == nil {
+		return archive.Analysis{}, &archive.ParseError{Reason: "parser unavailable"}
+	}
 	parser, ok := parsers.LookupParser(bundle.Capture.Harness.Name)
 	if !ok {
 		return archive.Analysis{}, &archive.ParseError{Reason: "parser unavailable"}

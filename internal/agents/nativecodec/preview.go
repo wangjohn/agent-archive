@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"io"
 )
 
 // Preview filters a single complete native record and retains only bounded display facts.
-func Preview(ctx context.Context, adapter archive.Adapter, record []byte) (archive.RecordPreview, error) {
+func Preview(ctx context.Context, adapter interface {
+	FilterJSONL(io.Reader) (archive.FilteredTranscript, error)
+}, record []byte) (archive.RecordPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.RecordPreview{}, err
 	}

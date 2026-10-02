@@ -607,7 +607,7 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 		}
 	}
 	// Native invocation/read-inference evidence is collected once, in
-	// toolCalls()'s per-record walk (see ParseNormalized), rather than a
+	// the native parser's per-record walk, rather than a
 	// second traversal of bundle.NativeRecords here.
 	for _, entry := range nativeSkillUses {
 		recordUse(entry)

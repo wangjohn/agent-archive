@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"time"
 
@@ -203,7 +202,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	adapter  archive.Adapter
+	adapter  agentapi.TranscriptFilter
 	filtered archive.FilteredTranscript
 	observed sourceState
 	// outcome is the scan's outcome when the read ended it.
@@ -349,7 +348,7 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 
 	// Observe the filesystem only with session activity. An unrelated skill edit
 	// must not refresh every historical session or extend its retention lifetime.
-	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(cached, candidate) || !nativeEvidenceExtends(candidate, cached)
+	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
 	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		active = true
 	}
@@ -498,7 +497,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 			return refiltered, false, err
 		}
 	}
-	if !haveGuard || nativeEvidenceExtends(guardBundle, candidate) {
+	if !haveGuard || nativeEvidenceExtends(read.adapter, guardBundle, candidate) {
 		return candidate, false, nil
 	}
 	provider, _, found := s.opts.Sources.LookupSources(s.reg.Harness.Name)

@@ -2,11 +2,11 @@ package nativecodec_test
 
 import (
 	"bytes"
+	"context"
 
 	"encoding/json"
 
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
-	"github.com/wangjohn/agent-archive/internal/archive"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 	"os"
 	"path/filepath"
@@ -45,8 +45,8 @@ func TestNativeComposerFilterAndAnalysisPreserveGoldenPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			var fixture struct {
-				Composer json.RawMessage        `json:"composer"`
-				Bubbles  []archive.CursorBubble `json:"bubbles"`
+				Composer json.RawMessage            `json:"composer"`
+				Bubbles  []nativecodec.CursorBubble `json:"bubbles"`
 			}
 			if err := json.Unmarshal(raw, &fixture); err != nil {
 				t.Fatal(err)
@@ -58,8 +58,16 @@ func TestNativeComposerFilterAndAnalysisPreserveGoldenPaths(t *testing.T) {
 			if err := json.Unmarshal(raw, &native); err != nil {
 				t.Fatal(err)
 			}
-			want, wantErr := (archive.CursorAdapter{}).FilterComposer(archive.CursorComposer{Composer: fixture.Composer, Bubbles: fixture.Bubbles})
-			got, gotErr := (nativecodec.CursorAdapter{}).FilterComposer(nativecodec.CursorComposer{Composer: native.Composer, Bubbles: native.Bubbles})
+			want, wantErr := (nativecodec.CursorAdapter{}).FilterComposer(nativecodec.CursorComposer{Composer: fixture.Composer, Bubbles: fixture.Bubbles})
+			i := 0
+			got, gotErr := nativecodec.FilterComposerRecords(context.Background(), native.Composer, func(context.Context) (nativecodec.CursorBubble, bool, error) {
+				if i == len(native.Bubbles) {
+					return nativecodec.CursorBubble{}, false, nil
+				}
+				b := native.Bubbles[i]
+				i++
+				return b, true, nil
+			})
 			if (wantErr != nil) != (gotErr != nil) {
 				t.Fatalf("filter errors %v / %v", wantErr, gotErr)
 			}

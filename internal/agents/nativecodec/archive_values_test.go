@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"io"
 	"strings"
 	"time"
 )
 
-type Adapter = archive.Adapter
+type Adapter interface {
+	archive.Adapter
+	FilterJSONL(io.Reader) (archive.FilteredTranscript, error)
+}
 type FilterError = archive.FilterError
 
 var ErrUnsafeSourceFormat = archive.ErrUnsafeSourceFormat
@@ -506,7 +510,7 @@ func PreviewRecord(agent string, record []byte) (RecordPreview, error) {
 }
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
-func NewAdapter(name string) (archive.Adapter, error) {
+func NewAdapter(name string) (Adapter, error) {
 	switch archive.CanonicalHarness(name) {
 	case archive.HarnessCodex:
 		return CodexAdapter{}, nil

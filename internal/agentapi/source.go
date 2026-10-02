@@ -101,9 +101,10 @@ type FilterContext struct {
 	Limits    ReadLimits
 }
 
-// TranscriptFilter interprets bounded native input. Adapter methods are temporary retained-bundle compatibility.
+// TranscriptFilter owns native filtering and retained evidence interpretation.
 type TranscriptFilter interface {
 	archive.Adapter
+	RetainedComparator
 	Filter(context.Context, NativeInput, FilterContext) (archive.FilteredTranscript, error)
 	Refilter(context.Context, archive.SourceBundle, time.Time) (archive.FilteredTranscript, error)
 }
