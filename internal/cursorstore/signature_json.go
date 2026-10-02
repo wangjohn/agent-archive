@@ -210,7 +210,8 @@ func (p *signatureJSON) object(depth int, visit func(string) error) error {
 		if first != '"' {
 			return NotChecked(UnknownFormat)
 		}
-		raw, err := p.string(128)
+		// A selected field may encode every letter as a six-byte Unicode escape.
+		raw, err := p.string(6*len(signatureConversationHeaders) + 2)
 		if err != nil {
 			return err
 		}

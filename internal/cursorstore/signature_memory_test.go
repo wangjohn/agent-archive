@@ -25,3 +25,36 @@ func TestOversizedComposerSignatureAvoidsRawAllocation(t *testing.T) {
 		t.Fatalf("signature allocated %d bytes for omitted oversized raw composer", allocated)
 	}
 }
+
+// Invalid native scalar types must be rejected without materializing their contents.
+func TestOversizedInvalidSignatureFieldsAvoidRawAllocation(t *testing.T) {
+	// Allocation measurements require a serial test without concurrent fixtures.
+	const size = 65 << 20
+	large := strings.Repeat("x", size)
+	for name, composer := range map[string]string{
+		"timestamp string": `{"lastUpdatedAt":"` + large + `"}`,
+		"timestamp array":  `{"lastUpdatedAt":["` + large + `"]}`,
+		"timestamp object": `{"lastUpdatedAt":{"unknown":"` + large + `"}}`,
+		"identity array":   `{"fullConversationHeadersOnly":[{"bubbleId":["` + large + `"]}]}`,
+		"identity object":  `{"fullConversationHeadersOnly":[{"bubbleId":{"unknown":"` + large + `"}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := decodeHeaders([]byte(composer)); ReasonOf(err) != UnknownFormat {
+				t.Fatalf("legacy outcome: %v", err)
+			}
+			path := StateDatabase(t.TempDir())
+			writeDB(t, path, false, map[string]any{"composerData:c": composer})
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := ReadSignature(t.Context(), path, "c")
+			runtime.ReadMemStats(&after)
+			if ReasonOf(err) != UnknownFormat {
+				t.Fatalf("bounded outcome: %v", err)
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 32<<20 {
+				t.Fatalf("signature allocated %d bytes for rejected native field", allocated)
+			}
+		})
+	}
+}
