@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -90,6 +91,13 @@ func TestSignatureOnlyMatchesLegacyHeaderDecoding(t *testing.T) {
 		"surrogate identity":     `{"fullConversationHeadersOnly":[{"bubbleId":"invalid-\ud800"}]}`,
 		"invalid duplicate type": `{"fullConversationHeadersOnly":[{"bubbleId":7,"bubbleId":"b1"}]}`,
 		"huge number":            `{"lastUpdatedAt":1e400}`,
+		"raw NUL tail":           "{}\x00",
+		"escaped NUL identity":   `{"fullConversationHeadersOnly":[{"bubbleId":"escaped-\u0000"}]}`,
+		"deep unknown field":     `{"lastUpdatedAt":7,"unknown":` + strings.Repeat("[", 1001) + `0` + strings.Repeat("]", 1001) + `}`,
+		"deep inline field":      `{"conversation":[{"bubbleId":"last","unknown":` + strings.Repeat("[", 1001) + `0` + strings.Repeat("]", 1001) + `}]}`,
+		"Go depth boundary":      `{"unknown":` + strings.Repeat("[", 9999) + `0` + strings.Repeat("]", 9999) + `}`,
+		"Go depth exceeded":      `{"unknown":` + strings.Repeat("[", 10000) + `0` + strings.Repeat("]", 10000) + `}`,
+		"long timestamp":         `{"lastUpdatedAt":0.` + strings.Repeat("0", 2000) + `1e2001,"unknown":` + strings.Repeat("[", 1001) + `0` + strings.Repeat("]", 1001) + `}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := StateDatabase(t.TempDir())
