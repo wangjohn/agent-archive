@@ -774,3 +774,222 @@ func TestOwnKeyPreSlotCancellationDoesNotCancelCompletedOwnership(t *testing.T) 
 		t.Fatalf("completed ownership treated as cancelled pre-slot: %d %s", code, output.String())
 	}
 }
+
+type ownKeySecretRetryStore struct {
+	*fakeKeychain
+	fail        bool
+	deleteRefs  []string
+	afterDelete func(string) error
+}
+
+func (s *ownKeySecretRetryStore) LoadStored(ctx context.Context, ref string) (credentials.R2Credentials, error) {
+	key, err := s.Load(ctx, ref)
+	if errors.Is(err, credentials.ErrMissingCredential) {
+		return key, credentials.ErrKeychainItemNotFound
+	}
+	return key, err
+}
+
+func (s *ownKeySecretRetryStore) Delete(ctx context.Context, ref string) error {
+	s.deleteRefs = append(s.deleteRefs, ref)
+	if s.fail {
+		return credentials.ErrKeychainLocked
+	}
+	if err := s.fakeKeychain.Delete(ctx, ref); err != nil {
+		return err
+	}
+	if s.afterDelete != nil {
+		return s.afterDelete(ref)
+	}
+	return nil
+}
+
+func deletedOwnKeySecretFixture(t *testing.T) (Env, string, *cloudflaretest.Server, *ownKeySecretRetryStore, config.Config, issuance.Slot) {
+	t.Helper()
+	env, home, cf, kc, cfg := ownKeyFixture(t)
+	store := &ownKeySecretRetryStore{fakeKeychain: kc}
+	env.Credentials = func() (credentials.CredentialStore, error) { return store, nil }
+	issuer := fixtureIssuer(t, env, home)
+	checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+	slot, err := ownKeySlot(home, &checkpoint, issuer, issuer.api, env)
+	must(t, err)
+	slot.State = issuance.CleanupPending
+	must(t, issuance.Save(home, slot))
+	store.fail = true
+	must(t, issuer.cleanupOwnKeyStage(&slot))
+	if slot.State != issuance.Deleted || !slot.SecretRemovalPending || providerKeyLive(cf, slot.ProviderID) {
+		t.Fatal("fixture did not confirm deletion and retain secret cleanup")
+	}
+	return env, home, cf, store, cfg, slot
+}
+
+func TestOwnKeyDeletedStageSecretRemovalRetriesAfterStoreRecovery(t *testing.T) {
+	for _, cancelStage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(cancelStage), func(t *testing.T) {
+			env, home, cf, store, cfg, oldSlot := deletedOwnKeySecretFixture(t)
+			configBefore, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			store.fail = false
+			beforeDeletes := len(store.deleteRefs)
+			args := []string{"machines", "own-key", "--yes"}
+			wantCreates := 2
+			if cancelStage {
+				args = append(args, "--cancel")
+				wantCreates = 1
+			}
+			var output bytes.Buffer
+			if code := Run(args, nil, &output, &output, env); code != 0 {
+				t.Fatalf("recovered secret cleanup still blocked: %d %s", code, output.String())
+			}
+			if cf.Calls(cloudflaretest.RouteDeleteToken) != 1 || cf.Calls(cloudflaretest.RouteCreateToken) != wantCreates {
+				t.Fatal("cleanup repeated provider deletion or minted on cancellation")
+			}
+			if len(store.deleteRefs) <= beforeDeletes || store.deleteRefs[beforeDeletes] != oldSlot.SecretRef {
+				t.Fatal("retry did not remove only the exact staged secret first")
+			}
+			if _, err = store.Load(t.Context(), oldSlot.SecretRef); !errors.Is(err, credentials.ErrMissingCredential) {
+				t.Fatal("recovered staged secret remains")
+			}
+			slots, err := issuance.List(home)
+			must(t, err)
+			for _, slot := range slots {
+				if slot.SlotID == oldSlot.SlotID && (slot.State != issuance.Deleted || slot.SecretRemovalPending) {
+					t.Fatal("secret cleanup success did not durably clear exact deleted slot")
+				}
+			}
+			if _, err = os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+				t.Fatal("completed retry retained checkpoint")
+			}
+			if cancelStage {
+				after, err := os.ReadFile(filepath.Join(home, "config.json"))
+				must(t, err)
+				if !bytes.Equal(configBefore, after) || len(store.deleteRefs) != beforeDeletes+1 {
+					t.Fatal("cleanup-only cancellation changed config or removed another secret")
+				}
+				if _, err = store.Load(t.Context(), cfg.Storage.R2CredentialRef); err != nil {
+					t.Fatal("cleanup cancellation removed shared access")
+				}
+			} else {
+				current, _, err := config.Load(home)
+				must(t, err)
+				if current.MachineAssignment == nil || current.MachineAssignment.Kind != config.MachineAssignmentR2Own || len(slots) != 2 {
+					t.Fatal("resumed migration did not finish new ownership")
+				}
+			}
+		})
+	}
+}
+
+func TestOwnKeyDeletedStageSecretRetryPreservesBindingGuards(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*testing.T, *config.Config, *ownKeySecretRetryStore, *issuance.Slot)
+	}{
+		{"active-alias", func(t *testing.T, cfg *config.Config, store *ownKeySecretRetryStore, slot *issuance.Slot) {
+			t.Helper()
+			key, err := store.Load(t.Context(), slot.SecretRef)
+			must(t, err)
+			must(t, store.Save(t.Context(), cfg.Storage.R2CredentialRef, key))
+		}},
+		{"retained-alias", func(t *testing.T, cfg *config.Config, store *ownKeySecretRetryStore, slot *issuance.Slot) {
+			t.Helper()
+			key, err := store.Load(t.Context(), slot.SecretRef)
+			must(t, err)
+			must(t, store.Save(t.Context(), "retained-stage-alias", key))
+			previous := cfg.Storage
+			previous.Bucket = "retained-destination"
+			previous.R2CredentialRef = "retained-stage-alias"
+			cfg.PreviousDestinations = []credentials.Config{previous}
+		}},
+		{"retired-reference", func(_ *testing.T, cfg *config.Config, _ *ownKeySecretRetryStore, slot *issuance.Slot) {
+			cfg.RetiredCredentialRefs = []string{slot.SecretRef}
+		}},
+		{"retired-alias", func(t *testing.T, cfg *config.Config, store *ownKeySecretRetryStore, slot *issuance.Slot) {
+			t.Helper()
+			key, err := store.Load(t.Context(), slot.SecretRef)
+			must(t, err)
+			must(t, store.Save(t.Context(), "retired-stage-alias", key))
+			cfg.RetiredCredentialRefs = []string{"retired-stage-alias"}
+		}},
+		{"unknown-retired-binding", func(_ *testing.T, cfg *config.Config, _ *ownKeySecretRetryStore, _ *issuance.Slot) {
+			cfg.RetiredCredentialRefs = []string{"unknown-retired"}
+		}},
+		{"changed-staged-secret", func(t *testing.T, _ *config.Config, store *ownKeySecretRetryStore, slot *issuance.Slot) {
+			t.Helper()
+			must(t, store.Save(t.Context(), slot.SecretRef, credentials.R2Credentials{AccessKeyID: strings.Repeat("f", 32), SecretAccessKey: "changed-secret-canary"}))
+		}},
+		{"unknown-provider-identity", func(_ *testing.T, _ *config.Config, _ *ownKeySecretRetryStore, slot *issuance.Slot) {
+			slot.ProviderID = ""
+		}},
+		{"unconfirmed-delete-reason", func(_ *testing.T, _ *config.Config, _ *ownKeySecretRetryStore, slot *issuance.Slot) {
+			slot.CleanupReason = "creation-refused"
+		}},
+		{"changed-destination", func(_ *testing.T, cfg *config.Config, _ *ownKeySecretRetryStore, _ *issuance.Slot) {
+			cfg.Storage.Bucket = "later-destination"
+			cfg.MachineAssignment = nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, home, cf, store, cfg, slot := deletedOwnKeySecretFixture(t)
+			store.fail = false
+			tc.mutate(t, &cfg, store, &slot)
+			must(t, config.Save(home, cfg))
+			path := filepath.Join(home, "issued", "slot-"+slot.SlotID+".json")
+			// Direct write models incomplete identity proof, which lifecycle Save
+			// deliberately refuses to manufacture by changing immutable fields.
+			must(t, local.Write(path, slot))
+			before, err := os.ReadFile(path)
+			must(t, err)
+			deletes := len(store.deleteRefs)
+			for _, args := range [][]string{{"machines", "own-key", "--yes"}, {"machines", "own-key", "--cancel", "--yes"}} {
+				var output bytes.Buffer
+				if code := Run(args, nil, &output, &output, env); code != 1 || len(store.deleteRefs) != deletes || cf.Calls(cloudflaretest.RouteDeleteToken) != 1 || cf.Calls(cloudflaretest.RouteCreateToken) != 1 {
+					t.Fatalf("secret retry bypassed retained/unknown binding: %d %s", code, output.String())
+				}
+				after, err := os.ReadFile(path)
+				must(t, err)
+				if !bytes.Equal(before, after) {
+					t.Fatal("refused secret retry altered issuance proof")
+				}
+				if _, err = os.Stat(filepath.Join(home, ownKeyFile)); err != nil {
+					t.Fatal("refused secret retry lost checkpoint")
+				}
+			}
+		})
+	}
+}
+
+func TestDeletedOwnKeySecretRetryKeepsProofWhenSuccessCannotBeJournaled(t *testing.T) {
+	env, home, cf, store, _, slot := deletedOwnKeySecretFixture(t)
+	store.fail = false
+	issuer := fixtureIssuer(t, env, home)
+	path := filepath.Join(home, "issued", "slot-"+slot.SlotID+".json")
+	backup := filepath.Join(home, "pending-secret-proof.json")
+	store.afterDelete = func(ref string) error {
+		if ref != slot.SecretRef {
+			t.Fatal("cleanup attempted unrelated secret")
+		}
+		// Inject a journal-write failure after successful local deletion.
+		return os.Rename(path, backup)
+	}
+	if err := issuer.retryDeletedOwnKeySecret(&slot); err == nil || !slot.SecretRemovalPending {
+		t.Fatal("unpersisted secret cleanup success discarded pending proof")
+	}
+	var retained issuance.Slot
+	must(t, local.Read(backup, &retained))
+	if !retained.SecretRemovalPending {
+		t.Fatal("journal failure cleared persisted pending proof")
+	}
+	must(t, os.Rename(backup, path))
+	store.afterDelete = nil
+	var output bytes.Buffer
+	if code := Run([]string{"machines", "own-key", "--cancel", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != 1 || cf.Calls(cloudflaretest.RouteCreateToken) != 1 {
+		t.Fatalf("retry of already absent exact secret failed: %d %s", code, output.String())
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	if len(slots) != 1 || slots[0].SecretRemovalPending {
+		t.Fatal("absence recovery did not durably clear pending proof")
+	}
+}

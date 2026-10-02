@@ -425,7 +425,10 @@ exact staged slot has already committed still finishes its cleanup. An interrupt
 before slot allocation leaves no provider key: a validated checkpoint with no
 remaining issuance or cleanup obligation can be retired locally on retry or
 cancel, including after setup changes destination. This cancellation needs no
-management token. Uncertain issuance and pending secret removal stay recorded.
+management token. Uncertain issuance and pending secret removal stay recorded. After confirmed
+provider deletion, retry or cancellation can finish exact staged local secret
+removal when the credential store recovers. Active or retained aliases, unknown
+identity, and further cleanup failures keep the obligation recorded.
 Only after commit
 can the obsolete shared local secret be deleted; another local destination's
 reference, a matching retired alias, an unreadable binding, or a cleanup failure

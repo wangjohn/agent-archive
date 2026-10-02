@@ -262,16 +262,8 @@ func ownKeySlot(home string, checkpoint *ownKeyCheckpoint, issuer *keyIssuer, ap
 			return slot, errors.New("own-key staged lineage mismatched")
 		}
 	}
-	if slot.State == issuance.CreationIntent || slot.State == issuance.SecretIntent || slot.State == issuance.CleanupPending {
-		release, err := lockCollector(home, "own-key recovery cleanup", env.now())
-		if err != nil {
-			return slot, err
-		}
-		err = issuer.cleanupOwnKeyStage(&slot)
-		release()
-		if err != nil {
-			return slot, err
-		}
+	if err := issuer.recoverOwnKeyStage(&slot); err != nil {
+		return slot, err
 	}
 	if slot.State == issuance.Deleted {
 		if slot.SecretRemovalPending {
@@ -480,7 +472,7 @@ func cancelStagedOwnKey(home string, checkpoint ownKeyCheckpoint, issuer *keyIss
 		case issuance.Spare, issuance.Reserved, issuance.DeliveryIntent, issuance.Delivered, issuance.Own:
 			return machineCommandError(errOut, errors.New("slot is not owned by an uncommitted own-key transaction; cancellation refused"))
 		case issuance.Deleted:
-			// A confirmed prior cleanup only needs its checkpoint removed.
+			err = issuer.retryDeletedOwnKeySecret(&slot)
 		}
 		if err != nil || slot.State != issuance.Deleted || slot.SecretRemovalPending {
 			return machineCommandError(errOut, errors.New("staged cancellation remains pending; shared access unchanged"))
@@ -621,5 +613,83 @@ func (i *keyIssuer) cleanupOwnKeyStage(s *issuance.Slot) error {
 		return err
 	}
 	i.cleanup(s)
+	return nil
+}
+
+// Recovery serializes local binding proof with collection/config mutation.
+// The command already holds setup.lock and issued.lock.
+func (i *keyIssuer) recoverOwnKeyStage(s *issuance.Slot) error {
+	switch s.State {
+	case issuance.CreationIntent, issuance.SecretIntent, issuance.CleanupPending:
+	case issuance.Deleted:
+		if !s.SecretRemovalPending {
+			return nil
+		}
+	case issuance.Spare, issuance.Reserved, issuance.DeliveryIntent, issuance.Delivered, issuance.OwnIntent, issuance.Own:
+		return nil
+	default:
+		return errors.New("unknown own-key stage; recovery refused")
+	}
+	release, err := lockCollector(i.home, "own-key recovery cleanup", i.env.now())
+	if err != nil {
+		return err
+	}
+	defer release()
+	if s.State == issuance.Deleted {
+		return i.retryDeletedOwnKeySecret(s)
+	}
+	return i.cleanupOwnKeyStage(s)
+}
+
+// Caller holds setup.lock, issued.lock and collector.lock. Provider deletion
+// is already confirmed; retry only the exact local secret and persist success.
+func (i *keyIssuer) retryDeletedOwnKeySecret(s *issuance.Slot) error {
+	if s.State != issuance.Deleted {
+		return errors.New("own-key provider deletion is not confirmed; secret retained")
+	}
+	if !s.SecretRemovalPending {
+		return nil
+	}
+	if s.Validate() != nil || s.CleanupReason != "provider-delete-confirmed" || !config.ValidMachineID(s.ProviderID) || s.IssuerID != i.cfg.MachineID || s.RecipientID != i.cfg.MachineID {
+		return errors.New("deleted own-key identity unavailable; secret cleanup pending")
+	}
+	if err := i.ownKeyCleanupSafe(*s); err != nil {
+		return err
+	}
+	cfg, found, err := config.Load(i.home)
+	if err != nil || !found {
+		return errors.New("committed ownership unavailable; secret cleanup pending")
+	}
+	kc, err := i.env.credentialStore()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
+	defer cancel()
+	for _, ref := range cfg.RetiredCredentialRefs {
+		if ref == s.SecretRef {
+			return errors.New("retired own-key reference retained; secret cleanup refused")
+		}
+		key, loadErr := credentials.LoadStored(ctx, kc, ref)
+		if loadErr != nil || key.AccessKeyID == "" || key.AccessKeyID == s.ProviderID {
+			return errors.New("retired credential identity unknown or aliases own key; secret retained")
+		}
+	}
+	key, err := credentials.LoadStored(ctx, kc, s.SecretRef)
+	if err != nil && !errors.Is(err, credentials.ErrKeychainItemNotFound) && !errors.Is(err, credentials.ErrCredentialFileNotFound) {
+		return errors.New("staged credential identity unavailable; secret cleanup pending")
+	}
+	if err == nil && key.AccessKeyID != s.ProviderID {
+		return errors.New("staged credential identity changed; secret cleanup refused")
+	}
+	if err = kc.Delete(ctx, s.SecretRef); err != nil {
+		return err
+	}
+	next := *s
+	next.SecretRemovalPending = false
+	if err = issuance.Save(i.home, next); err != nil {
+		return err
+	}
+	*s = next
 	return nil
 }

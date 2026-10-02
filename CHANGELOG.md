@@ -60,7 +60,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   refuse a shared credential reference replaced by later setup, retaining the
   stage for safe cancellation. Pre-slot interruptions can be safely retired
   locally after setup changes, while uncertain issuance and secret cleanup
-  remain recorded.
+  remain recorded. Confirmed-deleted own-key stages retry exact local secret
+  removal after credential-store recovery without deleting the provider again.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
