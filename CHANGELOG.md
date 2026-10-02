@@ -26,6 +26,14 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
 
+### Fixed
+
+- Native handoff keeps verified IDs selectable when its cumulative label-read
+  budget is exhausted, and reuses unused header reservations after inspection.
+  Incomplete local `--latest` offers an explicit picker or known-ID recipes
+  rather than selecting automatically. Cancellation during canonical checkout
+  scoping stops further path resolution.
+
 ### Changed
 
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
@@ -47,6 +55,14 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 setup checks the token before asking for bucket settings, offers
+  token replacement or retry on failure, and summarizes the bucket and
+  automatic or customized location before creation.
+- Guided R2 setup checks the archive-key permission before confirmation and
+  bucket creation, so a failed lookup leaves no empty bucket behind.
+- R2 setup instructions distinguish custom account tokens from the R2 token
+  form, show the dashboard's Edit permission labels, and explain how to use
+  a bucket-scoped Object Read & Write key instead.
 - HTML statistics exports preserve concurrently created destination files when
   `--force` is absent, including when the filesystem cannot create hard links.
 - Clipboard handoff uses `pbcopy` on macOS and installed `wl-copy`, `xclip`, or

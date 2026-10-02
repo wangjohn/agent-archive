@@ -1,18 +1,15 @@
-"""The real-systemd CI job keeps the name and the pinned image it is required by.
+"""Extended CI preserves the real-systemd job and its validated runner image.
 
-Branch protection lists real-systemd as a required check, and matches it by the
-check's name: renaming the job (or giving it a name: or a matrix, which change
-the check's name) leaves the rule waiting on a check that never reports. The
-job is validated on one runner image (dev/contributing/testing.md); on
-ubuntu-latest a new image would change systemd under a required check without
-a change in this repository. Read without PyYAML, like test_release_assets.py.
+The job runs nightly or on demand. Its stable name identifies the systemd
+backstop, and its pinned image prevents an unreviewed systemd upgrade.
+Read without PyYAML, like test_release_assets.py.
 """
 from pathlib import Path
 import re
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
-TEST_YML = ROOT / '.github' / 'workflows' / 'test.yml'
+EXTENDED_YML = ROOT / '.github' / 'workflows' / 'extended.yml'
 TESTING_MD = ROOT / 'dev' / 'contributing' / 'testing.md'
 
 JOB = 'real-systemd'
@@ -44,17 +41,17 @@ def job_key(text, key):
 
 class RealSystemdJobTest(unittest.TestCase):
     def setUp(self):
-        self.jobs = jobs(TEST_YML.read_text())
+        self.jobs = jobs(EXTENDED_YML.read_text())
 
     def job(self):
-        self.assertIn(JOB, self.jobs, f'test.yml has no job named {JOB}; branch protection requires it by name')
+        self.assertIn(JOB, self.jobs, f'extended.yml has no job named {JOB}; nightly systemd coverage must remain')
         return self.jobs[JOB]
 
     def test_the_job_is_named_exactly_real_systemd(self):
         text = self.job()
-        # A name: or a matrix would change the check's name from the job id.
-        self.assertIsNone(job_key(text, 'name'), f'{JOB} must not set name:, which renames the required check')
-        self.assertIsNone(job_key(text, 'strategy'), f'{JOB} must not have a matrix, which renames the required check')
+        # Keep a stable check name for the systemd backstop.
+        self.assertIsNone(job_key(text, 'name'), f'{JOB} must not set name:, which renames the check')
+        self.assertIsNone(job_key(text, 'strategy'), f'{JOB} must not have a matrix, which renames the check')
 
     def test_runs_on_a_pinned_ubuntu_image(self):
         runs_on = job_key(self.job(), 'runs-on')

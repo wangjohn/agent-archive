@@ -10,7 +10,7 @@ and a stubbed launchctl. -->
 
 ## Checklist
 
-- [ ] `go test -race ./...`, `go vet ./...`, `golangci-lint run --disable=revive`, and the Levenshtein Go lint pass (see `dev/contributing/testing.md`).
+- [ ] CI's Linux race, macOS smoke, cross-build, macOS lint, and Levenshtein checks pass (see `dev/contributing/testing.md`). Run the Extended workflow on this branch when changing macOS integration, fuzz targets, or systemd behavior.
 - [ ] Every bug fix has a regression test that fails without the fix.
 - [ ] New or changed exported identifiers have doc comments (CI runs revive on new code).
 - [ ] **Privacy:** if this changes what the filter keeps, drops, or redacts (anything that changes uploaded bundle content), `FilterVersion` is bumped (and the adapter version if adapter output changed), `dev/specs/privacy-filter-changelog.md` has a section for it, and the golden files are regenerated.

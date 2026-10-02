@@ -11,10 +11,10 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 `agent-archive` solves these problems, and can perform the following:
 
 - Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session from one coding agent to another. Type `/handoff codex` in Claude Code (or ask for `$handoff` in Codex) and Codex opens in a new terminal tab or window with the session as its context (on Linux, a new tmux window; outside tmux it prints the command to paste); from a terminal, run `agent-archive handoff`, pick a session, and press Enter. No copying and pasting. Useful especially if you run into rate limits halfway through a session ([handoff guide](docs/guides/handoff.md)).
-- Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
+- Hand off a session from one coding agent to another. Type `/handoff codex` in Claude Code (or ask for `$handoff` in Codex) and Codex opens in a new terminal tab or window with the session as its context (on Linux, a new tmux window; outside tmux it prints the command to paste); from a terminal, run `agent-archive handoff`, pick a session (press `/` and type a few words, a PR number, or a branch to narrow the list), and press Enter. Or name it: `agent-archive handoff "flaky retention"`. No copying and pasting. Useful especially if you run into rate limits halfway through a session ([handoff guide](docs/guides/handoff.md)).
+- Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session by a word or two (its name, branch, project, or PR number) and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
 - Hand off a session from one computer to another with the same `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
-- View all of your past sessions across coding agents with `agent-archive list`. This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+- View all of your past sessions across coding agents with `agent-archive list` (from inside a repository it shows that repository's sessions first; `agent-archive list "retention"` finds one by words). This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
 
 ## Quickstart
 
@@ -73,7 +73,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
 | `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
-| `list` | Find archived sessions. | `agent-archive list --since 7d` |
+| `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |
 | `show` | View a session's summary, or its transcript with `--transcript`. | `agent-archive show SESSION_ID` |
 | `stats` | See your usage: tokens by day, estimated cost, agents, models, projects, highlights. | `agent-archive stats --days 7` |
 | `backfill` | Preview sessions already on this machine for import. | `agent-archive backfill --dry-run` |
