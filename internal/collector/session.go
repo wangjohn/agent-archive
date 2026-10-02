@@ -259,7 +259,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
-	if agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}
 	switch {

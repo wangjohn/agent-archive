@@ -475,7 +475,7 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 		return nil
 	}
 	if err := readCursorDatabaseChats(ctx, workers, res.ReadChat, res.ReadSnapshot, toRead, env.Sources); err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || fatalSourceFailure(err) {
 			return err
 		}
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(err)
@@ -596,7 +596,7 @@ func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(con
 		// A value of this chat's that does not decode is the chat's
 		// problem, unsafe_format; only a failure of the database itself
 		// (a lock, a failed copy, a changed file) leaves it unchecked.
-		chatOnly := err != nil && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat || agentapi.HasFailure(err, agentapi.Limit))
+		chatOnly := err != nil && !fatalSourceFailure(err) && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat || agentapi.HasFailure(err, agentapi.Limit))
 		if err != nil && !chatOnly && readErr == nil {
 			readErr = err
 		}
@@ -623,6 +623,12 @@ func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(con
 					err = archive.ErrRecordTooLarge
 				}
 			}
+		}
+		if fatalSourceFailure(err) {
+			mu.Lock()
+			readErr = errors.Join(readErr, err)
+			mu.Unlock()
+			return
 		}
 		switch {
 		case errors.Is(err, archive.ErrRecordTooLarge):
