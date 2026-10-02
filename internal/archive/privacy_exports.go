@@ -18,18 +18,22 @@ func JSONHasDuplicateKeys(value string) bool { return jsonHasDuplicateKeys(value
 // MaxSanitizeStringPasses bounds repeated redaction of encoded strings.
 const MaxSanitizeStringPasses = maxSanitizeStringPasses
 
-// These operations expose mandatory privacy decisions to native envelope
-// shapers. None changes or replaces the redaction policy.
+// PrivacyHiddenObject recognizes objects containing hidden instruction content.
 func PrivacyHiddenObject(value map[string]any) bool { return isHiddenObject(value) }
 
+// PrivacyBinaryObject recognizes binary content that shared privacy policy omits.
 func PrivacyBinaryObject(value map[string]any) (string, bool) { return binaryContentBlock(value) }
 
+// PrivacyBlockedKey reports keys forbidden by shared privacy policy.
 func PrivacyBlockedKey(key string) bool { return blockedKeys[key] }
 
+// PrivacySensitiveLabel detects labels describing sensitive typed input.
 func PrivacySensitiveLabel(value map[string]any) bool { return hasSensitiveLabel(value) }
 
+// PrivacyDeniedArgument applies shared sensitive tool-argument rules.
 func PrivacyDeniedArgument(key, tool string, labelled bool) bool {
 	return deniedToolArgument(key, tool, labelled)
 }
 
+// PrivacyRedactArgv redacts credential arguments using the shared argv policy.
 func PrivacyRedactArgv(value []any) ([]any, bool) { return redactArgv(value) }

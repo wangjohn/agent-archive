@@ -851,6 +851,7 @@ func cloneHandoff(h Handoff) Handoff {
 	return out
 }
 
+// BuildHandoffWithAnalysis renders a handoff from one previously derived analysis.
 func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *Metadata, opts HandoffOptions) (Handoff, error) {
 	view := analysis.View
 	var exchanges []HandoffExchange

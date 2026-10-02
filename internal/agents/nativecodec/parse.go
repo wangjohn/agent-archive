@@ -226,14 +226,17 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 	}
 }
 
+// ParseClaude interprets retained safe Claude evidence without source I/O.
 func ParseClaude(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	return parse(ctx, b, profileClaude)
 }
 
+// ParseCodex interprets retained safe Codex evidence without source I/O.
 func ParseCodex(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	return parse(ctx, b, profileCodex)
 }
 
+// ParseCursor interprets retained safe Cursor evidence without source I/O.
 func ParseCursor(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	return parse(ctx, b, profileCursor)
 }

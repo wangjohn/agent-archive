@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-// ToolAction is the retained meaning of a native tool invocation. Parsers own
+// ToolActionKind classifies the retained meaning of a native invocation. Parsers own
 // tool names and argument layouts; shared builders own paths and presentation.
 type ToolActionKind string
 
+// Tool action kinds describe common renderer behavior for already interpreted facts.
 const (
 	ToolActionGeneric ToolActionKind = "generic"
 	ToolActionShell   ToolActionKind = "shell"
@@ -20,6 +21,7 @@ const (
 	ToolActionPlan    ToolActionKind = "plan"
 )
 
+// ToolAction carries semantic invocation facts for shared paths and presentation.
 type ToolAction struct {
 	Kind      ToolActionKind
 	Text      string
@@ -31,6 +33,7 @@ type ToolAction struct {
 	Plan      *PlanUpdate
 }
 
+// PlanUpdate describes a native plan replacement or merge after parsing.
 type PlanUpdate struct {
 	Items []HandoffPlanItem
 	Merge bool

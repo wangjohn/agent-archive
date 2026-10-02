@@ -196,6 +196,7 @@ var blockedKeys = map[string]bool{
 	"image": true, "images": true, "audio": true, "binary": true, "attachment": true,
 }
 
+// PrivacyState carries shared mandatory redaction decisions and omission accounting.
 type PrivacyState struct {
 	Record int
 	AddGap func(string, int, string)
