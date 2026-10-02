@@ -116,6 +116,12 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
+	var questionErr error
+	opts, stdin, questionErr = initialSetupPairingQuestion(*refresh || *abandon, opts, stdin, stdout, env)
+	if questionErr != nil {
+		terminal.Println(stderr, questionErr.Error())
+		return 1
+	}
 	if opts.pair || opts.pairFile != "" {
 		return runPairingSetupCommand(opts, *refresh, *abandon, fs, stdin, stdout, stderr, env)
 	}

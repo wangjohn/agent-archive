@@ -1,0 +1,34 @@
+{
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "$id":"https://agent-archive.dev/schemas/revocation.schema.json",
+ "title":"Experimental secret-free revocation operation",
+ "type":"object",
+ "additionalProperties":false,
+ "required":["version","operation_id","destination_id","requester_id","account_id","bucket","created_at","include_issued","account_inventory_complete","keys","publication_pending","request_only"],
+ "properties":{
+  "version":{"const":1},
+  "operation_id":{"$ref":"#/$defs/id"},
+  "destination_id":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+  "requester_id":{"$ref":"#/$defs/id"},
+  "target_id":{"$ref":"#/$defs/id"},
+  "account_id":{"type":"string","pattern":"^([0-9a-f]{32})?$"},
+  "bucket":{"type":"string","maxLength":63},
+  "jurisdiction":{"enum":["eu","fedramp"]},
+  "permission_id":{"$ref":"#/$defs/id"},
+  "created_at":{"type":"string","format":"date-time"},
+  "include_issued":{"type":"boolean"},
+  "account_inventory_complete":{"const":false},
+  "publication_pending":{"type":"boolean"},
+  "request_only":{"type":"boolean"},
+  "keys":{"type":"array","maxItems":128,"items":{
+   "type":"object","additionalProperties":false,
+   "required":["provider_id","recipient_id","issuer_id","slot_id","outcome"],
+   "properties":{
+    "provider_id":{"$ref":"#/$defs/id"},"recipient_id":{"$ref":"#/$defs/id"},
+    "issuer_id":{"$ref":"#/$defs/id"},"slot_id":{"$ref":"#/$defs/id"},
+    "outcome":{"enum":["pending","confirmed","failed-or-unknown"]}
+   }
+  }}
+ },
+ "$defs":{"id":{"type":"string","pattern":"^[0-9a-f]{32}$"}}
+}

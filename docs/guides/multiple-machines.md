@@ -364,3 +364,78 @@ Expiry is not key revocation. Delivered issuer-local secrets are removed at comm
 exit; immutable issuance lineage remains for later verification. Local cancellation
 needs management access to delete a dedicated token; otherwise access may remain.
 No provider propagation or independent cutoff guarantee has passed live acceptance.
+
+### Experimental revocation and shared-key migration
+
+These Phase 4 commands remain draft code. Live Cloudflare and combined
+acceptance have not enabled general availability or the first-run pairing
+question. Read-only verification and complete pagination never prove ownership
+or account-wide visibility.
+
+With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1`, use
+`agent-archive machines revoke NAME` or select exactly one `--machine-id`,
+`--recipient-id`, `--pairing-id`, or retry `--operation-id`. A bucket name or
+machine record is a hint, never deletion authority. A current destination-bound
+local assignment supports self-revocation; a healthy issuer's ledger supports
+recipient/pairing selection. A remote machine requires a private
+`--binding-file` independently established from the machine's committed local
+assignment and an out-of-band check. Never copy bucket claims into this file.
+Its strict JSON shape is `{"machine_id":"<32hex>","independently_verified":true,
+"assignment":{...}}`, with the destination-bound assignment fields from
+`machine-assignment.schema.json`. The declaration records operator evidence;
+the software still verifies exact provider token ID, scope and immutable name.
+It cannot establish that an operator's assertion is honest. Unknown ownership
+refuses even with `--yes`.
+
+Normal revocation selects verified dedicated/retired keys and unused spares;
+it excludes keys delivered to other recipients merely by the target issuer.
+`--include-issued` requires an independently bound issuer machine ID and checks
+all visible provider descendants, including delivered recipients and potentially
+copied credentials, without trusting a compromised ledger to exclude keys.
+Creator-only visibility and legacy/shared gaps remain explicit. Replace keys
+from a healthy issuer before compromise recovery where practical.
+
+Each random operation is persisted privately in `revocations/`, then published
+as `machines/revocations/<operation-id>.json`. At most 128 verified keys fit one
+operation. Selection and execution each have a 20-second provider budget;
+initial and final publication each have a separate five-second budget. Retries use exactly the
+local selected set and never regress a confirmed result. Different revokers
+publish distinct objects. Setup and issuance locks preserve the selection
+through deletion; selected local slots are withheld from delivery even when
+provider outcomes are unknown. Confirmed retries finish local slot retirement. Only a successful provider delete confirms a key;
+404 or missing metadata remains unknown until live absence semantics are
+verified. Self's active object key is last. Final bucket publication can fail
+while local deletion results remain confirmed. No-token and AWS-profile requests
+say access was not removed. Revocation never creates or refills keys, never
+promises immediate cutoff, and leaves sessions/downloaded data intact.
+
+With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1`, run
+`agent-archive machines own-key` to migrate shared/legacy R2 access. The exact
+slot is checkpointed before minting, verified/staged privately, and committed
+through setup's rollback-capable transaction. The existing machine ID is its
+immutable recipient. Retry resumes the exact staged slot. Only after commit
+can the obsolete shared local secret be deleted; another local destination's
+reference or a cleanup failure keeps access explicitly present. The shared
+provider key is never deleted. Registration failure is separate from commit.
+Both commands use the explicit token sources described above; `--yes` and JSON
+revocation do not prompt or run a configured token command.
+
+For a staged own-key operation that has not committed, run
+`agent-archive machines own-key --cancel --yes` with an environment management
+token. Cancellation reloads the committed config and active stored credential
+and all retained local destination credentials
+under locks before deleting the exact staged dedicated key. It refuses if the
+key is active, the binding is unknown, or setup recovery is pending. A committed
+own-key operation cannot be cancelled this way; use verified revocation.
+
+The fake combined acceptance recipe is
+`go test ./internal/cli -run TestMachineTwoHomeFakeAcceptance -count=1`.
+It uses two temporary homes, an in-memory credential store and object store,
+and a loopback fake provider. It exercises own-key, dedicated add, pair setup,
+list with provider verification, rename preserving identity, and receiver
+revocation. The focused revocation tests cover forged mappings, delivered-key
+exclusion and issuer inclusion, scope mismatch, unknown 404 outcomes, and
+publication failure. This establishes local contracts only. Live provider
+permission, inventory visibility, absence semantics and revocation propagation
+acceptance remain unrun; all Phase 4 commands remain experimental draft features
+and the first-setup pairing question remains disabled.

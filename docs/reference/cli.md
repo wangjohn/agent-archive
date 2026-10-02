@@ -257,6 +257,27 @@ remains. Spare refill failure does not invalidate the delivered pairing.
 | `--spares` | a value | `2` |
 | `--yes` | no value | — |
 
+## agent-archive machines own-key
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines own-key [--yes] [--cancel]
+
+Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1 is required.
+Stage and check a dedicated key, then commit through setup's transaction.
+Existing machine identity remains. Shared access stays valid for other users.
+Remove the old local secret only after commit and only when no other local
+destination needs it. Record publication retries independently of commit.
+  --yes          Require environment token; never prompt or run a command
+  --cancel       Remove only a proven uncommitted staged dedicated key
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--cancel` | no value | — |
+| `--yes` | no value | — |
+
 ## agent-archive machines rename
 
 Guide: [Multiple machines](../guides/multiple-machines.md).
@@ -272,6 +293,50 @@ A failed publication keeps the local name and the collector retries.
 ```
 
 No flags.
+
+## agent-archive machines revoke
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines revoke NAME [--include-issued] [--yes] [--json]
+       agent-archive machines revoke --machine-id MACHINE_ID [--yes] [--json]
+       agent-archive machines revoke --recipient-id RECIPIENT_ID
+       [--yes] [--json]
+       agent-archive machines revoke --pairing-id PAIRING_ID [--yes] [--json]
+       agent-archive machines revoke --operation-id OPERATION_ID
+       [--yes] [--json]
+
+Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1 is required.
+Bucket claims never authorize deletion. Verify immutable ownership through a
+local assignment, healthy issuer ledger or independently checked operator file.
+Unknown ownership refuses even under --yes. No token records a request only.
+A provider 404 remains unknown; a request is never proof of access removal.
+Self's active object key is deleted last. Sessions and downloaded data remain.
+  --machine-id MACHINE_ID   Select an independently bound immutable machine
+  --recipient-id RECIPIENT_ID
+                    Select a healthy local issuer's recipient lineage
+  --pairing-id PAIRING_ID   Select a healthy local issuer's pairing lineage
+  --operation-id OPERATION_ID
+                    Retry exactly this local operation and confirmed outcomes
+  --binding-file PATH
+                    Private independent operator binding; never bucket claims
+  --include-issued Check visible issuer descendants, including delivered keys
+                    Inventory completeness stays unknown; no refill or mint
+  --yes             Never prompt; require environment token for deletion
+  --json            Write secret-free per-key outcomes; never prompt
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--binding-file` | a value | — |
+| `--include-issued` | no value | — |
+| `--json` | no value | — |
+| `--machine-id` | a value | — |
+| `--operation-id` | a value | — |
+| `--pairing-id` | a value | — |
+| `--recipient-id` | a value | — |
+| `--yes` | no value | — |
 
 ## agent-archive status
 

@@ -945,3 +945,10 @@ but ordinary-word codes cannot be reliably recognized. If either piece may
 have been seen, create new pairing pieces; if both may have been seen, replace
 the shared R2 credential on every machine using it. Expiry and local cancellation
 do not revoke bucket access. This beta has no independent per-machine revocation.
+
+Experimental revocation progress contains immutable IDs, destination metadata,
+requester/time and per-key pending/confirmed/failed-or-unknown outcomes. Local
+journals and distinct bucket operation objects never contain credential values.
+Operator binding files must come from independent local/out-of-band evidence;
+bucket claims do not authorize deletion. Own-key checkpoints store only opaque
+references and slot IDs, keeping old local access until replacement commits.

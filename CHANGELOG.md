@@ -10,6 +10,12 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Draft experimental revocation with verified immutable selection, per-key
+  recovery journals, serialized issuance selection and independent publication,
+  plus transaction-based
+  `machines own-key` migration. General availability and first-run pairing
+  remain disabled pending combined and live provider acceptance.
+
 - Draft experimental dedicated R2 issuance for `machines add` and guided bucket
   creation: exact immutable provider identities, verified fresh keys, default
   two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
