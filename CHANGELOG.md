@@ -43,6 +43,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
 - Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
 - The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
 
 - Listings default to the current project when available and return at most 50
   sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
@@ -97,6 +101,10 @@ the release behavior.
   sessions whose source is unavailable keep their existing preview.
 
 #### Added
+
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches
