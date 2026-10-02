@@ -52,7 +52,7 @@ func (r SessionRegistration) validateSource() error {
 			return errors.New("source kind must be provider-qualified")
 		}
 		for _, c := range r.SourceKind {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-/_", c)) {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && !strings.ContainsRune("-/_", c) {
 				return errors.New("invalid source kind")
 			}
 		}

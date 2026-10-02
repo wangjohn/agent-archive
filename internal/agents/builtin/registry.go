@@ -49,15 +49,8 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if _, ok := r.bindings[d.ID]; ok {
 			return nil, fmt.Errorf("duplicate binding %q", d.ID)
 		}
-		if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) || nilImplementation(b.Sources) || nilImplementation(b.Filter) {
-			return nil, fmt.Errorf("agent %s has a typed-nil implementation", d.ID)
-		}
-		if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil {
-			return nil, fmt.Errorf("agent %s has no operations", d.ID)
-		}
-		// Declaration metadata and operation promises cannot override the catalog.
-		if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
-			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
+		if err := validateBinding(b, d.ID); err != nil {
+			return nil, err
 		}
 		d.Operations = nil
 		if b.Launcher != nil {
@@ -72,13 +65,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if b.Decoder != nil {
 			d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
 		}
-		if b.Sources != nil || b.Filter != nil {
-			if b.Sources == nil || b.Filter == nil {
-				return nil, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
-			}
-			if b.Filter.Name() != string(d.ID) {
-				return nil, fmt.Errorf("agent %s has filter for %s", d.ID, b.Filter.Name())
-			}
+		if b.Sources != nil {
 			d.Operations = append(d.Operations, agentmeta.Source)
 		}
 		b.Descriptor = d
@@ -102,6 +89,28 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		return nil, err
 	}
 	return r, nil
+}
+
+func validateBinding(b Integration, id agentmeta.ID) error {
+	if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) || nilImplementation(b.Sources) || nilImplementation(b.Filter) {
+		return fmt.Errorf("agent %s has a typed-nil implementation", id)
+	}
+	if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil {
+		return fmt.Errorf("agent %s has no operations", id)
+	}
+	// Declaration metadata and operation promises cannot override the catalog.
+	if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
+		return fmt.Errorf("binding %s must contain only its canonical ID", id)
+	}
+	if b.Sources != nil || b.Filter != nil {
+		if b.Sources == nil || b.Filter == nil {
+			return fmt.Errorf("agent %s has incomplete source bindings", id)
+		}
+		if b.Filter.Name() != string(id) {
+			return fmt.Errorf("agent %s has filter for %s", id, b.Filter.Name())
+		}
+	}
+	return nil
 }
 
 func nilImplementation(v interface{}) bool {

@@ -231,7 +231,7 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
+		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
@@ -252,7 +252,7 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 	}
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
+		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,

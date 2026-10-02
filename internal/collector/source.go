@@ -33,6 +33,14 @@ func (s sourceState) empty() bool {
 	return s.file.Size == 0
 }
 
+// size is raw observation data, independent of native locator framing.
+func (s sourceState) size() int64 {
+	if s.observation.Present {
+		return s.observation.Size
+	}
+	return s.file.Size
+}
+
 func (s sourceState) matches(old state.ScanSignature) bool {
 	if old.SourceKind != s.kind {
 		return false
@@ -125,8 +133,12 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	return observe(r.reg.SourceKind, o), err
 }
 
-func (r providerReader) Filter(ctx context.Context, _ archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
-	provider, f, err := r.binding()
+func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return out, observed, errors.New("native filter port required")
+	}
+	provider, _, err := r.binding()
 	if err != nil {
 		return out, observed, err
 	}

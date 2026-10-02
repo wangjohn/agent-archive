@@ -55,7 +55,7 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 	if !found || signature.Blocked != "" || signature.Failed || signature.SourceKind != read.observed.kind {
 		return false, nil
 	}
-	return read.observed.file.Size < signature.TranscriptSize, nil
+	return read.observed.size() < signature.TranscriptSize, nil
 }
 
 // refilterBundle filters a retained snapshot's records again with adapter
