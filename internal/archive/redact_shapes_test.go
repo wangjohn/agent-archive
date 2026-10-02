@@ -16,6 +16,7 @@ func TestCredentialShapeNeedles(t *testing.T) {
 	a := func(n int) string { return strings.Repeat("a", n) }
 	d := func(n int) string { return strings.Repeat("0", n) }
 	samples := []string{
+		"aa-pair1:synthetic_ABC-123",
 		"eyJ" + a(10) + "." + a(10) + "." + a(10),
 		"gh" + "p_" + a(24),
 		"github" + "_pat_" + a(24),
