@@ -72,9 +72,9 @@ func offersDestinations(opts handoffOptions, interactive bool) bool {
 // catalog presentation order.
 func installedDestinations(env launchSpecDependencies) []handoffDestination {
 	var installed []handoffDestination
-	for _, integration := range registryFor(env).Supporting(agentmeta.Launch) {
-		dest := handoffDestination(integration.Descriptor.ID)
-		for _, name := range integration.Launcher.Executables().Names {
+	for _, binding := range env.launcherLookup().Launchers() {
+		dest := handoffDestination(binding.Agent)
+		for _, name := range binding.Launcher.Executables().Names {
 			if _, err := env.lookPath(name); err == nil {
 				installed = append(installed, dest)
 				break

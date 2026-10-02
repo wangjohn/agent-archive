@@ -57,20 +57,6 @@ type handoffTarget struct {
 	lastActivityAt time.Time
 }
 
-// currentSessionEnv names environment variables an agent sets for the commands
-// it runs, holding its own native session ID, and the harness that sets each.
-// `--latest` skips that session: run from inside an agent, the newest session
-// is always the one asking. `--to` with no selector hands it off instead.
-// CLAUDE_CODE_SESSION_ID is observed in Claude Code; CODEX_THREAD_ID is read
-// if present but has not been observed.
-var currentSessionEnv = []struct {
-	key     string
-	harness string
-}{
-	{"CLAUDE_CODE_SESSION_ID", archive.HarnessClaude},
-	{"CODEX_THREAD_ID", archive.HarnessCodex},
-}
-
 var errHandoffNotSetUp = errors.New("handoff not set up")
 
 // runHandoffCommand implements `agent-archive handoff`. It prints transcript
@@ -369,9 +355,9 @@ var errNotRegisteredHere = errors.New("no session registered on this machine")
 // running inside, if it says.
 func currentSessions(env currentSessionDependencies) map[string]bool {
 	ids := map[string]bool{}
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && strings.TrimSpace(value) != "" {
-			ids[strings.TrimSpace(value)] = true
+	for _, observation := range runtimeObservations(env) {
+		if observation.NativeID != "" {
+			ids[observation.NativeID] = true
 		}
 	}
 	return ids
