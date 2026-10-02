@@ -95,7 +95,7 @@ func TestDeleteLocalDataRemovesOnlyItsOwnEntries(t *testing.T) {
 		}
 	}
 	write(".pending-123")
-	locks := []string{"setup.lock", "hooks.lock", "admission-intents.lock"}
+	locks := []string{"setup.lock", "hooks.lock", "admission-intents.lock", "issued.lock"}
 	for _, name := range locks {
 		write(name)
 	}
