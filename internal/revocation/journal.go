@@ -37,23 +37,55 @@ type Key struct {
 	Outcome     Outcome `json:"outcome"`
 }
 
+// SelectorKind identifies the unverified request's form, never its authority.
+type SelectorKind string
+
+const (
+	// RequestedName is a caller-supplied display name.
+	RequestedName SelectorKind = "name"
+	// RequestedMachineID is a caller-supplied immutable machine ID.
+	RequestedMachineID SelectorKind = "machine_id"
+	// RequestedRecipientID is a caller-supplied recipient ID.
+	RequestedRecipientID SelectorKind = "recipient_id"
+	// RequestedPairingID is a caller-supplied pairing ID.
+	RequestedPairingID SelectorKind = "pairing_id"
+)
+
+// RequestedSelector records the caller's unverified request, never deletion authority.
+type RequestedSelector struct {
+	Kind  SelectorKind `json:"kind"`
+	Value string       `json:"value"`
+}
+
+func (r RequestedSelector) valid() bool {
+	switch r.Kind {
+	case RequestedName:
+		return config.ValidMachineName(r.Value)
+	case RequestedMachineID, RequestedRecipientID, RequestedPairingID:
+		return config.ValidMachineID(r.Value)
+	default:
+		return false
+	}
+}
+
 // Journal separates confirmed provider outcomes from informational publication.
 type Journal struct {
-	Version            int       `json:"version"`
-	OperationID        string    `json:"operation_id"`
-	DestinationID      string    `json:"destination_id"`
-	RequesterID        string    `json:"requester_id"`
-	TargetID           string    `json:"target_id,omitempty"`
-	AccountID          string    `json:"account_id"`
-	Bucket             string    `json:"bucket"`
-	Jurisdiction       string    `json:"jurisdiction,omitempty"`
-	PermissionID       string    `json:"permission_id,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	IncludeIssued      bool      `json:"include_issued"`
-	InventoryComplete  bool      `json:"account_inventory_complete"`
-	Keys               []Key     `json:"keys"`
-	PublicationPending bool      `json:"publication_pending"`
-	RequestOnly        bool      `json:"request_only"`
+	Version            int                `json:"version"`
+	OperationID        string             `json:"operation_id"`
+	DestinationID      string             `json:"destination_id"`
+	RequesterID        string             `json:"requester_id"`
+	TargetID           string             `json:"target_id,omitempty"`
+	RequestedSelector  *RequestedSelector `json:"requested_selector,omitempty"`
+	AccountID          string             `json:"account_id"`
+	Bucket             string             `json:"bucket"`
+	Jurisdiction       string             `json:"jurisdiction,omitempty"`
+	PermissionID       string             `json:"permission_id,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+	IncludeIssued      bool               `json:"include_issued"`
+	InventoryComplete  bool               `json:"account_inventory_complete"`
+	Keys               []Key              `json:"keys"`
+	PublicationPending bool               `json:"publication_pending"`
+	RequestOnly        bool               `json:"request_only"`
 }
 
 // Validate bounds and verifies journal identifiers before retries or publication.
@@ -63,6 +95,9 @@ func (j *Journal) Validate() error {
 		return bad
 	}
 	if j.Jurisdiction != "" && !cloudflare.ValidJurisdiction(j.Jurisdiction) || j.RequestOnly && len(j.Keys) != 0 || len(j.Keys) > 0 && (!config.ValidMachineID(j.AccountID) || !config.ValidMachineID(j.PermissionID) || cloudflare.ValidateBucketName(j.Bucket) != nil) {
+		return bad
+	}
+	if j.RequestedSelector != nil && !j.RequestedSelector.valid() {
 		return bad
 	}
 	for _, id := range []string{j.TargetID, j.AccountID, j.PermissionID} {

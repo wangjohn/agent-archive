@@ -53,6 +53,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Draft machine revocation rejects forged self labels, leaves registry commands
+  usable after progress publication, and preserves unverified request targets.
+  Own-key migrations retire completed checkpoints and disclose shared access
+  retained through retired local credential aliases.
+
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
   Incomplete local `--latest` offers an explicit picker or known-ID recipes

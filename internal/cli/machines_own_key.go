@@ -70,7 +70,11 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return finishOwnKey(home, checkpoint, out, errOut, env)
 	}
 	if cfg.MachineAssignment != nil && cfg.MachineAssignment.DestinationID == cfg.DestinationID() && cfg.MachineAssignment.Kind == config.MachineAssignmentR2Own && checkpoint.SlotID == "" {
+		if *cancelOwn {
+			return machineCommandError(errOut, errors.New("dedicated key already committed; cancellation refused"))
+		}
 		terminal.Println(out, "This machine already has locally committed dedicated ownership; no key created.")
+		publishOwnKeyRegistration(home, out, env)
 		return 0
 	}
 	p := newPrompter(stdin, out)
@@ -132,7 +136,27 @@ func readOwnKeyCheckpoint(home string, cfg config.Config) (ownKeyCheckpoint, err
 	if err := local.Read(path, &checkpoint); err != nil {
 		return checkpoint, errors.New("own-key checkpoint unreadable; no new key created")
 	}
-	if checkpoint.DestinationID != cfg.DestinationID() || checkpoint.SlotID != "" && !config.ValidMachineID(checkpoint.SlotID) || !config.SafeMachineText(checkpoint.OldRef, 128) {
+	if checkpoint.SlotID != "" && !config.ValidMachineID(checkpoint.SlotID) || !config.SafeMachineText(checkpoint.OldRef, 128) {
+		return checkpoint, errors.New("own-key checkpoint is invalid")
+	}
+	// Older completed checkpoints may survive a later setup. Retire only after
+	// the exact old slot proves committed ownership; pending cleanup/stages stay.
+	if checkpoint.Committed && !checkpoint.CleanupPending {
+		slots, err := issuance.List(home)
+		if err != nil {
+			return checkpoint, err
+		}
+		for _, slot := range slots {
+			if slot.SlotID == checkpoint.SlotID && slot.DestinationID == checkpoint.DestinationID && slot.State == issuance.Own && slot.IssuerID == cfg.MachineID && slot.RecipientID == cfg.MachineID {
+				if err = os.Remove(path); err != nil {
+					return checkpoint, err
+				}
+				return ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}, nil
+			}
+		}
+		return checkpoint, errors.New("completed own-key ownership unavailable; checkpoint retained")
+	}
+	if checkpoint.DestinationID != cfg.DestinationID() {
 		return checkpoint, errors.New("own-key checkpoint does not match this destination")
 	}
 	return checkpoint, nil
@@ -253,7 +277,11 @@ func finishOwnKey(home string, checkpoint ownKeyCheckpoint, out, errOut io.Write
 		}
 	}
 	if err == nil {
-		err = local.Write(filepath.Join(home, ownKeyFile), checkpoint)
+		if checkpoint.CleanupPending {
+			err = local.Write(filepath.Join(home, ownKeyFile), checkpoint)
+		} else {
+			err = os.Remove(filepath.Join(home, ownKeyFile))
+		}
 	}
 	hooksRelease()
 	release()
@@ -266,10 +294,14 @@ func finishOwnKey(home string, checkpoint ownKeyCheckpoint, out, errOut io.Write
 	} else {
 		terminal.Println(out, "Old shared local secret removed after commit.")
 	}
-	if err = publishMachineAfterSetup(home, env); err != nil {
+	publishOwnKeyRegistration(home, out, env)
+	return 0
+}
+
+func publishOwnKeyRegistration(home string, out io.Writer, env Env) {
+	if err := publishMachineAfterSetup(home, env); err != nil {
 		terminal.Println(out, "Machine registration pending; committed dedicated ownership is retained.")
 	}
-	return 0
 }
 
 // References can alias the same provider credential. Preserve truthful retained
@@ -277,6 +309,25 @@ func finishOwnKey(home string, checkpoint ownKeyCheckpoint, out, errOut io.Write
 func oldSharedAccessNeeded(cfg config.Config, oldRef string, env Env) bool {
 	if oldRef == "" {
 		return false
+	}
+	// Retired references can keep the same shared provider key usable even when
+	// setup merely changed its local reference at the current destination.
+	for _, ref := range cfg.RetiredCredentialRefs {
+		if ref == oldRef || ref == cfg.Storage.R2CredentialRef {
+			continue
+		}
+		kc, err := env.credentialStore()
+		if err != nil {
+			return true
+		}
+		old, err := credentials.LoadStored(context.Background(), kc, oldRef)
+		if err != nil || old.AccessKeyID == "" {
+			return true
+		}
+		retired, err := credentials.LoadStored(context.Background(), kc, ref)
+		if err != nil || retired.AccessKeyID == "" || retired.AccessKeyID == old.AccessKeyID {
+			return true
+		}
 	}
 	for _, destination := range cfg.PreviousDestinations {
 		if destination.Provider != credentials.ProviderR2 {

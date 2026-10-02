@@ -947,7 +947,9 @@ the shared R2 credential on every machine using it. Expiry and local cancellatio
 do not revoke bucket access. This beta has no independent per-machine revocation.
 
 Experimental revocation progress contains immutable IDs, destination metadata,
-requester/time and per-key pending/confirmed/failed-or-unknown outcomes. Local
+requester/time, the bounded explicitly unverified requested name or immutable ID,
+and per-key pending/confirmed/failed-or-unknown outcomes. Request metadata never
+authorizes deletion. Local
 journals and distinct bucket operation objects never contain credential values.
 Operator binding files must come from independent local/out-of-band evidence;
 bucket claims do not authorize deletion. Own-key checkpoints store only opaque

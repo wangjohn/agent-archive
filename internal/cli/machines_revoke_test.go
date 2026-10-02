@@ -7,13 +7,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/machines"
@@ -350,6 +353,113 @@ func TestUnknownRevocationWithholdsSpareAndConfirmedRetryFinishesLedger(t *testi
 	for _, slot := range slots {
 		if slot.SlotID == spare.SlotID && slot.State != issuance.Deleted {
 			t.Fatal("confirmed retry did not retire ledger")
+		}
+	}
+}
+
+// A bucket writer can replace this machine's label without changing its key.
+func TestNamedRevocationRefusesForgedSelfLabel(t *testing.T) {
+	env, _, cf, cfg, store := revocationFixture(t)
+	record, err := machines.Build(cfg, "linux/amd64", "dev", "", env.now())
+	must(t, err)
+	record.Name = "victim"
+	must(t, machines.Publish(t.Context(), store, record))
+	var output bytes.Buffer
+	if code := Run([]string{"machines", "revoke", "victim", "--yes"}, nil, &output, &output, env); code != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 || !providerKeyLive(cf, cfg.MachineAssignment.AccessKeyID) {
+		t.Fatalf("forged label authorized self deletion: %d %s", code, output.String())
+	}
+}
+
+func TestRevocationPublicationKeepsRegistryCommandsUsable(t *testing.T) {
+	env, home, _, cfg, store := revocationFixture(t)
+	cfg.MachineName = "local-source"
+	must(t, config.Save(home, cfg))
+	record, err := machines.Build(cfg, "linux/amd64", "dev", "", env.now())
+	must(t, err)
+	must(t, machines.Publish(t.Context(), store, record))
+	j, err := prepareRevocation(home, cfg, revokeSelector{Name: "local-source"}, "", env)
+	must(t, err)
+	j.RequestOnly = true
+	must(t, putRevocation(t.Context(), store, j))
+	lookup := env.LookupEnv
+	env.LookupEnv = func(key string) (string, bool) {
+		if key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY" {
+			return "1", true
+		}
+		return lookup(key)
+	}
+	for _, args := range [][]string{{"machines", "--json"}, {"machines", "--verify", "--yes", "--json"}, {"machines", "rename", "renamed-source"}, {"machines", "revoke", "renamed-source", "--yes"}} {
+		var output bytes.Buffer
+		if code := Run(args, nil, &output, &output, env); code != 0 {
+			t.Fatalf("operation poisoned registry command %v: %d %s", args, code, output.String())
+		}
+	}
+}
+
+func TestRequestOnlyRevocationPersistsUnverifiedSelector(t *testing.T) {
+	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "schemas", "revocation.schema.json"))
+	must(t, err)
+	schemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
+	must(t, err)
+	schemaID := schemaDoc.(map[string]any)["$id"].(string)
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	must(t, compiler.AddResource(schemaID, schemaDoc))
+	schema, err := compiler.Compile(schemaID)
+	must(t, err)
+	for _, provider := range []string{"r2", "s3"} {
+		for _, kind := range []string{"name", "machine_id", "recipient_id", "pairing_id"} {
+			t.Run(provider+"/"+kind, func(t *testing.T) {
+				env, home, cf, cfg, store := revocationFixture(t)
+				if provider == "s3" {
+					cfg.Storage = credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic", AWSProfile: "synthetic"}
+					cfg.MachineAssignment = nil
+					must(t, config.Save(home, cfg))
+				}
+				env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE" }
+				value := strings.Repeat("b", 32)
+				args := []string{"machines", "revoke", "--yes"}
+				if kind == "name" {
+					value = "requested-target"
+					args = append(args, value)
+				} else {
+					args = append(args, "--"+strings.ReplaceAll(kind, "_", "-"), value)
+				}
+				var output bytes.Buffer
+				if code := Run(args, nil, &output, &output, env); code != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+					t.Fatalf("request deleted access: %d %s", code, output.String())
+				}
+				entries, err := os.ReadDir(filepath.Join(home, "revocations"))
+				must(t, err)
+				if len(entries) != 1 {
+					t.Fatal("request journal missing")
+				}
+				raw, err := os.ReadFile(filepath.Join(home, "revocations", entries[0].Name()))
+				must(t, err)
+				var saved map[string]any
+				must(t, json.Unmarshal(raw, &saved))
+				requested, ok := saved["requested_selector"].(map[string]any)
+				if !ok || requested["kind"] != kind || requested["value"] != value || saved["request_only"] != true || len(saved["keys"].([]any)) != 0 || saved["target_id"] != nil {
+					t.Fatalf("unverified request lost or promoted: %s", raw)
+				}
+				published, err := store.Get(t.Context(), "machines/revocations/"+saved["operation_id"].(string)+".json")
+				must(t, err)
+				var bucket map[string]any
+				must(t, json.Unmarshal(published, &bucket))
+				schemaValue, err := jsonschema.UnmarshalJSON(bytes.NewReader(published))
+				must(t, err)
+				must(t, schema.Validate(schemaValue))
+
+				if !reflect.DeepEqual(bucket["requested_selector"], saved["requested_selector"]) || strings.Contains(string(raw)+string(published), bootstrapCanary) || strings.Contains(string(raw)+string(published), "object-canary") {
+					t.Fatal("published request lost selector or exposed credential")
+				}
+				// Bucket hints never replace the original request with a deletion selection.
+				operation := saved["operation_id"].(string)
+				output.Reset()
+				if code := Run([]string{"machines", "revoke", "--operation-id", operation, "--yes"}, nil, &output, &output, env); code != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+					t.Fatal("request-only retry acquired deletion authority")
+				}
+			})
 		}
 	}
 }

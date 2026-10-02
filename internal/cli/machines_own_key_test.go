@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -162,10 +163,8 @@ func TestOwnKeyCommitsWithExistingMachineIdentityAndThenRemovesSharedLocalSecret
 	if _, err = kc.Load(context.Background(), before.Storage.R2CredentialRef); !errors.Is(err, credentials.ErrMissingCredential) {
 		t.Fatal("old local shared secret retained")
 	}
-	raw, err := os.ReadFile(filepath.Join(home, ownKeyFile))
-	must(t, err)
-	if strings.Contains(string(raw), "object-canary") || strings.Contains(string(raw), bootstrapCanary) {
-		t.Fatal("secret checkpoint")
+	if _, err = os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+		t.Fatal("completed cleanup checkpoint retained", err)
 	}
 	creates := cf.Calls(cloudflaretest.RouteCreateToken)
 	output.Reset()
@@ -310,5 +309,175 @@ func TestDedicatedOwnIntentCleanupPreservesCommittedOrUnknownBindings(t *testing
 	must(t, kc.Delete(context.Background(), "main"))
 	if i.cleanupUncommittedOwnIntent(&s) == nil || len(cf.Live()) != 2 {
 		t.Fatal("unknown active binding deleted")
+	}
+}
+
+func TestCompletedOwnKeyAllowsLaterSharedMigration(t *testing.T) {
+	for _, different := range []bool{false, true} {
+		t.Run(strconv.FormatBool(different), func(t *testing.T) {
+			env, home, cf, kc, initial := ownKeyFixture(t)
+			shared, err := kc.Load(t.Context(), initial.Storage.R2CredentialRef)
+			must(t, err)
+			var output bytes.Buffer
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 {
+				t.Fatalf("initial migration: %d %s", code, output.String())
+			}
+			owned, _, err := config.Load(home)
+			must(t, err)
+			priorKey := owned.MachineAssignment.AccessKeyID
+			next := owned
+			if different {
+				next.Storage.Bucket = "other-destination"
+			}
+			next.Storage.R2CredentialRef = "repaired-shared"
+			must(t, kc.Save(t.Context(), next.Storage.R2CredentialRef, shared))
+			next.MachineAssignment = &config.MachineAssignment{DestinationID: next.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: shared.AccessKeyID, SharedWith: strings.Repeat("b", 32)}
+			userHome, err := env.userHomeDir()
+			must(t, err)
+			executable, err := env.executable()
+			must(t, err)
+			must(t, applySetup(home, userHome, executable, owned, &next, nil, env))
+			creates := cf.Calls(cloudflaretest.RouteCreateToken)
+			output.Reset()
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates+1 {
+				t.Fatalf("completed checkpoint blocked later migration: %d %s", code, output.String())
+			}
+			current, _, err := config.Load(home)
+			must(t, err)
+			if current.MachineAssignment.AccessKeyID == priorKey || !providerKeyLive(cf, priorKey) || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+				t.Fatal("later migration consumed prior dedicated key")
+			}
+			slots, err := issuance.List(home)
+			must(t, err)
+			for _, slot := range slots {
+				if slot.ProviderID == priorKey && slot.State != issuance.Own {
+					t.Fatal("prior dedicated lifecycle changed")
+				}
+			}
+			creates = cf.Calls(cloudflaretest.RouteCreateToken)
+			output.Reset()
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates {
+				t.Fatal("completed retry minted again")
+			}
+		})
+	}
+}
+
+func TestOwnKeyDisclosesRetiredSharedAlias(t *testing.T) {
+	type bindingKind string
+	const (
+		alias      bindingKind = "alias"
+		unreadable bindingKind = "unreadable"
+		unrelated  bindingKind = "unrelated"
+	)
+	for _, binding := range []bindingKind{alias, unreadable, unrelated} {
+		t.Run(string(binding), func(t *testing.T) {
+			env, home, cf, kc, cfg := ownKeyFixture(t)
+			key, err := kc.Load(t.Context(), cfg.Storage.R2CredentialRef)
+			must(t, err)
+			retired := cfg.Storage.R2CredentialRef
+			must(t, kc.Save(t.Context(), "current-shared", key))
+			switch binding {
+			case alias:
+				// Retain the same shared credential under its previous reference.
+			case unreadable:
+				must(t, kc.Delete(t.Context(), retired))
+			case unrelated:
+				must(t, kc.Save(t.Context(), retired, credentials.R2Credentials{AccessKeyID: strings.Repeat("f", 32), SecretAccessKey: "unrelated-canary"}))
+			}
+			// Same-destination setup creates a new reference and retires the old one.
+			next := cfg
+			next.Storage.R2CredentialRef = "current-shared"
+			userHome, err := env.userHomeDir()
+			must(t, err)
+			executable, err := env.executable()
+			must(t, err)
+			must(t, applySetup(home, userHome, executable, cfg, &next, nil, env))
+			var output bytes.Buffer
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+				t.Fatalf("migration: %d %s", code, output.String())
+			}
+			if binding != unrelated && (!strings.Contains(output.String(), "Old shared access remains") || strings.Contains(output.String(), "Old shared local secret removed")) {
+				t.Fatalf("retired shared alias falsely removed: %s", output.String())
+			}
+			if binding != unreadable {
+				if _, err = kc.Load(t.Context(), retired); err != nil {
+					t.Fatal("retired alias or unrelated credential deleted")
+				}
+			}
+		})
+	}
+}
+
+func TestOwnKeyRetiresOnlyCompletedCheckpointWithCommittedLedgerProof(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(strconv.FormatBool(pending), func(t *testing.T) {
+			env, home, cf, _, cfg := ownKeyFixture(t)
+			var output bytes.Buffer
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 {
+				t.Fatalf("migration: %d %s", code, output.String())
+			}
+			slots, err := issuance.List(home)
+			must(t, err)
+			checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef, SlotID: slots[0].SlotID, Committed: true, CleanupPending: pending}
+			// A prior version retained completed checkpoints. Model a later setup
+			// at another destination, while leaving the old owned key intact.
+			must(t, local.Write(filepath.Join(home, ownKeyFile), checkpoint))
+			current, _, err := config.Load(home)
+			must(t, err)
+			current.Storage.Bucket = "later-destination"
+			current.MachineAssignment = nil
+			must(t, config.Save(home, current))
+			loaded, err := readOwnKeyCheckpoint(home, current)
+			if pending {
+				if err == nil {
+					t.Fatal("incomplete old cleanup discarded")
+				}
+				var retained ownKeyCheckpoint
+				must(t, local.Read(filepath.Join(home, ownKeyFile), &retained))
+				if retained != checkpoint {
+					t.Fatal("pending checkpoint changed")
+				}
+			} else if err != nil || loaded.SlotID != "" || loaded.DestinationID != current.DestinationID() {
+				t.Fatal("completed old checkpoint blocked new destination", loaded, err)
+			}
+			if !providerKeyLive(cf, slots[0].ProviderID) || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+				t.Fatal("checkpoint retirement deleted prior provider key")
+			}
+		})
+	}
+}
+
+func TestOwnKeyCompletedRetryPublishesWithoutMinting(t *testing.T) {
+	env, home, cf, _, _ := ownKeyFixture(t)
+	original := env.OpenStore
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		if cfg.MachineID != "" {
+			return nil, errors.New("synthetic publication failure")
+		}
+		return original(cfg)
+	}
+	var output bytes.Buffer
+	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || !strings.Contains(output.String(), "registration pending") {
+		t.Fatalf("committed publication failure: %d %s", code, output.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+		t.Fatal("completed cleanup retained checkpoint")
+	}
+	store := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+	// Retry committed publication independently, without another management token.
+	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+	creates := cf.Calls(cloudflaretest.RouteCreateToken)
+	output.Reset()
+	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates {
+		t.Fatalf("committed retry minted: %d %s", code, output.String())
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	raw, err := store.Get(t.Context(), "machines/"+cfg.MachineID+".json")
+	must(t, err)
+	if !bytes.Contains(raw, []byte(cfg.MachineAssignment.AccessKeyID)) {
+		t.Fatal("completed retry did not publish committed ownership")
 	}
 }

@@ -196,8 +196,22 @@ func prepareRevocation(home string, cfg config.Config, selector revokeSelector, 
 	if err != nil && cfg.Storage.Provider != credentials.ProviderS3 {
 		return revocation.Journal{}, err
 	}
-	j := revocation.Journal{Version: 1, OperationID: id, DestinationID: cfg.DestinationID(), RequesterID: cfg.MachineID, TargetID: selector.MachineID, AccountID: account, Bucket: bucket.Name, Jurisdiction: bucket.Jurisdiction, CreatedAt: env.now().UTC(), IncludeIssued: selector.IncludeIssued, Keys: []revocation.Key{}, PublicationPending: true}
+	j := revocation.Journal{Version: 1, OperationID: id, DestinationID: cfg.DestinationID(), RequesterID: cfg.MachineID, RequestedSelector: requestedRevocationSelector(selector), AccountID: account, Bucket: bucket.Name, Jurisdiction: bucket.Jurisdiction, CreatedAt: env.now().UTC(), IncludeIssued: selector.IncludeIssued, Keys: []revocation.Key{}, PublicationPending: true}
 	return j, j.Validate()
+}
+
+func requestedRevocationSelector(selector revokeSelector) *revocation.RequestedSelector {
+	for _, requested := range []revocation.RequestedSelector{
+		{Kind: revocation.RequestedName, Value: selector.Name},
+		{Kind: revocation.RequestedMachineID, Value: selector.MachineID},
+		{Kind: revocation.RequestedRecipientID, Value: selector.RecipientID},
+		{Kind: revocation.RequestedPairingID, Value: selector.PairingID},
+	} {
+		if requested.Value != "" {
+			return &requested
+		}
+	}
+	return nil
 }
 
 func publishRevocation(parent context.Context, home string, j *revocation.Journal, cfg config.Config, env Env) {
@@ -290,6 +304,10 @@ func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) {
 		return
 	}
 	terminal.Printf(out, "Revocation operation %s\n", j.OperationID)
+	if j.RequestOnly && j.RequestedSelector != nil {
+		terminal.Printf(out, "Unverified requested %s: %s\n", j.RequestedSelector.Kind, j.RequestedSelector.Value)
+	}
+
 	for _, key := range j.Keys {
 		terminal.Printf(out, "%s: %s\n", key.ProviderID, key.Outcome)
 	}
@@ -397,6 +415,15 @@ func trustedRevokeTarget(ctx context.Context, cfg config.Config, selector revoke
 			return "", "", nil, err
 		}
 		machineID = record.MachineID
+		// A bucket writer can replace this machine's label. Its immutable local
+		// assignment does not authorize a different name supplied by the caller.
+		localName := cfg.MachineName
+		if localName == "" && config.ValidMachineID(cfg.MachineID) {
+			localName = "unnamed-" + cfg.MachineID[:4]
+		}
+		if machineID == cfg.MachineID && selector.Name != localName && selector.Name != cfg.MachineID {
+			return "", "", nil, errors.New("bucket label does not match this machine's trusted local name; use an independently verified immutable ID")
+		}
 	}
 	if selector.BindingFile != "" {
 		proof, err := readOperatorBinding(selector.BindingFile, cfg.DestinationID())

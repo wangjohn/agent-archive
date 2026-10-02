@@ -77,7 +77,7 @@ func TestPublishedOperationMatchesSecretFreeSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := strings.Repeat("a", 32)
-	j := Journal{Version: 1, OperationID: key, DestinationID: strings.Repeat("b", 64), RequesterID: key, PermissionID: strings.Repeat("f", 32), AccountID: key, Bucket: "synthetic", CreatedAt: time.Now().UTC(), Keys: []Key{{ProviderID: key, RecipientID: key, IssuerID: key, SlotID: key, Outcome: Pending}}}
+	j := Journal{Version: 1, OperationID: key, DestinationID: strings.Repeat("b", 64), RequesterID: key, PermissionID: strings.Repeat("f", 32), AccountID: key, Bucket: "synthetic", Jurisdiction: "us", CreatedAt: time.Now().UTC(), Keys: []Key{{ProviderID: key, RecipientID: key, IssuerID: key, SlotID: key, Outcome: Pending}}}
 	encoded, err := json.Marshal(j)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +88,23 @@ func TestPublishedOperationMatchesSecretFreeSchema(t *testing.T) {
 	}
 	if err = schema.Validate(value); err != nil {
 		t.Fatal(err)
+	}
+	for _, selector := range []*RequestedSelector{{Kind: RequestedName, Value: "requested-target"}, {Kind: RequestedMachineID, Value: key}, {Kind: RequestedRecipientID, Value: key}, {Kind: RequestedPairingID, Value: key}} {
+		j.RequestedSelector = selector
+		if err = j.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err = json.Marshal(j)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err = jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = schema.Validate(value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	value.(map[string]any)["secret_access_key"] = "CANARY"
 	if err = schema.Validate(value); err == nil {
@@ -108,5 +125,17 @@ func TestOperationJournalSelectionBound(t *testing.T) {
 	j.Keys = append(j.Keys, Key{ProviderID: id, RecipientID: id, IssuerID: id, SlotID: id, Outcome: Pending})
 	if err := j.Validate(); err == nil {
 		t.Fatal("129 selection accepted")
+	}
+}
+
+func TestRequestedSelectorRejectsUnboundedOrUnknownMetadata(t *testing.T) {
+	t.Parallel()
+	j := Journal{Version: 1, OperationID: strings.Repeat("a", 32), RequesterID: strings.Repeat("b", 32), DestinationID: strings.Repeat("c", 64), Bucket: "synthetic", CreatedAt: time.Now(), Keys: []Key{}, RequestOnly: true}
+	const unknownSelector SelectorKind = "provider_secret"
+	for _, selector := range []*RequestedSelector{{Kind: RequestedName, Value: strings.Repeat("a", 41)}, {Kind: RequestedName, Value: "bad\nname"}, {Kind: RequestedRecipientID, Value: "not-an-id"}, {Kind: unknownSelector, Value: "canary"}} {
+		j.RequestedSelector = selector
+		if err := j.Validate(); err == nil {
+			t.Fatalf("unsafe request accepted: %+v", selector)
+		}
 	}
 }

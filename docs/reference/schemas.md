@@ -48,5 +48,6 @@ it does not authorize provider changes or establish ownership.
 
 Experimental revocation journals and operation objects follow
 [`revocation.schema.json`](../../schemas/revocation.schema.json). They contain
-per-key provider outcomes, never secret values or deletion authority copied
+per-key provider outcomes and optional explicitly unverified request selectors,
+never secret values or deletion authority copied
 from bucket claims. Operator proofs are private inputs; they are not uploaded.

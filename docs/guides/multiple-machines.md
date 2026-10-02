@@ -406,7 +406,10 @@ provider outcomes are unknown. Confirmed retries finish local slot retirement. O
 404 or missing metadata remains unknown until live absence semantics are
 verified. Self's active object key is last. Final bucket publication can fail
 while local deletion results remain confirmed. No-token and AWS-profile requests
-say access was not removed. Revocation never creates or refills keys, never
+say access was not removed and preserve the requested name or immutable ID as
+explicitly unverified operation metadata. A named self-revocation requires the
+locally committed name (or explicit immutable ID); a forged bucket label cannot
+redirect the command to this machine's trusted key. Revocation never creates or refills keys, never
 promises immediate cutoff, and leaves sessions/downloaded data intact.
 
 With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1`, run
@@ -415,7 +418,11 @@ slot is checkpointed before minting, verified/staged privately, and committed
 through setup's rollback-capable transaction. The existing machine ID is its
 immutable recipient. Retry resumes the exact staged slot. Only after commit
 can the obsolete shared local secret be deleted; another local destination's
-reference or a cleanup failure keeps access explicitly present. The shared
+reference, a matching retired alias, an unreadable binding, or a cleanup failure
+keeps access explicitly present. Completed cleanup retires its checkpoint so a
+later supported setup/migration can create a new own key; incomplete cleanup
+and staged keys remain recorded. Earlier dedicated keys retain their issuance
+lineage and are never deleted by checkpoint retirement. The shared
 provider key is never deleted. Registration failure is separate from commit.
 Both commands use the explicit token sources described above; `--yes` and JSON
 revocation do not prompt or run a configured token command.
