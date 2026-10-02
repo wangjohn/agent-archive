@@ -16,6 +16,14 @@ Planned for v0.2.0. This release has not been tagged or published.
   no archive or configuration; private launch files have seven-day best-effort
   cleanup on later local handoffs. Disposable real-app acceptance is still
   unverified on macOS and Linux.
+- Experimental read-only `machines --verify` provider observations, gated by
+  `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1`, and an interactive argv-based
+  `cloudflare_token_command` source shared with guided setup. Provider inventory
+  visibility and machine ownership remain explicitly unknown.
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
 
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
@@ -71,6 +79,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 setup validates pasted replacement management tokens before
+  creating a client, matching its environment, command and initial prompt sources.
+- Experimental provider verification identifies existing permissions without
+  requiring permission to create a new token with them.
+
 - Guided R2 setup checks the token before asking for bucket settings, offers
   token replacement or retry on failure, and summarizes the bucket and
   automatic or customized location before creation.
@@ -93,6 +106,10 @@ intermediate parser versions and interaction details. The summary above describe
 the release behavior.
 
 #### Changed
+
+- Scripted setup accepts `--prefix`, `--retention-days`, and explicit skill-use
+  capture choices. The command printed for another machine now carries these
+  settings, skill evidence, and the agent skill installation policy.
 
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a

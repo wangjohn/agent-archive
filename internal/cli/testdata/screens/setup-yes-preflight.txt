@@ -20,5 +20,5 @@ Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
 
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --project ~/src/web-app
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
 [exit 0]

@@ -147,7 +147,7 @@ $ agent-archive machines --verify
 $ agent-archive machines revoke work-laptop
 This deletes work-laptop's own key and its 0 unused spare keys.
 Recipient: <immutable recipient ID>; issuer: <immutable machine ID>
-Provider key: "agent-archive my-bucket r=<recipient-id> i=<issuer-id> k=<slot-id>"
+Provider key: "agent-archive r=<recipient-id> i=<issuer-id> k=<slot-id>"
 Its sessions stay in the bucket.
 Revoke? [y/N] y
 ✓ Key deletion confirmed · access removed for the verified key set
@@ -320,7 +320,8 @@ Spares are bucket-scoped R2 keys pre-created in the credential store, avoiding a
   - during `machines add` when a token is available, refilling to the target count. `machines revoke` never creates or refills keys.
 - **How many:** two by default. `machines add --spares N` (0 to 5) changes the target and saves it as `spare_keys` in `config.json`. `0` turns spares off.
 - **Where:** the same credential store as the machine's own key (Keychain on macOS; `credentials/<reference>.json`, 0600, on Linux), under references listed in a new `spare_credential_refs` config field, and in the [issued-key ledger](#the-issued-key-ledger).
-- **Identity:** allocate random 128-bit `recipient_id` and slot ID before the destination is known. Fresh/spare provider names: `agent-archive <bucket> r=<recipient-id> i=<issuer-id> k=<slot-id>` (verify length limits). Carry the spare’s recipient ID into its bundle; labels stay in local/bucket records. Issuer identity persists after delivery and does not imply “unused spare”.
+- **Provider name limit:** official [Token Details](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/get/) documents a 120-character maximum. The original bucket-bearing proposal exceeds that limit even for a one-character bucket. The canonical name omits the bucket; only the exact provider policy and configured account/jurisdiction/bucket establish destination scope. Names alone never authorize management.
+- **Identity:** allocate random 128-bit `recipient_id` and slot ID before the destination is known. Fresh/spare provider names: `agent-archive r=<recipient-id> i=<issuer-id> k=<slot-id>` (118 bytes with three lowercase 32-hex IDs). Carry the spare’s recipient ID into its bundle; labels stay in local/bucket records. Issuer identity persists after delivery and does not imply “unused spare”.
 - **Risk:** spares outlive deletion of the holder’s main key. Distinguish unused from delivered keys through verified bindings. [Issuer-compromise recovery](#issuer-compromise) includes potentially copied delivered keys; recipients obtain replacements from a healthy issuer.
 
 ### Where a token comes from
@@ -328,7 +329,7 @@ Spares are bucket-scoped R2 keys pre-created in the credential store, avoiding a
 Creating/deleting/listing keys needs a Cloudflare token with “Account API Tokens Write”. Sources, in order:
 
 1. `CLOUDFLARE_API_TOKEN`, as wrangler uses. Removed from the environment once read, like the R2 variables.
-2. `cloudflare_token_command` in config, e.g. `op read op://Private/Cloudflare/agent-archive`: interactive commands only, never collector. Allow unlock/Touch ID; never log stdout/token. Suppress stderr except generic failure and exit status, matching S3 `credential_process`.
+2. `cloudflare_token_command` in config, an argv array, e.g. `["op", "read", "op://Private/Cloudflare/agent-archive"]`: interactive commands only, never collector. Allow unlock/Touch ID; never log stdout/token. Suppress stderr except generic failure and exit status, matching S3 `credential_process`.
 3. A prompt, with the same deep link and permission list guided setup prints (`printR2BootstrapInstructions`, `setup_r2_create.go:286`).
 
 Keep tokens in memory for one command. Never send management tokens to object storage or object credentials to the management API.

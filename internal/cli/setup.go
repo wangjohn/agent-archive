@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ const defaultRetentionDays = 90
 var allHarnesses = agentmeta.SetupNames(productionAgents.Catalog())
 
 type setupDraft struct {
+	PairingID     string        `json:"pairing_id,omitempty"`
 	StagedRefs    []string      `json:"staged_credential_refs,omitempty"`
 	Version       int           `json:"version"`
 	Config        config.Config `json:"config"`
@@ -113,11 +115,17 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
+	if opts.pair || opts.pairFile != "" {
+		return runPairingSetupCommand(opts, *refresh, *abandon, fs, stdin, stdout, stderr, env)
+	}
 	if *refresh {
 		if other := refreshCompanions(fs); other != "" {
 			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
 		}
 		return runSetupRefresh(stdout, stderr, env, opts.verbose)
+	}
+	if opts.requireSkillSupplied && opts.noRequireSkillSupplied {
+		return fs.usageError("--require-skill-use and --no-require-skill-use contradict each other; give one")
 	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
@@ -243,6 +251,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	stopApps()
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
+	p.tokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	p.spaceAfterAnswer = true
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)
@@ -329,6 +338,8 @@ func retiredStagedRefs(retired, staged []string, active string) []string {
 // to applySetup. Draft persistence and installation happen elsewhere.
 func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
 	cfg := draft.Config
+	// The token source is local configuration, never an answer restored from a draft.
+	cfg.CloudflareTokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	// Existing-machine setup keeps the committed label: a resumed draft may
 	// predate a rename. First setup retains its optional chosen draft label.
 	if existing.MachineID != "" || existing.MachineName != "" {
@@ -1025,15 +1036,11 @@ func printAnotherMachine(p *prompter, cfg config.Config, userHome string, enviro
 		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
 	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome, environments...)))
-	// setup --yes has no flag for the folder inside the bucket: it stores in
-	// the default one, which would split the archive from this machine's.
-	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
-		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
-	}
 }
 
 // anotherMachineCommand is the setup --yes command that sets up another machine
-// like this one: the same storage, apps and projects. Projects in the home
+// like this one: the same storage, capture rules, skills, apps and projects.
+// Projects in the home
 // folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
 func anotherMachineCommand(cfg config.Config, userHome string, environments ...Env) string {
@@ -1056,6 +1063,19 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 	if len(cfg.Harnesses) > 0 {
 		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
 	}
+	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix), "--retention-days", strconv.Itoa(cmp.Or(cfg.RetentionDays, defaultRetentionDays)))
+	if cfg.RequireSkillUse {
+		args = append(args, "--require-skill-use")
+	} else {
+		args = append(args, "--no-require-skill-use")
+	}
+	args = append(args, "--skill-evidence", string(cfg.EffectiveSkillEvidence()))
+	if cfg.NoSkills {
+		args = append(args, "--no-skills")
+	} else {
+		args = append(args, "--skills")
+	}
+
 	for _, project := range cfg.Archive.Projects {
 		if !project.Included {
 			continue
@@ -2071,4 +2091,15 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 func isGoBuildDir(name string) bool {
 	digits, ok := strings.CutPrefix(name, "go-build")
 	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
+}
+
+func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 {
+		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
+	}
+	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {
+		terminal.Printf(stderr, "Pairing incomplete: %v\n", err)
+		return 1
+	}
+	return 0
 }

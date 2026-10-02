@@ -64,9 +64,50 @@ Save these changes?
   1) Yes, save
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [1]: 30
+Enter 1-3 [1]: 2
 
-Enter a number from 1 to 3.
+
+What would you like to change?
+  1) Apps to include
+  2) Projects to include
+  3) All sessions or only sessions using skills
+  4) Skill evidence: none, metadata, or body
+  5) How long sessions are kept
+  6) Bucket or credentials
+  7) Folder inside the bucket
+  8) AWS bucket region
+  9) Nothing, go back to the review
+Enter 1-9 [9]: 5
+
+Keep sessions for how many days? [90]: 30
+
+
+Step 3 of 3 · Review your changes
+
+* Apps       Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
+             was Codex 0.121.0
+* Projects   ~/src/web-app
+             ~/src/api
+             was ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
+  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+* Keep for   30 days
+             was 90 days
+
+  * changed from your current settings
+
+  ✓ Storage connected       write, read, list, delete
+  ! Bucket privacy unknown  public-access settings could not be read
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+
+  Filtering is best effort; sensitive text may remain in archived sessions.
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+
+Save these changes?
+  1) Yes, save
+  2) Edit a setting
+  3) Cancel (your setup draft is kept)
 Enter 1-3 [1]: 
 
 
@@ -85,5 +126,5 @@ Check progress with agent-archive status.
 Looking for past sessions in these projects… none to import.
 
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app --project ~/src/api
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --prefix agent-archive/ --retention-days 30 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app --project ~/src/api
 [exit 0]
