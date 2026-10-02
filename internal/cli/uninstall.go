@@ -80,6 +80,14 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	// release is idempotent so the deferred calls cannot unlock twice.
 	release = releaseOnce(release)
 	defer release()
+	// Issuance takes issued.lock before the collector lock. A purge follows
+	// that order and refuses before changing hooks, credentials or lineage.
+	// Ordinary uninstall keeps issuance state and does not need this lock.
+	releaseIssued, err := lockUninstallIssuance(home, purge)
+	if err != nil {
+		return err
+	}
+	defer releaseIssued()
 	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
@@ -164,12 +172,24 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		releaseAdmission = releaseOnce(releaseAdmission)
 		defer releaseAdmission()
 		// The purge releases the locks once their files are gone.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); release() }); err != nil {
+		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); releaseIssued(); release() }); err != nil {
 			return err
 		}
 	}
 	printUninstallSummary(out, unverified)
 	return nil
+}
+
+// lockUninstallIssuance excludes key creation only when its lineage will be purged.
+func lockUninstallIssuance(home string, purge bool) (func(), error) {
+	if !purge {
+		return func() {}, nil
+	}
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		return nil, fmt.Errorf("key issuance is running; retry local-data purge when it finishes: %w", err)
+	}
+	return releaseOnce(release), nil
 }
 
 func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
@@ -578,7 +598,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "setup.lock"}
+var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -684,7 +704,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" {
+		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {

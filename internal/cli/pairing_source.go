@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -121,6 +122,12 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 		return 1
 	}
 	defer release()
+	// A purge can unlink the lock after source preparation. Recheck the
+	// committed configuration before issuing against an old in-memory snapshot.
+	if err := validatePairingSourceSnapshot(home, cfg); err != nil {
+		terminal.Println(errOut, err.Error())
+		return 1
+	}
 	// Repeat local name checks under the same lock used by every delivery.
 	prior, err := readPairingLedgers(home)
 	if err != nil {
@@ -205,6 +212,22 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 		return result
 	}
 	return finishPairingDelivery(p, code, ledger, home, opts.yes, out, errOut, env, &slot, issuer)
+}
+
+// validatePairingSourceSnapshot is called with issued.lock held before key effects.
+func validatePairingSourceSnapshot(home string, cfg config.Config) error {
+	current, found, err := config.Load(home)
+	if err != nil || !found || !current.Archive.Enabled {
+		return errors.New("source setup changed; run setup before creating a pairing")
+	}
+	checked := cfg
+	// The source's storage probe refreshes only these observations in memory.
+	checked.StorageVerifiedAt = current.StorageVerifiedAt
+	checked.BucketPrivacy = current.BucketPrivacy
+	if !reflect.DeepEqual(checked, current) {
+		return errors.New("source configuration changed; rerun machines add")
+	}
+	return nil
 }
 
 func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home string, yes bool, out, errOut io.Writer, env Env, slot *issuance.Slot, issuer *keyIssuer) int {
