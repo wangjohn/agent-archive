@@ -2,7 +2,7 @@ $ agent-archive setup
 Checking installed applications...
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 Step 1 of 3 · Choose what to capture
 
@@ -34,11 +34,10 @@ Projects:
 
 Step 2 of 3 · Connect storage
 
-Where should sessions be stored?
+Where should your archive live?
   1) Cloudflare R2
   2) Amazon S3
-  3) Amazon S3: create a new bucket for me
-  4) Show setup instructions
-Enter 1-4 [1]: Setup incomplete: no more input: EOF
+[h] Setup instructions
+Choose [1]: Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]
