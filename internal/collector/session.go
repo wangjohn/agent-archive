@@ -93,6 +93,7 @@ type sessionScan struct {
 
 // filteredSource is a source read and filtered once in a scan.
 type filteredSource struct {
+	adapter    agentapi.TranscriptFilter
 	transcript archive.FilteredTranscript
 	observed   sourceState
 }
@@ -222,12 +223,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// arrives), and nothing is recorded as a failure.
 		return read, false, nil
 	}
-	if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
-		return read, false, err
-	}
 	if s.filtered != nil {
+		read.adapter = s.filtered.adapter
 		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
 	} else {
+		if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
+			return read, false, err
+		}
 		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
 	}
 	if err != nil {

@@ -86,7 +86,8 @@ func (r *recordingStore) Put(ctx context.Context, key string, data []byte) error
 
 func collect(t *testing.T, local *state.Store, store storage.ObjectStore, at time.Time) collector.Result {
 	t.Helper()
-	result, err := collector.Run(context.Background(), local, store, collector.Options{Parsers: builtin.NewBuiltins(),
+	bindings := builtin.NewBuiltins()
+	result, err := collector.Run(context.Background(), local, store, collector.Options{Sources: bindings, Parsers: bindings,
 		MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1},
 	})
 	if err != nil {

@@ -39,7 +39,7 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 	}
 	filtered, _, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) && !agentapi.HasFailure(err, agentapi.Cleanup) {
 			return archive.SourceBundle{}, ErrNoTranscript
 		}
 		return archive.SourceBundle{}, fmt.Errorf("filter transcript: %w", err)
