@@ -17,6 +17,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
+const syntheticHookAgent agentmeta.ID = "synthetic"
+
+type syntheticSignal string
+
+const (
+	signalBegin  syntheticSignal = "begin"
+	signalAnswer syntheticSignal = "answer"
+	signalFinish syntheticSignal = "finish"
+	signalChild  syntheticSignal = "child"
+)
+
 type injectedDecoder struct {
 	decode func(agentapi.HookInput) []agentapi.LifecycleEvent
 }
@@ -30,17 +41,19 @@ type injectedLookup struct{ decoder agentapi.HookDecoder }
 func (d injectedLookup) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
 	return d.decoder, name == "synthetic"
 }
+
 func syntheticLifecycle(in agentapi.HookInput) []agentapi.LifecycleEvent {
 	identity, _ := in.Payload["opaque"].(string)
 	project, _ := in.Payload["checkout"].(string)
 	path, _ := in.Payload["locator"].(string)
-	signal, _ := in.Payload["signal"].(string)
-	event := agentapi.LifecycleEvent{Session: agentapi.NativeSession{Agent: "synthetic", NativeID: identity}, ProjectRoot: project, Reason: signal, NativeEvent: signal, Source: agentapi.SourceRef{Path: path}}
+	rawSignal, _ := in.Payload["signal"].(string)
+	signal := syntheticSignal(rawSignal)
+	event := agentapi.LifecycleEvent{Session: agentapi.NativeSession{Agent: syntheticHookAgent, NativeID: identity}, ProjectRoot: project, Reason: string(signal), NativeEvent: string(signal), Source: agentapi.SourceRef{Path: path}}
 	switch signal {
-	case "begin":
+	case signalBegin:
 		event.Kind = agentapi.EventStart
 		event.NewOnly = true
-		event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "explicit_start"}
+		event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessExplicitStart}
 		event.Deferred = agentapi.DeferredStart
 		turn := event
 		turn.Kind = agentapi.EventTurnStart
@@ -49,13 +62,13 @@ func syntheticLifecycle(in agentapi.HookInput) []agentapi.LifecycleEvent {
 		turn.Deferred = agentapi.DeferredNone
 		turn.Evidence = []archive.SupplementalEvidence{{Kind: archive.EvidenceKindLifecycleHook, ObservedAt: in.ObservedAt, Provenance: "hook:synthetic:begin", Payload: map[string]any{"event_name": "begin"}}}
 		return []agentapi.LifecycleEvent{event, turn}
-	case "answer":
+	case signalAnswer:
 		event.Kind = agentapi.EventResponse
 		event.Locator = agentapi.LocatorFillFile
 		event.Deferred = agentapi.DeferredFollowup
-	case "finish":
+	case signalFinish:
 		event.Kind = agentapi.EventStop
-	case "child":
+	case signalChild:
 		event.Kind = agentapi.EventSubagent
 		event.Child = &agentapi.ChildObservation{ID: "child-1", Path: path, Type: "synthetic", CaptureTranscript: true}
 	default:
@@ -63,9 +76,11 @@ func syntheticLifecycle(in agentapi.HookInput) []agentapi.LifecycleEvent {
 	}
 	return []agentapi.LifecycleEvent{event}
 }
-func syntheticPayload(signal, id, project, path string) map[string]any {
-	return map[string]any{"signal": signal, "opaque": id, "checkout": project, "locator": path}
+
+func syntheticPayload(signal syntheticSignal, id, project, path string) map[string]any {
+	return map[string]any{"signal": string(signal), "opaque": id, "checkout": project, "locator": path}
 }
+
 func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
@@ -74,13 +89,13 @@ func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 	ports := injectedLookup{injectedDecoder{syntheticLifecycle}}
 	id := " opaque/λ\x00 "
 	// An absent-parent follow-up can retain a locator but cannot admit by itself.
-	if err := HandleEvent(home, "synthetic", syntheticPayload("answer", id, project, "/synthetic/source"), at, WithDecoders(ports)); err != nil {
+	if err := HandleEvent(home, "synthetic", syntheticPayload(signalAnswer, id, project, "/synthetic/source"), at, WithDecoders(ports)); err != nil {
 		t.Fatal(err)
 	}
 	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
 		t.Fatalf("follow-up admitted: %v %v", regs, err)
 	}
-	if err := HandleEvent(home, "synthetic", syntheticPayload("begin", id, project, ""), at, WithDecoders(ports)); err != nil {
+	if err := HandleEvent(home, "synthetic", syntheticPayload(signalBegin, id, project, ""), at, WithDecoders(ports)); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReplayAdmissionIntents(home, at.Add(time.Second), ports); err != nil {
@@ -104,14 +119,14 @@ func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 	if err != nil || !found || builtinID == archiveID {
 		t.Fatalf("colliding native owners %q %q %v", builtinID, archiveID, err)
 	}
-	if err := HandleEvent(home, "synthetic", syntheticPayload("child", id, project, "/synthetic/child"), at, WithDecoders(ports)); err != nil {
+	if err := HandleEvent(home, "synthetic", syntheticPayload(signalChild, id, project, "/synthetic/child"), at, WithDecoders(ports)); err != nil {
 		t.Fatal(err)
 	}
 	children, err := store.LoadSubagentCandidates()
 	if err != nil || len(children) != 1 || children[0].ParentArchiveSessionID != archiveID || children[0].ParentNativeSessionID != id || children[0].ProjectRoot != reg.ProjectRoot {
 		t.Fatalf("children %+v %v", children, err)
 	}
-	if err := HandleEvent(home, "synthetic", syntheticPayload("finish", id, project, ""), at, WithDecoders(ports)); err != nil {
+	if err := HandleEvent(home, "synthetic", syntheticPayload(signalFinish, id, project, ""), at, WithDecoders(ports)); err != nil {
 		t.Fatal(err)
 	}
 	requests, err := store.LoadRequests()
@@ -125,18 +140,20 @@ func TestInjectedDecoderUsesRealAdmissionAndChildEffects(t *testing.T) {
 		t.Fatalf("requests %+v %v", requests, err)
 	}
 }
+
 func TestBatchRejectsEveryInvalidLaterEffectBeforeAnyMutation(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	for name, corrupt := range map[string]func(*agentapi.LifecycleEvent){
 		"identity": func(e *agentapi.LifecycleEvent) { e.Session.NativeID = "other" },
-		"agent":    func(e *agentapi.LifecycleEvent) { e.Session.Agent = "claude" },
+		"agent":    func(e *agentapi.LifecycleEvent) { e.Session.Agent = agentmeta.Claude },
 		"project":  func(e *agentapi.LifecycleEvent) { e.ProjectRoot = "/other" },
 		"kind":     func(e *agentapi.LifecycleEvent) { e.Kind = 255 },
 		"source":   func(e *agentapi.LifecycleEvent) { e.Source.Key = "database" },
 		"evidence": func(e *agentapi.LifecycleEvent) { e.Evidence[0].ObservedAt = at.Add(time.Second) },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, at.Add(-time.Hour))
 			before, err := os.ReadDir(home)
@@ -149,7 +166,7 @@ func TestBatchRejectsEveryInvalidLaterEffectBeforeAnyMutation(t *testing.T) {
 				return batch
 			}}}
 			probes := 0
-			err = HandleEvent(home, "synthetic", syntheticPayload("begin", "native", project, ""), at, WithDecoders(ports), WithRepoKey(func(string) string { probes++; return "" }))
+			err = HandleEvent(home, "synthetic", syntheticPayload(signalBegin, "native", project, ""), at, WithDecoders(ports), WithRepoKey(func(string) string { probes++; return "" }))
 			if err == nil || probes != 0 {
 				t.Fatalf("err %v probes %d", err, probes)
 			}
@@ -160,30 +177,42 @@ func TestBatchRejectsEveryInvalidLaterEffectBeforeAnyMutation(t *testing.T) {
 		})
 	}
 }
+
 func TestReplayAfterEachDurableLifecycleBoundaryKeepsIdentity(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	for _, boundary := range []string{"registration-create", "evidence-save", "locator-update", "request-save", "child-reservation", "child-link", "child-candidate"} {
-		t.Run(boundary, func(t *testing.T) {
+	for _, boundary := range []effectName{effectRegistrationCreate, effectRegistrationUpdate, effectEvidenceSave, effectLocatorUpdate, effectRequestSave, effectChildReservation, effectChildLink, effectChildCandidate} {
+		t.Run(string(boundary), func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, at.Add(-time.Hour))
 			ports := injectedLookup{injectedDecoder{syntheticLifecycle}}
-			start := syntheticPayload("begin", "native", project, "")
+			start := syntheticPayload(signalBegin, "native", project, "")
 			payload := start
-			if boundary != "registration-create" && boundary != "evidence-save" {
+			if boundary != effectRegistrationCreate && boundary != effectEvidenceSave {
 				if err := HandleEvent(home, "synthetic", start, at, WithDecoders(ports)); err != nil {
 					t.Fatal(err)
 				}
 				switch boundary {
-				case "locator-update", "request-save":
-					payload = syntheticPayload("answer", "native", project, "/source")
-				default:
-					payload = syntheticPayload("child", "native", project, "/child")
+				case effectRegistrationUpdate:
+					payload = syntheticPayload(signalBegin, "native", project, "/continued")
+					ports = injectedLookup{decoder: injectedDecoder{decode: func(in agentapi.HookInput) []agentapi.LifecycleEvent {
+						batch := syntheticLifecycle(in)
+						batch[0].NewOnly = false
+						batch[0].Locator = agentapi.LocatorReplaceFile
+						return batch
+					}}}
+				case effectLocatorUpdate, effectRequestSave:
+					payload = syntheticPayload(signalAnswer, "native", project, "/source")
+				case effectChildReservation, effectChildLink, effectChildCandidate:
+					payload = syntheticPayload(signalChild, "native", project, "/child")
+				case effectRegistrationCreate, effectEvidenceSave, effectIntentAck:
+					t.Fatal("unexpected prepared lifecycle boundary")
 				}
 			}
 			interrupted := false
 			fail := func(o *eventOptions) {
-				o.afterEffect = func(name string) error {
+				o.afterEffect = func(name effectName) error {
 					if name == boundary && !interrupted {
 						interrupted = true
 						return errors.New("durable interruption")
@@ -222,7 +251,7 @@ func TestReplayAfterEachDurableLifecycleBoundaryKeepsIdentity(t *testing.T) {
 				}
 				seen[key] = true
 			}
-			if strings.HasPrefix(boundary, "child-") {
+			if strings.HasPrefix(string(boundary), "child-") {
 				children, err := store.LoadSubagentCandidates()
 				if err != nil || len(children) != 1 {
 					t.Fatalf("child replay %+v %v", children, err)
@@ -231,6 +260,7 @@ func TestReplayAfterEachDurableLifecycleBoundaryKeepsIdentity(t *testing.T) {
 		})
 	}
 }
+
 func TestLegacyAdmissionBytesTranslateWithoutRestatting(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
@@ -260,20 +290,22 @@ func TestLegacyAdmissionBytesTranslateWithoutRestatting(t *testing.T) {
 		t.Fatalf("legacy intent not acknowledged: %v", err)
 	}
 }
+
 func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	for _, boundary := range []string{"registration-create", "evidence-save", "locator-update", "request-save", "intent-ack"} {
-		t.Run(boundary, func(t *testing.T) {
+	for _, boundary := range []effectName{effectRegistrationCreate, effectEvidenceSave, effectLocatorUpdate, effectRequestSave, effectIntentAck} {
+		t.Run(string(boundary), func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, at.Add(-time.Hour))
 			ports := injectedLookup{injectedDecoder{syntheticLifecycle}}
-			payload := syntheticPayload("begin", "native", project, "")
-			if boundary == "locator-update" || boundary == "request-save" {
+			payload := syntheticPayload(signalBegin, "native", project, "")
+			if boundary == effectLocatorUpdate || boundary == effectRequestSave {
 				if err := HandleEvent(home, "synthetic", payload, at, WithDecoders(ports)); err != nil {
 					t.Fatal(err)
 				}
-				payload = syntheticPayload("answer", "native", project, "/source")
+				payload = syntheticPayload(signalAnswer, "native", project, "/source")
 			}
 			batch := syntheticLifecycle(agentapi.HookInput{Payload: payload, ObservedAt: at})
 			batch, err := validateBatch("synthetic", batch, at)
@@ -289,7 +321,7 @@ func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 				t.Fatalf("queue %v %v", queued, err)
 			}
 			interrupted := false
-			err = replayAdmissionIntents(home, at.Add(time.Second), ports, func(name string) error {
+			err = replayAdmissionIntents(home, at.Add(time.Second), ports, func(name effectName) error {
 				if name == boundary && !interrupted {
 					interrupted = true
 					return errors.New("after durable replay effect")
@@ -308,7 +340,7 @@ func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if boundary != "intent-ack" && len(entries) != 1 {
+			if boundary != effectIntentAck && len(entries) != 1 {
 				t.Fatalf("partial replay lost intent %v", entries)
 			}
 			if err := ReplayAdmissionIntents(home, at.Add(2*time.Second), ports); err != nil {
@@ -326,7 +358,7 @@ func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 			if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) == 0 {
 				t.Fatalf("replay lost evidence %+v %v", requests, err)
 			}
-			if boundary == "locator-update" || boundary == "request-save" {
+			if boundary == effectLocatorUpdate || boundary == effectRequestSave {
 				if reg.TranscriptPath != "/source" || !requests[0].Urgent() {
 					t.Fatalf("followup effects incomplete %+v %+v", reg, requests)
 				}
@@ -340,6 +372,7 @@ func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 		})
 	}
 }
+
 func TestInvalidReplayBatchPrecedesAnyAdmissionEffect(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
@@ -349,7 +382,7 @@ func TestInvalidReplayBatchPrecedesAnyAdmissionEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload("begin", "native", project, ""), ObservedAt: at})
+	batch := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "native", project, ""), ObservedAt: at})
 	batch[1].Session.NativeID = "wrong-owner"
 	batch[1].Evidence = nil
 	intent := admissionIntent{Version: 1, Harness: "synthetic", NativeSessionID: "native", ProjectRoot: project, DestinationID: cfg.DestinationID(), PauseGeneration: cfg.PauseGeneration, ObservedAt: at, Effects: []agentapi.ReplayEffect{{Event: batch[0]}, {Event: batch[1]}}}

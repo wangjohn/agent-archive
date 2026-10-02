@@ -150,9 +150,9 @@ func CursorDatabaseReaderFor(env Environment) func(context.Context) (CursorDatab
 						break
 					}
 					switch r.Kind {
-					case "composer":
+					case agentapi.ComposerRecord:
 						c.Composer = r.Raw
-					case "bubble":
+					case agentapi.BubbleRecord:
 						c.Bubbles = append(c.Bubbles, cursorstore.Bubble{ID: r.Key, Value: r.Raw, Missing: r.Missing})
 					}
 				}

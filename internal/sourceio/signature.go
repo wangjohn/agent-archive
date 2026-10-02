@@ -27,7 +27,7 @@ func ValidateSignature(s agentapi.SourceSignature) error {
 		return errors.New("invalid source signature")
 	}
 	for _, c := range s.Provider {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-/_", c)) {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && !strings.ContainsRune("-/_", c) {
 			return errors.New("invalid source signature provider")
 		}
 	}
@@ -35,7 +35,7 @@ func ValidateSignature(s agentapi.SourceSignature) error {
 		return errors.New("invalid source signature token")
 	}
 	for _, c := range s.Token {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
 			return errors.New("invalid source signature token")
 		}
 	}

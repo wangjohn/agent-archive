@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -27,7 +26,7 @@ func TestSyncEndToEndFromHookThroughPublish(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
+	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +98,7 @@ func TestSyncRunsRetentionSweepAndDeletesExpiredSession(t *testing.T) {
 	transcript := writeCodexTranscript(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
+	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,7 +164,7 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	transcript := writeCodexTranscript(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
+	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 

@@ -29,9 +29,9 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		}
 		out, err = f.FilterText(sourceio.Reader(ctx, in.File, in.File.Length()), c.StartedAt)
 		if err != nil {
-			return out, errors.Join(sourceio.Classify(err), sourceio.Classify(in.File.Check()))
+			return out, errors.Join(sourceio.Classify(err), sourceio.Classify(in.File.Check()), ctx.Err())
 		}
-		return out, sourceio.Classify(in.File.Check())
+		return out, errors.Join(sourceio.Classify(in.File.Check()), ctx.Err())
 	}
 	if in.Records == nil {
 		return archive.FilteredTranscript{}, errors.New("cursor native input required")
@@ -40,7 +40,7 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 	if err != nil {
 		return archive.FilteredTranscript{}, err
 	}
-	if !ok || r.Kind != "composer" || r.Missing {
+	if !ok || r.Kind != agentapi.ComposerRecord || r.Missing {
 		return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("cursor composer framing required"))
 	}
 	out, err := nativecodec.FilterComposerRecords(ctx, r.Raw, func(ctx context.Context) (nativecodec.CursorBubble, bool, error) {
@@ -48,8 +48,8 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		if err != nil || !ok {
 			return nativecodec.CursorBubble{}, ok, err
 		}
-		if row.Kind != "bubble" {
-			return nativecodec.CursorBubble{}, false, agentapi.Wrap(agentapi.Unsafe, errors.New("unexpected Cursor record framing"))
+		if row.Kind != agentapi.BubbleRecord {
+			return nativecodec.CursorBubble{}, false, agentapi.Wrap(agentapi.Unsafe, errors.New("unexpected cursor record framing"))
 		}
 		var value []byte
 		if !row.Missing {
@@ -57,7 +57,7 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		}
 		return nativecodec.CursorBubble{ID: row.Key, Value: value}, true, nil
 	})
-	return out, sourceio.Classify(err)
+	return out, errors.Join(sourceio.Classify(err), ctx.Err())
 }
 
 // Refilter applies current privacy rules to retained native evidence.

@@ -32,6 +32,7 @@ func (s sourceState) empty() bool {
 	}
 	return s.file.Size == 0
 }
+
 func (s sourceState) matches(old state.ScanSignature) bool {
 	if old.SourceKind != s.kind {
 		return false
@@ -50,13 +51,15 @@ func (s sourceState) matches(old state.ScanSignature) bool {
 	}
 	return s.file == transcriptFileInfo{Size: old.TranscriptSize, Mtime: old.TranscriptMtime}
 }
+
 func observe(kind archive.SourceKind, o agentapi.SourceObservation) sourceState {
-	s := sourceState{kind: kind, observation: o}
+	var file transcriptFileInfo
 	if kind == archive.SourceKindFile {
-		s.file = transcriptFileInfo{Size: o.Size, Mtime: o.Activity.UnixNano()}
+		file = transcriptFileInfo{Size: o.Size, Mtime: o.Activity.UnixNano()}
 	}
-	return s
+	return sourceState{kind: kind, observation: o, file: file}
 }
+
 func sourceRef(reg archive.SessionRegistration) agentapi.SourceRef {
 	return agentapi.SourceRef{Kind: reg.SourceKind, Path: reg.TranscriptPath, Key: reg.SourceKey}
 }
@@ -92,6 +95,7 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 	}
 	return p, f, nil
 }
+
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.opts.sourcePasses != nil {
 		pass, err := r.opts.sourcePasses.get(ctx, key, p)
@@ -103,6 +107,7 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 	}
 	return pass, pass.Close, nil
 }
+
 func (r providerReader) Signature(ctx context.Context) (out sourceState, err error) {
 	provider, filter, err := r.binding()
 	if err != nil {
@@ -119,6 +124,7 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	}
 	return observe(r.reg.SourceKind, o), err
 }
+
 func (r providerReader) Filter(ctx context.Context, _ archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
 	provider, f, err := r.binding()
 	if err != nil {
@@ -151,6 +157,7 @@ func (r providerReader) Filter(ctx context.Context, _ archive.Adapter, maxBytes 
 	}
 	return out, observed, checkFilteredSize(out, maxBytes)
 }
+
 func translateSourceError(err error) error {
 	switch {
 	case errors.Is(err, agentapi.ErrRawLimit):
@@ -172,6 +179,7 @@ func CursorChatSize(c cursorstore.Composer) int64 {
 	}
 	return n
 }
+
 func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
 	if int64(len(c.Composer)) > recordLimit {
 		return errRecordTooLarge
@@ -217,7 +225,7 @@ func (r *composerRecords) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	}
 	if r.i == 0 {
 		r.i++
-		return agentapi.NativeRecord{Kind: "composer", Raw: r.c.Composer}, true, nil
+		return agentapi.NativeRecord{Kind: agentapi.ComposerRecord, Raw: r.c.Composer}, true, nil
 	}
 	i := r.i - 1
 	if i >= len(r.c.Bubbles) {
@@ -225,7 +233,7 @@ func (r *composerRecords) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	}
 	b := r.c.Bubbles[i]
 	r.i++
-	return agentapi.NativeRecord{Kind: "bubble", Key: b.ID, Raw: b.Value, Missing: b.Value == nil}, true, nil
+	return agentapi.NativeRecord{Kind: agentapi.BubbleRecord, Key: b.ID, Raw: b.Value, Missing: b.Value == nil}, true, nil
 }
 
 // cursorDatabase is Cursor's state.vscdb for this user.
@@ -261,6 +269,7 @@ func (s *sourcePassSet) get(ctx context.Context, name string, p agentapi.SourceP
 	}
 	return pass, err
 }
+
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
 	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase()}, passes: map[string]agentapi.SourcePass{}}
 	return func() error {

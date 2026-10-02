@@ -107,13 +107,16 @@ func mergeCaptureGaps(first, second []archive.CaptureGap) []archive.CaptureGap {
 // snapshot that cannot be filtered again leaves candidate to replace it, as
 // before this existed, with a warning: the new filter's output, though
 // poorer, is still safer to publish than the old filter's.
-func (s *sessionScan) refilterRewritten(read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
+func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
 	rewritten, err := s.rewrittenSinceCapture(read)
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(s.ctx, s.reg, read.adapter, snapshot)
+	refiltered, err := refilterBundle(ctx, s.reg, read.adapter, snapshot)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return candidate, false, err
+		}
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))
 		return candidate, false, nil
 	}

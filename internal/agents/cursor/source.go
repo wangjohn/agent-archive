@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"maps"
 	"time"
 )
 
@@ -62,6 +63,7 @@ func (p *sourcePass) Signature(ctx context.Context, r agentapi.SourceRef) (agent
 	p.lastChecked = r.Key
 	return chatObservation(sig), nil
 }
+
 func chatObservation(sig cursorstore.Signature) agentapi.SourceObservation {
 	at := time.Time{}
 	if sig.LastUpdatedAt > 0 {
@@ -69,6 +71,7 @@ func chatObservation(sig cursorstore.Signature) agentapi.SourceObservation {
 	}
 	return agentapi.SourceObservation{Signature: sourceio.CursorSignature(sig), Present: true, Empty: sig.HeaderCount == 0, Activity: at}
 }
+
 func (p *sourcePass) Read(ctx context.Context, r agentapi.SourceRef, l agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	if _, err := (SourceProvider{}).Describe(r); err != nil {
 		return nil, agentapi.Wrap(agentapi.Unsafe, err)
@@ -101,6 +104,7 @@ func (p *sourcePass) Read(ctx context.Context, r agentapi.SourceRef, l agentapi.
 	p.live[s] = true
 	return s, nil
 }
+
 func (p *sourcePass) Close() error {
 	if p.closed {
 		return p.closeErr
@@ -124,9 +128,11 @@ type chatSnapshot struct {
 }
 
 func (s *chatSnapshot) Observation() agentapi.SourceObservation { return s.observed }
+
 func (s *chatSnapshot) Input() agentapi.NativeInput {
-	return agentapi.NativeInput{Records: &chatRecords{snapshot: s}, Framing: "composer"}
+	return agentapi.NativeInput{Records: &chatRecords{snapshot: s}}
 }
+
 func (s *chatSnapshot) Close() error {
 	if s.closed {
 		return nil
@@ -152,7 +158,7 @@ func (r *chatRecords) Next(ctx context.Context) (agentapi.NativeRecord, bool, er
 	}
 	if r.next == 0 {
 		r.next++
-		return agentapi.NativeRecord{Kind: "composer", Raw: s.composer.Composer}, true, nil
+		return agentapi.NativeRecord{Kind: agentapi.ComposerRecord, Raw: s.composer.Composer}, true, nil
 	}
 	i := r.next - 1
 	if i >= len(s.composer.Bubbles) {
@@ -160,7 +166,7 @@ func (r *chatRecords) Next(ctx context.Context) (agentapi.NativeRecord, bool, er
 	}
 	b := s.composer.Bubbles[i]
 	r.next++
-	return agentapi.NativeRecord{Kind: "bubble", Key: b.ID, Raw: b.Value, Missing: b.Missing}, true, nil
+	return agentapi.NativeRecord{Kind: agentapi.BubbleRecord, Key: b.ID, Raw: b.Value, Missing: b.Missing}, true, nil
 }
 
 // Sweep removes only stale, unlocked raw database snapshots.
@@ -186,9 +192,7 @@ func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 		if err != nil {
 			return nil, err
 		}
-		for r, at := range found {
-			out[r] = at
-		}
+		maps.Copy(out, found)
 	}
 	if len(ids) == 0 {
 		return out, nil

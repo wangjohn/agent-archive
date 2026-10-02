@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 )
 
 func TestPurePlansAndInspectionUseOnlyInjectedObservations(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"claude", "codex", "cursor"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			port := Configurator{Spec: fuzzSpec(name)}
 			// Deliberately absent host paths: Plan and Inspect must use these bytes.
 			file := agentapi.HookFile{Path: filepath.Join(t.TempDir(), "never-created", "settings"), Present: true, Bytes: []byte(`{"untouched":{"n":9007199254740993,"html":"<&"}}`), Mode: 0640, Regular: true}
@@ -56,6 +58,7 @@ func TestPurePlansAndInspectionUseOnlyInjectedObservations(t *testing.T) {
 		})
 	}
 }
+
 func TestOwnershipAliasUsesProvidedIdentityWithoutHostProbe(t *testing.T) {
 	t.Parallel()
 	port := Configurator{Spec: fuzzSpec("claude")}
@@ -71,6 +74,7 @@ func TestOwnershipAliasUsesProvidedIdentityWithoutHostProbe(t *testing.T) {
 		t.Fatalf("injected identity not honored %+v %v", inspection, err)
 	}
 }
+
 func FuzzDecoderNativeShapes(f *testing.F) {
 	for _, value := range []string{"startup", "clear", "resume", "compact", "unknown", "  CLEAR  "} {
 		f.Add(value, "/native/source", 0)
@@ -88,7 +92,7 @@ func FuzzDecoderNativeShapes(f *testing.F) {
 		case 3:
 			delete(payload, "transcript_path")
 		}
-		port := Decoder{Spec: DecoderSpec{Agent: "cursor", Events: map[string]agentapi.EventKind{"sessionStart": agentapi.EventStart}, NullPathFresh: true, OwnedFilename: true}}
+		port := Decoder{Spec: DecoderSpec{Agent: agentmeta.Cursor, Events: map[string]agentapi.EventKind{"sessionStart": agentapi.EventStart}, NullPathFresh: true, OwnedFilename: true}}
 		before := payload["transcript_path"]
 		first, err := port.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Unix(1, 0)})
 		if err != nil {

@@ -132,7 +132,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if settled, err := s.compare(read, &candidate); settled || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, blocked, err := s.guard(read, candidate, supplemental)
+	candidate, blocked, err := s.guard(s.ctx, read, candidate, supplemental)
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
@@ -484,7 +484,7 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 // A transcript that does not is blocked (blocked reports it); a Cursor chat
 // that does not is taken as it now is, with a rewrite gap, and the
 // candidate is rebuilt to carry it.
-func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, supplemental []archive.SupplementalEvidence) (_ archive.SourceBundle, blocked bool, err error) {
+func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate archive.SourceBundle, supplemental []archive.SupplementalEvidence) (_ archive.SourceBundle, blocked bool, err error) {
 	// A blocked candidate is itself the rewritten evidence, so it must never
 	// become the baseline: keep guarding against what was actually published.
 	guardBundle, _, haveGuard := s.published.LastPublished()
@@ -492,7 +492,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 		guardBundle, haveGuard = cached, true
 	}
 	if haveGuard && versionChanged(guardBundle, candidate) {
-		refiltered, replaced, err := s.refilterRewritten(read, guardBundle, candidate)
+		refiltered, replaced, err := s.refilterRewritten(ctx, read, guardBundle, candidate)
 		if err != nil || replaced {
 			return refiltered, false, err
 		}

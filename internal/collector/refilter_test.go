@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"strings"
 	"testing"
@@ -372,5 +373,18 @@ func TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch(t *test
 	}
 	if _, blocked, _ := store.LoadBlocked("session-1"); !blocked {
 		t.Fatal("the gap ended; update refilterRewritten's note on the limitation")
+	}
+}
+
+func TestRetainedRefilterPreservesCancellation(t *testing.T) {
+	adapter, err := testAdapter("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = refilterBundle(ctx, archive.SessionRegistration{}, adapter, archive.SourceBundle{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("refilter lost cancellation: %v", err)
 	}
 }

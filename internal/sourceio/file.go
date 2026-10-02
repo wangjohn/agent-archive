@@ -71,9 +71,11 @@ func (p *filePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agent
 	}
 	return fileObservation(info.Size(), info.ModTime()), nil
 }
+
 func fileObservation(size int64, at time.Time) agentapi.SourceObservation {
 	return agentapi.SourceObservation{Signature: FileSignature(size, at.UnixNano()), Present: true, Empty: size == 0, Activity: at, Size: size}
 }
+
 func (p *filePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	if ref.Kind != archive.SourceKindFile {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("unsupported file source kind"))
@@ -100,6 +102,7 @@ func (p *filePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agen
 
 	return s, nil
 }
+
 func (p *filePass) Close() error {
 	if p.closed {
 		return p.closeErr
@@ -122,9 +125,11 @@ func (s *fileSnapshot) Observation() agentapi.SourceObservation {
 	stamp := s.file.Stamp()
 	return fileObservation(stamp.Size, stamp.ModifiedAt)
 }
+
 func (s *fileSnapshot) Input() agentapi.NativeInput {
 	return agentapi.NativeInput{File: s}
 }
+
 func (s *fileSnapshot) Close() error {
 	if s.closed {
 		return s.err
@@ -134,20 +139,25 @@ func (s *fileSnapshot) Close() error {
 	s.err = agentapi.Wrap(agentapi.Cleanup, s.file.Close())
 	return s.err
 }
-func (s *fileSnapshot) Length() int64             { return s.file.Stamp().Size }
+
+func (s *fileSnapshot) Length() int64 { return s.file.Stamp().Size }
+
 func (s *fileSnapshot) Stamp() transcriptio.Stamp { return s.file.Stamp() }
+
 func (s *fileSnapshot) ReadAt(b []byte, off int64) (int, error) {
 	if s.closed || s.owner.closed {
 		return 0, agentapi.ErrClosed
 	}
 	return s.file.ReadAt(b, off)
 }
+
 func (s *fileSnapshot) Check() error {
 	if s.closed || s.owner.closed {
 		return agentapi.ErrClosed
 	}
 	return Classify(s.file.Check())
 }
+
 func (s *fileSnapshot) Records(ctx context.Context, tail bool, window, record int64, visit func([]byte) bool) (transcriptio.RecordWindow, error) {
 	if s.closed || s.owner.closed {
 		return transcriptio.RecordWindow{}, agentapi.ErrClosed

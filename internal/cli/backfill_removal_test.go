@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -70,7 +69,7 @@ func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 				"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 			}
-			if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
+			if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 				t.Fatal(err)
 			}
 			regs, err := store.LoadRegistrations()

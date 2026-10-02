@@ -66,11 +66,12 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	decoder, ok := env.agentRegistry().LookupDecoder(*harness)
-	if !ok {
+	integration, ok := env.agentRegistry().Lookup(*harness)
+	if !ok || integration.Decoder == nil {
 		return 0
 	}
-	batch, err = decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
+	*harness = string(integration.Descriptor.ID)
+	batch, err = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 		return 0
@@ -81,7 +82,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 			batch[i].Evidence[j].ObservedAt = now
 		}
 	}
-	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver()), capture.WithDecoders(env.agentRegistry())); err != nil {
+	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver())); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 

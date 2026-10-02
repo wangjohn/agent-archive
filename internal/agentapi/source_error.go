@@ -30,8 +30,12 @@ func (e *SourceError) Error() string {
 	if e.Kind == Unsafe || e.Kind == FormatMismatch {
 		return "unsafe source format"
 	}
+	if e.Kind == Changed {
+		return "source changed while reading; try again"
+	}
 	return "source " + string(e.Kind)
 }
+
 func (e *SourceError) Unwrap() error { return e.Err }
 
 // Failure reports the outer classified failure, including joined cleanup errors.
@@ -67,6 +71,7 @@ func Deterministic(err error) bool {
 	}
 	return deterministicTree(err)
 }
+
 func deterministicTree(err error) bool {
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, e := range joined.Unwrap() {

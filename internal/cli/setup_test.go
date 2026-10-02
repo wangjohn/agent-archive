@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -343,7 +342,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
 	now := env.now().Add(time.Second)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}
-	if err := capture.HandleEvent(home, "codex", payload, now, capture.WithDecoders(productionAgents)); err != nil {
+	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	input := "storage\ns3\nprofile\nother-bucket\ny\n"
