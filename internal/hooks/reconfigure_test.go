@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,5 +77,81 @@ func TestReconfigurationNativeOwnerSwitchKeepsExistingMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type nativeAliasLookup struct{ port agentapi.HookConfigurator }
+
+func (p nativeAliasLookup) LookupHooks(string) (agentapi.HookConfigurator, bool) { return p.port, true }
+
+func (p nativeAliasLookup) HookAgents() []string { return []string{"first", "second"} }
+
+// Regression ALIAS-RETIRE-01 covers both owner orders before effects.
+func TestReconfigurationSharedNativeAliasRetirementRefusesDeletion(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "regular-first", true: "alias-first"}[reverse], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings")
+			alias := path + "-alias"
+			must(t, os.WriteFile(path, nil, 0640))
+			must(t, os.Symlink(path, alias))
+			port, _ := testPorts.LookupHooks("claude")
+			hook := Hook{Ports: nativeAliasLookup{port}, Executable: "/agent-archive", DataHome: t.TempDir()}
+			files := Files{"first": path, "second": alias}
+			initial, err := Plan(files, hook, []string{"first", "second"})
+			must(t, err)
+			must(t, Apply(initial))
+			names := []string{"first", "second"}
+			if reverse {
+				names = []string{"second", "first"}
+			}
+			original, err := os.ReadFile(path)
+			must(t, err)
+			changes, err := PlanReconfiguration(nil, files, hook, hook, nil, names)
+			if err == nil || len(changes) != 0 {
+				t.Fatal("conflicting deletion accepted")
+			}
+			got, err := os.ReadFile(path)
+			must(t, err)
+			if string(got) != string(original) {
+				t.Fatal("refusal changed bytes")
+			}
+			if _, err := os.Stat(alias); err != nil {
+				t.Fatalf("shared retirement left alias dangling: %v", err)
+			}
+		})
+	}
+}
+
+func TestReconfigurationNativeAliasOnlyRetirementKeepsTarget(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "settings")
+	alias := path + "-alias"
+	must(t, os.WriteFile(path, nil, 0640))
+	must(t, os.Symlink(path, alias))
+	hook := Hook{Ports: testPorts, Executable: "/agent-archive", DataHome: t.TempDir()}
+	files := Files{"claude": alias}
+	changes, err := Plan(files, hook, []string{"claude"})
+	must(t, err)
+	must(t, Apply(changes))
+	changes, err = PlanReconfiguration(nil, files, hook, hook, nil, []string{"claude"})
+	must(t, err)
+	if len(changes) != 1 || changes[0].Delete {
+		t.Fatal("alias-only retirement lost native target preservation")
+	}
+	must(t, Apply(changes))
+	info, err := os.Stat(path)
+	must(t, err)
+	if info.Mode().Perm() != 0640 {
+		t.Fatal("target mode lost")
+	}
+	data, err := os.ReadFile(alias)
+	must(t, err)
+	if !Empty(data) {
+		t.Fatal("owned-only target not emptied")
+	}
+	info, err = os.Lstat(alias)
+	must(t, err)
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("alias replaced")
 	}
 }

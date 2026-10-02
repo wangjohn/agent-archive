@@ -79,6 +79,9 @@ func PlanReconfiguration(files, previous Files, install, removal Hook, selected,
 }
 
 func (destination setupHookDestination) plan() (*Change, error) {
+	if err := destination.validateRemovalAliases(); err != nil {
+		return nil, err
+	}
 	current := cloneHookFile(destination.before)
 	changed := false
 	for _, owner := range destination.removals {
@@ -87,6 +90,9 @@ func (destination setupHookDestination) plan() (*Change, error) {
 			return nil, err
 		}
 		if change != nil {
+			if change.Delete && len(destination.installs) == 0 && destination.hasRemovalAlias() {
+				return nil, fmt.Errorf("hook owners have conflicting deletion plans for %s", owner.file.Path)
+			}
 			current = plannedHookFile(current, *change)
 			changed = true
 		}
@@ -138,6 +144,34 @@ func (destination setupHookDestination) plan() (*Change, error) {
 		return &change, nil
 	}
 	return nil, nil
+}
+
+func (destination setupHookDestination) hasRemovalAlias() bool {
+	for _, owner := range destination.removals {
+		if owner.file.Present && !owner.file.Regular {
+			return true
+		}
+	}
+	return false
+}
+
+// Check original deletion restrictions before sequential retirement can make
+// another owner's original symlink observation disappear. Keep the same
+// refusal regardless of which owner is visited first.
+func (destination setupHookDestination) validateRemovalAliases() error {
+	if len(destination.installs) > 0 || !destination.hasRemovalAlias() {
+		return nil
+	}
+	for _, owner := range destination.removals {
+		change, err := owner.plan(destination.before, agentapi.HookRemove)
+		if err != nil {
+			return err
+		}
+		if change != nil && change.Delete {
+			return fmt.Errorf("hook owners have conflicting deletion plans for %s", owner.file.Path)
+		}
+	}
+	return nil
 }
 
 func (owner setupHookOwner) plan(current agentapi.HookFile, action agentapi.HookAction) (*Change, error) {
