@@ -25,6 +25,8 @@ func parseText(a *archive.Analysis, b archive.SourceBundle) {
 				kind = archive.TurnKindAssistant
 			case textRoleTool:
 				kind = archive.TurnKindToolResult
+			case textRoleSystem, textRoleDeveloper, textRoleThinking, textRoleAnalysis:
+				continue
 			}
 			a.View.Turns = append(a.View.Turns, archive.NormalizedTurn{RecordIndex: len(a.View.Turns), Role: string(section.role), Kind: kind, Text: text})
 			if kind == archive.TurnKindHumanPrompt && a.Facts.TextTitle == "" {

@@ -3,7 +3,7 @@ package nativecodec
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+
 	"os"
 	"path/filepath"
 
@@ -18,7 +18,7 @@ import (
 // same path the collector and `handoff --source local` take.
 func handoffBundle(t *testing.T, harness string) SourceBundle {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("../../archive/testdata", "handoff", harness+".jsonl"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "archive", "testdata", "handoff", harness+".jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,10 +39,6 @@ func handoffBundle(t *testing.T, harness string) SourceBundle {
 	return bundle
 }
 
-func markdownSize(h Handoff) int {
-	return len(RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true}))
-}
-
 // Each harness renders to a checked-in golden document. Regenerate with
 // `go test ./internal/archive -run TestHandoffGolden -update` and review the
 // diff.
@@ -54,7 +50,7 @@ func TestHandoffGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true})
-			golden.Check(t, filepath.Join("../../archive/testdata", "handoff", harness+".md"), got)
+			golden.Check(t, filepath.Join("..", "..", "archive", "testdata", "handoff", harness+".md"), got)
 		})
 	}
 }
@@ -156,21 +152,6 @@ func TestHandoffCursorContent(t *testing.T) {
 	if strings.Contains(rendered, "picking up work") {
 		t.Fatalf("preamble rendered with Preamble false:\n%s", rendered)
 	}
-}
-
-// bigHandoff builds n exchanges, each with a long prompt, long assistant
-// text, and three tool calls with long results.
-func bigHandoff(n int) Handoff {
-	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "claude"}, LeftOff: "final words"}
-	for i := range n {
-		exchange := HandoffExchange{Prompt: fmt.Sprintf("prompt %d ", i) + strings.Repeat("p", 3000)}
-		exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepText, Text: strings.Repeat("a", 2000)})
-		for range 3 {
-			exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Bash", Summary: "go test", Result: strings.Repeat("r", 1500), ResultLines: 1, ResultBytes: 1500}})
-		}
-		h.Exchanges = append(h.Exchanges, exchange)
-	}
-	return h
 }
 
 func TestHandoffJSONRoundTrips(t *testing.T) {

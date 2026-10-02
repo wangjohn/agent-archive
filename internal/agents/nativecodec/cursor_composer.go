@@ -299,15 +299,9 @@ func (f *cursorComposerFilter) filterStreamMessages(ctx context.Context, headers
 			stopped = true
 			continue
 		}
-		if len(value) > maxRecordBytes {
-			return nil, archive.ErrRecordTooLarge
-		}
-		var bubble map[string]any
-		if err := json.Unmarshal(value, &bubble); err != nil || bubble == nil {
-			return nil, &archive.FilterError{Reason: "cursor message is not valid JSON"}
-		}
-		if v, ok := cursorInt(bubble["_v"]); !ok || v != cursorBubbleVersion {
-			return nil, errCursorFormatUnknown
+		bubble, err := decodeCursorBubble(value)
+		if err != nil {
+			return nil, err
 		}
 		if rowID, _ := bubble["bubbleId"].(string); rowID != headerID {
 			// The row is some other message's: as good as missing.
@@ -911,4 +905,18 @@ func sortedKeys(values map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func decodeCursorBubble(value []byte) (map[string]any, error) {
+	if len(value) > maxRecordBytes {
+		return nil, archive.ErrRecordTooLarge
+	}
+	var bubble map[string]any
+	if err := json.Unmarshal(value, &bubble); err != nil || bubble == nil {
+		return nil, &archive.FilterError{Reason: "cursor message is not valid JSON"}
+	}
+	if v, ok := cursorInt(bubble["_v"]); !ok || v != cursorBubbleVersion {
+		return nil, errCursorFormatUnknown
+	}
+	return bubble, nil
 }

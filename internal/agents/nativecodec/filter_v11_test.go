@@ -451,12 +451,6 @@ func itoa(i int) string {
 	return string(data)
 }
 
-func jsonEqual(a, b any) bool {
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return bytes.Equal(x, y)
-}
-
 // A-20: when a Cursor text transcript separates its sections with blank
 // lines, as Cursor does, a role line that does not follow a blank line is
 // content: YAML in a tool's output cannot start a Person turn. Capitalized
@@ -486,7 +480,7 @@ func TestCursorTextBlankSeparatedSectionsKeepToolOutputAsContent(t *testing.T) {
 	if !hasGapDetail(filtered.Gaps, "hidden_instruction_omitted", "1 text sections omitted (3 lines)") {
 		t.Errorf("gaps = %#v", filtered.Gaps)
 	}
-	exchanges, leftOff := textTranscriptExchanges([]TextTranscript{{Content: retained}}, HandoffOptions{})
+	exchanges, leftOff := textTranscriptExchanges([]TextTranscript{{Content: retained}})
 	if len(exchanges) != 2 || exchanges[0].Prompt != "show me the config" || exchanges[1].Prompt != "thanks" {
 		t.Fatalf("exchanges = %+v", exchanges)
 	}
@@ -508,7 +502,7 @@ func TestCursorTextSanitizingCannotMintAHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: filtered.Text[0]}}, HandoffOptions{})
+	exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: filtered.Text[0]}})
 	if len(exchanges) != 1 {
 		t.Fatalf("sanitizing minted a Person turn: %q -> %+v", filtered.Text[0], exchanges)
 	}

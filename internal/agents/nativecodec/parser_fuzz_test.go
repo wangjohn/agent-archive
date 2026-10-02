@@ -24,8 +24,8 @@ var fuzzAdapters = []Adapter{ClaudeAdapter{}, CodexAdapter{}, CursorAdapter{}}
 // adapterSeeds adds every JSONL fixture to f with its adapter's index.
 func adapterSeeds(f *testing.F) {
 	f.Helper()
-	paths, _ := filepath.Glob(filepath.Join("../../archive/testdata", "*.jsonl"))
-	handoff, _ := filepath.Glob(filepath.Join("../../archive/testdata", "handoff", "*.jsonl"))
+	paths, _ := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "*.jsonl"))
+	handoff, _ := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "handoff", "*.jsonl"))
 	for _, path := range append(paths, handoff...) {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -356,7 +356,7 @@ func FuzzCursorText(f *testing.F) {
 				users++
 			}
 		}
-		exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: retained}}, HandoffOptions{})
+		exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: retained}})
 		prompts := 0
 		for _, exchange := range exchanges {
 			if exchange.Prompt != "" {
@@ -374,7 +374,7 @@ func FuzzCursorText(f *testing.F) {
 // fixtures; the filter does not panic, and every retained record is a JSON
 // object that refilters through FilterJSONL unchanged in what it keeps.
 func FuzzCursorComposer(f *testing.F) {
-	paths, _ := filepath.Glob(filepath.Join("../../archive/testdata", "cursor-composer", "*.json"))
+	paths, _ := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "cursor-composer", "*.json"))
 	for _, path := range paths {
 		if strings.HasSuffix(path, ".golden.json") {
 			continue
@@ -419,7 +419,7 @@ func FuzzCursorComposer(f *testing.F) {
 // source bundle. It must return an error or a bundle, never panic, and the
 // streaming reader must accept whatever the whole-bundle reader accepts.
 func FuzzDecodeSource(f *testing.F) {
-	paths, _ := filepath.Glob(filepath.Join("../../archive/testdata", "*.jsonl"))
+	paths, _ := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "*.jsonl"))
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -500,5 +500,7 @@ func FuzzSanitizeValueIdempotent(f *testing.F) {
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
 var plainSecret = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+/_.-]{7,63}$`)
+
 var validBranch = ValidBranch

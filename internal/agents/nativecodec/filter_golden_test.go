@@ -35,7 +35,7 @@ func adapterForFixture(t *testing.T, name string) Adapter {
 
 func filterGoldenFixtures(t *testing.T) []string {
 	t.Helper()
-	names, err := filepath.Glob(filepath.Join("../../archive/testdata", "*.jsonl"))
+	names, err := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "*.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func filterGoldenFixtures(t *testing.T) []string {
 
 func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 	t.Helper()
-	file, err := os.Open(filepath.Join("../../archive/testdata", name))
+	file, err := os.Open(filepath.Join("..", "..", "archive", "testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 	filtered, err := adapter.FilterJSONL(file)
 	// A fixture with a .meta.json beside it is a Claude Code subagent
 	// transcript (filter 14), filtered with that file's contents.
-	if meta, readErr := os.ReadFile(filepath.Join("../../archive/testdata", strings.TrimSuffix(name, ".jsonl")+".meta.json")); readErr == nil {
+	if meta, readErr := os.ReadFile(filepath.Join("..", "..", "archive", "testdata", strings.TrimSuffix(name, ".jsonl")+".meta.json")); readErr == nil {
 		if _, err := file.Seek(0, 0); err != nil {
 			t.Fatal(err)
 		}

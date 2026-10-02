@@ -103,13 +103,21 @@ type TokenCount struct {
 	Value    int
 	Recorded bool
 }
-type TokenObservation struct{ Input, Output, CacheRead, CacheWrite, Reasoning TokenCount }
+
+type TokenObservation struct {
+	Input      TokenCount
+	Output     TokenCount
+	CacheRead  TokenCount
+	CacheWrite TokenCount
+	Reasoning  TokenCount
+}
 
 // TokenAccumulator applies common message deduplication and model aggregation.
 type TokenAccumulator struct {
 	byMessage map[string]typedModelUsage
 	anonymous []typedModelUsage
 }
+
 type typedModelUsage struct {
 	usage TokenObservation
 	model string
@@ -126,6 +134,7 @@ func (t *TokenAccumulator) Observe(usage TokenObservation, messageID, model stri
 	}
 	t.byMessage[messageID] = entry
 }
+
 func (t *TokenAccumulator) Usage() (TokenUsage, []ModelTokens) {
 	var total TokenUsage
 	byModel := map[string]*TokenUsage{}
@@ -152,6 +161,7 @@ func (t *TokenAccumulator) Usage() (TokenUsage, []ModelTokens) {
 	foldExtraModels(byModel)
 	return total, sortedModelTokens(byModel)
 }
+
 func addTokenObservation(out *TokenUsage, usage TokenObservation) {
 	add := func(dst **int, count TokenCount) {
 		if count.Recorded {

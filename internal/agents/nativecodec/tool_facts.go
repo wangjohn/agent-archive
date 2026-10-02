@@ -123,6 +123,7 @@ func replacementPlanItems(name string, input map[string]any) []archive.HandoffPl
 	}
 	return items
 }
+
 func observedTool(call archive.NormalizedToolCall, raw map[string]any) archive.NormalizedToolCall {
 	name := call.Name
 	if name == "" {

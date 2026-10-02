@@ -21,6 +21,7 @@ type operationParser struct {
 }
 
 func (p *operationParser) Version() string { return p.version }
+
 func (p *operationParser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	p.calls++
 	if p.failure != nil {
@@ -39,6 +40,7 @@ func (b *operationBindings) LookupParser(name string) (agentapi.TranscriptParser
 	b.lookups++
 	return b.parser, name == "codex"
 }
+
 func (b *operationBindings) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
 	return codex.SourceProvider{}, b.filter, name == "codex"
 }
@@ -47,13 +49,15 @@ type countedCodexFilter = codex.Filter
 
 type operationFilter struct {
 	countedCodexFilter
-	calls, refilters int
+	calls     int
+	refilters int
 }
 
 func (f *operationFilter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
 	f.calls++
 	return f.countedCodexFilter.Filter(ctx, in, c)
 }
+
 func (f *operationFilter) Refilter(ctx context.Context, b archive.SourceBundle, at time.Time) (archive.FilteredTranscript, error) {
 	f.refilters++
 	return f.countedCodexFilter.Refilter(ctx, b, at)

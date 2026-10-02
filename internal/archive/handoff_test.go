@@ -28,6 +28,7 @@ func bigHandoff(n int) Handoff {
 	}
 	return h
 }
+
 func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 	t.Parallel()
 	h := bigHandoff(40)
@@ -62,6 +63,7 @@ func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 		t.Fatal("FitHandoff mutated its input")
 	}
 }
+
 func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	t.Parallel()
 	fit, _ := FitHandoff(bigHandoff(40), 40_000, markdownSize)
@@ -85,6 +87,7 @@ func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 		t.Fatal("left off was trimmed")
 	}
 }
+
 func TestFitHandoffReportsWhenItCannotFit(t *testing.T) {
 	t.Parallel()
 	fit, ok := FitHandoff(bigHandoff(5), 1_000, markdownSize)
@@ -95,6 +98,7 @@ func TestFitHandoffReportsWhenItCannotFit(t *testing.T) {
 		t.Fatal("exchanges dropped")
 	}
 }
+
 func TestFitHandoffWithinBudgetIsUnchanged(t *testing.T) {
 	t.Parallel()
 	h := bigHandoff(2)
@@ -121,6 +125,7 @@ func TestHandoffFooterNamesFullRecordOnlyWhenTrimmed(t *testing.T) {
 		t.Fatal("trimmed handoff does not name its full record")
 	}
 }
+
 func TestTrimResultKeepsHeadAndTail(t *testing.T) {
 	t.Parallel()
 	var lines []string
@@ -142,6 +147,7 @@ func TestTrimResultKeepsHeadAndTail(t *testing.T) {
 		}
 	}
 }
+
 func TestCodeFenceOutrunsBackticksInContent(t *testing.T) {
 	t.Parallel()
 	if got := codeFence("plain"); got != "```" {
@@ -175,6 +181,7 @@ func TestFitHandoffTrimsASingleLongExchange(t *testing.T) {
 		t.Fatalf("an early step kept its output: %#v", steps[1])
 	}
 }
+
 func TestProtectedStart(t *testing.T) {
 	t.Parallel()
 	ex := func(n int) HandoffExchange { return HandoffExchange{Steps: make([]HandoffStep, n)} }

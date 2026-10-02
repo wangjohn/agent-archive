@@ -10,7 +10,15 @@ import (
 	"time"
 )
 
-func parse(ctx context.Context, bundle archive.SourceBundle, agent string) (archive.Analysis, error) {
+type nativeProfile string
+
+const (
+	profileClaude nativeProfile = "claude"
+	profileCodex  nativeProfile = "codex"
+	profileCursor nativeProfile = "cursor"
+)
+
+func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile) (archive.Analysis, error) {
 	if err := archive.ValidateSourceBundle(bundle); err != nil {
 		return archive.Analysis{}, &archive.ParseError{Reason: err.Error()}
 	}
@@ -36,7 +44,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent string) (arch
 		if at := latestRecordTime(bundle, record); at.After(view.LatestRecordAt) {
 			view.LatestRecordAt = at
 		}
-		if agent == "codex" && firstString(record, "type") == "turn_context" {
+		if agent == profileCodex && firstString(record, "type") == "turn_context" {
 			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
 			continue
 		}
@@ -73,9 +81,9 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent string) (arch
 		var model, responseModel, reasoning string
 		var modelSource archive.TurnModelSource
 		switch agent {
-		case "codex":
+		case profileCodex:
 			model, reasoning, modelSource = codexModel, codexReasoning, archive.TurnModelSourceTurnContext
-		case "claude":
+		case profileClaude:
 			responseModel, modelSource = recordModel(record), archive.TurnModelSourceNativeResponse
 		default:
 			model, reasoning, modelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), archive.TurnModelSourceNativeTranscript
@@ -107,7 +115,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent string) (arch
 	if len(bundle.NativeText) > 0 {
 		parseText(&analysis, bundle)
 	}
-	if agent == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0 {
+	if agent == profileCursor && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0 {
 		analysis.Observability.ToolResults = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
 	}
 	return analysis, nil
@@ -123,8 +131,8 @@ func latestRecordTime(bundle archive.SourceBundle, record map[string]any) time.T
 	return at
 }
 
-func tokenModel(agent string, record map[string]any, codexModel string) string {
-	if agent == archive.HarnessCodex && codexModel != "" && !isPlaceholderModel(codexModel) {
+func tokenModel(agent nativeProfile, record map[string]any, codexModel string) string {
+	if agent == profileCodex && codexModel != "" && !isPlaceholderModel(codexModel) {
 		return codexModel
 	}
 	return recordModel(record)
@@ -141,12 +149,12 @@ func accumulateTokens(record map[string]any, model string, totals *archive.Token
 	totals.Observe(tokenObservation(usage), firstString(owner, "id"), model)
 }
 
-func setAvailability(a *archive.Analysis, b archive.SourceBundle, agent string) {
+func setAvailability(a *archive.Analysis, b archive.SourceBundle, agent nativeProfile) {
 	a.Observability.StructuredCounts = archive.Availability{State: archive.AvailabilityAvailable}
 	a.Observability.Compactions = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
 	a.Observability.ToolErrors = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
 	a.Observability.ToolResults = archive.Availability{State: archive.AvailabilityAvailable}
-	if agent == "claude" {
+	if agent == profileClaude {
 		version, err := strconv.Atoi(strings.TrimSpace(b.Capture.FilterVersion))
 		if err == nil && version >= 5 {
 			a.Observability.Compactions = archive.Availability{State: archive.AvailabilityAvailable}
@@ -154,7 +162,7 @@ func setAvailability(a *archive.Analysis, b archive.SourceBundle, agent string) 
 			a.Observability.Compactions.Reason = archive.AvailabilityReasonHistoricalFilter
 		}
 	}
-	if agent == "claude" || agent == "cursor" {
+	if agent == profileClaude || agent == profileCursor {
 		a.Observability.ToolErrors = archive.Availability{State: archive.AvailabilityAvailable}
 	}
 	if len(b.NativeText) > 0 {
@@ -162,7 +170,8 @@ func setAvailability(a *archive.Analysis, b archive.SourceBundle, agent string) 
 		a.Observability.StructuredCounts = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonText}
 	}
 }
-func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]any, agent string) {
+
+func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]any, agent nativeProfile) {
 	kind := firstString(r, "type")
 	var name string
 	switch {
@@ -184,28 +193,8 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 	if branch := firstStringDeep(r, "gitBranch"); branch != "" {
 		f.Branch = branch
 	}
-	if kind == "pr-link" && len(f.PullRequests) < archive.MaxPullRequests {
-		repository := firstString(r, "prRepository")
-		owner, name, ok := splitRepository(repository)
-		number, numberOK := claudePRNumber(r["prNumber"])
-		if ok && numberOK {
-			link := archive.PullRequestLink{Repository: repository, Number: number}
-			if firstString(r, "prUrl") == claudePRURL(owner, name, number) {
-				link.URL = claudePRURL(owner, name, number)
-			}
-			seen := false
-			for _, prior := range f.PullRequests {
-				if prior.Repository == link.Repository && prior.Number == link.Number {
-					seen = true
-					break
-				}
-			}
-			if !seen {
-				f.PullRequests = append(f.PullRequests, link)
-			}
-		}
-	}
-	if agent == "cursor" && strings.ToLower(strings.TrimSpace(kind)) == "turn_ended" {
+	collectPullRequest(f, r)
+	if agent == profileCursor && strings.ToLower(strings.TrimSpace(kind)) == "turn_ended" {
 		f.TurnEnd = archive.NativeTurnEnd{Present: true, State: archive.MetadataStateIdle, Outcome: archive.TurnOutcomeUnknown}
 		switch strings.ToLower(strings.TrimSpace(firstString(r, "status"))) {
 		case "completed":
@@ -222,7 +211,7 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 				f.IdentityConflict = true
 			}
 		}
-		if agent == "codex" && kind == "session_meta" {
+		if agent == profileCodex && kind == "session_meta" {
 			payload, _ := r["payload"].(map[string]any)
 			if id, alias := firstString(payload, "id"), firstString(payload, "session_id"); id != b.NativeSessionID || alias != "" && alias != b.NativeSessionID {
 				f.IdentityConflict = true
@@ -232,11 +221,38 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 }
 
 func ParseClaude(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
-	return parse(ctx, b, "claude")
+	return parse(ctx, b, profileClaude)
 }
+
 func ParseCodex(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
-	return parse(ctx, b, "codex")
+	return parse(ctx, b, profileCodex)
 }
+
 func ParseCursor(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
-	return parse(ctx, b, "cursor")
+	return parse(ctx, b, profileCursor)
+}
+
+func collectPullRequest(f *archive.NativeFacts, r map[string]any) {
+	if firstString(r, "type") == "pr-link" && len(f.PullRequests) < archive.MaxPullRequests {
+		repository := firstString(r, "prRepository")
+		owner, name, ok := splitRepository(repository)
+		number, numberOK := claudePRNumber(r["prNumber"])
+		if ok && numberOK {
+			var url string
+			if firstString(r, "prUrl") == claudePRURL(owner, name, number) {
+				url = claudePRURL(owner, name, number)
+			}
+			link := archive.PullRequestLink{Repository: repository, Number: number, URL: url}
+			seen := false
+			for _, prior := range f.PullRequests {
+				if prior.Repository == link.Repository && prior.Number == link.Number {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				f.PullRequests = append(f.PullRequests, link)
+			}
+		}
+	}
 }

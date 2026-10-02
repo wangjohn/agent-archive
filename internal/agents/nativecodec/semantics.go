@@ -545,6 +545,7 @@ func splitRepository(repository string) (owner, name string, ok bool) {
 }
 
 const maxTokenCount = 1 << 53
+
 const maxPRNumber = 1 << 30
 
 var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_input": true}
@@ -560,9 +561,10 @@ func tokenObservation(source map[string]any) archive.TokenObservation {
 		}
 		return archive.TokenCount{}
 	}
-	out := archive.TokenObservation{Input: read("input_tokens", "prompt_tokens"), Output: read("output_tokens", "completion_tokens"), CacheRead: read("cache_read_input_tokens", "cached_input_tokens"), CacheWrite: read("cache_creation_input_tokens", "cache_write_input_tokens")}
+	var reasoning archive.TokenCount
 	if value, ok := reasoningTokenCount(source); ok {
-		out.Reasoning = archive.TokenCount{Value: value, Recorded: true}
+		reasoning = archive.TokenCount{Value: value, Recorded: true}
 	}
+	out := archive.TokenObservation{Reasoning: reasoning, Input: read("input_tokens", "prompt_tokens"), Output: read("output_tokens", "completion_tokens"), CacheRead: read("cache_read_input_tokens", "cached_input_tokens"), CacheWrite: read("cache_creation_input_tokens", "cache_write_input_tokens")}
 	return out
 }

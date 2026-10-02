@@ -96,6 +96,7 @@ func TestFilterV11RedactsArgumentVectors(t *testing.T) {
 		}
 	}
 }
+
 func jsonEqual(a, b any) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)

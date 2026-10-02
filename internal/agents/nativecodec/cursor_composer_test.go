@@ -40,7 +40,7 @@ func loadComposerFixture(t *testing.T, name string) CursorComposer {
 
 func readComposerTestdata(t *testing.T, name string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("../../archive/testdata", "cursor-composer", name))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "archive", "testdata", "cursor-composer", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func composerGoldenOf(t *testing.T, name string) []byte {
 // purpose (and needs a FilterVersion bump).
 func TestCursorComposerGolden(t *testing.T) {
 	t.Parallel()
-	names, err := filepath.Glob(filepath.Join("../../archive/testdata", "cursor-composer", "*.json"))
+	names, err := filepath.Glob(filepath.Join("..", "..", "archive", "testdata", "cursor-composer", "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestCursorComposerGolden(t *testing.T) {
 		if again := composerGoldenOf(t, name); !bytes.Equal(got, again) {
 			t.Fatalf("%s: output is not deterministic", name)
 		}
-		path := filepath.Join("../../archive/testdata", "cursor-composer", goldenName)
+		path := filepath.Join("..", "..", "archive", "testdata", "cursor-composer", goldenName)
 		if golden.Update() {
 			golden.Write(t, path, got)
 			continue

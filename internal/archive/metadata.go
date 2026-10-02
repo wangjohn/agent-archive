@@ -680,6 +680,7 @@ func BuildMetadataWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr 
 	}
 	return assembleAnalyzedMetadata(bundle, analysis, metadata), nil
 }
+
 func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata Metadata) Metadata {
 	view := analysis.View
 	// A native end-of-turn record fills in only what the hook evidence could

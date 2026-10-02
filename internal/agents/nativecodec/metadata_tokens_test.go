@@ -321,14 +321,14 @@ func TestDeriveMCPCallsSortsAndCaps(t *testing.T) {
 	for i := range MaxMCPCalls + 5 {
 		counts[fmt.Sprintf("mcp__s%03d__t", i)] = 1
 	}
-	got := deriveMCPCalls(namedCalls(counts), "")
+	got := deriveMCPCalls(namedCalls(counts))
 	if len(got) != MaxMCPCalls {
 		t.Fatalf("len = %d, want the cap %d", len(got), MaxMCPCalls)
 	}
-	if want := []ToolUsage{{"alpha", 4}, {"zeta", 3}, {"mid", 2}, {"s000", 1}}; !reflect.DeepEqual(got[:4], want) {
+	if want := []ToolUsage{{Name: "alpha", Count: 4}, {Name: "zeta", Count: 3}, {Name: "mid", Count: 2}, {Name: "s000", Count: 1}}; !reflect.DeepEqual(got[:4], want) {
 		t.Fatalf("mcp calls = %v, want prefix %v", got[:4], want)
 	}
-	if got := deriveMCPCalls(namedCalls(map[string]int{"Bash": 2, "search_docs": 1}), ""); got != nil {
+	if got := deriveMCPCalls(namedCalls(map[string]int{"Bash": 2, "search_docs": 1})); got != nil {
 		t.Fatalf("no MCP calls = %v, want nil", got)
 	}
 }
@@ -337,7 +337,7 @@ func TestDeriveMCPCallsSortsAndCaps(t *testing.T) {
 func TestDeriveMCPCallsBoundsServerNames(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("s", 300)
-	got := deriveMCPCalls(namedCalls(map[string]int{"mcp__" + long + "__tool": 1}), "")
+	got := deriveMCPCalls(namedCalls(map[string]int{"mcp__" + long + "__tool": 1}))
 	if len(got) != 1 || len([]rune(got[0].Name)) != toolNameLimit {
 		t.Fatalf("mcp calls = %v", got)
 	}
@@ -350,7 +350,7 @@ func TestToolErrorsObservable(t *testing.T) {
 	for harness, want := range map[string]bool{"claude": true, "claude-code": true, "cursor": true, "codex": false, "other": false} {
 		bundle := SourceBundle{Capture: SourceCapture{Harness: Harness{Name: harness}}}
 		var a Analysis
-		setAvailability(&a, bundle, CanonicalHarness(harness))
+		setAvailability(&a, bundle, nativeProfile(CanonicalHarness(harness)))
 		if got := a.Observability.ToolErrors.Available(); got != want {
 			t.Errorf("toolErrorsObservable(%s) = %v, want %v", harness, got, want)
 		}

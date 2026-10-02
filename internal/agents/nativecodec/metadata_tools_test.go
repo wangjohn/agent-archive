@@ -28,10 +28,10 @@ func TestDeriveToolsUsedSortsBreaksTiesAndCaps(t *testing.T) {
 	for i := range 8 {
 		counts[fmt.Sprintf("tool_%02d", i)] = 1
 	}
-	got := deriveToolsUsed(namedCalls(counts), "")
+	got := deriveToolsUsed(namedCalls(counts))
 	want := []ToolUsage{
-		{"Bash", 5}, {"Read", 5}, {"Edit", 3}, {"mcp__github__get_issue", 3},
-		{"tool_00", 1}, {"tool_01", 1}, {"tool_02", 1}, {"tool_03", 1}, {"tool_04", 1}, {"tool_05", 1},
+		{Name: "Bash", Count: 5}, {Name: "Read", Count: 5}, {Name: "Edit", Count: 3}, {Name: "mcp__github__get_issue", Count: 3},
+		{Name: "tool_00", Count: 1}, {Name: "tool_01", Count: 1}, {Name: "tool_02", Count: 1}, {Name: "tool_03", Count: 1}, {Name: "tool_04", Count: 1}, {Name: "tool_05", Count: 1},
 	}
 	if len(want) != MaxToolsUsed {
 		t.Fatalf("test expects the cap to be %d", len(want))
@@ -39,7 +39,7 @@ func TestDeriveToolsUsedSortsBreaksTiesAndCaps(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("tools used = %v\nwant %v", got, want)
 	}
-	if got := deriveToolsUsed(nil, ""); got != nil {
+	if got := deriveToolsUsed(nil); got != nil {
 		t.Fatalf("no calls = %v, want nil", got)
 	}
 }
@@ -54,7 +54,7 @@ func TestDeriveToolsUsedNamelessCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := parserTestMetadata(t, parserTestBundle(t, "codex", CodexAdapter{}, filtered))
-	want := []ToolUsage{{"local_shell_call", 1}, {"search_docs", 1}, {"widget-extension", 1}}
+	want := []ToolUsage{{Name: "local_shell_call", Count: 1}, {Name: "search_docs", Count: 1}, {Name: "widget-extension", Count: 1}}
 	if !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
 	}
@@ -99,7 +99,7 @@ func TestToolsUsedAndHandoffListTheSameCalls(t *testing.T) {
 	}
 	bundle := parserTestBundle(t, "codex", CodexAdapter{}, filtered)
 	m := parserTestMetadata(t, bundle)
-	want := []ToolUsage{{"CommandExecution", 1}, {"local_shell_call", 1}}
+	want := []ToolUsage{{Name: "CommandExecution", Count: 1}, {Name: "local_shell_call", Count: 1}}
 	if !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v (tool_calls %v)", m.ToolsUsed, want, *m.Counts.ToolCalls)
 	}
@@ -110,7 +110,7 @@ func TestToolsUsedAndHandoffListTheSameCalls(t *testing.T) {
 	if got := handoffToolNames(handoff); !reflect.DeepEqual(got, []string{"local_shell_call", "CommandExecution"}) {
 		t.Fatalf("handoff tools = %v", got)
 	}
-	if got := deriveToolsUsed([]NormalizedToolCall{{Name: "   ", Invocation: true, ObservedName: "   "}}, ""); got != nil {
+	if got := deriveToolsUsed([]NormalizedToolCall{{Name: "   ", Invocation: true, ObservedName: "   "}}); got != nil {
 		t.Fatalf("blank name = %v", got)
 	}
 }
@@ -182,7 +182,7 @@ func TestFilesTouchedCountsDistinctFilesAndAgreesWithHandoff(t *testing.T) {
 	if want := []string{"a.go", "sub/b.go", "/elsewhere/d.go"}; !reflect.DeepEqual(handoff.FilesTouched, want) {
 		t.Fatalf("handoff files = %v, want %v", handoff.FilesTouched, want)
 	}
-	want := []ToolUsage{{"Edit", 2}, {"Write", 2}, {"MultiEdit", 1}, {"Read", 1}}
+	want := []ToolUsage{{Name: "Edit", Count: 2}, {Name: "Write", Count: 2}, {Name: "MultiEdit", Count: 1}, {Name: "Read", Count: 1}}
 	if !reflect.DeepEqual(metadata.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", metadata.ToolsUsed, want)
 	}
@@ -299,7 +299,7 @@ func TestCursorComposerMetadataHasEndTimeAndTools(t *testing.T) {
 		t.Fatalf("ended at = %v, want %v", m.EndedAt, filtered.NativeEndAt)
 	}
 	// The chat reads a file and runs a command: it edits nothing.
-	if want := []ToolUsage{{"read_file", 1}, {"run_terminal_command_v2", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
+	if want := []ToolUsage{{Name: "read_file", Count: 1}, {Name: "run_terminal_command_v2", Count: 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
 	}
 	if m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 0 {
@@ -321,7 +321,7 @@ func TestCursorComposerEditFileV2TouchesFiles(t *testing.T) {
 	if m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 1 {
 		t.Fatalf("files touched = %v, want 1", m.Counts.FilesTouched)
 	}
-	if want := []ToolUsage{{"edit_file_v2", 2}, {"glob_file_search", 1}, {"read_file_v2", 1}, {"ripgrep_raw_search", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
+	if want := []ToolUsage{{Name: "edit_file_v2", Count: 2}, {Name: "glob_file_search", Count: 1}, {Name: "read_file_v2", Count: 1}, {Name: "ripgrep_raw_search", Count: 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
 	}
 	handoff, err := BuildHandoff(bundle, &m, HandoffOptions{})
@@ -390,7 +390,7 @@ func TestMetadataSchemaBoundsToolsUsed(t *testing.T) {
 	for i := range MaxToolsUsed + 5 {
 		calls = append(calls, NormalizedToolCall{Name: fmt.Sprintf("mcp__server__tool_%02d", i)})
 	}
-	base.ToolsUsed = deriveToolsUsed(calls, "")
+	base.ToolsUsed = deriveToolsUsed(calls)
 	validate := func(m Metadata) error {
 		t.Helper()
 		data, err := json.Marshal(m)
@@ -410,7 +410,7 @@ func TestMetadataSchemaBoundsToolsUsed(t *testing.T) {
 		t.Fatalf("metadata at the limits is invalid: %v", err)
 	}
 	for name, mutate := range map[string]func(*Metadata){
-		"too many tools": func(m *Metadata) { m.ToolsUsed = append(m.ToolsUsed, ToolUsage{"extra", 1}) },
+		"too many tools": func(m *Metadata) { m.ToolsUsed = append(m.ToolsUsed, ToolUsage{Name: "extra", Count: 1}) },
 		"zero count":     func(m *Metadata) { m.ToolsUsed[0].Count = 0 },
 		"empty name":     func(m *Metadata) { m.ToolsUsed[0].Name = "" },
 		"long name":      func(m *Metadata) { m.ToolsUsed[0].Name = strings.Repeat("x", toolNameLimit+1) },

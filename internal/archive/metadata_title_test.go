@@ -17,6 +17,7 @@ func TestDeriveSessionTitleSkipsEmptyPrompts(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
 func TestCollapseSessionTitleTruncates(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("word ", 40)
@@ -28,6 +29,7 @@ func TestCollapseSessionTitleTruncates(t *testing.T) {
 		t.Fatalf("len=%d got=%q", len([]rune(got)), got)
 	}
 }
+
 func TestCollapseSessionTitleKeepsTextBeyondOldLimit(t *testing.T) {
 	t.Parallel()
 	text := strings.Repeat("a", 72) + " distinguish this session"
@@ -35,6 +37,7 @@ func TestCollapseSessionTitleKeepsTextBeyondOldLimit(t *testing.T) {
 		t.Fatalf("title lost distinguishing text: %q", got)
 	}
 }
+
 func TestApplyProjectName(t *testing.T) {
 	t.Parallel()
 	var m Metadata

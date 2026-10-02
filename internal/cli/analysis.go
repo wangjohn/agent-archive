@@ -17,6 +17,7 @@ func analyzeSource(ctx context.Context, parsers agentapi.ParsersLookup, bundle a
 	}
 	return agentapi.Analyze(ctx, parser, bundle)
 }
+
 func analyzeTarget(ctx context.Context, parsers agentapi.ParsersLookup, target handoffTarget) (handoffTarget, error) {
 	target.analysis, target.parseErr = analyzeSource(ctx, parsers, target.bundle)
 	target.analyzed = true

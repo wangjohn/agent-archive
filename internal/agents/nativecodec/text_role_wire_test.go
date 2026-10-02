@@ -3,7 +3,10 @@ package nativecodec
 import "testing"
 
 func TestTextRoleWireSpellings(t *testing.T) {
-	for _, c := range []struct{ got, want string }{
+	for _, c := range []struct {
+		got  string
+		want string
+	}{
 		{string(textRoleUser), "user"},
 		{string(textRoleAssistant), "assistant"},
 		{string(textRoleTool), "tool"},

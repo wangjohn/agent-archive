@@ -165,7 +165,7 @@ func TestCursorTextHeaderCaseIsTheFirstHeaders(t *testing.T) {
 				t.Errorf("%s: %q was retained:\n%s", tc.name, dropped, retained)
 			}
 		}
-		exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: retained}}, HandoffOptions{})
+		exchanges, _ := textTranscriptExchanges([]TextTranscript{{Content: retained}})
 		var prompts []string
 		for _, exchange := range exchanges {
 			prompts = append(prompts, exchange.Prompt)

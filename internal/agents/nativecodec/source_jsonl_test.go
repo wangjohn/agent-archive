@@ -415,7 +415,7 @@ func TestSourceBundleJSONLPreservesNormalizedAndHandoffViews(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true})
-		want, err := os.ReadFile(filepath.Join("../../archive/testdata", "handoff", harness+".md"))
+		want, err := os.ReadFile(filepath.Join("..", "..", "archive", "testdata", "handoff", harness+".md"))
 		if err != nil {
 			t.Fatal(err)
 		}

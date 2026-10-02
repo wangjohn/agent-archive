@@ -867,19 +867,20 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 		exchanges, leftOff, plan = selectHandoffExchanges(handoffEvents(view), root, opts)
 		files = sessionFilesTouched(view.ToolCalls, root)
 	}
+	directory := path.Base(analysis.Facts.WorkspaceRoot)
+	if analysis.Facts.WorkspaceRoot == "" {
+		directory = ""
+	}
 	h := Handoff{
 		Version:                HandoffVersion,
 		Session:                handoffSession(bundle, view, metadata, opts),
-		Workspace:              compareWorkspace(HandoffWorkspace{Directory: path.Base(analysis.Facts.WorkspaceRoot), Branch: analysis.Facts.Branch}, analysis.Facts.WorkspaceRoot, opts.Checkout),
+		Workspace:              compareWorkspace(HandoffWorkspace{Directory: directory, Branch: analysis.Facts.Branch}, analysis.Facts.WorkspaceRoot, opts.Checkout),
 		ToolResultsUnavailable: toolResultsUnavailable,
 		Exchanges:              exchanges,
 		LeftOff:                leftOff,
 		Plan:                   plan,
 		FilesTouched:           files,
 		Gaps:                   countGaps(bundle.Capture.Gaps),
-	}
-	if analysis.Facts.WorkspaceRoot == "" {
-		h.Workspace.Directory = ""
 	}
 	return displayHandoff(h), nil
 }
@@ -910,6 +911,8 @@ func textTurnsExchanges(turns []NormalizedTurn, opts HandoffOptions) ([]HandoffE
 					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
 				}})
 			}
+		case TurnKindCommandOutput, TurnKindShellCommand, TurnKindLocalCommand, TurnKindCompactSummary, TurnKindHarnessNotification:
+		// Text formats do not establish these native structured categories.
 		case TurnKindHarnessMeta:
 			// FilterText omitted hidden sections, and only a visible role
 			// starts one here.

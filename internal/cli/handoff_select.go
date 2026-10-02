@@ -204,6 +204,7 @@ type localLabelKey struct {
 	sessionID string
 	active    time.Time
 }
+
 type localLabelResult struct {
 	metadata  archive.Metadata
 	hasPrompt bool

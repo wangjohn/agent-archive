@@ -186,11 +186,8 @@ type NormalizedToolCall struct {
 	IsError           *bool `json:"is_error,omitempty"`
 	OutputBytes       *int  `json:"output_bytes,omitempty"`
 
-	// raw is the retained native object this call was read from, and
-	// resultText the retained output of the result linked to it. They are
-	// kept from the single toolActivity walk for BuildHandoff, which needs a
-	// custom tool's raw string input and the result text; neither is part of
-	// the published view.
+	// Attribution and presentation facts come from the native parser and are
+	// excluded from the published normalized view. No raw record is retained.
 	RecordedBranch string     `json:"-"`
 	RecordedAt     time.Time  `json:"-"`
 	ResultAt       *time.Time `json:"-"`
@@ -210,7 +207,7 @@ type NormalizedToolResult struct {
 	IsError     bool   `json:"is_error,omitempty"`
 	OutputBytes int    `json:"output_bytes"`
 
-	// text is the retained output OutputBytes measures; see
+	// Text is the retained output OutputBytes measures; see
 	// NormalizedToolCall.ResultText.
 	RecordedAt time.Time `json:"-"`
 	Text       string    `json:"-"`

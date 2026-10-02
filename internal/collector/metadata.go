@@ -25,6 +25,7 @@ func (o Options) parserFor(name string) agentapi.TranscriptParser {
 	}
 	return parser
 }
+
 func (o Options) parserVersionFor(name string) string {
 	if o.ParserVersion != "" {
 		return o.ParserVersion
@@ -293,6 +294,7 @@ func (s *sessionScan) resolveParser() agentapi.TranscriptParser {
 	}
 	return s.parser
 }
+
 func (s *sessionScan) parserVersion() string {
 	if s.opts.ParserVersion != "" {
 		return s.opts.ParserVersion

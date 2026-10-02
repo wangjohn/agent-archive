@@ -216,7 +216,7 @@ func TestMetadataSchemaBoundsModelTokensAndMCPCalls(t *testing.T) {
 	for i := range MaxMCPCalls + 5 {
 		counts[fmt.Sprintf("mcp__server-%02d__tool", i)] = 1
 	}
-	base.MCPCalls = deriveMCPCalls(namedCalls(counts), "")
+	base.MCPCalls = deriveMCPCalls(namedCalls(counts))
 	if len(base.ModelTokens) != MaxModelTokens || len(base.MCPCalls) != MaxMCPCalls {
 		t.Fatalf("%d model entries, %d MCP servers", len(base.ModelTokens), len(base.MCPCalls))
 	}
@@ -230,7 +230,7 @@ func TestMetadataSchemaBoundsModelTokensAndMCPCalls(t *testing.T) {
 		"negative tokens":  func(m *Metadata) { n := -1; m.ModelTokens[0].InputTokens = &n },
 		"negative reason":  func(m *Metadata) { n := -1; m.Counts.ReasoningTokens = &n },
 		"negative errors":  func(m *Metadata) { n := -1; m.Counts.ToolErrors = &n },
-		"too many servers": func(m *Metadata) { m.MCPCalls = append(m.MCPCalls, ToolUsage{"extra", 1}) },
+		"too many servers": func(m *Metadata) { m.MCPCalls = append(m.MCPCalls, ToolUsage{Name: "extra", Count: 1}) },
 		"zero MCP count":   func(m *Metadata) { m.MCPCalls[0].Count = 0 },
 	} {
 		m := base

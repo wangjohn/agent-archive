@@ -446,9 +446,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
 			continue
 		}
-		noteRecordTime(&result, raw)
-		result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
-		result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
+		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
 		if format == "claude-jsonl" && isCompactBoundary(raw) {
 			recognized++
@@ -706,4 +704,10 @@ func observeHarness(t *archive.FilteredTranscript, record map[string]any) {
 	if mode := firstStringDeep(record, "source"); mode != "" {
 		t.ObservedHarness.Mode = mode
 	}
+}
+
+func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) {
+	noteRecordTime(result, raw)
+	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
+	result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
 }

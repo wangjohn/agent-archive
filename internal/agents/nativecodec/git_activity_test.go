@@ -231,7 +231,7 @@ func TestGitActivityMergeTakesTheCreatedRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, _ := deriveGitActivity(bundle, view.ToolCalls)
+	events := deriveGitActivity(view.ToolCalls)
 	if len(events) != 2 {
 		t.Fatalf("events = %+v", events)
 	}
@@ -290,7 +290,7 @@ func TestGitActivityFromCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, _ := deriveGitActivity(bundle, view.ToolCalls)
+	events := deriveGitActivity(view.ToolCalls)
 	want := []GitEvent{{Kind: GitEventCommit, Source: GitEventSourceShell, SHA: "3f9c2ab", Branch: "main"}}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %+v\nwant %+v", events, want)
@@ -359,7 +359,12 @@ func TestGitActivityMergeTakesTheCreatedURL(t *testing.T) {
 	}
 }
 
-type gitCounts struct{ commits, pushes, prsCreated, prsMerged int }
+type gitCounts struct {
+	commits    int
+	pushes     int
+	prsCreated int
+	prsMerged  int
+}
 
 func (c *gitCounts) add(kind GitEventKind) {
 	switch kind {
@@ -373,6 +378,7 @@ func (c *gitCounts) add(kind GitEventKind) {
 		c.prsMerged++
 	}
 }
+
 func deref(n *int) int {
 	if n == nil {
 		return 0

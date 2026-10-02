@@ -139,8 +139,7 @@ var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_i
 // credentialVocabulary the text patterns use too) is dropped for every
 // tool.
 var (
-	typedInputArgumentKeys  = map[string]bool{"text": true, "value": true, "values": true, "keys": true, "chars": true}
-	deniedToolArgumentIntro = "omitted tool argument keys: "
+	typedInputArgumentKeys = map[string]bool{"text": true, "value": true, "values": true, "keys": true, "chars": true}
 )
 
 // typedInputToolWords are the words of a tool name that say the tool types

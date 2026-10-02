@@ -41,7 +41,7 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		return archive.FilteredTranscript{}, err
 	}
 	if !ok || r.Kind != "composer" || r.Missing {
-		return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("Cursor composer framing required"))
+		return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("cursor composer framing required"))
 	}
 	out, err := nativecodec.FilterComposerRecords(ctx, r.Raw, func(ctx context.Context) (nativecodec.CursorBubble, bool, error) {
 		row, ok, err := in.Records.Next(ctx)

@@ -23,7 +23,7 @@ func TestHandoffNotesADifferentCheckout(t *testing.T) {
 		t.Fatalf("workspace = %+v", h.Workspace)
 	}
 	got := RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true})
-	golden.Check(t, filepath.Join("../../archive/testdata", "handoff", "claude-elsewhere.md"), got)
+	golden.Check(t, filepath.Join("..", "..", "archive", "testdata", "handoff", "claude-elsewhere.md"), got)
 	// The full recorded path never reaches the document.
 	if strings.Contains(string(got), "/Users/someone") || strings.Contains(string(got), "/home/me") {
 		t.Errorf("a full directory path is in the handoff:\n%s", got)

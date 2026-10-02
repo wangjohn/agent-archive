@@ -83,6 +83,7 @@ func notificationText(text string) string {
 	}
 	return "App notification"
 }
+
 func prepareTurnText(kind archive.TurnKind, text string) string {
 	switch kind {
 	case archive.TurnKindHumanPrompt, archive.TurnKindLocalCommand:
@@ -93,10 +94,13 @@ func prepareTurnText(kind archive.TurnKind, text string) string {
 		return commandOutput(text)
 	case archive.TurnKindHarnessNotification:
 		return notificationText(text)
+	case archive.TurnKindAssistant, archive.TurnKindToolResult, archive.TurnKindHarnessMeta, archive.TurnKindCompactSummary:
+		return text
 	default:
 		return text
 	}
 }
+
 func firstLine(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {

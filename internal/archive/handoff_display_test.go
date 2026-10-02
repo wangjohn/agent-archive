@@ -143,6 +143,7 @@ func TestEveryHandoffFieldIsDisplayText(t *testing.T) {
 		t.Errorf("displayHandoff modified its argument")
 	}
 }
+
 func assertDisplayText(t *testing.T, where, s string) {
 	t.Helper()
 	if !utf8.ValidString(s) {

@@ -21,14 +21,16 @@ const (
 )
 
 type ToolAction struct {
-	Kind                 ToolActionKind
-	Text                 string
-	Path                 string
-	Files                []string
-	LineStart, LineCount *int
-	Prompt               bool
-	Plan                 *PlanUpdate
+	Kind      ToolActionKind
+	Text      string
+	Path      string
+	Files     []string
+	LineStart *int
+	LineCount *int
+	Prompt    bool
+	Plan      *PlanUpdate
 }
+
 type PlanUpdate struct {
 	Items []HandoffPlanItem
 	Merge bool
@@ -71,11 +73,11 @@ func actionSummary(a ToolAction, root string) string {
 			return firstLine(a.Text, handoffSummaryCap)
 		}
 	case ToolActionAgent:
-		cap := handoffSummaryCap
+		limit := handoffSummaryCap
 		if a.Prompt {
-			cap = handoffAgentPromptCap
+			limit = handoffAgentPromptCap
 		}
-		return firstLine(a.Text, cap)
+		return firstLine(a.Text, limit)
 	case ToolActionPlan:
 		return "updated the plan"
 	}
