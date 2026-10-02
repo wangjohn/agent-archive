@@ -821,7 +821,7 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 	field := func(name string) (sqliteValueKind, any, error) {
 		var t sqliteValueKind
 		var v any
-		err := q.QueryRowContext(ctx, `SELECT type, value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t, &v)
+		err := q.QueryRowContext(ctx, `SELECT type, CASE WHEN type IN ('integer','real') THEN value END FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t, &v)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil, nil
 		}
@@ -886,7 +886,7 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, inline bool, sig Signature) (Signature, error) {
 	rows, err := q.QueryContext(ctx, `SELECT j.id,j.type,
  (SELECT type FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
- (SELECT value FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
+ (SELECT CASE WHEN type = 'text' THEN value END FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
  EXISTS (SELECT 1 FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' AND type NOT IN ('text','null'))
  FROM json_each((SELECT value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1)) AS j ORDER BY j.id`, key, name)
 	if err != nil {
