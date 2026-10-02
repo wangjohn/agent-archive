@@ -709,7 +709,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printAnotherMachine(p, cfg, finish.userHome)
+	printAnotherMachine(p, cfg, finish.userHome, finish.env)
 	return nil
 }
 
@@ -989,13 +989,13 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 
 // printAnotherMachine ends a committed setup with the command that sets up
 // another machine with the same storage.
-func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
+func printAnotherMachine(p *prompter, cfg config.Config, userHome string, environments ...Env) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
 		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
-	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome)))
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome, environments...)))
 	// setup --yes has no flag for the folder inside the bucket: it stores in
 	// the default one, which would split the archive from this machine's.
 	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
@@ -1007,7 +1007,14 @@ func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
 // like this one: the same storage, apps and projects. Projects in the home
 // folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
-func anotherMachineCommand(cfg config.Config, userHome string) string {
+func anotherMachineCommand(cfg config.Config, userHome string, environments ...Env) string {
+	var env Env
+	if len(environments) > 0 {
+		env = environments[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	keys := map[string]string{}
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1024,7 +1031,24 @@ func anotherMachineCommand(cfg config.Config, userHome string) string {
 		if !project.Included {
 			continue
 		}
-		args = append(args, "--project", homeRelative(project.Root, userHome))
+		key, checked := keys[project.Root]
+		if !checked {
+			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
+			// A key describes the whole repository. A configured subdirectory
+			// must keep its path to avoid widening capture on another machine.
+			if child.Err() == nil {
+				if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+					key = env.projectRepoKey(child, project.Root)
+				}
+			}
+			done()
+			keys[project.Root] = key
+		}
+		if key != "" {
+			args = append(args, "--project-repo", key)
+		} else {
+			args = append(args, "--project", homeRelative(project.Root, userHome))
+		}
 	}
 	for i, arg := range args {
 		args[i] = shellWord(arg)

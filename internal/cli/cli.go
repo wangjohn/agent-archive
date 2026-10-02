@@ -29,6 +29,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
@@ -110,6 +111,10 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// projectGitRunner replaces bounded Git operations in setup tests.
+	projectGitRunner gitremote.Runner
+	// repoKeyContext replaces bounded setup lookups in tests.
+	repoKeyContext func(context.Context, string) string
 	// currentBranch, set only by tests, replaces the git lookup of the
 	// branch checked out in a directory (see gitBranch).
 	currentBranch func(dir string) string
