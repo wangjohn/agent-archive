@@ -135,8 +135,14 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 	if IsUndecodable(err) {
 		return "", false, ErrSessionIndexRecoveryRequired
 	}
-	if err != nil || !found {
+	if err != nil {
 		return "", false, err
+	}
+	if !found {
+		// Older writers also indexed unfinished children. Their directly
+		// referenced candidate retains the archive ID even before admission;
+		// let collector recovery promote that evidence to a reservation.
+		return "", false, s.legacyCandidateRecovery(key, entry.ArchiveSessionID)
 	}
 	actual, err := registrationKey(reg)
 	if reg.Validate() != nil {
@@ -154,8 +160,30 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 	return entry.ArchiveSessionID, true, nil
 }
 
+func (s *Store) legacyCandidateRecovery(key agentmeta.SessionKey, id string) error {
+	candidate, found, err := readJSON[SubagentCandidate](s.subagentCandidatePath(id))
+	if IsUndecodable(err) {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if err != nil || !found {
+		return err
+	}
+	actual, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+	if err != nil || candidate.ArchiveSessionID != id {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if actual.Agent != key.Agent {
+		return nil
+	}
+	if actual.NativeID != key.NativeID {
+		return ErrSessionIdentityConflict
+	}
+	return ErrSessionIndexRecoveryRequired
+}
+
 // ArchiveSessionID returns only a validated registration, reading at most one
-// qualified entry, one legacy entry and their directly referenced registration.
+// qualified entry, one legacy entry and their directly referenced registration
+// or unfinished legacy child candidate.
 // It performs no writes, enumeration or adoption outside the writer's locks.
 func (s *Store) ArchiveSessionID(key agentmeta.SessionKey) (string, bool, error) {
 	if err := key.Validate(); err != nil {

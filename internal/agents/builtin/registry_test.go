@@ -1,12 +1,13 @@
 package builtin
 
 import (
-	"github.com/wangjohn/agent-archive/internal/agents/codex"
-	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"reflect"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/sourceio"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
@@ -156,5 +157,24 @@ func TestSourceBindingCoherenceAndNarrowLookup(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(100, func() { r.LookupSources("native-codex") }); n != 0 {
 		t.Fatalf("source lookup allocates %g", n)
+	}
+}
+
+func TestHookOperationProjectionsAgreeWithCatalog(t *testing.T) {
+	t.Parallel()
+	r := NewBuiltins()
+	for _, want := range r.Catalog().All() {
+		got, ok := r.Lookup(string(want.ID))
+		if !ok || !reflect.DeepEqual(got.Descriptor, want) {
+			t.Fatalf("lookup differs from derived catalog: %+v, want %+v", got.Descriptor, want)
+		}
+	}
+	for _, operation := range []agentmeta.Operation{agentmeta.ManagedHooks, agentmeta.LifecycleHooks} {
+		for _, got := range r.Supporting(operation) {
+			want, _ := r.Catalog().Lookup(string(got.Descriptor.ID))
+			if !reflect.DeepEqual(got.Descriptor, want) {
+				t.Fatalf("%s projection differs from catalog: %+v, want %+v", operation, got.Descriptor, want)
+			}
+		}
 	}
 }

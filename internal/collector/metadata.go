@@ -18,7 +18,11 @@ func (o Options) parserFor(name string) agentapi.TranscriptParser {
 	}
 	var parser agentapi.TranscriptParser
 	if o.Parsers != nil {
-		parser, _ = o.Parsers.LookupParser(name)
+		var found bool
+		parser, found = o.Parsers.LookupParser(name)
+		if !found {
+			parser = nil
+		}
 	}
 	if o.parserCache != nil {
 		o.parserCache[name] = parser

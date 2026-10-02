@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -21,6 +22,44 @@ func corruptQualifiedIndex(t *testing.T, home string, key agentmeta.SessionKey) 
 	sum := sha256.Sum256(key.Encoding())
 	if err := os.WriteFile(filepath.Join(home, "sessions-v1", hex.EncodeToString(sum[:])+".json"), []byte("{"), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLegacyChildHookBeforeRecoveryKeepsCandidateIdentity(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	if err := HandleEvent(home, "claude", claudeStart(project, "parent", "startup", "/synthetic/parent.jsonl"), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	parentID, _, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent:subagent:child"}
+	const childID = "legacy-child"
+	sum := sha256.Sum256([]byte(child.NativeID))
+	if err := local.Write(filepath.Join(home, "sessions", hex.EncodeToString(sum[:])+".json"), map[string]string{"archive_session_id": childID}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := state.SubagentCandidate{ArchiveSessionID: childID, NativeSessionID: child.NativeID, ParentArchiveSessionID: parentID, ParentNativeSessionID: "parent", ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "claude-code"}, AgentID: "child", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: at}
+	if err := store.SaveSubagentCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"hook_event_name": "SubagentStop", "session_id": "parent", "cwd": project, "agent_id": "child", "agent_transcript_path": candidate.TranscriptPath}
+	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("legacy child hook: %v", err)
+	}
+	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleEvent(home, "claude", payload, at.Add(2*time.Minute), WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 1 || candidates[0].ArchiveSessionID != childID {
+		t.Fatalf("legacy child duplicated: %#v %v", candidates, err)
 	}
 }
 

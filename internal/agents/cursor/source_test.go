@@ -13,6 +13,8 @@ import (
 )
 
 func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
+	cursorstore.SnapshotTempDirForTesting = t.TempDir()
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
 	path := filepath.Join(t.TempDir(), "state.vscdb")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {

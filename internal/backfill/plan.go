@@ -109,17 +109,19 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty    bool
-	unsafe   bool
-	tooLarge bool
+	empty     bool
+	unsafe    bool
+	tooLarge  bool
+	sourceErr error
 }
 
 // subagentWork is one subagent transcript of an imported parent.
 type subagentWork struct {
-	parent   *work
-	sub      Subagent
-	skipped  bool
-	vanished bool
+	parent    *work
+	sub       Subagent
+	skipped   bool
+	vanished  bool
+	sourceErr error
 }
 
 // importable reports whether nothing about the file itself stops it being
@@ -354,6 +356,11 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	}); err != nil {
 		return err
 	}
+	for _, w := range toFilter {
+		if w.sourceErr != nil {
+			return w.sourceErr
+		}
+	}
 	for _, group := range sessions {
 		markDuplicates(group)
 	}
@@ -410,6 +417,10 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		defer budget.release(n)
 		filtered, _, err := collector.FilterTranscriptFile(string(s.parent.t.harness), s.sub.Path, time.Time{}, env.Sources)
 		if err != nil {
+			if fatalSourceFailure(err) {
+				s.sourceErr = err
+				return
+			}
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
 			return
@@ -421,6 +432,9 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		return err
 	}
 	for _, s := range subagents {
+		if s.sourceErr != nil {
+			return s.sourceErr
+		}
 		switch {
 		case s.vanished:
 		case s.skipped:
@@ -516,6 +530,10 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 	}
 	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
 	if err != nil {
+		if fatalSourceFailure(err) {
+			w.sourceErr = err
+			return
+		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
@@ -545,6 +563,10 @@ func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspect
 	if !observed.StartedAt.IsZero() {
 		w.c.StartedAt, w.c.StartedAtSource = observed.StartedAt.UTC(), archive.StartedAtSourceTranscript
 	}
+}
+
+func fatalSourceFailure(err error) bool {
+	return agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // discoverChildren consumes native association evidence while retaining shared

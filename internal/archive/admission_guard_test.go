@@ -176,7 +176,6 @@ func walkSources(t *testing.T, fn func(path string, fset *token.FileSet, file *a
 func TestBoundaryGuardDetectsStartComparisons(t *testing.T) {
 	t.Parallel()
 	src := `package p
-
 func a() {
 	_ = r.SessionStartedAt.Before(c.DestinationSince)
 	_ = p.ActivatedAt.IsZero() || !r.SessionStartedAt.Before(p.ActivatedAt)
@@ -204,7 +203,6 @@ func a() {
 func TestDestinationGuardDetectsComparisons(t *testing.T) {
 	t.Parallel()
 	src := `package config
-
 func a() {
 	_ = r.Admitted().Before(c.DestinationSince)
 	_ = !reg.AdmittedAt.IsZero() && reg.AdmittedAt.After(cfg.DestinationSince)
@@ -214,11 +212,9 @@ func a() {
 	_ = r.Admitted().Before(p.ActivatedAt)
 	next.DestinationSince = now
 }
-
 func (c Config) InCurrentDestination(r archive.SessionRegistration) bool {
 	return c.DestinationSince.IsZero() || !r.Admitted().Before(c.DestinationSince)
 }
-
 func CheckClock() {
 	_ = admittedAt.Before(cfg.DestinationSince)
 }`

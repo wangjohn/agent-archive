@@ -10,13 +10,16 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/sourceidentity"
 	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -186,8 +189,12 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 			return err
 		}
 		defer func() { _ = tx.Rollback() }() // a read-only transaction; nothing to undo
-		value, err := composerRow(ctx, tx, composerID)
+		value, oversized, err := signatureComposerRow(ctx, tx, composerID, archive.MaxRecordBytes)
 		if err != nil {
+			return err
+		}
+		if oversized {
+			sig, err = signatureOnly(ctx, tx, composerID)
 			return err
 		}
 		var ids []string
@@ -223,12 +230,19 @@ func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (
 			if id == "" {
 				continue
 			}
-			value, err := composerRow(ctx, tx, id)
+			value, oversized, err := signatureComposerRow(ctx, tx, id, archive.MaxRecordBytes)
 			if errors.Is(err, ErrComposerNotFound) {
 				continue
 			}
 			if err != nil {
 				return err
+			}
+			if oversized {
+				sig, err := signatureOnly(ctx, tx, id)
+				if err == nil && sig.LastUpdatedAt > 0 {
+					out[id] = sig.LastUpdatedAt
+				}
+				continue
 			}
 			if sig, _, err := decodeHeaders(value); err == nil && sig.LastUpdatedAt > 0 {
 				out[id] = sig.LastUpdatedAt
@@ -240,6 +254,18 @@ func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (
 		return nil, err
 	}
 	return out, nil
+}
+
+// signatureComposerRow keeps oversized inline content in SQLite. The ordinary
+// branch returns the original value and preserves the legacy decoder semantics.
+func signatureComposerRow(ctx context.Context, q querier, id string, limit int64) ([]byte, bool, error) {
+	var value []byte
+	var size sql.NullInt64
+	err := q.QueryRowContext(ctx, `SELECT CASE WHEN length(CAST(value AS BLOB)) <= ? THEN value END,length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key = ?`, limit, "composerData:"+id).Scan(&value, &size)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !size.Valid {
+		return nil, false, ErrComposerNotFound
+	}
+	return value, size.Valid && size.Int64 > limit, err
 }
 
 // readCopy reads the Reader's snapshot. The copy is this process's own and
@@ -781,7 +807,7 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 		sig.LastUpdatedAt = int64(float64(n))
 	case sqliteReal:
 		n, ok := v.(float64)
-		if !ok {
+		if !ok || math.IsInf(n, 0) || math.IsNaN(n) {
 			return Signature{}, NotChecked(UnknownFormat)
 		}
 		sig.LastUpdatedAt = int64(n)
@@ -823,22 +849,26 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 }
 
 func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, inline bool, sig Signature) (Signature, error) {
-	rows, err := q.QueryContext(ctx, `SELECT j.type,
+	rows, err := q.QueryContext(ctx, `SELECT j.id,j.type,
  (SELECT type FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
- (SELECT value FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1)
+ (SELECT value FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
+ EXISTS (SELECT 1 FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' AND type NOT IN ('text','null'))
  FROM json_each((SELECT value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1)) AS j ORDER BY j.id`, key, name)
 	if err != nil {
 		return Signature{}, err
 	}
 	defer func() { _ = rows.Close() }()
 	var ids []string
+	var repairs []int64
 	for rows.Next() {
+		var index int64
+		var invalidIdentity bool
 		var object sqliteValueKind
 		var idtype, identity sql.NullString
-		if err = rows.Scan(&object, &idtype, &identity); err != nil {
+		if err = rows.Scan(&index, &object, &idtype, &identity, &invalidIdentity); err != nil {
 			return Signature{}, err
 		}
-		if object != sqliteObject && object != sqliteNull || idtype.Valid && sqliteValueKind(idtype.String) != sqliteText && sqliteValueKind(idtype.String) != sqliteNull {
+		if invalidIdentity || object != sqliteObject && object != sqliteNull || idtype.Valid && sqliteValueKind(idtype.String) != sqliteText && sqliteValueKind(idtype.String) != sqliteNull {
 			return Signature{}, NotChecked(UnknownFormat)
 		}
 		if !inline && (!identity.Valid || identity.String == "") {
@@ -846,12 +876,34 @@ func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, 
 		}
 		sig.HeaderCount++
 		sig.LastBubbleID = identity.String
+		if !utf8.ValidString(identity.String) {
+			repairs = append(repairs, index)
+		} else {
+			repairs = append(repairs, -1)
+		}
 		if !inline {
 			ids = append(ids, identity.String)
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return Signature{}, err
+	}
+	// SQL string decoding differs from Go JSON for invalid UTF-8 and lone
+	// surrogate escapes. Revisit only those rare fields from bounded raw JSON.
+	for i, index := range repairs {
+		if index < 0 {
+			continue
+		}
+		identity, err := rawHeaderIdentity(ctx, q, key, name, index)
+		if err != nil {
+			return Signature{}, err
+		}
+		if !inline {
+			ids[i] = identity
+		}
+		if i == len(repairs)-1 {
+			sig.LastBubbleID = identity
+		}
 	}
 	if inline {
 		return sig, nil

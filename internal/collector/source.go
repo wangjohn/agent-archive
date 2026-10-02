@@ -127,7 +127,7 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	defer func() { err = errors.Join(err, closePass()) }()
 	o, err := p.Signature(ctx, sourceRef(r.reg))
 	if err == nil {
-		err = sourceio.ValidateSignature(o.Signature)
+		err = r.validateObservation(provider, o)
 	}
 	return observe(r.reg.SourceKind, o), err
 }
@@ -150,13 +150,16 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	snap, err := p.Read(ctx, sourceRef(r.reg), limits)
 	if err != nil {
 		if o, ok := agentapi.ErrorObservation(err); ok {
+			if observationErr := r.validateObservation(provider, o); observationErr != nil {
+				return out, observed, errors.Join(err, agentapi.Wrap(agentapi.Unavailable, observationErr))
+			}
 			observed = observe(r.reg.SourceKind, o)
 		}
 		return out, observed, translateSourceError(err)
 	}
 	defer func() { err = errors.Join(err, snap.Close()) }()
 	observed = observe(r.reg.SourceKind, snap.Observation())
-	if err = sourceio.ValidateSignature(observed.observation.Signature); err != nil {
+	if err = r.validateObservation(provider, observed.observation); err != nil {
 		return out, sourceState{}, err
 	}
 	if r.reg.ReadsTranscriptFile() {
@@ -167,6 +170,23 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		return out, observed, translateSourceError(err)
 	}
 	return out, observed, checkFilteredSize(out, maxBytes)
+}
+
+func (r providerReader) validateObservation(provider agentapi.SourceProvider, o agentapi.SourceObservation) error {
+	if !o.Present || o.Size < 0 {
+		return errors.New("invalid present source observation")
+	}
+	if err := sourceio.ValidateSignature(o.Signature); err != nil {
+		return err
+	}
+	semantics, err := provider.Describe(sourceRef(r.reg))
+	if err != nil {
+		return err
+	}
+	if o.Signature.Provider != semantics.Provider {
+		return errors.New("source signature provider does not match declared semantics")
+	}
+	return nil
 }
 
 func translateSourceError(err error) error {

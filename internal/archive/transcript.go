@@ -229,6 +229,7 @@ func unmatchedHookFinals(bundle SourceBundle, view NormalizedView, exchanges []T
 	return out
 }
 
+// BuildTranscriptWithAnalysis renders a transcript from one previously derived analysis.
 func BuildTranscriptWithAnalysis(bundle SourceBundle, analysis Analysis, opts HandoffOptions) (Transcript, error) {
 	view := analysis.View
 	var exchanges []TranscriptExchange

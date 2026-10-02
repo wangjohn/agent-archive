@@ -191,3 +191,28 @@ func TestInjectedParseFailureRetainsSafeSourceAndUnknownCounts(t *testing.T) {
 		t.Fatalf("lookup/parse/filter: %d/%d/%d", bindings.lookups, bindings.parser.calls, bindings.filter.calls)
 	}
 }
+
+type unavailableOperationParser struct{ parser *operationParser }
+
+func (p unavailableOperationParser) LookupParser(string) (agentapi.TranscriptParser, bool) {
+	return p.parser, false
+}
+
+func TestUnavailableInjectedParserDoesNotDeriveOrClaimAVersion(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	parser := &operationParser{version: "unsupported"}
+	remote := storagetest.NewMemoryStore()
+	result, err := Run(context.Background(), local, remote, Options{Sources: testSources, Parsers: unavailableOperationParser{parser: parser}, MachineID: "machine", Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("run: %#v %v", result, err)
+	}
+	metadata := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if parser.calls != 0 || metadata.Parser.Version != "unavailable" || metadata.Parser.Status != archive.ParserStatusFailed || metadata.Counts.Turns != nil {
+		t.Fatalf("unavailable capability was used: calls=%d metadata=%#v", parser.calls, metadata)
+	}
+}

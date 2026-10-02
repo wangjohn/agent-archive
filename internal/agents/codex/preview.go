@@ -9,6 +9,7 @@ import (
 // Previewer filters bounded complete records without full-session analysis.
 type Previewer struct{}
 
+// PreviewRecord derives safe Codex facts from one bounded complete record.
 func (Previewer) PreviewRecord(ctx context.Context, record []byte) (archive.RecordPreview, error) {
 	return nativecodec.Preview(ctx, nativecodec.CodexAdapter{}, record)
 }

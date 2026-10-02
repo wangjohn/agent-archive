@@ -11,6 +11,7 @@ type Analysis struct {
 // AvailabilityState distinguishes a measured zero from unavailable evidence.
 type AvailabilityState string
 
+// Availability states distinguish measured evidence from unavailable or unknown evidence.
 const (
 	AvailabilityAvailable   AvailabilityState = "available"
 	AvailabilityUnavailable AvailabilityState = "unavailable"
@@ -20,6 +21,7 @@ const (
 // AvailabilityReason is a fixed, content-free explanation of availability.
 type AvailabilityReason string
 
+// Availability reasons describe content-free limits of the retained evidence.
 const (
 	AvailabilityReasonText             AvailabilityReason = "text_structure_unproven"
 	AvailabilityReasonNotRecorded      AvailabilityReason = "not_recorded"
@@ -33,6 +35,7 @@ type Availability struct {
 	Reason AvailabilityReason
 }
 
+// Available reports whether this evidence can support a measured value.
 func (a Availability) Available() bool { return a.State == AvailabilityAvailable }
 
 // Observability describes the actual retained source format and filter version.
@@ -104,6 +107,7 @@ type TokenCount struct {
 	Recorded bool
 }
 
+// TokenObservation carries presence-aware accounting extracted from one native record.
 type TokenObservation struct {
 	Input      TokenCount
 	Output     TokenCount
@@ -123,6 +127,7 @@ type typedModelUsage struct {
 	model string
 }
 
+// Observe records accounting, replacing prior observations of the same message.
 func (t *TokenAccumulator) Observe(usage TokenObservation, messageID, model string) {
 	entry := typedModelUsage{usage: usage, model: model}
 	if messageID == "" {
@@ -135,6 +140,7 @@ func (t *TokenAccumulator) Observe(usage TokenObservation, messageID, model stri
 	t.byMessage[messageID] = entry
 }
 
+// Usage returns common total and per-model accounting from the observed records.
 func (t *TokenAccumulator) Usage() (TokenUsage, []ModelTokens) {
 	var total TokenUsage
 	byModel := map[string]*TokenUsage{}
