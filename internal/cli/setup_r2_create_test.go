@@ -7,14 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -118,7 +116,7 @@ func guidedAnswers(rest ...string) string {
 // no data location, go ahead, and start archiving.
 var (
 	askToken     = []string{bootstrapCanary}
-	acceptedRest = []string{"", "n", "", ""}
+	acceptedRest = []string{"", ""}
 )
 
 func (g *guidedR2Fixture) happy() string {
@@ -318,7 +316,7 @@ func TestGuidedR2NeverPersistsTheBootstrapToken(t *testing.T) {
 		g := newGuidedR2Fixture(t)
 		// A check that keeps failing leaves the setup draft on disk.
 		g.env.OpenStore = failingOpener(invalidKey)
-		input := guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...)
+		input := guidedAnswers(append(append([]string{}, askToken...), "", "stop")...)
 		out := g.run(t, input, 1)
 		if _, err := os.Stat(draftPath(g.home)); err != nil {
 			t.Fatalf("no setup draft was saved, so the search would prove nothing about it: %v", err)
@@ -452,8 +450,8 @@ func TestGuidedR2IgnoresAMalformedAccountIDInTheEnvironment(t *testing.T) {
 func TestGuidedR2BlankTokenReturnsToTheMenu(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, guidedAnswers("", "s3", "work", "2", ""), 0)
-	if n := strings.Count(out, "Where should sessions be stored?"); n != 2 {
+	out := g.run(t, guidedAnswers("", "s3-existing", "work", "2", ""), 0)
+	if n := strings.Count(out, "Where should your archive live?"); n != 2 {
 		t.Fatalf("menu shown %d times:\n%s", n, out)
 	}
 	if len(g.cf.Requests()) != 0 || len(g.apis) != 0 {
@@ -468,7 +466,7 @@ func TestGuidedR2BlankTokenReturnsToTheMenu(t *testing.T) {
 func TestGuidedR2RejectedTokenReturnsToTheMenu(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, guidedAnswers("some-other-token", "other", "s3", "work", "2", ""), 0)
+	out := g.run(t, guidedAnswers("some-other-token", "other", "s3-existing", "work", "2", ""), 0)
 	if !strings.Contains(out, "Cloudflare didn't accept the API token") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 {
 		t.Fatalf("output:\n%s", out)
 	}
@@ -489,7 +487,7 @@ func TestGuidedR2CanReplaceRejectedEnvironmentToken(t *testing.T) {
 		t.Fatalf("replacement did not discard both clients: %+v", g.apis)
 	}
 	checked := strings.Index(out, "Archive-key permission lookup succeeded")
-	bucket := strings.Index(out, "Bucket name")
+	bucket := strings.Index(out, "Bucket:")
 	if checked < 0 || bucket < checked || !strings.Contains(out, "Paste a different token") {
 		t.Fatalf("replacement was not checked before bucket settings:\n%s", out)
 	}
@@ -535,7 +533,7 @@ func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
 		t.Parallel()
 		g := newGuidedR2Fixture(t)
 		g.cf.Accounts = nil
-		input := guidedAnswers(append(append([]string{}, askToken...), "0123456789abcdef0123456789abcdef", "", "n", "", "stop")...)
+		input := guidedAnswers(append(append([]string{}, askToken...), "0123456789abcdef0123456789abcdef", "", "stop")...)
 		if out := g.run(t, input, 1); !strings.Contains(out, "Cloudflare doesn't know that account") {
 			t.Fatalf("output:\n%s", out)
 		}
@@ -545,7 +543,7 @@ func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
 func TestGuidedR2ValidatesTheBucketName(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	input := guidedAnswers(append(append([]string{}, askToken...), "Bad_Name", "ab", "-lead", "My-Archive-Bkt", "n", "", "")...)
+	input := guidedAnswers(append(append([]string{}, askToken...), "customize", "Bad_Name", "ab", "-lead", "My-Archive-Bkt", "n", "", "")...)
 	out := g.run(t, input, 0)
 	if strings.Count(out, "a bucket name") < 3 {
 		t.Fatalf("names not refused:\n%s", out)
@@ -563,8 +561,8 @@ func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 1})
-	out := g.run(t, g.happy(), 0)
-	if !strings.Contains(out, "is taken; trying") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
+	out := g.run(t, g.happy()+"\n", 0)
+	if !strings.Contains(out, "is taken; preparing") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)
 	}
 	var names []string
@@ -577,7 +575,7 @@ func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 			names = append(names, body.Name)
 		}
 	}
-	if names[0] == names[1] || !defaultBucketName.MatchString(names[1]) || g.savedConfig(t).Storage.Bucket != names[1] {
+	if names[0] == names[1] || !defaultBucketName.MatchString(names[1]) || g.savedConfig(t).Storage.Bucket != names[1] || strings.Count(out, "Your archive storage") != 2 || !strings.Contains(out, "Bucket: "+names[1]) {
 		t.Fatalf("names %v", names)
 	}
 }
@@ -587,7 +585,7 @@ func TestGuidedR2AsksAgainWhenAChosenNameIsTaken(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Buckets["mine-bucket"] = ""
-	input := guidedAnswers(append(append([]string{}, askToken...), "mine-bucket", "n", "", "mine-two", "")...)
+	input := guidedAnswers(append(append([]string{}, askToken...), "customize", "mine-bucket", "n", "", "mine-two", "", "")...)
 	out := g.run(t, input, 0)
 	if !strings.Contains(out, "The name mine-bucket is taken in your Cloudflare account.") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)
@@ -602,7 +600,7 @@ func TestGuidedR2AsksAgainWhenAChosenNameIsTaken(t *testing.T) {
 func TestGuidedR2JurisdictionAndLocationHint(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	input := guidedAnswers(append(append([]string{}, askToken...), "eu-archive", "y", "mars", "EU", "nowhere", "weur", "", "")...)
+	input := guidedAnswers(append(append([]string{}, askToken...), "customize", "eu-archive", "y", "mars", "EU", "nowhere", "weur", "", "")...)
 	out := g.run(t, input, 0)
 	if !strings.Contains(out, "can't be changed later") {
 		t.Fatalf("no warning about permanence:\n%s", out)
@@ -642,7 +640,7 @@ func TestGuidedR2JurisdictionAndLocationHint(t *testing.T) {
 func TestGuidedR2DecliningTheGoAheadCreatesNothing(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "n", "s3", "work", "2", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "back", "s3-existing", "work", "2", "")...), 0)
 	if g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || len(g.cf.Tokens()) != 0 {
 		t.Fatalf("something was created:\n%s", out)
 	}
@@ -652,7 +650,7 @@ func TestGuidedR2DecliningTheGoAheadCreatesNothing(t *testing.T) {
 // the bucket name (default), no data location, go ahead, then what to do about
 // public access, and start archiving.
 func publicRest(whatNow ...string) []string {
-	return append(append([]string{"", "n", ""}, whatNow...), "")
+	return append(append([]string{""}, whatNow...), "")
 }
 
 // A bucket that reads as public stops setup at a menu whose default is another
@@ -690,7 +688,7 @@ func TestGuidedR2PublicBucketAnotherStorageRevokesTheKey(t *testing.T) {
 			t.Parallel()
 			g := newGuidedR2Fixture(t)
 			g.cf.ManagedEnabled = true
-			rest := append([]string{"", "n", ""}, answer...)
+			rest := append([]string{""}, answer...)
 			// After "another storage option" the storage question is asked
 			// again and the input ends there.
 			want := 1
@@ -703,7 +701,7 @@ func TestGuidedR2PublicBucketAnotherStorageRevokesTheKey(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if name != "input ends" && strings.Count(out, "Where should sessions be stored?") != 2 {
+			if name != "input ends" && strings.Count(out, "Where should your archive live?") != 2 {
 				t.Errorf("the storage question was not asked again:\n%s", out)
 			}
 			if strings.Contains(out, "not saved anywhere") || strings.Contains(out, "Connected to your storage.") {
@@ -854,7 +852,7 @@ func TestGuidedR2StepFailures(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(g.cf)
 			}
-			input := guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...)
+			input := guidedAnswers(append(append([]string{}, askToken...), "", "stop")...)
 			if strings.HasPrefix(tc.name, "permission group") {
 				input = guidedAnswers(append(append([]string{}, askToken...), "stop")...)
 			}
@@ -867,7 +865,7 @@ func TestGuidedR2StepFailures(t *testing.T) {
 			if left := strings.Contains(out, "was created and is empty"); left != tc.bucket {
 				t.Errorf("bucket reported left behind = %v, want %v:\n%s", left, tc.bucket, out)
 			}
-			if strings.HasPrefix(tc.name, "permission group") && (g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 || strings.Contains(out, "Create the bucket and its key now?") || strings.Contains(out, "Bucket name")) {
+			if strings.HasPrefix(tc.name, "permission group") && (g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 || strings.Contains(out, "Your archive storage") || strings.Contains(out, "Bucket:")) {
 				t.Errorf("permission failure reached creation or confirmation:\n%s", out)
 			}
 			if len(g.cf.Live()) != 0 || len(g.keychain.items) != 0 {
@@ -891,7 +889,7 @@ func TestGuidedR2PrintsTheTokenNameBeforeCreatingIt(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	var sent struct {
 		Name string `json:"name"`
 	}
@@ -912,7 +910,7 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "retry", "", "n", "", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "retry", "", "")...), 0)
 	want := []string{
 		string(cloudflaretest.RouteAccounts), string(cloudflaretest.RoutePermissionGroups), string(cloudflaretest.RoutePermissionGroups),
 		string(cloudflaretest.RouteCreateBucket), string(cloudflaretest.RouteCreateToken),
@@ -922,8 +920,8 @@ func TestGuidedR2RetriesPermissionLookupBeforeCreatingAnything(t *testing.T) {
 		t.Fatalf("calls %v, want %v", got, want)
 	}
 	failed := strings.Index(out, "No bucket or key has been created.")
-	confirm := strings.Index(out, "Create the bucket and its key now?")
-	if failed < 0 || confirm < failed || strings.Count(out, "Create the bucket and its key now?") != 1 || strings.Contains(out, "Try again with the same bucket") {
+	confirm := strings.Index(out, "Your archive storage")
+	if failed < 0 || confirm < failed || strings.Count(out, "Your archive storage") != 1 || strings.Contains(out, "Try again with the same bucket") {
 		t.Fatalf("lookup retry did not precede creation confirmation:\n%s", out)
 	}
 	g.savedConfig(t)
@@ -935,7 +933,7 @@ func TestGuidedR2RetryReusesTheBucket(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "retry", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "retry", "")...), 0)
 	if g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 || g.cf.Calls(cloudflaretest.RoutePermissionGroups) != 1 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 2 {
 		t.Fatalf("calls %v", routes(g.cf.Requests()))
 	}
@@ -950,7 +948,7 @@ func TestGuidedR2RetryAfterAFailedBucketStep(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusInternalServerError, Times: 1})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "retry", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "retry", "")...), 0)
 	if strings.Contains(out, "with the same bucket") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)
 	}
@@ -963,7 +961,7 @@ func TestGuidedR2FailureThenAnotherOption(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusForbidden})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "other", "s3", "work", "2", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "other", "s3-existing", "work", "2", "")...), 0)
 	if !strings.Contains(out, "was created and is empty. It stays in your Cloudflare account") {
 		t.Fatalf("bucket not reported:\n%s", out)
 	}
@@ -980,7 +978,7 @@ func TestGuidedR2RevokesAKeyThatFailsVerification(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	var listings atomic.Int32
 	g.env.OpenStore = failingOpener(func() error { listings.Add(1); return invalidKey() })
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	if n := listings.Load(); n != 5 || g.pauses != 4 || r2VerifyAttempts != 5 {
 		t.Fatalf("%d checks and %d pauses, want 5 and 4", n, g.pauses)
 	}
@@ -1013,7 +1011,7 @@ func TestGuidedR2RetryAfterFailedVerification(t *testing.T) {
 		}
 		return g.bucket, nil
 	}
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "retry", "")...), 0)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "retry", "")...), 0)
 	tokens := g.cf.Tokens()
 	if len(tokens) != 2 || len(g.cf.Live()) != 1 || g.cf.Live()[0].ID != tokens[1].ID || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 1 {
 		t.Fatalf("tokens %+v, calls %v\n%s", tokens, routes(g.cf.Requests()), out)
@@ -1034,7 +1032,7 @@ func TestGuidedR2FailedRevokeNamesTheToken(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	g.env.OpenStore = failingOpener(invalidKey)
 	g.cf.Fail(cloudflaretest.RouteDeleteToken, cloudflaretest.Failure{Status: http.StatusForbidden})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	name := g.cf.Tokens()[0].Name
 	if !strings.Contains(out, "Couldn't revoke the key that wasn't used.") || !strings.Contains(out, `Revoke the API token named "`+name+`"`) {
 		t.Fatalf("output:\n%s", out)
@@ -1047,7 +1045,7 @@ func TestGuidedR2DoesNotWaitOutOtherFailures(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	var listings atomic.Int32
 	g.env.OpenStore = failingOpener(func() error { listings.Add(1); return errors.New("connection reset") })
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	if listings.Load() != 1 || g.pauses != 0 {
 		t.Fatalf("%d checks, %d pauses", listings.Load(), g.pauses)
 	}
@@ -1085,7 +1083,7 @@ func TestGuidedR2IsInTheStorageMenu(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	input := strings.Join(append([]string{"", r2MenuNumber(t, guidedR2Choice)}, append(append([]string{}, askToken...), acceptedRest...)...), "\n") + "\n"
 	out := g.run(t, input, 0)
-	if !strings.Contains(out, "Cloudflare R2: create a new bucket for me") {
+	if !strings.Contains(out, "  1) Cloudflare R2") {
 		t.Fatalf("menu:\n%s", out)
 	}
 	g.savedConfig(t)
@@ -1167,14 +1165,6 @@ func TestParseR2AccountID(t *testing.T) {
 
 // withR2CreateSwitch is an Env whose lookup answers the experimental R2
 // switch with value, set or not, and nothing else.
-func withR2CreateSwitch(value string, set bool) Env {
-	return Env{LookupEnv: func(key string) (string, bool) {
-		if key == experimentalR2CreateVar {
-			return value, set
-		}
-		return "", false
-	}}
-}
 
 func menuKeys(options []option) string {
 	var keys []string
@@ -1188,25 +1178,12 @@ func menuKeys(options []option) string {
 // goldens show. The guided R2 choice joins it next to the guided S3 one,
 // before the instructions, only when the switch is on, and nothing but the
 // exact value 1 turns it on.
-func TestStorageMenuGateForGuidedR2(t *testing.T) {
+func TestStorageMenuHasTwoProvidersWithEitherGateState(t *testing.T) {
 	t.Parallel()
-	for name, env := range map[string]Env{
-		"unset": withR2CreateSwitch("", false), "empty": withR2CreateSwitch("", true), "zero": withR2CreateSwitch("0", true),
-		"true": withR2CreateSwitch("true", true), "yes": withR2CreateSwitch("yes", true), "two": withR2CreateSwitch("2", true),
-	} {
-		if !slices.Equal(storageMenuFor(env), storageMenuOptions()) {
-			t.Errorf("%s: the default menu differs from storageMenuOptions: %s", name, menuKeys(storageMenuFor(env)))
+	for range 2 {
+		if got := menuKeys(storageMenuOptions()); got != "r2,s3" {
+			t.Fatalf("providers %s", got)
 		}
-	}
-	on := storageMenuFor(withR2CreateSwitch("1", true))
-	if got, want := menuKeys(on), "r2,s3,"+storageChoiceS3New+","+guidedR2Choice+",help"; got != want {
-		t.Fatalf("switched on: menu = %s, want %s", got, want)
-	}
-	if on[len(on)-2].Label != storageLabelR2New {
-		t.Fatalf("the guided R2 entry is labelled %q, want %q", on[len(on)-2].Label, storageLabelR2New)
-	}
-	if on[len(on)-1].Key != "help" {
-		t.Fatalf("the instructions must stay last: %s", menuKeys(on))
 	}
 }
 
@@ -1218,7 +1195,7 @@ func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
 	t.Run("review cancelled, draft uses them", func(t *testing.T) {
 		t.Parallel()
 		g := newGuidedR2Fixture(t)
-		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "no")...), 0)
+		out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "no")...), 0)
 		tokens := g.cf.Tokens()
 		if len(tokens) != 1 || len(g.cf.Live()) != 1 {
 			t.Fatalf("tokens %+v\n%s", tokens, out)
@@ -1258,7 +1235,7 @@ func TestGuidedR2ReportsWhatItLeftWhenSetupEndsWithoutUsingIt(t *testing.T) {
 func TestGuidedR2ReportsEveryPairTheCommittedConfigDoesNotUse(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	input := guidedAnswers(append(append(append(append([]string{}, askToken...), "", "n", "", "edit", "storage", guidedR2Choice), askToken...), acceptedRest...)...)
+	input := guidedAnswers(append(append(append(append([]string{}, askToken...), "", "edit", "storage", "change", guidedR2Choice), askToken...), acceptedRest...)...)
 	out := g.run(t, input, 0)
 	tokens := g.cf.Tokens()
 	if len(tokens) != 2 || len(g.cf.Buckets) != 2 {
@@ -1403,13 +1380,7 @@ func TestGuidedR2PrintsCloudflareNamesSafely(t *testing.T) {
 // the experimental R2 switch is on, as a person types it.
 func r2MenuNumber(t *testing.T, key string) string {
 	t.Helper()
-	for i, o := range storageMenuFor(withR2CreateSwitch("1", true)) {
-		if o.Key == key {
-			return strconv.Itoa(i + 1)
-		}
-	}
-	t.Fatalf("the storage menu has no entry %q", key)
-	return ""
+	return key
 }
 
 // The pasted token is dropped and its "not saved" line printed only once the
@@ -1502,7 +1473,7 @@ func TestGuidedR2StorageCheckFailureNamesTheBucketAndToken(t *testing.T) {
 		}
 		return &guidedStore{fail: invalidKey}, nil
 	}
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "cancel")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "cancel")...), 1)
 	tokens := g.cf.Tokens()
 	if len(tokens) != 1 || len(g.cf.Live()) != 1 {
 		t.Fatalf("tokens %+v\n%s", tokens, out)
@@ -1553,7 +1524,7 @@ func TestGuidedR2InterruptDuringTheCheckRevokesTheToken(t *testing.T) {
 		return &ctxStore{onList: func() { caught <- syscall.SIGINT }}, nil
 	}
 	var out bytes.Buffer
-	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "", "n", "")...)), &out, &out, g.env)
+	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "")...)), &out, &out, g.env)
 	if code != 128+int(syscall.SIGINT) {
 		t.Fatalf("exit %d\n%s", code, &out)
 	}
@@ -1588,7 +1559,7 @@ func TestGuidedR2InterruptDuringTokenCreationNamesTheToken(t *testing.T) {
 		return cloudflare.Token{}, &cloudflare.Error{Op: "create API token", Err: ctx.Err()}
 	}
 	var out bytes.Buffer
-	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "", "n", "")...)), &out, &out, g.env)
+	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "")...)), &out, &out, g.env)
 	if code != 128+int(syscall.SIGINT) {
 		t.Fatalf("exit %d\n%s", code, &out)
 	}
@@ -1611,14 +1582,14 @@ func TestGuidedR2LostBucketAnswerIsNotSilentlyReplaced(t *testing.T) {
 			t.Parallel()
 			g := newGuidedR2Fixture(t)
 			g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusBadGateway, AfterWork: true, Times: 1})
-			input := guidedAnswers(append(append([]string{}, askToken...), chosen, "n", "", "retry", "second-name", "")...)
+			input := guidedAnswers(append(append([]string{}, askToken...), "customize", chosen, "n", "", "retry", "second-name", "", "")...)
 			out := g.run(t, input+"\n", 0)
 			for _, want := range []string{"Cloudflare may have made the bucket", "may have been created by the earlier request, which got no answer", "Another bucket name"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out, "is taken; trying") {
+			if strings.Contains(out, "is taken; preparing") {
 				t.Errorf("replaced the name quietly:\n%s", out)
 			}
 			if got := g.savedConfig(t).Storage.Bucket; got != "second-name" || len(g.cf.Buckets) != 2 {
@@ -1634,7 +1605,7 @@ func TestGuidedR2UnreadableTokenAnswerNamesTheToken(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusOK, RawBody: "<html>ok</html>", AfterWork: true, Times: 1})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	name := g.cf.Tokens()[0].Name
 	for _, want := range []string{"Cloudflare answered, but setup couldn't read the answer.", `If Cloudflare did create it, revoke the token named "` + name + `"`} {
 		if !strings.Contains(out, want) {
@@ -1650,7 +1621,7 @@ func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RouteCreateToken, cloudflaretest.Failure{Status: http.StatusOK, RawBody: `{"success":true,"result":{"id":"abc123"}}`, Times: 1})
-	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...), 1)
+	out := g.run(t, guidedAnswers(append(append([]string{}, askToken...), "", "stop")...), 1)
 	var deleted []string
 	for _, r := range g.cf.Requests() {
 		if r.Route == cloudflaretest.RouteDeleteToken {
@@ -1668,8 +1639,8 @@ func TestGuidedR2IsHiddenWithoutTheSwitch(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.env.LookupEnv = func(string) (string, bool) { return "", false }
-	out := g.run(t, strings.Join([]string{"", guidedR2Choice, "s3", "work", "2", ""}, "\n")+"\n", 0)
-	if strings.Contains(out, storageLabelR2New) || !strings.Contains(out, fmt.Sprintf("Enter a number from 1 to %d.", len(storageMenuOptions()))) {
+	out := g.run(t, strings.Join([]string{"", guidedR2Choice, "s3-existing", "work", "2", ""}, "\n")+"\n", 0)
+	if strings.Contains(out, "Cloudflare R2: create a new bucket for me") || !strings.Contains(out, "Choose a listed number or action") {
 		t.Fatalf("output:\n%s", out)
 	}
 	if len(g.cf.Requests()) != 0 || len(g.apis) != 0 {
@@ -1679,12 +1650,11 @@ func TestGuidedR2IsHiddenWithoutTheSwitch(t *testing.T) {
 
 // With the switch on the guided choice follows the guided S3 one, right
 // before the instructions.
-func TestGuidedR2SitsBeforeTheInstructions(t *testing.T) {
+func TestGuidedR2DoesNotAddNumberedProviderChoices(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
-	n, help := r2MenuNumber(t, guidedR2Choice), r2MenuNumber(t, "help")
-	if !strings.Contains(out, "  "+n+") "+storageLabelR2New+"\n  "+help+") Show setup instructions\n") || help != strconv.Itoa(len(storageMenuFor(withR2CreateSwitch("1", true)))) {
+	if !strings.Contains(out, "  1) Cloudflare R2\n  2) Amazon S3\n[h] Setup instructions") {
 		t.Fatalf("menu:\n%s", out)
 	}
 }
@@ -1734,7 +1704,7 @@ func TestGuidedR2AsksForANewNameOutsideTheSignalHandler(t *testing.T) {
 	g.env.Interrupts = sig.interrupts
 	g.env.IsTerminal = func(any) bool { return true }
 	var reads, activeAtRead atomic.Int32
-	answers := append(append([]string{"", "r2-create"}, askToken...), "taken-name", "n", "", "other-name", "")
+	answers := append(append([]string{"", "r2-create"}, askToken...), "customize", "taken-name", "n", "", "other-name", "", "")
 	in := &probeReader{lines: answers, onRead: func() {
 		reads.Add(1)
 		activeAtRead.Add(sig.active())
@@ -1779,7 +1749,7 @@ func TestGuidedR2SignalDuringRevokeIsAnswered(t *testing.T) {
 		}
 		return next()
 	}
-	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "", "n", "")...)), out, out, g.env)
+	code := Run([]string{"setup"}, strings.NewReader(guidedAnswers(append(append([]string{}, askToken...), "")...)), out, out, g.env)
 	if code != 128+int(syscall.SIGINT) {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
@@ -1902,7 +1872,7 @@ func TestGuidedR2RevokesTheTokenWhenTheDraftSaveFailsAfterStaging(t *testing.T) 
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	var out bytes.Buffer
-	p := newPrompter(strings.NewReader(strings.Join(append(append([]string{guidedR2Choice}, askToken...), "", "n", ""), "\n")+"\n"), &out)
+	p := newPrompter(strings.NewReader(strings.Join(append(append([]string{guidedR2Choice}, askToken...), ""), "\n")+"\n"), &out)
 	draft := setupDraft{Version: draftFormat, Step: 1, Config: config.Config{Harnesses: []string{"claude"}}}
 	saves := 0
 	save := func() error {
