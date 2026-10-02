@@ -27,6 +27,7 @@ remain the contract.
 
 | Proposal | Status |
 | --- | --- |
+| [Storage setup with default bucket creation](implemented/storage-setup-default-creation.md) | Implemented; R2 creation retains its experimental gate pending live acceptance. |
 | [Git activity in metadata](implemented/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](implemented/list-browse-ux.md) | Implemented design record; see [list and show](../../docs/guides/list-and-show.md) for current behavior. |
 | [Platform abstraction](implemented/platform-abstraction.md) | Implemented; remaining follow-ups and verification gaps are recorded in the document. |

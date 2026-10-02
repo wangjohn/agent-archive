@@ -52,7 +52,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
 		return map[string]applicationDiscovery{"codex": {VersionState: "absent"}}
 	}
-	input := strings.Join([]string{"y", project, "", "s3", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", project, "", "s3-existing", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	if !strings.Contains(output, "Codex (version not detected)") || strings.Contains(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
@@ -179,7 +179,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 				}
 				return storagetest.NewMemoryStore(), nil
 			}
-			out := setupRun(t, env, "\ns3\n\ntest-bucket\n"+tc.edits, 0)
+			out := setupRun(t, env, "\ns3-existing\n\ntest-bucket\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)
@@ -298,7 +298,7 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 		}
 		return storagetest.NewMemoryStore(), nil
 	}
-	answers := []string{"y", "n", "n", project, "", "s3", "profile", "bucket", "us-east-1",
+	answers := []string{"y", "n", "n", project, "", "s3-existing", "profile", "bucket", "us-east-1",
 		"y",     // refused: starting is not a choice
 		"check", // the file is fixed just before this answer
 		"y"}
