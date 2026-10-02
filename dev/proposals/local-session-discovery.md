@@ -1,8 +1,8 @@
 # Local session discovery: engineering proposal
 
-> **Proposed.** Not implemented or scheduled. See the [documentation index](../../docs/README.md) for what exists today.
+> **Proposed; revised source contract.** Not implemented on the default branch. See the [documentation index](../../docs/README.md) for what exists today.
 
-Status: proposed plan for review. Prepared 2026-10-01. This proposal adds automatic discovery of new local Codex sessions to the background collector, with shared admission rules that can support other agents later. It does not authorize implementation or changes to this machine's capture configuration.
+Status: proposed plan for review. Prepared 2026-10-01; source contract revised 2026-10-02. This proposal adds automatic discovery of new local Codex sessions to the background collector, with shared admission rules that can support other agents later. This document describes the intended behavior, not a claim that automatic discovery is available. Implementation work is tracked separately; it does not change this machine's capture configuration.
 
 ## Purpose
 
@@ -38,7 +38,9 @@ Relevant existing code:
 
 **Deferred:** automatic discovery for Claude Code or Cursor, cloud retrieval, a new GUI onboarding application, filesystem watchers, runtime plugins, retroactive imports, and changes to the transcript privacy filter. Cloud capture remains a [separate proposal](cloud-capture.md).
 
-“Local” must be supported by the adapter's source evidence. A file existing on this computer alone does not prove local execution: copied, forked, or downloaded histories need explicit classification. Unsupported or ambiguous histories remain available through deliberate backfill rather than automatic admission.
+“Local” means a supported session record read from a default or explicitly configured Codex home on this computer. It does not mean proven execution on this computer. The adapter validates source format, native identity, start time, and available import/fork/remote classifications. Identifiable unsupported histories remain available through deliberate backfill rather than automatic admission.
+
+A recently copied or downloaded session whose supported metadata is indistinguishable from an ordinary record is eligible if it satisfies every other admission rule. Its original native start must fall within capture consent; copying old history never makes it fresh. This is an explicit source-trust boundary, not a cryptographic provenance promise. The user accepts this limitation; its frequency has not been measured. See the [bounded source investigation and decision](local-session-discovery-evidence.md).
 
 ## Principles and decisions
 
@@ -50,7 +52,8 @@ Relevant existing code:
 | Existing installations explicitly enable discovery through setup. | An upgrade must not silently broaden capture behavior. |
 | Fresh setup enables discovery as part of selecting Codex, with a clear summary. | Users should not need to understand two capture mechanisms to get started. |
 | Native start evidence governs discovery eligibility; admission time keeps its existing meaning. | Scan time cannot make an old session eligible. |
-| Unknown evidence fails closed and is visible. | Avoid uploading unintended history while giving users an actionable explanation. |
+| Missing or invalid required metadata and identifiable unsupported classifications fail closed and are visible. | Preserve admission boundaries without requiring an unavailable proof of local execution. |
+| Indistinguishable recent copies use ordinary eligibility rules. | Approved source homes are the capture boundary; native start, project and destination consent still apply. |
 | No extra publication path. | Preserve filtering, checksums, source-first publication, metadata-last publication, and read-back verification. |
 
 ## Design
@@ -67,9 +70,9 @@ An adapter returns candidates and typed outcomes. The contract contains:
 | --- | --- |
 | Agent and native session ID | Identity within this machine's agent namespace. |
 | Source descriptor | Source kind, stable source key, and private locator. A locator can identify a file or database record; it is not necessarily a transcript path. |
-| Native start and evidence kind | An adapter-supported timestamp and the facts that establish a new local session. |
+| Native start and evidence kind | An adapter-supported native timestamp and format facts for a qualifying source record; not proof of local execution. |
 | Working directory | Input to shared project authorization. |
-| Parent/fork/execution classification | Facts needed to reject unsupported inherited or remote histories. |
+| Parent/fork/execution classification | Available facts used to reject identifiable unsupported imported, inherited, or remote histories. |
 | Source fingerprint | A scheduling hint for retry and change detection, never proof of freshness. |
 
 Adapters cannot authorize a project, select a destination, or register a session. Shared policy does that. Outcomes distinguish incomplete metadata, unsupported format, invalid identity, unavailable source, and a usable candidate. The API supports bounded enumeration with a continuation token and cancellation; it does not return all candidates in one in-memory slice.
@@ -81,7 +84,7 @@ Codex enumeration starts with the locations already supported by backfill: defau
 For a previously unregistered candidate, require all of the following:
 
 1. Discovery is enabled for that agent and the configuration is valid, committed, and unpaused.
-2. The bounded metadata identifies a supported new local session, with consistent native ID, source identity, absolute working directory, and a valid native start timestamp.
+2. The bounded metadata identifies a supported session record in an approved source root, with consistent native ID, source identity, absolute working directory, and a valid native start timestamp. Identifiable unsupported imports, forks, child-session linkages, or remote records are rejected; lack of independent execution proof alone is not a rejection.
 3. Shared project resolution yields an explicitly included project; the nearest applicable exclusion wins.
 4. Native start falls within an authorized discovery interval for this agent, project, and destination.
 5. No existing registration or removal record forbids admission.
@@ -160,11 +163,11 @@ Before project authorization, inspect only bounded metadata needed for identity,
 
 Treat file content and locators as untrusted input: allow expected regular sources, reject devices/FIFOs and path escapes, bound records and traversal, and revalidate identity when the source is reopened for collection. Explicitly configured symlinked Codex homes may be resolved to approved source roots; per-file symlinks must not permit reads outside those roots. Apply equivalent limits to worktree metadata. Sanitize OS errors before display because they often contain paths and native IDs.
 
-The feature's guarantee is scoped to the current user's trust boundary. It does not prevent that user or a process with the same permissions from fabricating a transcript. Protect against accidental overcapture, malicious source contents, and unintended path traversal without claiming tamper-proof provenance.
+The feature's guarantee is scoped to approved local source homes and the current user's trust boundary. It neither proves where a task executed nor prevents that user or a process with the same permissions from fabricating a transcript. An indistinguishable recent copy can be uploaded under the same consent rules as an ordinary record. Protect against historical capture, malicious source contents, and unintended path traversal without claiming tamper-proof provenance.
 
 ### 8. Setup and status
 
-Fresh setup keeps the agent and project choices users already understand. When a supported Codex installation is selected, the capture summary states: **“Automatically archive new local Codex tasks in these projects to this destination. Existing history requires backfill.”** Establish the discovery authorization interval only when setup commits. For an unsupported installation, explain the limitation and retain the hook setup path; do not show automatic capture as ready. Preserve setup rollback and interrupted-transaction recovery.
+Fresh setup keeps the agent and project choices users already understand. When a supported Codex installation is selected, the capture summary states: **“Automatically archive new Codex tasks found in these local Codex homes, in these projects, to this destination. Existing history requires backfill. Qualifying recent copied sessions may also be archived.”** Establish the discovery authorization interval only when setup commits. For an unsupported installation, explain the limitation and retain the hook setup path; do not show automatic capture as ready. Preserve setup rollback and interrupted-transaction recovery.
 
 For existing installations, show discovery as an explicit opt-in during setup refresh/reconfiguration. Keep current hooks operating until enabled. Enabling discovery is forward-looking and must not auto-run backfill. Noninteractive setup requires an explicit discovery choice; do not infer consent from a hook-only configuration. Final CLI flag names and configuration fields belong to implementation review.
 
@@ -194,13 +197,22 @@ Keep overall capture, discovery health, hook observation, and storage verificati
 
 | Phase | Work | Exit condition |
 | --- | --- | --- |
-| 0. Verify source evidence | Disposable desktop and CLI probes of headers, start times, parent/fork behavior, worktrees, archived moves, custom homes, and remote/downloaded histories. | Document supported evidence and unsupported cases; no automatic admission of ambiguous histories. |
+| 0. Bound source investigation | Inspect pinned producer formats and disposable execution/import/copy probes; record actual desktop versus CLI coverage. | Document supported metadata, identifiable rejection cases, and the indistinguishable-copy limitation. Missing execution provenance alone does not block discovery. |
 | 1. Shared foundations | Extract source catalog/resolver; add namespaced index migration and atomic admission; define durable authorization intervals and rollback compatibility. | Existing hook/backfill behavior passes; races, pause, exclusions, destination changes, and tombstones covered. |
 | 2. Codex discovery | Add adapter, bounded incremental scan, retry/reconciliation, and local admission independent of storage availability. | Correct capture with hooks absent or unapproved; no duplicate uploads; measured resource budgets. |
 | 3. Onboarding and status | Transactional enablement, existing-install opt-in, capture verification, separate discovery/hook health, docs and schemas. | Desktop user can enable capture and verify a new task without opening Codex CLI. |
 | 4. Release acceptance | Disposable machine and bucket acceptance, upgrade/rollback checks, failure injection, and benchmark evidence. | All correctness/security gates pass; remaining fidelity limitations are explicit. |
 
-Package boundaries are targets, not a line-count estimate. Phase 1 is independently reviewable before activating discovery. Keep behavior disabled until source-evidence and admission gates pass; ship only the Codex adapter. Future agents must meet the same contract and acceptance suite, with their own source-specific probes.
+Package boundaries are targets, not a line-count estimate. Use the following PR boundaries and integration order, preserving newer default-branch session identity and lifecycle behavior:
+
+| PR | Scope | Dependency and activation |
+| --- | --- | --- |
+| A. Contract and evidence | Revised source-trust contract and bounded investigation. | Standalone documentation change against main. |
+| B. Shared foundations | Source readers/resolver, identity/admission, authorization lifecycle, writer compatibility, and provenance. | Separate branch against main; incorporate A's contract before merge. Discovery remains disabled. |
+| C. Codex discovery | Bounded adapter/scanner and collector integration. | Stacked on B; discovery remains disabled. |
+| D. Setup, status, and activation | Consent UX, status, supported record formats, documentation, and release evidence. | Stacked on C; activation waits for all acceptance gates below. |
+
+Merge in A → B → C → D order. B does not need A's documentation commits in its ancestry; C and D must be reconciled with their merged prerequisites before retargeting. Keep production activation behind admission, real desktop, storage, compatibility, and performance acceptance. A documented inability to distinguish recent copies does not block activation; unavailable desktop acceptance still does. Ship only the Codex adapter. Future agents must meet the same contract and acceptance suite, with their own source-specific probes.
 
 | Area | Implementation ownership |
 | --- | --- |
@@ -220,7 +232,7 @@ The review strengthened the initial idea of scanning Codex files on each collect
 | Hooks, backfill, and discovery can race or overwrite provenance. | Share atomic register-or-merge, namespaced identities, and explicit immutable fields. |
 | A naïve full scan grows with years of history and competes with hooks. | Budget enumeration/header work, persist fair continuation, reconcile caches, and keep discovery I/O outside admission locks. |
 | Desktop users cannot tell whether capture actually works. | Make discovery the supported default for fresh Codex setup, with independent registration, publication verification, and hook-observation states. |
-| New files may contain copied, forked, or remote history. | Gate supported source evidence before rollout and reject ambiguous cases automatically. |
+| New files may contain copied, forked, or remote history. | Reject identifiable unsupported cases and pre-consent native starts. Accept indistinguishable qualifying recent copies and disclose the source-trust limitation. |
 | Upgrades can broaden capture or destroy eligibility history on rollback. | Require existing-install opt-in and a tested writer/schema compatibility policy. |
 
 ## Acceptance criteria
@@ -228,7 +240,8 @@ The review strengthened the initial idea of scanning Codex files on each collect
 ### Correctness and security
 
 - With hooks absent or unapproved, a supported new desktop or CLI Codex task in an included project is discovered, filtered, published, and read back successfully.
-- Old sessions, resumed old sessions, sessions begun during pause/disabled intervals, excluded projects, and unsupported inherited/remote histories are not automatically admitted. Invalid or missing start evidence never falls back to file timestamps.
+- Old sessions, resumed old sessions, sessions begun during pause/disabled intervals, excluded projects, and identifiable unsupported imported/inherited/remote histories are not automatically admitted. Invalid or missing start evidence never falls back to file timestamps.
+- A supported recent copy without a reliable distinguishing classification follows ordinary admission rules. Tests cover rejection of a pre-consent copy, deduplication of an already registered copy, and eligibility of an otherwise qualifying recent copy; no test claims proof of local execution.
 - External worktrees map to the included main repository only through validated metadata; explicit checkout exclusions win. Symlink escapes, cyclic/oversized Git metadata, FIFOs, malformed headers, and identity conflicts fail safely.
 - Every ordering of hook, discovery, backfill, retry, and crash recovery yields one archive identity and preserves admission, origin, and destination. Different agents with the same native ID remain distinct.
 - Retention and backfill-undo tombstones prevent resurrection. Destination switch and project reinclude do not cause historical capture into the new authorization period.
@@ -245,7 +258,7 @@ The review strengthened the initial idea of scanning Codex files on each collect
 
 ### Onboarding and compatibility
 
-- A desktop-only user completes agent-archive setup, starts a task, and sees verified capture without hook approval. The setup summary explains project scope, destination, and existing-history exclusion.
+- A desktop-only user completes agent-archive setup, starts a task, and sees verified capture without hook approval. The setup summary explains source homes, project scope, destination, existing-history exclusion, and the qualifying-recent-copy limitation.
 - An upgrade does not enable discovery or import history silently. Existing hook-only installations and imports continue working.
 - Status differentiates ready, found/pending, verified, degraded discovery, and unknown hook approval. An import or collector heartbeat does not falsely establish automatic-capture verification.
 - Schema fixtures and migration tests cover legacy registrations, ambiguous indexes, old readers/binaries, and rollback behavior. Use disposable state and storage for all development acceptance; do not alter a developer's live archive configuration.
@@ -254,11 +267,12 @@ The review strengthened the initial idea of scanning Codex files on each collect
 
 | Question | Proposed resolution or release gate |
 | --- | --- |
-| Which Codex versions expose reliable local/fork/start evidence? | Phase 0 establishes supported versions and evidence. Do not default-enable unsupported versions. |
+| Which Codex versions expose supported identity/start/classification metadata? | Phase 0 documents pinned formats and actual probe coverage. Do not default-enable unsupported formats or infer execution location from source presence. |
+| Can a recent copy look identical to a session executed here? | Yes for the metadata tested. Accept otherwise qualifying records, disclose the limitation, and preserve native-start consent. Further useful classifications can be added without claiming universal detection. |
 | Can inherited records precede a new fork's start despite a fresh session ID? | Reject automatic fork admission initially unless the adapter proves a safe content boundary. Decide broader fork support separately. |
 | How much authorization history is necessary? | Persist intervals needed for delayed admission and tombstones; define bounded compaction that fails closed for expired/unprovable starts. Never silently use current scan time. |
 | Can older binaries safely preserve the new state? | Set an explicit minimum writer version or incompatible config version if needed; test refusal and rollback before release. |
 | What are safe scan defaults and clock tolerances? | Proposed budgets require benchmark and clock-failure evidence before becoming release defaults. |
 | Should Claude Code and Cursor gain discovery next? | Decide from onboarding need, fidelity, and source cost. Their adapters must pass the shared admission contract; no automatic expansion in this release. |
 
-The design aims for reliable, explainable capture within verified source formats. Its long-term extension point is the source-evidence adapter and shared policy, with explicit compatibility gates whenever an agent changes its format.
+The design aims for reliable, explainable capture within supported source formats and explicit capture consent. Its long-term extension point is the source-evidence adapter and shared policy, with explicit compatibility gates whenever an agent changes its format.
