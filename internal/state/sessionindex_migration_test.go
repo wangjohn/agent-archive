@@ -365,6 +365,11 @@ func TestQualifiedRecoveryPreservesLegacyChildReservation(t *testing.T) {
 	if err := s.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
+	// A hook can arrive before the collector's first migration pass. It must
+	// defer this legacy candidate, rather than reserve a second child identity.
+	if id, created, err := s.EnsureArchiveSessionID(childKey); !errors.Is(err, ErrSessionIndexRecoveryRequired) || created || id != "" {
+		t.Fatalf("legacy candidate reassigned before recovery: %q %t %v", id, created, err)
+	}
 	// Known corruption is requested before maintenance; its negative census must
 	// not discard the candidate's stronger durable positive reservation evidence.
 	if err := s.RequestSessionIndexRecovery(childKey); err != nil {
