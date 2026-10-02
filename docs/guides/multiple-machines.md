@@ -33,8 +33,9 @@ hooks, collector, and local state.
   [`setup --yes`](../getting-started/setup.md#set-up-without-questions)
   sets up another machine from a script. The command printed after setup
   carries the bucket folder, retention, skill-use capture rule, skill evidence,
-  and agent skill installation policy; adjust the project paths for the new
-  machine. A key limited to one prefix (see
+  and agent skill installation policy. Whole repositories with a known origin
+  use [repository matching](#repository-matching-in-setup-commands); adjust
+  other project paths for the new machine. A key limited to one prefix (see
   [bucket permissions](../security/bucket-permissions.md)) works for several
   machines sharing that prefix.
 
@@ -243,7 +244,8 @@ On a configured source, run `agent-archive machines add --name laptop --share-ke
 for R2, or omit `--share-key` for S3. The source checks storage before creating a
 pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
 separate channel. On the receiver run `agent-archive setup --pair`, paste the
-bundle, and enter the code privately. Three letters per word are sufficient.
+bundle, and enter the code privately. The first three characters of each word
+are sufficient; use `yo-` for `yo-yo`, including the hyphen.
 Review the destination before capture settings: an existing destination change
 requires explicit consent. Source apps that are absent here are skipped.
 

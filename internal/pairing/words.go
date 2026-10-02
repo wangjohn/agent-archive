@@ -41,7 +41,11 @@ func NormalizeCode(code string) (string, error) {
 	if len(code) > 512 {
 		return "", errors.New("pairing code is too long")
 	}
-	parts := strings.FieldsFunc(strings.ToLower(code), func(r rune) bool { return r == '-' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+	parts, err := CodeWords(code)
+	if err == nil {
+		return strings.Join(parts, "-"), nil
+	}
+	parts = strings.FieldsFunc(strings.ToLower(code), func(r rune) bool { return r == '-' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
 	if len(parts) != 6 {
 		return "", errors.New("enter the six pairing words or their three-letter prefixes")
 	}
@@ -79,4 +83,57 @@ func NormalizeCode(code string) (string, error) {
 		parts[i] = found
 	}
 	return strings.Join(parts, "-"), nil
+}
+
+// CodeWords expands six full words or unique prefixes without treating hyphens
+// inside a word or its prefix as word boundaries. It preserves the code's words
+// for display as well as canonical key derivation.
+func CodeWords(code string) ([]string, error) {
+	if len(code) > 512 {
+		return nil, errors.New("pairing code is too long")
+	}
+	code = strings.ToLower(code)
+	list := words()
+	type state struct {
+		offset    int
+		remaining int
+	}
+	failed := map[state]bool{}
+	var parse func(int, int) ([]string, bool)
+	parse = func(offset, remaining int) ([]string, bool) {
+		key := state{offset, remaining}
+		if failed[key] {
+			return nil, false
+		}
+		for offset < len(code) && codeSeparator(code[offset]) {
+			offset++
+		}
+		if remaining == 0 {
+			return nil, offset == len(code)
+		}
+		for _, word := range list {
+			for _, token := range []string{word, word[:3]} {
+				if !strings.HasPrefix(code[offset:], token) {
+					continue
+				}
+				end := offset + len(token)
+				if end < len(code) && !codeSeparator(code[end]) {
+					continue
+				}
+				if tail, ok := parse(end, remaining-1); ok {
+					return append([]string{word}, tail...), true
+				}
+			}
+		}
+		failed[key] = true
+		return nil, false
+	}
+	if parts, ok := parse(0, 6); ok {
+		return parts, nil
+	}
+	return nil, errors.New("enter the six pairing words or their three-letter prefixes")
+}
+
+func codeSeparator(b byte) bool {
+	return b == '-' || b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }

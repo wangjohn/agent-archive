@@ -1,20 +1,16 @@
 name: Test
 on:
   pull_request:
-  push:
-    branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: test-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14]
-    runs-on: ${{ matrix.os }}
-    # The job takes 7 to 11 minutes. A hung step is stopped here, not after
-    # GitHub's default of six hours.
+  linux-race:
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,7 +27,7 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
-      # internal/cli takes 275 to 427 seconds under the race detector on these
+      # internal/cli takes 275 to 427 seconds under the race detector on CI
       # runners, too close to go test's default of 10 minutes a package.
       - run: go test -race -timeout 20m ./...
       # The run above uses the race detector, under which the wall-clock
@@ -48,20 +44,36 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
-      # real-systemd's name and pinned runner image, which branch protection
-      # and its validation depend on.
+      # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
 
+  macos-smoke:
+    # Compile every Darwin/cgo package, then exercise the native Keychain,
+    # launchd, terminal, and setup paths before merging. The full race suite
+    # runs on main and nightly in extended.yml.
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Darwin build and focused race tests
+        run: ./scripts/test_macos_smoke.sh
+
   cross-build:
-    # What the two platform legs above cannot see: the ubuntu leg builds only
-    # linux/amd64, and the macOS leg builds only darwin with cgo (the release
-    # configuration). This job, on Linux, builds and vets the other targets,
-    # so a change that breaks one fails here, not on release day. The macOS
-    # legs and the lint job already vet darwin with cgo natively, which no
-    # Linux runner can do (cgo needs Apple's SDK).
+    # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.
+    # Build and vet the other release targets before a change reaches main.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -85,8 +97,8 @@ jobs:
           go build ./...
           go vet ./...
       # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which the macOS legs
-      # (cgo on) never compile.
+      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
+      # (cgo on) never compiles.
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
@@ -102,107 +114,6 @@ jobs:
         run: |
           ./scripts/build-release.sh linux
           ./scripts/verify-linux-release.sh
-
-  fuzz:
-    # Every parser, redaction, and hook fuzz target, briefly, so a change that
-    # breaks one of their properties fails before merge
-    # (dev/contributing/testing.md). The failure message quotes the input;
-    # reproduce it locally and keep it as a seed.
-    runs-on: ubuntu-latest
-    # At 30 seconds a target, the targets take about 12 minutes in all.
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: go.sum
-      - name: Fuzz each target for 30 seconds
-        run: |
-          found=0
-          for pkg in $(go list ./...); do
-            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
-              found=$((found + 1))
-              echo "::group::$pkg $target"
-              go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
-              echo "::endgroup::"
-            done
-          done
-          # Guard against a listing that silently finds nothing: internal/archive
-          # has ten targets, internal/hooks two, and internal/cli one.
-          test "$found" -ge 13
-
-  real-systemd:
-    # The systemd scheduler adapter against a real systemd user manager
-    # (dev/contributing/testing.md): the runner is a virtual machine with
-    # systemd, where lingering starts the runner user's own manager. It runs
-    # the scheduler conformance suite over that manager (the states the suite
-    # puts a job in are real ones) and a setup-level smoke: the real setup
-    # installs the collector, the manager's timer starts its program, and
-    # uninstall leaves nothing. The tests change the user manager's units, so
-    # they run only when AGENT_ARCHIVE_REAL_SYSTEMD=1, and refuse a machine
-    # that already has agent-archive units.
-    #
-    # It depends on the runner image (logind, the user bus, a minute of timer),
-    # so the image is pinned: ubuntu-24.04 (systemd 255) is the one it has been
-    # validated on, and ubuntu-latest would change systemd version and defaults
-    # under a required check without a change here. Bump the pin deliberately
-    # and re-validate on the new image first (scripts/acceptance/linux). The job
-    # name must stay real-systemd: branch protection matches the required check
-    # by name. It is bounded by timeout-minutes. A failure is real information
-    # about the adapter, never to be ignored.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: go.sum
-      - name: Require Go 1.27.1 (go.mod's toolchain line)
-        run: |
-          go version
-          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
-      # The runner user has no login session, so no user manager: lingering
-      # starts one at once (user@UID.service) and keeps it running. Every later
-      # step finds it through these two variables, as a login shell would.
-      - name: Start the runner user's systemd user manager
-        run: |
-          uid="$(id -u)"
-          sudo loginctl enable-linger "$USER"
-          for _ in $(seq 1 60); do
-            [ -S "/run/user/$uid/bus" ] && break
-            sleep 0.5
-          done
-          test -S "/run/user/$uid/bus" || { echo "no user bus at /run/user/$uid/bus after enabling lingering" >&2; exit 1; }
-          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
-          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
-          export XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
-          systemctl --version | head -n 1
-          systemctl --user show-environment > /dev/null
-          loginctl show-user "$uid" --property=Linger
-      - name: Scheduler conformance suite against the real user manager
-        env:
-          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
-        run: go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd
-      # The timer's first run comes a minute after the user manager started
-      # (OnBootSec=60s), so this waits up to two and a half minutes for it.
-      # It also runs uninstall --skip-scheduler with the manager out of reach,
-      # then the command it prints for stopping the job by hand.
-      - name: Setup, the timer's first run, and uninstall
-        env:
-          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
-        run: go test -count=1 -v -timeout 8m -run 'TestRealSystemd' ./internal/cli
-      - name: What the manager says, if a step failed
-        if: failure()
-        run: |
-          systemctl --user list-units --all --no-pager 'agent-archive*' || true
-          systemctl --user status --no-pager 'agent-archive*' || true
-          journalctl --user --no-pager -n 100 || true
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is

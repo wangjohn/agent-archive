@@ -193,10 +193,10 @@ func TestPairingClipboardClearsOnlyUnchangedAndCodeUsesAlternateScreen(t *testin
 	}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
-	must(t, showPairingCode(p, "synthetic-secret", Env{Interrupts: noInterrupts, IsTerminal: func(any) bool { return true }}))
+	must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", Env{Interrupts: noInterrupts, IsTerminal: func(any) bool { return true }}))
 	s := out.String()
 	start, end := strings.Index(s, "\x1b[?1049h"), strings.Index(s, "\x1b[?1049l")
-	pos := strings.Index(s, "synthetic secret")
+	pos := strings.Index(s, "aardvark abandoned abbreviate abdomen abhorrence abiding")
 	if start < 0 || pos < start || end < pos {
 		t.Fatalf("code outside alternate screen %q", s)
 	}
@@ -431,5 +431,31 @@ func TestPairingRedirectedBundleUsesPrivateTerminalForReview(t *testing.T) {
 	}
 	if !tty.closed || !strings.Contains(tty.output.String(), "Sessions will upload") || !strings.Contains(tty.output.String(), "Review pairing settings") {
 		t.Fatalf("private review missing: closed=%t %s", tty.closed, &tty.output)
+	}
+}
+
+func TestPairingDeliveryPreservesHyphenatedCodeWords(t *testing.T) {
+	t.Parallel()
+	code := "yo-yo-aardvark-yo-yo-abdomen-yo-yo-abiding"
+	displayed := "yo-yo aardvark yo-yo abdomen yo-yo abiding"
+	env := Env{LookupEnv: noEnv, IsTerminal: func(any) bool { return true }, Interrupts: func() (<-chan os.Signal, func()) { return make(chan os.Signal), func() {} }}
+	var out, errOut bytes.Buffer
+	if status := finishPairingDelivery(nil, code, pairingLedger{}, "", true, &out, &errOut, env); status != 0 {
+		t.Fatalf("delivery %d: %s", status, &errOut)
+	}
+	if !strings.Contains(out.String(), displayed) {
+		t.Fatalf("scripted display: %q", out.String())
+	}
+	out.Reset()
+	p := newPrompter(strings.NewReader("\n"), &out)
+	if err := showPairingCode(p, code, env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), displayed) {
+		t.Fatalf("interactive display: %q", out.String())
+	}
+	normalized, err := pairing.NormalizeCode(displayed)
+	if err != nil || normalized != code {
+		t.Fatalf("displayed code not usable: %q, %v", normalized, err)
 	}
 }

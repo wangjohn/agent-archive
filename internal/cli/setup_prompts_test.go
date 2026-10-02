@@ -65,7 +65,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	input := strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	// The Sessions row is left out while it shows the default.
 	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
@@ -237,7 +237,7 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude", "cursor"} }
 	// Apps and projects; decline the found apps; change nothing else; keep
@@ -295,7 +295,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
 	// keep the project; add none; start archiving.
@@ -478,7 +478,7 @@ func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
 func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
 	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), bucketDocURL) {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
@@ -488,8 +488,8 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 func TestStorageHelpStaysOnTheMenu(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Show setup instructions") != 3 {
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
+	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Setup instructions") != 3 {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }

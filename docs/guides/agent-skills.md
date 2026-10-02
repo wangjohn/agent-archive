@@ -28,27 +28,38 @@ that session as a prompt: filtered as the archive is (injected instructions and
 credentials removed, tool output trimmed), cut to about 120 KB, and addressed
 to the receiving agent. It then does what you asked with it.
 
-- **It finds the session by its words.** Every word must appear in the
-  session's name, title (its first prompt), branch, project name, or app, or
-  start its short session ID, and `#212` or `212` also matches a pull request
-  number, so the words may be a topic, a PR number, a branch, or a project
-  name. It looks in this machine's sessions first (no network), then the
-  archive's, so a session from an hour ago needs no bucket access. The agent
-  searches for one or two distinctive words. With no
-  topic ("where my other agent left off") it takes the most recent session for
-  the project you are in (`--latest`). It passes over the session it is
-  running in when the agent names it to commands it runs, as Claude Code does;
-  Cursor does not, so there words or `--latest` can match the current chat.
-- **It never guesses.** When several sessions match, the agent shows you the
-  candidates (short ID, agent, project when they span several, when, pull
-  request, title) and asks which. It never picks for you. It can also read
-  them as data with `list "<words>" --json`.
+- **It finds the session by its words.** Every word must appear, in any case,
+  in the session's name (the one your agent shows in its sidebar), title (its
+  first prompt), branch, project name, or app, or start its short session ID,
+  and `#212` or `212` also matches a pull request number. So the words may be a
+  topic, a PR number, a branch, or a project name, and may match different
+  fields ("linux 212"). The agent searches for one or two distinctive words,
+  not a whole sentence. It looks in this machine's sessions first (no network),
+  then the archive's, so a session from an hour ago needs no bucket access, and
+  inside a repository it looks at that repository's sessions before the
+  others, saying how many more match elsewhere. Subagent sessions answer only
+  when nothing else matches. With no topic ("where my other agent left off") it
+  takes the most recent session for the project you are in (`--latest`). It
+  passes over the session it is running in when the agent names it to commands
+  it runs, as Claude Code does; Cursor does not, so there words or `--latest`
+  can match the current chat. The full rules are in
+  [naming a session in words](handoff.md#naming-a-session-in-words).
+- **It never guesses.** When several sessions match, `handoff` prints a table
+  and exits 1: the short ID, agent, project when they span several, when, pull
+  request, and title of each, then a `Next:` line with the exact command for
+  the first row. The agent shows you that table and asks which one. It never
+  picks for you. Once you choose, it runs the command again with that short ID
+  in place of the words, and `--harness` set to that row's agent. To see the
+  candidates as data instead, it can run `list "<words>" --json`, which prints
+  the archive's matches for the same words (a session not uploaded yet is only
+  in `handoff`'s table).
 - **When nothing matches**, it tries different words, or looks at the last 30
   days with `list --since 30d` and shows you the titles.
-- **It can browse:** `list` for what exists (a short table; `--json` for the
-  full metadata), `show ID` for a session's summary, `show ID --transcript`
-  for its conversation, bounded to about 120 KB (the rest is saved in a file
-  whose path is named).
+- **It can browse:** `list` for what exists (a short table of top-level
+  sessions, with a hint of how many subagent sessions each has; `list "<words>"`
+  searches it, and `--json` gives the full metadata), `show ID` for a session's
+  summary, `show ID --transcript` for its conversation, bounded to about 120 KB
+  (the rest is saved in a file whose path is named).
 
 The skill never lets the agent run `setup`, `uninstall`, `purge`, `backfill`,
 `sync`, or `feedback`, add `--to` to `handoff` (that starts another agent, and
@@ -117,8 +128,10 @@ The agent's own permission settings still apply.
 - **A sandbox.** In Claude Code's sandbox (off until you turn it on), in
   Codex's default one, and in Cursor's, the network is blocked unless
   approved (Claude Code asks about each new domain; where nothing can ask, as
-  in `claude -p`, it is refused). A session on this machine is still found by
-  its title (no network), but the archive fails with `operation not
+  in `claude -p`, it is refused). `handoff "<words>"` still finds a session on
+  this machine by any field it matches (name, title, branch, project, app, a PR
+  number, or the start of its ID), since it looks there first and needs no
+  network, but the archive, and so `list` and `show`, fail with `operation not
   permitted`. The skill tells you what failed and asks you to allow it, or to
   run the command yourself, rather than retrying variations. None of the three
   documents whether a sandboxed command can read the macOS Keychain, which an

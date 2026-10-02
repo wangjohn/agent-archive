@@ -48,7 +48,10 @@ func TestCodeAcceptsFullWordsAndPrefixes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(code, "-")
+	parts, err := CodeWords(code)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range parts {
 		parts[i] = strings.ToUpper(parts[i][:3])
 	}
@@ -142,6 +145,9 @@ func FuzzInspect(f *testing.F) {
 
 func FuzzNormalizeCode(f *testing.F) {
 	f.Add("aar aba abb abd abh abi")
+	f.Add("yo-yo-yo-yo-yo-yo-yo-yo-yo-yo-yo-yo")
+	f.Add("yo--yo--yo--yo--yo--yo-")
+	f.Add("YO-YO aar YO- abb abd abi")
 	f.Fuzz(func(t *testing.T, code string) {
 		if len(code) > 1024 {
 			return
@@ -239,4 +245,47 @@ func FuzzPayloadJSON(f *testing.F) {
 			_ = payloadJSON(plain)
 		}
 	})
+}
+
+func TestEveryWordAndPrefixKeepsSixCodeWords(t *testing.T) {
+	t.Parallel()
+	for _, word := range words() {
+		full := strings.TrimSuffix(strings.Repeat(word+"-", 6), "-")
+		prefix := word[:3]
+		for _, input := range []string{
+			full,
+			strings.TrimSuffix(strings.Repeat(strings.ToUpper(word)+" ", 6), " "),
+			strings.Join([]string{prefix, prefix, prefix, prefix, prefix, prefix}, "-"),
+			strings.Join([]string{word, prefix, word, prefix, word, prefix}, " \t"),
+		} {
+			got, err := NormalizeCode(input)
+			if err != nil || got != full {
+				t.Fatalf("word %q input %q: %q, %v", word, input, got, err)
+			}
+			parts, err := CodeWords(got)
+			if err != nil || len(parts) != 6 {
+				t.Fatalf("word %q boundaries %v: %v", word, parts, err)
+			}
+		}
+	}
+	for _, input := range []string{"yo yo yo yo yo yo", "yo-yo yo-yo yo-yo yo-yo yo-yo", "yo-yo yo-yo yo-yo yo-yo yo-yo yo-yo yo-yo"} {
+		if _, err := NormalizeCode(input); err == nil {
+			t.Fatalf("accepted wrong word count: %q", input)
+		}
+	}
+}
+
+func TestHyphenatedWordCodeEncryptsAndDecryptsDisplayedAndPrefixForms(t *testing.T) {
+	code := "yo-yo-aardvark-yo-yo-abdomen-yo-yo-abiding"
+	payload := testPayload()
+	bundle, err := Seal(payload, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"yo-yo aardvark yo-yo abdomen yo-yo abiding", "yo- aar yo- abd yo- abi", "yo--aar-yo--abd-yo--abi"} {
+		got, err := Open(bundle, input, payload.CreatedAt)
+		if err != nil || got.PairingID != payload.PairingID {
+			t.Fatalf("input %q: %v", input, err)
+		}
+	}
 }

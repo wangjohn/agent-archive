@@ -150,7 +150,12 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 
 func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home string, yes bool, out, errOut io.Writer, env Env) int {
 	if yes {
-		if _, err := fmt.Fprintln(out, "Pairing code (deliver separately): "+strings.ReplaceAll(code, "-", " ")); err != nil {
+		words, err := pairing.CodeWords(code)
+		if err != nil {
+			terminal.Println(errOut, "code delivery uncertain; pairing remains tracked")
+			return 1
+		}
+		if _, err := fmt.Fprintln(out, "Pairing code (deliver separately): "+strings.Join(words, " ")); err != nil {
 			terminal.Println(errOut, "code delivery uncertain; pairing remains tracked")
 			return 1
 		}
@@ -242,6 +247,10 @@ func writePairingFile(path, bundle string) error {
 }
 
 func showPairingCode(p *prompter, code string, env Env) error {
+	words, err := pairing.CodeWords(code)
+	if err != nil {
+		return err
+	}
 	if !env.interactive(p.out) {
 		return errors.New("pairing code display needs terminal output")
 	}
@@ -267,7 +276,7 @@ func showPairingCode(p *prompter, code string, env Env) error {
 		screen.mu.Unlock()
 		return errors.New("pairing code display interrupted")
 	}
-	_, err := fmt.Fprintln(p.out, "Pairing code: "+strings.ReplaceAll(code, "-", " ")+"\nType the first three letters of each word. Recording or screen sharing may capture it.\nPress Enter to hide.")
+	_, err = fmt.Fprintln(p.out, "Pairing code: "+strings.Join(words, " ")+"\nType the first three characters of each word (yo- for yo-yo). Recording or screen sharing may capture it.\nPress Enter to hide.")
 	screen.mu.Unlock()
 	if err != nil {
 		return err
