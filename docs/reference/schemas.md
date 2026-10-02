@@ -40,3 +40,8 @@ validate against a fixed version.
 
 `show --json` output is not an instance of `metadata.schema.json`: it adds
 `linked_session_availability` (see [JSON output](json-output.md#show)).
+
+The experimental `machines --verify --json` `verification` object follows
+[`machine-verification.schema.json`](../../schemas/machine-verification.schema.json).
+It describes bounded observations and explicitly unknown inventory visibility;
+it does not authorize provider changes or establish ownership.

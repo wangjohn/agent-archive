@@ -413,6 +413,19 @@ records and partial listings exit with code 1 while preserving readable records.
 Records are untrusted bucket claims. Heartbeats are at most daily, not current
 activity; credential kinds do not establish provider-verified ownership.
 
+`machines --verify --json` adds a `verification` object: `checked_at`,
+`pagination_complete`, `account_inventory_complete` (currently always false),
+`visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
+`observations` and optional `claim_not_observed` token IDs. Observations contain
+`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+is true only when pagination and all observed checks complete without partial
+results; it never asserts ownership, account completeness or revocation.
+States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
+`scope_unknown_or_mismatch`, `provider_key_not_active`,
+`issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
+`local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
+`local_committed_binding`. Failures return available observations and exit 1.
+
 `machines --json` additionally includes optional `pairing_warnings`, an array of
 secret-free local pending, uncertain-delivery or expired pairing descriptions.
 These warnings require no conversation scan or provider-management credential.

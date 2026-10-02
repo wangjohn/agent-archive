@@ -238,6 +238,43 @@ not publish a record or write registration state, including when nothing needs
 refreshing. The next collector pass publishes a changed application version
 through its normal fingerprint check, without waiting for the daily heartbeat.
 
+### Experimental provider observations
+
+Provider verification remains experimental and has not passed live Phase 4
+acceptance. Opt in with `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1` and run
+`agent-archive machines --verify`. This reads Cloudflare account token metadata
+for the configured R2 destination; it does not create or revoke keys. Arbitrary
+S3-compatible endpoints are refused.
+
+The management token comes from `CLOUDFLARE_API_TOKEN` first, which is read and
+removed before provider work. Otherwise an interactive invocation can use
+`cloudflare_token_command` in config, an argv array such as
+`["op", "read", "op://Private/Cloudflare/agent-archive"]`, or a hidden prompt.
+The command runs without a shell, has a 20-second budget and a 4 KiB output
+limit, and receives an environment without token, secret, object-access or
+pairing variables. Its stderr and failure output are suppressed. The token
+is held in memory and is never saved. Ordinary listing and collection never
+run this command. `--yes` and `--json` require the environment token and never
+prompt or run the configured command.
+
+Use Account API Tokens Read or Write. A successful list may expose only tokens
+created by the caller (`list_self`), so completed pagination is not evidence of
+account-wide completeness. Missing metadata means missing **or not visible**,
+not revoked. Checks read at most 20 pages / 1,000 tokens and 16 supplemental
+details within one 20-second provider budget; partial observations remain
+available when requests fail.
+
+Canonical issued names are `agent-archive r=<32hex> i=<32hex> k=<32hex>` (118
+bytes, within Cloudflare's 120-character limit). Bucket-bearing names from the
+original proposal are not accepted. Exact provider policy must independently
+match the configured account, jurisdiction, bucket and verified permission
+group. Unsupported policy fields or inconsistent pagination evidence remain
+unknown. A matching name describes issuance, not machine ownership. Only the
+current destination-bound local assignment establishes a committed local
+binding; other bucket records remain untrusted claims. Legacy/manual keys
+remain unknown. “Claim not observed” keys are candidates for inspection, never
+proof that a key is unused or safe to revoke.
+
 ## Encrypted pairing (shared-key beta)
 
 On a configured source, run `agent-archive machines add --name laptop --share-key`

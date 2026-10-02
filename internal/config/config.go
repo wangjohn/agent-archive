@@ -62,6 +62,8 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// CloudflareTokenCommand returns a management token for explicit interactive operations only.
+	CloudflareTokenCommand []string `json:"cloudflare_token_command,omitempty"`
 	// MachineName is a chosen label, never a detected hostname.
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
@@ -223,6 +225,9 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return Config{}, false, err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return Config{}, false, err
 	}
@@ -237,6 +242,9 @@ var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
 func Save(home string, cfg Config) error {
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return err
 	}

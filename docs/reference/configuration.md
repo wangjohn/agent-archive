@@ -106,6 +106,25 @@ Resuming an ordinary setup draft keeps the latest committed machine name and
 credential provenance for unchanged credentials. Changing the destination or
 credential reference clears old provenance; a draft cannot restore it.
 
+## Experimental management token source
+
+`cloudflare_token_command` is an optional argv array, for example
+`["op", "read", "op://Private/Cloudflare/agent-archive"]`. Store a reference to
+an external secret, never the token itself or a literal secret argument. Guided
+R2 creation and experimental `machines --verify` share this source. Both prefer
+`CLOUDFLARE_API_TOKEN` and remove that variable before management requests;
+removal failure stops the operation. Otherwise an interactive invocation runs
+the configured program directly, without a shell, or asks for a hidden token.
+
+The command receives no stdin, has a 20-second deadline and a 4 KiB stdout
+limit, and suppresses stderr and failure output. Its environment excludes
+credential variables. `--yes`, `--json`, pipes and the noninteractive policy
+never run the configured command or prompt; explicit verification in those
+modes requires the environment token. Ordinary listing, status and collection
+never acquire a management token. See [experimental provider observations](../guides/multiple-machines.md#experimental-provider-observations)
+for the opt-in gate and limits. This command configuration is local and is not
+part of a pairing payload.
+
 `AGENT_ARCHIVE_PAIRING_CODE` supplies the six-word pairing code only to
 `setup --pair-file PATH --yes` (or `--pair-file -`). The receiver reads and removes
 it from its process environment; it is never saved. Deliver it separately from

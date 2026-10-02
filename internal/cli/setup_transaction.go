@@ -332,6 +332,9 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			next.MachineName = "unnamed-" + next.MachineID[:4]
 		}
 	}
+	if err := next.ValidateCloudflareTokenCommand(); err != nil {
+		return err
+	}
 	if err := next.ValidateMachine(); err != nil {
 		return err
 	}

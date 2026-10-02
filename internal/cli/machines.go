@@ -109,12 +109,14 @@ func registrationPending(home string, cfg config.Config) bool {
 	return err != nil || ack.Pending || ack.DestinationID != cfg.DestinationID()
 }
 
-func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
+func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, env Env) int {
 	if len(args) > 0 && args[0] == "rename" {
 		return runMachinesRename(args[1:], out, errOut, env)
 	}
 	fs := env.newCommandFlags("machines", errOut)
 	asJSON := fs.Bool("json", false, "write informational machine records as JSON")
+	verify := fs.Bool("verify", false, "explicit experimental read-only provider check")
+	unattended := fs.Bool("yes", false, "do not prompt or run the configured token command")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
@@ -136,6 +138,12 @@ func runMachinesCommand(args []string, out, errOut io.Writer, env Env) int {
 		return machineCommandError(errOut, errors.New("could not open archive storage"))
 	}
 	result := machines.List(ctx, store)
+	if *verify {
+		return runMachinesVerify(cfg, result, stdin, out, errOut, env, *asJSON, *unattended)
+	}
+	if *unattended {
+		return fs.usageError("--yes requires --verify")
+	}
 	observePairingClaims(home, cfg.DestinationID(), result, env.now())
 	if *asJSON {
 		if err := json.NewEncoder(out).Encode(struct {

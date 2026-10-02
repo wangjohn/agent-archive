@@ -192,18 +192,26 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 Guide: [Multiple machines](../guides/multiple-machines.md).
 
 ```text
-Usage: agent-archive machines [--json]
+Usage: agent-archive machines [--json] [--verify] [--yes]
 
-List informational machine records from this bucket, without provider checks.
+List informational machine records from this bucket.
+--verify opts into an experimental, read-only Cloudflare metadata check behind
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1. Account inventory completeness
+remains unknown; matching metadata never proves ownership or access removal.
 Anyone with bucket access can forge records; they never authorize revocation.
 Heartbeat is updated at most daily and does not indicate current activity.
 Unreadable records and incomplete listings are reported; those exit with code 1.
-  --json  Write records, omitted objects, and partial-result status as JSON
+  --json    Write records and observations as JSON
+            Never prompt or run a token command
+  --verify  Explicit bounded provider metadata check for this R2 bucket
+  --yes     With --verify, require CLOUDFLARE_API_TOKEN and never prompt
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--json` | no value | — |
+| `--verify` | no value | — |
+| `--yes` | no value | — |
 
 ## agent-archive machines add
 

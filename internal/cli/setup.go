@@ -250,6 +250,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	stopApps()
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
+	p.tokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	p.spaceAfterAnswer = true
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)
@@ -336,6 +337,8 @@ func retiredStagedRefs(retired, staged []string, active string) []string {
 // to applySetup. Draft persistence and installation happen elsewhere.
 func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
 	cfg := draft.Config
+	// The token source is local configuration, never an answer restored from a draft.
+	cfg.CloudflareTokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
 	// Existing-machine setup keeps the committed label: a resumed draft may
 	// predate a rename. First setup retains its optional chosen draft label.
 	if existing.MachineID != "" || existing.MachineName != "" {
