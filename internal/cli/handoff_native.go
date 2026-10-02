@@ -105,6 +105,12 @@ type nativePreviewCatalog struct {
 }
 
 func (n *nativePreviewCatalog) load() (bool, error) {
+	if err := n.ctx.Err(); err != nil {
+		return false, err
+	}
+	if n.exhausted {
+		return false, nil
+	}
 	type job struct {
 		index int
 		c     nativesessions.Candidate
@@ -123,7 +129,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		}
 		if cost > nativeReadBudget-n.reserved {
 			n.exhausted = true
-			terminal.Println(n.stderr, "handoff: cumulative local read budget exhausted; older previews are unavailable in this invocation")
+			terminal.Println(n.stderr, "handoff: cumulative local read budget exhausted; remaining verified sessions are shown by native ID without preview labels")
 			break
 		}
 		n.reserved += cost
@@ -175,7 +181,8 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		if title == "" {
 			title = c.NativeID
 		}
-		row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", j.index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: archive.DisplayLine(title), Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), ProjectID: c.Directory}
+		row := n.identityRow(j.index)
+		row.Title = archive.DisplayLine(title)
 		row.fields = sessionFields{Name: a.p.Name, Title: a.p.Title, Branch: a.p.Branch, Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
 		if a.err != nil {
 			row.SkillHint = " · preview unavailable"
@@ -189,8 +196,23 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 	if partial > 0 || unavailable > 0 {
 		terminal.Printf(n.stderr, "handoff: this preview batch has %d partial labels and %d unavailable labels; word searches may miss uninspected text\n", partial, unavailable)
 	}
+	if n.exhausted {
+		for i := n.next; i < len(n.candidates); i++ {
+			row := n.identityRow(i)
+			row.SkillHint = " · label not inspected"
+			n.rows = append(n.rows, row)
+		}
+	}
 	terminal.Printf(n.stderr, "handoff: labels inspected for %d of %d discovered local sessions; word searches cover only these loaded previews\n", n.next, len(n.candidates))
 	return n.next < len(n.candidates) && !n.exhausted, nil
+}
+
+// identityRow uses only verified discovery facts; it never reads a transcript.
+func (n *nativePreviewCatalog) identityRow(index int) listRow {
+	c := n.candidates[index]
+	row := listRow{Index: len(n.rows) + 1, selectionKey: fmt.Sprintf("native-%d", index), SessionID: c.NativeID, ShortID: shortSessionID(c.NativeID), HarnessKey: c.Ref.Harness, Harness: c.Ref.Harness, Title: c.NativeID, Project: archive.DisplayLine(filepath.Base(c.Directory)), When: relativeAge(n.now, c.ModifiedAt), ProjectID: c.Directory}
+	row.fields = sessionFields{Project: row.Project, Harness: c.Ref.Harness, SessionID: c.NativeID}
+	return row
 }
 
 func nativeIdentity(candidates []nativesessions.Candidate, query, harness string) (*nativesessions.Candidate, error) {
@@ -306,7 +328,24 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 	if len(candidates) == 0 {
 		return fail(errors.New("no verified local sessions in the selected checkout; use --all-projects to search other projects, or --file PATH --harness NAME"))
 	}
-	selected, err := selectKnownNative(opts, result, interactive, env)
+	var selected *nativesessions.Candidate
+	if opts.latest && !result.Coverage.IdentityComplete {
+		terminal.Println(stderr, "handoff: --latest requires complete local identity and checkout discovery; select a known native ID explicitly")
+		if !interactive {
+			for i, c := range candidates {
+				if i >= handoffCandidateLimit {
+					terminal.Printf(stderr, "handoff: showing %d of %d verified candidates; use the terminal picker for the bounded catalog\n", handoffCandidateLimit, len(candidates))
+					break
+				}
+				terminal.Printf(stderr, "  agent-archive handoff %s --harness %s --source local --project %s\n", shellQuote(c.NativeID), shellQuote(c.Ref.Harness), shellQuote(c.Directory))
+			}
+			return handoffTarget{}, false, 1
+		}
+		// Refused latest must reach an explicit picker even when --to and a
+		// current-session identity are present.
+	} else {
+		selected, err = selectKnownNative(opts, result, interactive, env)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -329,7 +368,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 	if err != nil {
 		return fail(err)
 	}
-	if opts.latest {
+	if opts.latest && result.Coverage.IdentityComplete {
 		target.describe = fmt.Sprintf("local %s (%s), newest local transcript modification time %s", selected.NativeID, selected.Ref.Harness, selected.ModifiedAt.Format("2006-01-02 15:04:05 MST"))
 	}
 	return target, true, 0

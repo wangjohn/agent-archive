@@ -65,8 +65,8 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
 
-      # The same gate as a pull request's test job: nothing is built for
-      # release from a commit whose tests fail on this runner.
+      # Full Darwin race coverage also runs after merges in extended.yml;
+      # the release repeats it on the exact tagged commit.
       - name: Test
         run: |
           go vet ./...
