@@ -1,0 +1,49 @@
+=== RUN   TestLargeRecordMemoryCeiling
+    record_limit_test.go:129: 32 MiB record (bulk in a dropped field): peak heap in use 128.0 MiB above baseline (sampled), 160.1 MiB allocated in total, 358 bytes retained
+--- PASS: TestLargeRecordMemoryCeiling (0.61s)
+=== RUN   TestCursorTextOverTheRecordLimit
+--- PASS: TestCursorTextOverTheRecordLimit (0.00s)
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/archive	0.684s
+=== RUN   TestCursorSQLiteRewrittenChatRepublishes
+--- PASS: TestCursorSQLiteRewrittenChatRepublishes (0.07s)
+=== RUN   TestCursorSQLiteNamingAChatIsNotARewrite
+--- PASS: TestCursorSQLiteNamingAChatIsNotARewrite (0.05s)
+=== RUN   TestCursorSQLiteMetadataRegeneration
+--- PASS: TestCursorSQLiteMetadataRegeneration (0.02s)
+=== RUN   TestCursorSQLiteReadLocalBundle
+--- PASS: TestCursorSQLiteReadLocalBundle (0.00s)
+=== RUN   TestCursorSQLiteRememberedFailureWithRequest
+--- PASS: TestCursorSQLiteRememberedFailureWithRequest (0.03s)
+=== RUN   TestCursorSQLiteChatNewerThanTheSnapshot
+--- PASS: TestCursorSQLiteChatNewerThanTheSnapshot (0.00s)
+=== RUN   TestCursorSQLiteChatEmptiedAfterPublicationIsARewriteGap
+--- PASS: TestCursorSQLiteChatEmptiedAfterPublicationIsARewriteGap (0.01s)
+=== RUN   TestParserUpgradeWithNewContentReadsTheTranscriptOnce
+--- PASS: TestParserUpgradeWithNewContentReadsTheTranscriptOnce (0.01s)
+=== RUN   TestParserUpgradeOverAnUnchangedTranscriptDoesNotReadIt
+--- PASS: TestParserUpgradeOverAnUnchangedTranscriptDoesNotReadIt (0.02s)
+=== RUN   TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges
+=== RUN   TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges/mid-file
+=== RUN   TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges/trailing_without_newline
+--- PASS: TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges (0.02s)
+    --- PASS: TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges/mid-file (0.01s)
+    --- PASS: TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges/trailing_without_newline (0.00s)
+=== RUN   TestCursorSQLiteSourceChangeDetection
+--- PASS: TestCursorSQLiteSourceChangeDetection (0.04s)
+=== RUN   TestCursorSQLiteOneSnapshotPerPass
+--- PASS: TestCursorSQLiteOneSnapshotPerPass (0.02s)
+=== RUN   TestCursorSQLiteFailuresCostNoCopies
+=== RUN   TestCursorSQLiteFailuresCostNoCopies/missing_chat
+=== RUN   TestCursorSQLiteFailuresCostNoCopies/unsafe_format
+=== RUN   TestCursorSQLiteFailuresCostNoCopies/too_large
+--- PASS: TestCursorSQLiteFailuresCostNoCopies (0.01s)
+    --- PASS: TestCursorSQLiteFailuresCostNoCopies/missing_chat (0.00s)
+    --- PASS: TestCursorSQLiteFailuresCostNoCopies/unsafe_format (0.00s)
+    --- PASS: TestCursorSQLiteFailuresCostNoCopies/too_large (0.00s)
+=== RUN   TestCursorSQLitePassSweepsStaleSnapshots
+--- PASS: TestCursorSQLitePassSweepsStaleSnapshots (0.00s)
+=== RUN   TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange
+--- PASS: TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange (0.01s)
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/collector	0.348s

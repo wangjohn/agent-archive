@@ -1,0 +1,16 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/capture
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkHookLocalEffects/fresh-5         	     100	    212999 ns/op	         1.000 repo-probes/op	   35179 B/op	     313 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	     100	    363977 ns/op	         1.000 repo-probes/op	   35256 B/op	     313 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	     100	    328382 ns/op	         1.000 repo-probes/op	   35350 B/op	     313 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	     100	    413188 ns/op	         1.000 repo-probes/op	   35231 B/op	     313 allocs/op
+BenchmarkHookLocalEffects/fresh-5         	     100	    310584 ns/op	         1.000 repo-probes/op	   35231 B/op	     313 allocs/op
+BenchmarkHookLocalEffects/stop-5          	     100	    144974 ns/op	         0 repo-probes/op	   20136 B/op	     179 allocs/op
+BenchmarkHookLocalEffects/stop-5          	     100	    181942 ns/op	         0 repo-probes/op	   20198 B/op	     179 allocs/op
+BenchmarkHookLocalEffects/stop-5          	     100	    115064 ns/op	         0 repo-probes/op	   20202 B/op	     179 allocs/op
+BenchmarkHookLocalEffects/stop-5          	     100	     93240 ns/op	         0 repo-probes/op	   20253 B/op	     179 allocs/op
+BenchmarkHookLocalEffects/stop-5          	     100	    112394 ns/op	         0 repo-probes/op	   20141 B/op	     179 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/capture	0.313s
