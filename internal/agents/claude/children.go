@@ -16,6 +16,7 @@ import (
 // Children owns native subagent transcript association with a discovered parent.
 type Children struct{}
 
+// DiscoverChildren enumerates Claude subagent evidence without admitting registrations.
 func (Children) DiscoverChildren(ctx context.Context, r agentapi.ChildDiscoveryRequest, emit func(agentapi.ChildCandidate) error) (out agentapi.DiscoveryReport, err error) {
 	if r.Parent.Agent != agentmeta.Claude || r.Files == nil || emit == nil {
 		return out, fmt.Errorf("invalid child discovery request")

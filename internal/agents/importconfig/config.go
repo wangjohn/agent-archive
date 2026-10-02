@@ -19,6 +19,7 @@ type Provider struct {
 	ConversationTypes        []string
 }
 
+// ImportPolicy declares the configured native start evidence requirement.
 func (p Provider) ImportPolicy(agentapi.SourceRef) agentapi.ImportPolicy {
 	if p.FileCreatedStart {
 		return agentapi.ImportPolicy{Start: agentapi.ImportFileCreatedStart}
@@ -26,6 +27,7 @@ func (p Provider) ImportPolicy(agentapi.SourceRef) agentapi.ImportPolicy {
 	return agentapi.ImportPolicy{Start: agentapi.ImportNativeStart}
 }
 
+// InspectImport interprets retained conversation, session identity and start evidence.
 func (p Provider) InspectImport(ctx context.Context, r agentapi.ImportInspectionRequest) (out agentapi.ImportInspection, err error) {
 	for _, text := range r.Filtered.Text {
 		if strings.TrimSpace(text) != "" {

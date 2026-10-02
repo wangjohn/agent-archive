@@ -455,3 +455,44 @@ func (s *fourthPublicationStore) Put(ctx context.Context, key string, data []byt
 }
 
 const fourthDestination handoffDestination = handoffDestination(orbifold.ID)
+
+// Exercise the real command entry point, storage check and setup transaction with
+// an injected integration; inventory helper tests alone cannot prove selection.
+func TestFourthOrdinarySetupStatusAndUninstallCommands(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.Agents = fourthRegistry(t, &orbifold.Ports{})
+	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "fixture", Region: "us-east-1"}}, nil }
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "fixture-bucket", "--aws-profile", "fixture", "--project", project, "--apps", string(orbifold.ID))
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !slices.Equal(cfg.Harnesses, []string{string(orbifold.ID)}) {
+		t.Fatalf("command selection: %+v %v", cfg, err)
+	}
+	location := env.hookFiles(userHome)[string(orbifold.ID)]
+	if _, err := os.Stat(location); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentskills.Installed(env.Agents, userHome, "", home); len(got) != len(agentskills.Registry) {
+		t.Fatalf("command installed skills: %v", got)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), "orbifold: waiting for first session") {
+		t.Fatalf("status exit=%d output=%s errors=%s", code, &out, &errOut)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("uninstall exit=%d output=%s errors=%s", code, &out, &errOut)
+	}
+	if got := agentskills.Installed(env.Agents, userHome, "", home); len(got) != 0 {
+		t.Fatalf("command left owned skills: %v", got)
+	}
+	raw, err := os.ReadFile(location)
+	if err == nil && bytes.Contains(raw, []byte(home)) {
+		t.Fatalf("command left owned hook: %s", raw)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}

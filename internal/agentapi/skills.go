@@ -27,6 +27,7 @@ type SkillDestination struct {
 // SkillAction selects a typed skill mutation.
 type SkillAction uint8
 
+// SkillInstall, SkillRefresh and SkillRemove select planning operations without performing writes.
 const (
 	SkillInstall SkillAction = iota + 1
 	SkillRefresh

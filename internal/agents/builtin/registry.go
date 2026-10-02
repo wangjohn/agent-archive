@@ -331,11 +331,13 @@ func (r *Registry) LookupDatabaseCatalog(name string) (agentapi.DatabaseCatalogI
 	return b.DatabaseCatalog, ok && b.DatabaseCatalog != nil
 }
 
+// LookupNativePaths resolves native path declarations without probing the host.
 func (r *Registry) LookupNativePaths(name string) (agentapi.NativePathsProvider, bool) {
 	b, ok := r.Lookup(name)
 	return b.NativePaths, ok && b.NativePaths != nil
 }
 
+// NativePathAgents lists implemented native path providers in catalog order.
 func (r *Registry) NativePathAgents() []string {
 	var out []string
 	for _, d := range r.catalog.All() {
@@ -346,6 +348,7 @@ func (r *Registry) NativePathAgents() []string {
 	return out
 }
 
+// WorktreeResolvers lists implemented native missing-worktree conventions in catalog order.
 func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 	var out []agentapi.MissingWorktreeResolver
 	for _, d := range r.catalog.All() {
@@ -356,6 +359,7 @@ func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 	return out
 }
 
+// LookupWorkspace resolves a native workspace metadata interpreter.
 func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, bool) {
 	b, ok := r.Lookup(name)
 	return b.Workspace, ok && b.Workspace != nil

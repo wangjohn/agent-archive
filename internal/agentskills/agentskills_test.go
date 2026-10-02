@@ -762,3 +762,57 @@ func TestConflictingSkillDestinationsRefuseBeforeWriting(t *testing.T) {
 		t.Fatalf("conflicting plan touched host: %v %v", entries, err)
 	}
 }
+
+// A conflict between optional integrations matters only when both are selected.
+// Regression: 2026-10 phase 6 review P6-R1-01.
+func TestUnselectedSkillTemplateConflictDoesNotBlockInstallOrRemoval(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	ports := collidingSkillPorts{}
+	changes, foreign, err := PlanInstall(ports, home, "", []string{"plain"}, exe, "", "")
+	if err != nil || len(changes) != len(Registry) || len(foreign) != 0 {
+		t.Fatalf("single selected template: changes=%v foreign=%v err=%v", changes, foreign, err)
+	}
+	must(t, hooks.Apply(changes))
+	changes, _, err = PlanInstall(ports, home, "", []string{"frontmatter"}, exe, "", "")
+	if err != nil || len(changes) != len(Registry) {
+		t.Fatalf("switch selected template: changes=%v err=%v", changes, err)
+	}
+	must(t, hooks.Apply(changes))
+	if got := Installed(ports, home, "", ""); len(got) != len(Registry) {
+		t.Fatalf("installed alternatives: %v", got)
+	}
+	if got := Stale(ports, home, "", exe, ""); len(got) != 0 {
+		t.Fatalf("current alternative reported stale: %v", got)
+	}
+	if got := Stale(ports, home, "", exe+"-new", ""); len(got) != len(Registry) {
+		t.Fatalf("outdated alternatives: %v", got)
+	}
+	removals, kept, err := PlanRemoval(ports, home, "", "")
+	if err != nil || len(removals) != len(Registry) || len(kept) != 0 {
+		t.Fatalf("remove shared paths once: removals=%v kept=%v err=%v", removals, kept, err)
+	}
+	must(t, hooks.Apply(removals))
+}
+
+func TestConflictingInventoryPreservesForeignSkills(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	ports := collidingSkillPorts{}
+	path := filepath.Join(home, "shared-skills", Registry[0].Name, "SKILL.md")
+	write(t, path, "my foreign skill\n")
+	changes, foreign, err := PlanInstall(ports, home, "", []string{"plain"}, exe, "", "")
+	if err != nil || !reflect.DeepEqual(foreign, []string{path}) {
+		t.Fatalf("foreign alternative: %v %v", foreign, err)
+	}
+	must(t, hooks.Apply(changes))
+	removals, kept, err := PlanRemoval(ports, home, "", "")
+	if err != nil || !reflect.DeepEqual(kept, []string{path}) {
+		t.Fatalf("foreign removal: %v %v", kept, err)
+	}
+	must(t, hooks.Apply(removals))
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != "my foreign skill\n" {
+		t.Fatalf("foreign content changed: %q %v", raw, err)
+	}
+}

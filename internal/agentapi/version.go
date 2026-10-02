@@ -15,6 +15,7 @@ type ApplicationDiscovery struct {
 // VersionProbeKind restricts host execution to current supported probe operations.
 type VersionProbeKind uint8
 
+// VersionCLI and VersionBundle select executable and bundle metadata observations.
 const (
 	VersionCLI VersionProbeKind = iota + 1
 	VersionBundle

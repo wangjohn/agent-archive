@@ -10,6 +10,7 @@ import (
 // Native selection reserves its cumulative header budget between these real stages.
 type DiscoveryStage uint8
 
+// DiscoveryReferences enumerates locators; DiscoveryIdentities inspects their bounded native headers.
 const (
 	DiscoveryReferences DiscoveryStage = iota + 1
 	DiscoveryIdentities

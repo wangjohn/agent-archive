@@ -24,6 +24,7 @@ const maxComposerVersion = 18
 // not every message row, and holds its lock only briefly.
 const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'`
 
+// InspectCatalog streams compact Cursor chat identities and workspace relationships from native database records.
 func (DatabaseCatalogInspector) InspectCatalog(ctx context.Context, host agentapi.DatabaseCatalogHost) (agentapi.DatabaseCatalog, error) {
 	var chats []agentapi.DatabaseChat
 	newer := 0

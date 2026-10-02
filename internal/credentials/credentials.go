@@ -69,11 +69,12 @@ type CredentialStore interface {
 }
 
 // Config is the persisted pure destination value.
-
 type Config = destination.Config
 
+// ProviderS3 identifies a destination using the selected AWS profile.
 const ProviderS3 = destination.ProviderS3
 
+// ProviderR2 identifies a destination using stored R2 credentials.
 const ProviderR2 = destination.ProviderR2
 
 // LoadAWSConfig loads exactly the selected shared AWS profile. Supplying an

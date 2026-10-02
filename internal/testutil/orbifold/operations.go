@@ -17,19 +17,19 @@ import (
 )
 
 // Skills declares fixture-owned locations, separately from other integrations.
-
 func Skills() skillconfig.Provider {
 	return skillconfig.Provider{ManagedSuffix: ".orbifold/skills", Roots: []skillconfig.Root{{Suffix: ".orbifold/skills", Scope: "user_orbits"}, {Suffix: ".orbifold/skills", Scope: "project_orbits", Project: true}}}
 }
 
 // Hooks interprets an independent JSON hook settings layout, preserving foreign fields.
-
 type Hooks struct{}
 
+// Location declares the synthetic starboard settings path.
 func (Hooks) Location(l agentapi.HookLocations) string {
 	return filepath.Join(l.UserHome, ".orbifold", "starboard.json")
 }
 
+// EnvironmentKeys lists native configuration keys omitted from owned launch environments.
 func (Hooks) EnvironmentKeys() []string { return []string{"ORBIT_CONFIG"} }
 
 func hookDocument(f agentapi.HookFile) (map[string]any, error) {
@@ -48,6 +48,7 @@ func hookDocument(f agentapi.HookFile) (map[string]any, error) {
 	return d, nil
 }
 
+// Inspect observes the synthetic installation entry without modifying settings.
 func (Hooks) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookInspection, error) {
 	d, err := hookDocument(r.File)
 	if err != nil {
@@ -65,6 +66,7 @@ func (Hooks) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookInspection,
 	return agentapi.HookInspection{State: state, Installed: found}, nil
 }
 
+// Plan describes a synthetic hook mutation while preserving foreign fields and owners.
 func (h Hooks) Plan(r agentapi.HookPlanRequest) ([]filechange.Change, error) {
 	if r.Action != agentapi.HookInstall && r.Action != agentapi.HookRemove {
 		return nil, errors.New("unknown starboard action")
@@ -97,13 +99,14 @@ func (h Hooks) Plan(r agentapi.HookPlanRequest) ([]filechange.Change, error) {
 }
 
 // Launcher keeps native argv independent of shared process execution.
-
 type Launcher struct{}
 
+// Executables declares the synthetic launcher name without resolving it.
 func (Launcher) Executables() agentapi.Executables {
 	return agentapi.Executables{Names: []string{"orbit-run"}, Install: "synthetic fixture only"}
 }
 
+// Args translates shared launch values into independent native arguments.
 func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
 	if r.ProjectDir == "" {
 		return nil, errors.New("landing directory required")
@@ -111,8 +114,10 @@ func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
 	return append([]string{"--landing", r.ProjectDir, "--carry", r.Prompt}, r.ExtraArgs...), nil
 }
 
+// SessionEnvironmentKeys lists the synthetic current-session environment keys.
 func (p *Ports) SessionEnvironmentKeys() []string { return []string{"ORBIT_NATIVE_KEY"} }
 
+// Detect interprets caller-supplied synthetic session presence.
 func (p *Ports) Detect(e agentapi.RuntimeEnvironment) agentapi.RuntimeObservation {
 	if e.LookupEnv == nil {
 		return agentapi.RuntimeObservation{}
@@ -124,6 +129,7 @@ func (p *Ports) Detect(e agentapi.RuntimeEnvironment) agentapi.RuntimeObservatio
 	return agentapi.RuntimeObservation{NativeID: id, PresenceKey: "ORBIT_NATIVE_KEY"}
 }
 
+// ObserveVersion reports synthetic installed presence separately from version availability.
 func (p *Ports) ObserveVersion(e agentapi.VersionEnvironment) agentapi.ApplicationDiscovery {
 	out := agentapi.ApplicationDiscovery{VersionState: "unavailable"}
 	if e.Host == nil {
@@ -143,12 +149,14 @@ func (p *Ports) ObserveVersion(e agentapi.VersionEnvironment) agentapi.Applicati
 	return out
 }
 
+// CaptureEvidence declares fixture validation only, with child linkage unavailable.
 func (p *Ports) CaptureEvidence() agentapi.CaptureCapabilities {
 	validated := agentapi.CapabilityEvidence{State: agentapi.CapabilityFixtureValidated, Evidence: "synthetic Orbifold fixtures only"}
 	unavailable := agentapi.CapabilityEvidence{State: agentapi.CapabilityUnavailable, Evidence: "no child native evidence declared"}
 	return agentapi.CaptureCapabilities{FreshStart: validated, Transcript: validated, Lifecycle: validated, SkillEvidence: validated, SubagentLinkage: unavailable, AdapterFixtures: validated}
 }
 
+// PreviewRecord renders a redacted retained pulse into a shared turn preview.
 func (p *Ports) PreviewRecord(ctx context.Context, raw []byte) (archive.RecordPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.RecordPreview{}, err
@@ -169,13 +177,14 @@ func (p *Ports) PreviewRecord(ctx context.Context, raw []byte) (archive.RecordPr
 }
 
 // Discovery owns the unusual native header and filename vocabulary.
-
 type Discovery struct{ Qualified bool }
 
+// DefaultDirectories declares the synthetic constellation store location.
 func (Discovery) DefaultDirectories(home string) []string {
 	return []string{filepath.Join(home, ".orbifold", "constellations")}
 }
 
+// Roots declares purpose-specific synthetic traversal, excluding native-file handoff.
 func (d Discovery) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryPurpose) []agentapi.NativeStoreRoot {
 	if purpose == agentapi.DiscoveryHandoff {
 		return nil
@@ -191,6 +200,7 @@ func (d Discovery) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryP
 	return roots
 }
 
+// InspectHeader interprets one pulse through the caller-owned bounded scanner.
 func (Discovery) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
 	var header agentapi.NativeHeader
 	var parseErr error
@@ -206,6 +216,7 @@ func (Discovery) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeH
 	return header, errors.Join(parseErr, err)
 }
 
+// Discover streams synthetic locators and optional inspected identities into the caller.
 func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, emit func(agentapi.DiscoveryCandidate) error) (agentapi.DiscoveryReport, error) {
 	roots := r.Roots
 	if len(roots) == 0 {
@@ -250,14 +261,12 @@ func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, em
 }
 
 // ProjectPaths demonstrates a native inventory declaration without probing paths.
-
 func (p *Ports) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
 	return agentapi.NativeProjectPaths{Worktrees: []string{filepath.Join(e.Locations.UserHome, ".orbifold", "landings")}}
 }
 
 // ReadManifestShards is intentionally limited to the caller's synthetic files.
 // Production providers use their own bounded verified reads instead.
-
 func ReadManifestShards(paths []string, open func(string) (io.ReadCloser, error)) ([][]byte, error) {
 	var out [][]byte
 	for _, path := range paths {

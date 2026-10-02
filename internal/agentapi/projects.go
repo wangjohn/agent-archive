@@ -60,6 +60,7 @@ type WorkspaceRequest struct {
 // WorkspaceEvidencePurpose distinguishes project files from message metadata.
 type WorkspaceEvidencePurpose uint8
 
+// WorkspaceProjectFile and WorkspaceMessageRecord select the native metadata layout being interpreted.
 const (
 	WorkspaceProjectFile WorkspaceEvidencePurpose = iota + 1
 	WorkspaceMessageRecord

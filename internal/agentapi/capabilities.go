@@ -3,6 +3,7 @@ package agentapi
 // CapabilityState is how well a capture capability is established.
 type CapabilityState string
 
+// CapabilityDocumented and the other states distinguish declared support from fixture validation and unavailable or unknown capabilities.
 const (
 	CapabilityDocumented       CapabilityState = "documented"
 	CapabilityFixtureValidated CapabilityState = "fixture_validated"

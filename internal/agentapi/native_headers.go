@@ -5,6 +5,7 @@ import "time"
 // DiscoveryPurpose separates compatibility import headers from verified native selection.
 type DiscoveryPurpose uint8
 
+// DiscoveryImport, DiscoveryHandoff and DiscoveryProjects keep each header purpose and its limits separate.
 const (
 	DiscoveryImport DiscoveryPurpose = iota + 1
 	DiscoveryHandoff
@@ -27,7 +28,6 @@ type NativeHeaderRequest struct {
 	Scan    func(func([]byte) bool) error
 }
 
-// NativeHeaderInspector interprets native headers without host operations.
 // NativeStoreRoot declares native traversal layout for one purpose.
 type NativeStoreRoot struct {
 	Priority   int
@@ -46,6 +46,7 @@ type NativeLocations struct {
 	Directories []string
 }
 
+// NativeHeaderInspector interprets native headers without host operations.
 type NativeHeaderInspector interface {
 	Roots(NativeLocations, DiscoveryPurpose) []NativeStoreRoot
 	InspectHeader(NativeHeaderRequest) (NativeHeader, error)

@@ -10,6 +10,7 @@ import (
 // ProjectEvidence declares native desktop and worktree conventions.
 type ProjectEvidence struct{}
 
+// ProjectPaths declares Claude desktop workspace locations for the observed platform.
 func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
 	var desktop []string
 	if e.OperatingSystem == platform.Darwin && e.Locations.UserHome != "" {
@@ -18,6 +19,7 @@ func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.N
 	return agentapi.NativeProjectPaths{DesktopWorkspaces: desktop}
 }
 
+// MissingWorktreeRepository recovers the repository prefix of a Claude worktree path.
 func (ProjectEvidence) MissingWorktreeRepository(dir string) (string, bool) {
 	marker := string(filepath.Separator) + filepath.Join(".claude", "worktrees") + string(filepath.Separator)
 	i := strings.Index(dir, marker)

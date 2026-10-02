@@ -14,6 +14,7 @@ import (
 // ProjectEvidence owns Cursor storage, workspace slug and metadata conventions.
 type ProjectEvidence struct{}
 
+// ProjectPaths declares Cursor database, workspace storage and worktree locations.
 func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
 	var app string
 	home := e.Locations.UserHome
@@ -43,6 +44,7 @@ func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.N
 
 }
 
+// OpenWorkspace prepares one compact native workspace inventory for this planning pass.
 func (ProjectEvidence) OpenWorkspace(ctx context.Context, r agentapi.WorkspaceRequest) (agentapi.WorkspacePass, error) {
 	if r.Files == nil || r.ResolvePath == nil {
 		return nil, fmt.Errorf("workspace dependencies required")
@@ -64,6 +66,7 @@ func (m *cursorMatcher) MatchWorkspace(ctx context.Context, key string) ([]strin
 	return m.cache[key], ctx.Err()
 }
 
+// WorkspaceFolders extracts checkout directories from the requested native metadata layout.
 func (ProjectEvidence) WorkspaceFolders(e agentapi.WorkspaceEvidence) []string {
 	switch e.Purpose {
 	case agentapi.WorkspaceProjectFile:

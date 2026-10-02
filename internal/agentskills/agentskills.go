@@ -92,6 +92,19 @@ func renderedSkillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome,
 	return files, nil
 }
 
+// inventorySkillFiles retains each provider's alternative template and ownership
+// policy. Different templates at the same path are only a conflict when selected
+// together for installation; inventory must still find and remove either one.
+func inventorySkillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, executable, dataHome string) []File {
+	var files []File
+	for _, skill := range registry {
+		for _, name := range ports.SkillAgents() {
+			files = append(files, skillFiles(ports, []Skill{skill}, userHome, claudeDir, []string{name}, executable, dataHome)...)
+		}
+	}
+	return files
+}
+
 // marker is the line every skill file carries. A file with it is setup's,
 // whichever release or executable path wrote it; the person keeps a file of
 // their own by deleting the line.
@@ -164,24 +177,18 @@ func planInstall(ports agentapi.SkillsLookup, registry []Skill, userHome, claude
 		changes = append(changes, planned...)
 
 	}
-	currentFiles, err := renderedSkillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "")
-	if err != nil {
-		return nil, nil, err
-	}
-	previousFiles, err := renderedSkillFiles(ports, registry, userHome, previousClaudeDir, ports.SkillAgents(), "", "")
-	if err != nil {
-		return nil, nil, err
-	}
+	currentFiles := inventorySkillFiles(ports, registry, userHome, claudeDir, "", "")
+	previousFiles := inventorySkillFiles(ports, registry, userHome, previousClaudeDir, "", "")
 	for _, f := range append(currentFiles, previousFiles...) {
 		if wanted[f.Path] {
 			continue
 		}
-		wanted[f.Path] = true // planned once, if both Claude Code paths are one
 		change, found, err := planRemoval(ports, f, dataHome)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
+			wanted[f.Path] = true // remove each path once, using a provider that owns it
 			changes = append(changes, change)
 		}
 	}
@@ -197,19 +204,26 @@ func PlanRemoval(ports agentapi.SkillsLookup, userHome, claudeDir, dataHome stri
 
 // planRemovalOf is PlanRemoval for the skills in registry.
 func planRemovalOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
-	files, err := renderedSkillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "")
-	if err != nil {
-		return nil, nil, err
-	}
+	files := inventorySkillFiles(ports, registry, userHome, claudeDir, "", "")
+	removed := map[string]bool{}
 	for _, f := range files {
+		if removed[f.Path] {
+			continue
+		}
 		change, found, err := planRemoval(ports, f, dataHome)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
+			removed[f.Path] = true
 			changes = append(changes, change)
-		} else if _, state, _ := read(f.Path); state != missing {
-			kept = append(kept, f.Path)
+		}
+	}
+	for _, f := range files {
+		if !removed[f.Path] && !slices.Contains(kept, f.Path) {
+			if _, state, _ := read(f.Path); state != missing {
+				kept = append(kept, f.Path)
+			}
 		}
 	}
 	return changes, kept, nil
@@ -240,8 +254,8 @@ func Installed(ports agentapi.SkillsLookup, userHome, claudeDir, dataHome string
 // installedOf is Installed for the skills in registry.
 func installedOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, dataHome string) []string {
 	var paths []string
-	for _, f := range skillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "") {
-		if inspection, err := inspectFile(ports, f, dataHome); err == nil && inspection.State == agentapi.HookOwned {
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, "", "") {
+		if inspection, err := inspectFile(ports, f, dataHome); err == nil && inspection.State == agentapi.HookOwned && !slices.Contains(paths, f.Path) {
 			paths = append(paths, f.Path)
 		}
 	}
@@ -263,11 +277,19 @@ func staleOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir,
 		return nil
 	}
 	var paths []string
-	for _, f := range skillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), executable, dataHome) {
-		if inspection, err := inspectFile(ports, f, dataHome); err == nil && inspection.State == agentapi.HookOwned && inspection.Stale {
-			paths = append(paths, f.Path)
+	fresh := map[string]bool{}
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, executable, dataHome) {
+		if inspection, err := inspectFile(ports, f, dataHome); err == nil && inspection.State == agentapi.HookOwned {
+			if inspection.Stale {
+				if !slices.Contains(paths, f.Path) {
+					paths = append(paths, f.Path)
+				}
+			} else {
+				fresh[f.Path] = true
+			}
 		}
 	}
+	paths = slices.DeleteFunc(paths, func(path string) bool { return fresh[path] })
 	return paths
 }
 
@@ -283,7 +305,7 @@ func RemoveEmptyDirs(ports agentapi.SkillsLookup, userHome, claudeDir string) {
 
 // removeEmptyDirs is RemoveEmptyDirs for the skills in registry.
 func removeEmptyDirs(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string) {
-	for _, f := range skillFiles(ports, registry, userHome, claudeDir, ports.SkillAgents(), "", "") {
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, "", "") {
 		stop := f.Boundary
 		for dir := filepath.Dir(f.Path); dir != filepath.Clean(stop) && local.PathWithin(dir, stop); dir = filepath.Dir(dir) {
 			if info, err := os.Lstat(dir); err != nil || !info.IsDir() || os.Remove(dir) != nil {

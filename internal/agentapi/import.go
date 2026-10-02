@@ -9,6 +9,7 @@ import (
 // ImportStartPolicy declares evidence needed before filtering historical input.
 type ImportStartPolicy uint8
 
+// ImportNativeStart requires a native start observation; ImportFileCreatedStart permits the caller to use file creation evidence.
 const (
 	ImportNativeStart ImportStartPolicy = iota
 	ImportFileCreatedStart

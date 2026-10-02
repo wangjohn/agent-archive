@@ -9,6 +9,7 @@ import (
 // ProjectEvidence declares native desktop and worktree locations.
 type ProjectEvidence struct{}
 
+// ProjectPaths declares Codex worktree locations from the observed user home.
 func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
 	var desktop []string
 	if e.OperatingSystem == platform.Darwin && e.Locations.UserHome != "" {
