@@ -16,20 +16,30 @@ python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
-python3 scripts/test_ci_workflow.py                      # real-systemd keeps its name and pinned image
+python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
+./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
-CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
-1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
-first run blocks, and revive's doc-comment rule runs only on code a pull
-request adds or changes. The Keychain code needs cgo and Xcode's command
-line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
-runs the Linux scheduler against a real systemd user manager on Ubuntu 24.04
-(see [below](#never-test-against-your-real-machine)); it is meant to be a
-required check, and its name must stay `real-systemd`, because branch
-protection matches it by name. `go test ./...` also checks the docs:
+CI's [Test workflow](../../.github/workflows/test.yml) runs the full race
+suite, performance assertions, vet, and script tests on Ubuntu for each pull
+request. On macOS it builds all production packages with cgo and runs the
+focused Keychain, launchd, terminal, and CLI smoke suite above. macOS
+golangci-lint also runs on each pull request: the first pass blocks, and
+revive's doc-comment rule checks only code the pull request adds or changes.
+All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
+pull request cancels that pull request's older Test and Levenshtein runs.
+
+The [Extended workflow](../../.github/workflows/extended.yml) runs the full
+Linux and macOS race suites after a merge to `main`; it keeps only the newest
+main run during a burst of merges. Nightly it reruns the full macOS suite and
+runs the fuzz and real-systemd jobs. Dispatch it manually on a selected ref
+to run all jobs or one suite before merging a change to those paths. The
+Keychain code needs cgo and Xcode's command line tools on macOS; elsewhere a
+stub is built. The `real-systemd` job runs the Linux scheduler against a real
+systemd user manager on Ubuntu (see [below](#never-test-against-your-real-machine)).
+It is not a required pull-request check. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -167,17 +177,18 @@ In Go tests, everything goes through injection:
   `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
   manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
   and the user's hook and skill files for the smoke); they refuse a machine that
-  already has such units. CI runs them in the `real-systemd` job on
-  `ubuntu-24.04` (a virtual machine with systemd 255: it enables lingering for
-  the runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  already has such units. Extended CI runs them nightly or on demand in the
+  `real-systemd` job on `ubuntu-24.04` (a virtual machine with systemd: it
+  enables lingering for the runner user, sets `XDG_RUNTIME_DIR` and
+  `DBUS_SESSION_BUS_ADDRESS`, and
   waits up to two and a half minutes for the timer's first run). That job is
-  intended to be a required check, so it is pinned to the image it was
+  a nightly or manually requested check, pinned to the image it was
   validated on rather than `ubuntu-latest`, whose move to a new image would
-  change the systemd version and defaults under a required check. Bump the pin
+  change the systemd version and defaults. Bump the pin
   deliberately, re-validating on the new image with
-  `scripts/acceptance/linux` first. The job's name must stay `real-systemd`,
-  because branch protection matches the required check by name
-  (`scripts/test_ci_workflow.py` fails on a rename or an unpinned image). A
+  `scripts/acceptance/linux` first. Keep the job's name `real-systemd` for
+  consistent backstop results (`scripts/test_ci_workflow.py` fails on a
+  rename or an unpinned image). A
   failure in it is a real finding about the adapter. To run it yourself, never
   on your own machine or login, use a disposable Linux container with
   systemd as PID 1 (Docker on macOS runs it in a Linux VM) and a non-root
@@ -675,6 +686,8 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
 | `FuzzLineMatchesCoverWholeString` | any text | running each credential pattern line by line, only on lines with its needles, finds everything matching the whole string finds |
 | `FuzzGatedRedactionMatchesWhole` | any text | the redaction as it runs (line by line, gated by needles and separators) equals the same redaction run ungated over the whole string |
+| `FuzzNormalizeRemoteURL` | any remote URL or other string | no panic; repository keys have the documented shape, and normalized URLs have no edge slash, control character, or `.git` suffix |
+| `FuzzURLUserinfoMatchesReference` | any text up to 4096 bytes | the linear URL userinfo scanner agrees with the reference implementation |
 
 In `internal/hooks`:
 
@@ -703,11 +716,18 @@ In `internal/cli`:
 | --- | --- | --- |
 | `FuzzHookPayload` | an app name and up to eight hook payloads, run in turn against a fresh data directory set up for all three apps | every run exits 0 without a panic, and nothing outside the data directory (the project folder, `HOME`) changes |
 
+In `internal/termlaunch`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzShellQuote` | any shell argument without NUL | `/bin/sh` reads the quoted argument back unchanged |
+
 Their seeds come from the fixtures in `testdata/` and from
-`testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs every target
-in every package for 30 seconds on every pull request (the `fuzz` job in
-`.github/workflows/test.yml`). For a change to redaction or parsing, run the
-affected targets for a couple of minutes each, with fast minimization so a
+`testdata/fuzz/<target>/`, and plain `go test` runs them on every pull request.
+The `fuzz` job in [Extended CI](../../.github/workflows/extended.yml) mutates
+all 24 targets for 30 seconds each nightly or on demand. For a change to
+redaction or parsing, run the affected targets for a couple of minutes each,
+with fast minimization so a
 failure is reported promptly:
 
 ```sh

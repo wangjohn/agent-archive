@@ -723,11 +723,21 @@ to parse a whole source for every display row. Historical companion measurements
 are not measurements of this newer target; the companion artifacts record
 these additional obligations without changing pinned samples or hashes.
 
-Latest target `4add976435af4b91d1dfbd31b3c2496316a0d3f4` also includes archived
+Target `4add976435af4b91d1dfbd31b3c2496316a0d3f4` also includes archived
 handoff no-prompt selection (#257): preserve known-zero versus unavailable
 human-turn counts, local prompts newer than the archive copy, and exact-ID
 accessibility. These remain shared selection policies when the native facts
 and availability move into Analysis.
+
+Latest target `e3b82989d56903966a0fb1c6a774c18c15f5e838` extends native-handoff
+budget and cancellation behavior: release unused header reservations after
+workers finish, preserve actual cumulative read accounting, and keep verified
+identity-only picker rows available without preview reads after budget exhaustion.
+Cancellation is checked during checkout scoping and before loading previews.
+Incomplete discovery cannot silently choose latest or the current session;
+interactive fallback requires an explicit choice and noninteractive fallback
+offers qualified native-ID/agent/checkout recipes. These remain shared selection
+and resource policies, with no replacement of historical performance samples.
 
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |

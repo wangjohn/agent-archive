@@ -299,8 +299,12 @@ Code, Codex, or Cursor pull in a past session when you ask.
    ([permissions](agent-skills.md#permissions)). Where nothing can ask, as in
    `claude -p`, the agent is refused instead and should say so; allow the command in that agent's settings, or run it yourself.
 5. **A sandbox may block it.** If the agent says the network or the credential
-   store (the Keychain, or on Linux the credentials file) was blocked, a session on this machine is still found by its title; allow the
-   command, or run it yourself in a terminal.
+   store (the Keychain, or on Linux the credentials file) was blocked,
+   `handoff "<words>"` still finds a session on this machine by its name,
+   title, branch, project, app, a PR number, or the start of its ID (it looks
+   there first and needs no network). `list`, `show`, and sessions that exist
+   only in the archive need the blocked access: allow the command, or run it
+   yourself in a terminal.
 
 ## Linux and systemd
 
