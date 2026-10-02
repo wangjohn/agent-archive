@@ -379,7 +379,7 @@ var screens = []screen{
 		// The review of a reconfiguration that changes apps, projects and
 		// retention, saved.
 		name:    "setup-review-reconfigure-changes",
-		answers: []string{"4", "y", "y", "~/src/api", "", "", "30", ""},
+		answers: []string{"4", "y", "y", "~/src/api", "", "", "2", "5", "30", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
