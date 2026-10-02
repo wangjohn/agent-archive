@@ -17,7 +17,7 @@ func TestSetupExcludingProjectPrunesStoredDiagnostic(t *testing.T) {
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, first), 0)
 	cfg, _, _ := config.Load(home)
 	root := cfg.Archive.Projects[0].Root
-	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "old", "cwd": root}, now); err != nil {
+	if err := handleTestHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "old", "cwd": root}, now); err != nil {
 		t.Fatal(err)
 	}
 	if ds, _ := capture.ReadDiagnostics(home); len(ds) != 1 || ds[0].ProjectRoot != root {

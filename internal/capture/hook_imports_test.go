@@ -18,7 +18,7 @@ func TestHookRegistrationRecordsAdmissionAndOrigin(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl"}
-	if err := HandleEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -49,7 +49,7 @@ func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
 	}
 	startPayload := payload("/tmp/a.jsonl")
 	startPayload["source"] = "startup"
-	if err := HandleEvent(home, "claude", startPayload, start); err != nil {
+	if err := HandleEvent(home, "claude", startPayload, start, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, err := state.Open(home)
@@ -70,7 +70,7 @@ func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "claude", payload("/tmp/b.jsonl"), start.Add(2*time.Hour)); err != nil {
+	if err := HandleEvent(home, "claude", payload("/tmp/b.jsonl"), start.Add(2*time.Hour), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ = store.LoadRegistrations()
@@ -83,7 +83,7 @@ func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "claude", payload("/tmp/a2.jsonl"), start.Add(4*time.Hour)); err != nil {
+	if err := HandleEvent(home, "claude", payload("/tmp/a2.jsonl"), start.Add(4*time.Hour), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ = store.LoadRegistrations()
@@ -113,7 +113,7 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 		t.Fatal(err)
 	}
 	resume := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "native-1", "cwd": "/work/widget", "transcript_path": "/tmp/new.jsonl"}
-	if err := HandleEvent(home, "claude", resume, start.Add(time.Hour)); err != nil {
+	if err := HandleEvent(home, "claude", resume, start.Add(time.Hour), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ := store.LoadRegistrations()
@@ -128,7 +128,7 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 		t.Fatal(err)
 	}
 	resume["transcript_path"] = "/tmp/newer.jsonl"
-	if err := HandleEvent(home, "claude", resume, start.Add(3*time.Hour)); err != nil {
+	if err := HandleEvent(home, "claude", resume, start.Add(3*time.Hour), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	if regs, _ := store.LoadRegistrations(); len(regs) != 1 || regs[0].TranscriptPath != "/tmp/new.jsonl" {
@@ -162,7 +162,7 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	}
 	resumeAt := importedAt.Add(48 * time.Hour)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "native-1", "cwd": "/work/widget", "transcript_path": "/tmp/new.jsonl"}
-	if err := HandleEvent(home, "claude", payload, resumeAt); err != nil {
+	if err := HandleEvent(home, "claude", payload, resumeAt, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := store.LoadRegistrations()

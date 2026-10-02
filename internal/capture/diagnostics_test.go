@@ -381,7 +381,7 @@ func TestExcludedProjectLeavesNoDiagnostic(t *testing.T) {
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
-	if err := HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/private/excluded"}}, at); err != nil {
+	if err := HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/private/excluded"}}, at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	ds, _ := ReadDiagnostics(home)
@@ -397,7 +397,7 @@ func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(time.Hour))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "old", "cwd": "/work/widget"}
-	if err := HandleEvent(home, "claude", payload, at); err != nil {
+	if err := HandleEvent(home, "claude", payload, at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	ds, _ := ReadDiagnostics(home)

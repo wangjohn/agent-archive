@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -78,7 +77,7 @@ func newHandoffFixtureFor(t *testing.T, sync bool, harness, transcriptTemplate s
 	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := capture.HandleEvent(home, harness, payload, now); err != nil {
+	if err := handleTestHookEvent(home, harness, payload, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(transcriptTemplate, "PROJECT", project)), 0o600); err != nil {
@@ -454,7 +453,7 @@ func TestHandoffLatestPassesOverSessionsWithoutPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-2", "cwd": f.project, "transcript_path": fresh}
-	if err := capture.HandleEvent(f.home, "codex", payload, f.env.now().Add(time.Minute)); err != nil {
+	if err := handleTestHookEvent(f.home, "codex", payload, f.env.now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	later := time.Now().Add(time.Hour)

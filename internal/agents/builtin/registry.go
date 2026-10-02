@@ -18,6 +18,8 @@ type Integration struct {
 	Descriptor agentmeta.Descriptor
 	Launcher   agentapi.Launcher
 	Runtime    agentapi.RuntimeDetector
+	Hooks      agentapi.HookConfigurator
+	Decoder    agentapi.HookDecoder
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -43,10 +45,10 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if _, ok := r.bindings[d.ID]; ok {
 			return nil, fmt.Errorf("duplicate binding %q", d.ID)
 		}
-		if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) {
+		if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) {
 			return nil, fmt.Errorf("agent %s has a typed-nil implementation", d.ID)
 		}
-		if b.Launcher == nil && b.Runtime == nil {
+		if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil {
 			return nil, fmt.Errorf("agent %s has no operations", d.ID)
 		}
 		// Declaration metadata and operation promises cannot override the catalog.
@@ -59,6 +61,12 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		}
 		if b.Runtime != nil {
 			d.Operations = append(d.Operations, agentmeta.Runtime)
+		}
+		if b.Hooks != nil {
+			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
+		}
+		if b.Decoder != nil {
+			d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
 		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
@@ -116,9 +124,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Runtime: claude.RuntimeDetector{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Runtime: codex.RuntimeDetector{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Runtime: cursor.RuntimeDetector{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder()},
 	})
 	if err != nil {
 		panic(err)
@@ -170,4 +178,25 @@ func (r *Registry) addOperations(b Integration) {
 			r.sessionKeys = append(r.sessionKeys, key)
 		}
 	}
+}
+
+// LookupHooks returns only the managed configuration port.
+func (r *Registry) LookupHooks(name string) (agentapi.HookConfigurator, bool) {
+	b, ok := r.Lookup(name)
+	return b.Hooks, ok && b.Hooks != nil
+}
+
+// HookAgents returns stable native configuration owners.
+func (r *Registry) HookAgents() []string {
+	var names []string
+	for _, b := range r.Supporting(agentmeta.ManagedHooks) {
+		names = append(names, string(b.Descriptor.ID))
+	}
+	return names
+}
+
+// LookupDecoder resolves a narrow lifecycle port without host operations.
+func (r *Registry) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
+	b, ok := r.bindings[agentmeta.ID(agentmeta.Canonical(r.catalog, name))]
+	return b.Decoder, ok && b.Decoder != nil
 }

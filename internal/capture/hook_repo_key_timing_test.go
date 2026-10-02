@@ -34,7 +34,7 @@ func TestHookAsksForTheRepoKeyBeforeTakingTheLock(t *testing.T) {
 		unlock()
 		return archive.RepoKey("https://example.test/acme/widget.git")
 	}
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithRepoKey(lookup)); err != nil {
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithRepoKey(lookup), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	if asked != 1 {
@@ -54,7 +54,7 @@ func TestHookDoesNotAskAgainForAContinuationOfARegisteredSession(t *testing.T) {
 	lookup := WithRepoKey(func(string) string { asked++; return "" })
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	for range 3 {
-		if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, lookup); err != nil {
+		if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, lookup, WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 	}

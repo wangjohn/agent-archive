@@ -14,7 +14,7 @@ import (
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
-func testHook(executable string) Hook { return Hook{Executable: executable} }
+func testHook(executable string) Hook { return Hook{Ports: testPorts, Executable: executable} }
 
 func TestMergePreservesAndIsIdempotent(t *testing.T) {
 	for _, app := range []string{"codex", "claude", "cursor"} {
@@ -154,7 +154,7 @@ func TestMergeAndRemoveKeepTheUsersFile(t *testing.T) {
 			if err := json.Unmarshal(merged, &parsed); err != nil {
 				t.Fatalf("merge produced invalid JSON: %v\n%s", err, merged)
 			}
-			removed, changed, err := Remove(merged, "claude", Hook{})
+			removed, changed, err := Remove(merged, "claude", Hook{Ports: testPorts})
 			if err != nil || !changed {
 				t.Fatalf("remove: changed=%v err=%v", changed, err)
 			}
@@ -180,7 +180,7 @@ func TestHookCommandCarriesTheDataDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	dataHome := filepath.Join(dir, "data $HOME `x`")
-	command, err := Hook{Executable: executable, DataHome: dataHome}.Command("cursor")
+	command, err := Hook{Ports: testPorts, Executable: executable, DataHome: dataHome}.Command("cursor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,11 +193,11 @@ func TestHookCommandCarriesTheDataDirectory(t *testing.T) {
 	if want := dataHome + "|_hook --harness cursor"; string(seen) != want {
 		t.Fatalf("hook saw %q, want %q", seen, want)
 	}
-	plain, _ := Hook{Executable: executable}.Command("cursor")
+	plain, _ := Hook{Ports: testPorts, Executable: executable}.Command("cursor")
 	if strings.Contains(plain, "AGENT_ARCHIVE_HOME") {
 		t.Fatalf("default data directory embedded: %s", plain)
 	}
-	if _, err := (Hook{Executable: executable, DataHome: "relative"}).Command("claude"); err == nil {
+	if _, err := (Hook{Ports: testPorts, Executable: executable, DataHome: "relative"}).Command("claude"); err == nil {
 		t.Fatal("accepted a relative data directory")
 	}
 }

@@ -36,7 +36,7 @@ func TestStagedAdmissionDoesNotCrossPauseResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -75,7 +75,7 @@ func TestAdmissionReplayDoesNotCrossPauseResume(t *testing.T) {
 			if _, err := config.SetPaused(home, false); err != nil {
 				t.Fatal(err)
 			}
-			if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+			if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
 				t.Fatal(err)
 			}
 			regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -89,7 +89,7 @@ func TestAdmissionReplayDoesNotCrossPauseResume(t *testing.T) {
 			if err != nil || !queued {
 				t.Fatalf("fresh queue=%t error=%v", queued, err)
 			}
-			if err := ReplayAdmissionIntents(home, at.Add(3*time.Second)); err != nil {
+			if err := ReplayAdmissionIntents(home, at.Add(3*time.Second), testDecoders); err != nil {
 				t.Fatal(err)
 			}
 			regs, err = state.OpenReadOnly(home).LoadRegistrations()
@@ -130,7 +130,7 @@ func TestHookAdmissionWaitDoesNotCrossPauseResume(t *testing.T) {
 			if err != nil && !errors.Is(err, local.ErrBusy) {
 				t.Fatal(err)
 			}
-			if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+			if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
 				t.Fatal(err)
 			}
 			regs, err := state.OpenReadOnly(home).LoadRegistrations()

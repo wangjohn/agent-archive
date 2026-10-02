@@ -53,7 +53,7 @@ func TestResumeDuringExpiryIsTreatedAsNeverSeen(t *testing.T) {
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	transcript := writeTestTranscript(t, "t.jsonl", "")
-	if err := HandleEvent(home, "claude", claudeStart(project, "native-1", "startup", transcript), at); err != nil {
+	if err := HandleEvent(home, "claude", claudeStart(project, "native-1", "startup", transcript), at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, err := state.Open(home)
@@ -72,7 +72,7 @@ func TestResumeDuringExpiryIsTreatedAsNeverSeen(t *testing.T) {
 	}
 	resumed := make(chan error, 1)
 	go func() {
-		resumed <- HandleEvent(home, "claude", claudeStart(project, "native-1", "resume", transcript), at.Add(90*24*time.Hour))
+		resumed <- HandleEvent(home, "claude", claudeStart(project, "native-1", "resume", transcript), at.Add(90*24*time.Hour), WithDecoders(testDecoders))
 	}()
 	time.Sleep(100 * time.Millisecond) // the resume is now waiting for the lock
 	if err := store.ForgetSession(archiveID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
@@ -99,7 +99,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := HandleEvent(home, "claude", claudeStart(project, "native-1", "startup", writeTestTranscript(t, "t.jsonl", "")), at); err != nil {
+	if err := HandleEvent(home, "claude", claudeStart(project, "native-1", "startup", writeTestTranscript(t, "t.jsonl", "")), at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -110,7 +110,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 	}
 	started := make(chan error, 1)
 	go func() {
-		started <- HandleEvent(home, "claude", claudeStart(project, "native-1", "clear", writeTestTranscript(t, "t2.jsonl", "")), at.Add(90*24*time.Hour))
+		started <- HandleEvent(home, "claude", claudeStart(project, "native-1", "clear", writeTestTranscript(t, "t2.jsonl", "")), at.Add(90*24*time.Hour), WithDecoders(testDecoders))
 	}()
 	time.Sleep(100 * time.Millisecond)
 	if err := store.ForgetSession(oldID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
@@ -138,7 +138,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 		setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 		native := fmt.Sprintf("native-%d", round)
-		if err := HandleEvent(home, "claude", claudeStart(project, native, "startup", writeTestTranscript(t, "t.jsonl", "")), at); err != nil {
+		if err := HandleEvent(home, "claude", claudeStart(project, native, "startup", writeTestTranscript(t, "t.jsonl", "")), at, WithDecoders(testDecoders)); err != nil {
 			t.Fatal(err)
 		}
 		store, _ := state.Open(home)
@@ -159,7 +159,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			time.Sleep(time.Duration(round%10) * 50 * time.Microsecond)
-			hookErr = HandleEvent(home, "claude", payload, at.Add(time.Hour))
+			hookErr = HandleEvent(home, "claude", payload, at.Add(time.Hour), WithDecoders(testDecoders))
 		}()
 		wg.Wait()
 		if forgetErr != nil || hookErr != nil {
@@ -180,7 +180,7 @@ func TestHookWaitsForOverlappingRegistration(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "overlap", "cwd": dir}, now)
+		done <- HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "overlap", "cwd": dir}, now, WithDecoders(testDecoders))
 	}()
 	select {
 	case err := <-done:

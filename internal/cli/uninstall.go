@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -126,12 +129,12 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found))
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports))
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, uninstallHookApps(in.owner().Ports, hookFiles, nil, nil)) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
@@ -510,11 +513,44 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 // installedApps is the apps whose hooks setup installed, per the committed
 // configuration. An empty list in a configuration means every app (see
 // config.Config.Harnesses); with no configuration at all, none is known.
-func installedApps(cfg config.Config, found bool) []string {
+func installedApps(cfg config.Config, found bool, lookups ...agentapi.HooksLookup) []string {
 	if found && len(cfg.Harnesses) == 0 {
+		if len(lookups) > 0 {
+			return uninstallHookApps(lookups[0], hooks.Files(cfg.HookFiles), nil, nil)
+		}
 		return allHarnesses
 	}
 	return cfg.Harnesses
+}
+
+// uninstallHookApps starts with injected managed-hook owners and then includes
+// recorded paths and installed owners. Codex keeps its established first position.
+func uninstallHookApps(ports agentapi.HooksLookup, files, legacy hooks.Files, installed []string) []string {
+	if ports == nil {
+		ports = productionAgents
+	}
+	apps := append([]string(nil), ports.HookAgents()...)
+	for i, app := range apps {
+		if app == string(agentmeta.Codex) {
+			copy(apps[1:i+1], apps[:i])
+			apps[0] = app
+			break
+		}
+	}
+	var recorded []string
+	for app := range files {
+		recorded = append(recorded, app)
+	}
+	for app := range legacy {
+		recorded = append(recorded, app)
+	}
+	sort.Strings(recorded)
+	for _, app := range append(recorded, installed...) {
+		if !containsString(apps, app) {
+			apps = append(apps, app)
+		}
+	}
+	return apps
 }
 
 // planUninstallHooks plans removing owner's handlers (see hooks.Hook) from
@@ -526,9 +562,15 @@ func installedApps(cfg config.Config, found bool) []string {
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
 func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	for _, app := range allHarnesses {
+	for _, app := range uninstallHookApps(owner.Ports, files, legacy, installed) {
 		for i, set := range []hooks.Files{files, legacy} {
-			if i == 1 && legacy[app] == files[app] {
+			if set[app] == "" {
+				if i == 0 && containsString(installed, app) {
+					return nil, nil, fmt.Errorf("missing installed hook settings path for %s", app)
+				}
+				continue
+			}
+			if i == 1 && local.CanonicalPath(legacy[app]) == local.CanonicalPath(files[app]) {
 				continue
 			}
 			change, found, err := hooks.PlanRemovalOf(set, owner, app)
@@ -540,7 +582,23 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 				continue
 			}
 			if found {
-				changes = append(changes, change)
+				duplicate := false
+				for _, prior := range changes {
+					// Hardlinks remain separate atomic-replacement destinations.
+					if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+						continue
+					}
+					// Distinct owners may select one file only when their complete plans
+					// agree. Otherwise refuse rather than lose handlers or apply stale bytes.
+					if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.After, change.After) || !bytes.Equal(prior.Before, change.Before) {
+						return nil, nil, fmt.Errorf("hook owners have conflicting removal plans for %s", change.Path)
+					}
+					duplicate = true
+					break
+				}
+				if !duplicate {
+					changes = append(changes, change)
+				}
 			}
 		}
 	}
@@ -552,7 +610,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 // agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
 func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
+	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome, in.owner().Ports), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
 	removals, kept, err := agentskills.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
