@@ -15,6 +15,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/smithy-go/logging"
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
 var (
@@ -64,30 +65,11 @@ type CredentialStore interface {
 	Delete(ctx context.Context, reference string) error
 }
 
-// Config describes one archive storage destination. For S3, AWSProfile is
-// mandatory and is loaded deterministically. For R2, R2CredentialRef points
-// to an item in the credential store (see OpenDefault) and Endpoint may be
-// omitted when AccountID is supplied.
-// The JSON tags spell the Go field names, the format already saved in users'
-// config files: renaming one would make existing configs unreadable.
-type Config struct {
-	Provider        string `json:"Provider"`
-	Bucket          string `json:"Bucket"`
-	Region          string `json:"Region"`
-	Prefix          string `json:"Prefix"`
-	AWSProfile      string `json:"AWSProfile"`
-	R2CredentialRef string `json:"R2CredentialRef"`
-	R2AccountID     string `json:"R2AccountID"`
-	R2Endpoint      string `json:"R2Endpoint"`
-}
+// Config is the persisted pure destination value.
+type Config = destination.Config
 
-// Config.Provider values.
-const (
-	// ProviderS3 is Amazon S3, authenticated through a shared AWS profile.
-	ProviderS3 = "s3"
-	// ProviderR2 is Cloudflare R2, authenticated through a credential store item.
-	ProviderR2 = "r2"
-)
+const ProviderS3 = destination.ProviderS3
+const ProviderR2 = destination.ProviderR2
 
 // LoadAWSConfig loads exactly the selected shared AWS profile. Supplying an
 // explicit profile makes the SDK resolve that profile's static, SSO,
@@ -147,19 +129,7 @@ func LoadR2Config(ctx context.Context, cfg Config, store CredentialStore) (aws.C
 // R2Endpoint returns a validated endpoint. Cloudflare's account endpoint is
 // inferred only when the caller explicitly supplies an account ID.
 func R2Endpoint(endpoint, accountID string) (string, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		accountID = strings.TrimSpace(accountID)
-		if accountID == "" || strings.ContainsAny(accountID, "/\\ \t\r\n") {
-			return "", errors.New("R2 endpoint or account ID is required")
-		}
-		endpoint = "https://" + accountID + ".r2.cloudflarestorage.com"
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("invalid R2 endpoint")
-	}
-	return strings.TrimRight(endpoint, "/"), nil
+	return destination.R2Endpoint(endpoint, accountID)
 }
 
 // R2Location is what an R2 account ID or URL pasted into setup names.

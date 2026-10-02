@@ -36,8 +36,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourceidentity"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
@@ -978,7 +978,7 @@ type ScanSignature struct {
 	// whether a stat is trustworthy evidence at all (see unchangedSinceLastScan).
 	SourceFormat string `json:"source_format,omitempty"`
 	// SourceKind is the registration's source. A Cursor database chat is
-	// identified by its cursorstore.Signature instead of a file stat.
+	// identified by its sourceidentity.CursorSignature instead of a file stat.
 	SourceKind            archive.SourceKind `json:"source_kind,omitempty"`
 	CursorLastUpdatedAt   int64              `json:"cursor_last_updated_at,omitempty"`
 	CursorHeaderCount     int                `json:"cursor_header_count,omitempty"`
@@ -1004,8 +1004,8 @@ type ScanSignature struct {
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.
-func (s ScanSignature) CursorSignature() cursorstore.Signature {
-	return cursorstore.Signature{
+func (s ScanSignature) CursorSignature() sourceidentity.CursorSignature {
+	return sourceidentity.CursorSignature{
 		LastUpdatedAt: s.CursorLastUpdatedAt, HeaderCount: s.CursorHeaderCount, LastBubbleID: s.CursorLastBubbleID,
 		MessageRows: s.CursorMessageRows, LastMessageHash: s.CursorLastMessageHash,
 	}

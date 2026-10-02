@@ -153,3 +153,19 @@ When support is `unverified`, `installed_version_support_reason` says why:
 
 `application-versions.json` is advisory. If it cannot be read, `status` reports
 a warning, treats installed versions as `unknown`, and continues.
+
+## Integration extension evidence
+
+Operation availability comes from populated registry ports. Capability evidence
+remains a separate declaration, and installed-version health still requires
+real publication and readback. Purpose-specific discovery availability and skill
+roots are declared by each native integration; import compatibility and no-setup
+handoff do not implicitly share all roots or formats. Cursor skill installation
+uses `.agents/skills`, while its existing evidence inventory uses `.cursor/skills`.
+
+The test-only Orbifold fixture uses an independent native vocabulary and retained
+format through normal injected registry consumers. Its hook, source, filter and
+analysis flow exercises replay, colliding IDs, transient reads, unknown metrics,
+publication/readback and replacement provenance. This is fixture evidence only:
+Orbifold is absent from production composition, and the tests make no claim about
+an installed app version.
