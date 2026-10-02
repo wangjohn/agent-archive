@@ -54,6 +54,8 @@ report next to the plan. A plan expires five minutes after creation.
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--prefix PREFIX] [--retention-days DAYS]
+               [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
        agent-archive setup --refresh [--verbose]
@@ -96,6 +98,14 @@ An interrupted setup is recovered on the next run.
                         default: keep the saved key)
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
+  --prefix PREFIX       Folder inside the bucket (default: saved folder, else
+                        agent-archive/). May be changed alone with --yes
+  --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
+                        else 90)
+  --require-skill-use   Capture only sessions that use skills
+  --no-require-skill-use
+                        Capture sessions with or without skills (default:
+                        saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
   --project-repo KEY    Capture a unique local repo by key (repeatable)
                        Skip ambiguous, excluded, or incomplete matches

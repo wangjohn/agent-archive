@@ -31,7 +31,11 @@ hooks, collector, and local state.
   machine's Keychain on macOS, or in a private file under its data directory
   on Linux; see [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
   [`setup --yes`](../getting-started/setup.md#set-up-without-questions)
-  sets up another machine from a script. A key limited to one prefix (see
+  sets up another machine from a script. The command printed after setup
+  carries the bucket folder, retention, skill-use capture rule, skill evidence,
+  and agent skill installation policy. Whole repositories with a known origin
+  use [repository matching](#repository-matching-in-setup-commands); adjust
+  other project paths for the new machine. A key limited to one prefix (see
   [bucket permissions](../security/bucket-permissions.md)) works for several
   machines sharing that prefix.
 

@@ -75,6 +75,8 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--prefix PREFIX] [--retention-days DAYS]
+               [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
        agent-archive setup --refresh [--verbose]
@@ -117,6 +119,14 @@ An interrupted setup is recovered on the next run.
                         default: keep the saved key)
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
+  --prefix PREFIX       Folder inside the bucket (default: saved folder, else
+                        agent-archive/). May be changed alone with --yes
+  --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
+                        else 90)
+  --require-skill-use   Capture only sessions that use skills
+  --no-require-skill-use
+                        Capture sessions with or without skills (default:
+                        saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
   --project-repo KEY    Capture a unique local repo by key (repeatable)
                        Skip ambiguous, excluded, or incomplete matches
@@ -153,7 +163,9 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--apps` | a value | — |
 | `--aws-profile` | a value | — |
 | `--bucket` | a value | — |
+| `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
+| `--prefix` | a value | — |
 | `--project` | a value | — |
 | `--project-repo` | a value | — |
 | `--provider` | a value | — |
@@ -161,6 +173,8 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--r2-account` | a value | — |
 | `--refresh` | no value | — |
 | `--region` | a value | — |
+| `--require-skill-use` | no value | — |
+| `--retention-days` | a value | `0` |
 | `--skill-evidence` | a value | — |
 | `--skills` | no value | — |
 | `--verbose` | no value | — |
