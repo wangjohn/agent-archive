@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -59,45 +60,23 @@ var handoffSessionEnv = func() []string {
 	return names
 }()
 
-// agentCommand is how one destination is started: the executables to try in
-// order, what to install when none is found, the flag naming the directory
-// it may read, and whether it takes `--` before the prompt.
-type agentCommand struct {
-	binaries     []string
-	install      string
-	dirFlag      string
-	endOfOptions bool
-}
-
-// agentCommands was verified by probing each CLI. Claude Code refuses to
-// read a file outside its project unless the file's directory is added, so
-// it is given the handoff's directory and started in the checkout; Codex
-// and Cursor take the checkout as a flag and can read the whole disk.
-// Claude Code (commander) and Codex (clap) end options at `--`; Cursor's
-// agent is not open source, so its prompt goes last without one.
-var agentCommands = map[handoffDestination]agentCommand{
-	handoffDestinationClaude: {binaries: []string{"claude"}, install: "Claude Code", dirFlag: "--add-dir", endOfOptions: true},
-	handoffDestinationCodex:  {binaries: []string{"codex"}, install: "Codex", dirFlag: "--cd", endOfOptions: true},
-	handoffDestinationCursor: {binaries: []string{"agent", "cursor-agent"}, install: "Cursor's CLI", dirFlag: "--workspace"},
-}
-
 // buildLaunchSpec resolves dest's executable to an absolute path and
 // arranges its arguments: the directory flag, extra (configured arguments,
 // then those after `--`), and the prompt last, after `--` where the agent
 // accepts it so no option takes the prompt as its value (Claude's --add-dir
 // takes any number of directories).
 func buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error) {
-	command, ok := agentCommands[dest]
-	if !ok {
+	integration, ok := registryFor(env).Lookup(string(dest))
+	if !ok || integration.Launcher == nil {
 		return launchSpec{}, fmt.Errorf("unknown agent %q", dest)
 	}
-	if slices.Contains(extra, "--") {
-		// Words after a second `--` would come before the prompt as
-		// positional arguments, and the agent would take one as its prompt.
-		return launchSpec{}, fmt.Errorf("arguments for %s cannot include `--`: the handoff prompt goes after it", dest)
+	command := integration.Launcher.Executables()
+	args, err := integration.Launcher.Args(agentapi.LaunchRequest{ProjectDir: dir, Prompt: prompt, HandoffPath: handoffFile, ExtraArgs: extra})
+	if err != nil {
+		return launchSpec{}, err
 	}
 	var binary string
-	for _, name := range command.binaries {
+	for _, name := range command.Names {
 		path, err := env.lookPath(name)
 		if err == nil {
 			// A new window may start elsewhere, with another PATH.
@@ -109,18 +88,9 @@ func buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, e
 		binary = ""
 	}
 	if binary == "" {
-		return launchSpec{}, fmt.Errorf("could not find %s: install %s or put it on PATH", strings.Join(command.binaries, " or "), command.install)
+		return launchSpec{}, fmt.Errorf("could not find %s: install %s or put it on PATH", strings.Join(command.Names, " or "), command.Install)
 	}
-	dirArg := dir
-	if dest == handoffDestinationClaude {
-		// Only the launch copy's own directory, not every saved handoff.
-		dirArg = filepath.Dir(handoffFile)
-	}
-	args := slices.Concat([]string{command.dirFlag, dirArg}, extra)
-	if command.endOfOptions {
-		args = append(args, "--")
-	}
-	args = append(args, prompt)
+	dest = handoffDestination(integration.Descriptor.ID)
 	return launchSpec{Destination: dest, Binary: binary, Args: args, Dir: dir, Env: childEnv(env.environ()), HandoffFile: handoffFile}, nil
 }
 

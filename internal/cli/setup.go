@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ const defaultPrefix = "agent-archive/"
 
 const defaultRetentionDays = 90
 
-var allHarnesses = []string{"codex", "claude", "cursor"}
+var allHarnesses = agentmeta.SetupNames(productionAgents.Catalog())
 
 type setupDraft struct {
 	GuidedSlotID  string        `json:"guided_slot_id,omitempty"`
@@ -2006,14 +2007,8 @@ func containsString(values []string, target string) bool {
 }
 
 func appName(app string) string {
-	//lint:ignore LV1001 harness names are plain strings in config and archive; an unknown name is shown as given
-	switch app {
-	case "codex":
-		return "Codex"
-	case "claude":
-		return "Claude Code"
-	case "cursor":
-		return "Cursor"
+	if d, ok := productionAgents.Catalog().Lookup(app); ok {
+		return d.DisplayName
 	}
 	return app
 }

@@ -12,14 +12,21 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // harnessOrder is the order apps appear in, in columns and lists.
-var harnessOrder = []string{"claude", "codex", "cursor"}
+var harnessOrder = agentmeta.Names(agentmeta.Builtins())
 
-var harnessNames = map[string]string{"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
+var harnessNames = func() map[string]string {
+	names := make(map[string]string)
+	for _, d := range agentmeta.Builtins().All() {
+		names[string(d.ID)] = d.DisplayName
+	}
+	return names
+}()
 
 // ProjectSummary is one project row of the plan: the sessions it imports.
 type ProjectSummary struct {

@@ -14,6 +14,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"io"
 	"os"
 	"os/signal"
@@ -94,6 +95,8 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// Agents overrides immutable production composition, including its catalog.
+	Agents            *builtin.Registry
 	handoffConfigLoad func(string) (config.Config, bool, error)
 	nativeFS          nativesessions.FileSystem
 	nativeStoreRoots  []nativesessions.StoreRoot

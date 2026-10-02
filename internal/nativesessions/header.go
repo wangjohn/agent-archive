@@ -3,6 +3,7 @@ package nativesessions
 
 import (
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -20,9 +21,9 @@ type Header struct {
 type harnessName string
 
 const (
-	harnessClaude harnessName = "claude"
-	harnessCodex  harnessName = "codex"
-	harnessCursor harnessName = "cursor"
+	harnessClaude harnessName = harnessName(agentmeta.Claude)
+	harnessCodex  harnessName = harnessName(agentmeta.Codex)
+	harnessCursor harnessName = harnessName(agentmeta.Cursor)
 )
 
 // Inspect applies native header rules to a caller-owned bounded record scan.

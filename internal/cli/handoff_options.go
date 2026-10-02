@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"slices"
 	"strings"
@@ -91,7 +92,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
 		worktree: *worktree, branch: *branch}
-	if message := validateHandoffOptions(&opts, interactive); message != "" {
+	if message := validateHandoffOptionsWithCatalog(&opts, interactive, catalogFor(env)); message != "" {
 		fs.usageError("%s", message)
 		return handoffOptions{}, false
 	}
@@ -100,17 +101,23 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 
 // validateHandoffOptions returns the usage error for opts, or "" when they
 // are valid, in which case opts.harness is now the canonical harness name.
-func validateHandoffOptions(opts *handoffOptions, interactive bool) string {
+func validateHandoffOptionsWithCatalog(opts *handoffOptions, interactive bool, c agentmeta.Catalog) string {
+	if opts.to != "" {
+		opts.to = agentmeta.Canonical(c, opts.to)
+		if opts.to == "" {
+			return "--to must be claude, codex, or cursor"
+		}
+	}
 	if message := validateHandoffFlagCombinations(*opts, interactive); message != "" {
 		return message
 	}
-	if message := validateHandoffLaunchOptions(opts.to, opts.output, opts.format, opts.noPreamble); message != "" {
+	if message := validateHandoffLaunchOptionsWithCatalog(opts.to, opts.output, opts.format, opts.noPreamble, c); message != "" {
 		return message
 	}
 	if message := validateHandoffWindowOptions(*opts, interactive); message != "" {
 		return message
 	}
-	canonical, ok := harnessFlag(opts.harness)
+	canonical, ok := harnessFlagWithCatalog(c, opts.harness)
 	if !ok {
 		return harnessFlagError(opts.harness)
 	}
@@ -183,9 +190,9 @@ const noSelectorMessage = "name a session ID or title, --latest, or --file PATH;
 // the agent session it runs in.
 const noCurrentSessionMessage = "name a session ID or title, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
 
-func validateHandoffLaunchOptions(to, output, format string, noPreamble bool) string {
+func validateHandoffLaunchOptionsWithCatalog(to, output, format string, noPreamble bool, c agentmeta.Catalog) string {
 	switch {
-	case to != "" && handoffDestination(to) != handoffDestinationClaude && handoffDestination(to) != handoffDestinationCodex && handoffDestination(to) != handoffDestinationCursor:
+	case to != "" && !launchSupported(c, to):
 		return "--to must be claude, codex, or cursor"
 	case to != "" && output != "":
 		return "--to and --output cannot be used together"
@@ -218,5 +225,5 @@ func (e Env) loadHandoffConfig(home string) (config.Config, bool, error) {
 	if e.handoffConfigLoad != nil {
 		return e.handoffConfigLoad(home)
 	}
-	return config.Load(home)
+	return config.LoadWithCatalog(home, e.agentRegistry().Catalog())
 }
