@@ -85,7 +85,8 @@ func (f selectedTranscriptFilter) Filter(context.Context, agentapi.NativeInput, 
 func TestQualifiedAppendOnlySourceRetainsSizeForRewriteDetection(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)
-	reg := archive.SessionRegistration{ArchiveSessionID: "qualified-source", SourceKind: "example/append", Harness: archive.Harness{Name: "claude"}}
+	const kind archive.SourceKind = "example/append"
+	reg := archive.SessionRegistration{ArchiveSessionID: "qualified-source", SourceKind: kind, Harness: archive.Harness{Name: "claude"}}
 	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
