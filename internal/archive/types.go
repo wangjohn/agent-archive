@@ -43,8 +43,9 @@ const (
 	// Filter 13 keeps the name a session was given (Claude Code's
 	// custom-title and pr-link records, Cursor's chat name). Filter 14 keeps
 	// the description the parent gave a Claude Code subagent's task, read
-	// from the sibling .meta.json. See dev/specs/privacy-filter.md.
-	FilterVersion = "14"
+	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
+	// including truncated payloads. See dev/specs/privacy-filter.md.
+	FilterVersion = "15"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

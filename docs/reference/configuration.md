@@ -124,3 +124,10 @@ modes requires the environment token. Ordinary listing, status and collection
 never acquire a management token. See [experimental provider observations](../guides/multiple-machines.md#experimental-provider-observations)
 for the opt-in gate and limits. This command configuration is local and is not
 part of a pairing payload.
+
+`AGENT_ARCHIVE_PAIRING_CODE` supplies the six-word pairing code only to
+`setup --pair-file PATH --yes` (or `--pair-file -`). The receiver reads and removes
+it from its process environment; it is never saved. Deliver it separately from
+the encrypted bundle, and clear it in the parent shell afterward. There is no
+code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
+redirected bundle input uses a private terminal for the code and destination review.

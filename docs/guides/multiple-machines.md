@@ -31,7 +31,11 @@ hooks, collector, and local state.
   machine's Keychain on macOS, or in a private file under its data directory
   on Linux; see [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
   [`setup --yes`](../getting-started/setup.md#set-up-without-questions)
-  sets up another machine from a script. A key limited to one prefix (see
+  sets up another machine from a script. The command printed after setup
+  carries the bucket folder, retention, skill-use capture rule, skill evidence,
+  and agent skill installation policy. Whole repositories with a known origin
+  use [repository matching](#repository-matching-in-setup-commands); adjust
+  other project paths for the new machine. A key limited to one prefix (see
   [bucket permissions](../security/bucket-permissions.md)) works for several
   machines sharing that prefix.
 
@@ -170,6 +174,27 @@ If you opt in on a home that several machines do mount, expect this:
 
 Silencing the warning by removing `host_id` does not make this safe.
 
+### Repository matching in setup commands
+
+Setup's printed command uses `--project-repo REPO_KEY` for an included
+repository root with an origin remote, so another checkout may live at a
+different path. A configured subdirectory keeps its path to preserve scope. Repository keys are hashes; remote URLs and credentials are never
+printed. Projects without a key retain their `--project DIR` argument.
+
+`setup --yes --project-repo REPO_KEY` includes only a unique, eligible clone.
+It establishes each keyed candidate’s full checkout root with Git, so running
+from a subdirectory cannot narrow the requested repository. It checks the
+current directory, saved project roots, and the first record
+of app history files, with a shared five-second budget, 128 distinct roots,
+four Git processes, and 250 milliseconds per Git lookup. Discovery returns
+partial results and reports timeout, cap, or unreadable files; incomplete or
+ambiguous discovery skips repository selection. Existing exclusions also
+block implicit inclusion of an overlapping root; saved inclusions block a
+wider ancestor. Failed or nonportable origin lookups make discovery incomplete. Use an explicit
+`--project DIR` to select a path independently. There is no home-directory
+crawl or transcript-body search. Filesystem cancellation is cooperative:
+a native filesystem call already in progress can outlast the budget.
+
 ## Machine records and names
 
 `agent-archive machines` lists informational records from this destination.
@@ -249,3 +274,55 @@ current destination-bound local assignment establishes a committed local
 binding; other bucket records remain untrusted claims. Legacy/manual keys
 remain unknown. “Claim not observed” keys are candidates for inspection, never
 proof that a key is unused or safe to revoke.
+
+## Encrypted pairing (shared-key beta)
+
+On a configured source, run `agent-archive machines add --name laptop --share-key`
+for R2, or omit `--share-key` for S3. The source checks storage before creating a
+pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
+separate channel. On the receiver run `agent-archive setup --pair`, paste the
+bundle, and enter the code privately. The first three characters of each word
+are sufficient; use `yo-` for `yo-yo`, including the hyphen.
+Review the destination before capture settings: an existing destination change
+requires explicit consent. Source apps that are absent here are skipped.
+
+This beta shares the active R2 key. Cancelling a pairing, expiry, and deleting a
+machine record do not remove access. Replace the shared key on every machine to
+revoke it. S3 bundles contain a profile name and settings, without AWS credentials;
+configure that local profile with `aws configure --profile NAME` or
+`aws configure sso --profile NAME` before receiving. No provider management token
+is requested. Registry claims remain informational and untrusted.
+
+Use `--print` for encrypted bundle output or `--file PATH` for an exclusive private
+0600 file. Interactive source delivery requires terminal input and output;
+codes appear only on a cleared alternate screen and the
+clipboard is cleared on normal exit only when it still contains that exact bundle.
+A crash or interruption leaves delivery uncertain; check `status` or `machines`.
+Do not record or screen-share code display. Delete explicitly saved bundle files
+when no longer needed. The default expiry is 15 minutes; `--expires` accepts 5m
+through 24h, with five minutes of authenticated clock-skew tolerance.
+
+For deliberately scripted use, `machines add --yes --name laptop` prints both
+pieces (or prints the code with `--file`). Receive with `setup --pair-file PATH`
+or `setup --pair-file -`, plus `--yes` and `AGENT_ARCHIVE_PAIRING_CODE`; the receiver
+reads and removes that variable before setup. There is no code command-line flag.
+`--yes` refuses to replace an existing destination. Any presence of
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` refuses pairing before
+home, credential, storage, trace, or output changes, regardless of other overrides.
+
+Repository matching is bounded by one five-second deadline, 128 canonical roots,
+four Git workers, and 250ms per Git lookup. It does not crawl home directories or
+search conversation bodies. Native filesystem calls cannot always be cancelled;
+the deadline prevents new work once they return. Relative subtree paths retain
+inclusion scope after a repository moves. Known origin mismatches never fall back
+to a home path. Ambiguous, incomplete, and unresolved exclusions are skipped under
+`--yes`; local exclusions remain. Choose skipped scopes deliberately with ordinary
+`setup --project DIR`. Unmapped source exclusions withhold affected inclusions.
+
+The receiver keeps its immutable machine ID and commits through ordinary setup's
+credential staging, hook, and scheduler transaction. Interrupted staging retries
+reuse a matching opaque credential reference. Codes, bundles and decrypted payloads
+are never saved in drafts or ledgers. After commit, machine publication failure
+remains pending without disabling capture; the collector can reconstruct paired
+assignment metadata and publish after the bundle expires. App approval and history
+imports remain separate steps.

@@ -75,6 +75,8 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--prefix PREFIX] [--retention-days DAYS]
+               [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
                [--allow-network-home]
        agent-archive setup --refresh [--verbose]
@@ -84,6 +86,11 @@ Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --pair                Receive an encrypted bundle and hidden terminal code
+  --pair-file PATH|-    Read a bounded bundle file or stdin; with --yes read and
+                        unset AGENT_ARCHIVE_PAIRING_CODE. Never a code flag.
+                        Pairing refuses inside coding agents. --yes refuses a
+                        destination change; interactive review requires consent.
   --refresh             After upgrading agent-archive: bring the app hooks, the
                         background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
@@ -117,7 +124,17 @@ An interrupted setup is recovered on the next run.
                         default: keep the saved key)
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
+  --prefix PREFIX       Folder inside the bucket (default: saved folder, else
+                        agent-archive/). May be changed alone with --yes
+  --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
+                        else 90)
+  --require-skill-use   Capture only sessions that use skills
+  --no-require-skill-use
+                        Capture sessions with or without skills (default:
+                        saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repo by key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
@@ -151,13 +168,20 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--apps` | a value | — |
 | `--aws-profile` | a value | — |
 | `--bucket` | a value | — |
+| `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
+| `--pair` | no value | — |
+| `--pair-file` | a value | — |
+| `--prefix` | a value | — |
 | `--project` | a value | — |
+| `--project-repo` | a value | — |
 | `--provider` | a value | — |
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |
 | `--refresh` | no value | — |
 | `--region` | a value | — |
+| `--require-skill-use` | no value | — |
+| `--retention-days` | a value | `0` |
 | `--skill-evidence` | a value | — |
 | `--skills` | no value | — |
 | `--verbose` | no value | — |
@@ -187,6 +211,41 @@ Unreadable records and incomplete listings are reported; those exit with code 1.
 | --- | --- | --- |
 | `--json` | no value | — |
 | `--verify` | no value | — |
+| `--yes` | no value | — |
+
+## agent-archive machines add
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines add [--name NAME] [--share-key]
+       [--expires 15m] [--print | --file PATH] [--yes]
+
+Create an encrypted pairing bundle after checking the source storage.
+Shared-key R2 beta requires --share-key and cannot revoke one recipient alone.
+S3 transfers settings and a profile name. Configure the profile on the receiver.
+Deliver the bundle and six-word code separately. Pairing refuses in any coding
+agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
+  --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
+  --share-key    Explicitly share the active R2 key (beta)
+  --expires DURATION  Lifetime from 5m to 24h (default: 15m)
+  --print        Print the encrypted bundle instead of copying it
+  --file PATH    Create a private 0600 bundle file; never overwrite a file
+  --yes          Require --name and deliberately print bundle and code
+                 (with --file, print only the separately delivered code)
+Interactive delivery needs terminal input and output; codes use a cleared
+alternate screen. Clipboard contents are
+cleared on normal exit only if they still equal the bundle. Interrupted delivery
+remains uncertain in the local ledger; shared credentials remain active.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--expires` | a value | `15m0s` |
+| `--file` | a value | — |
+| `--name` | a value | — |
+| `--print` | no value | — |
+| `--share-key` | no value | — |
 | `--yes` | no value | — |
 
 ## agent-archive machines rename
@@ -302,8 +361,8 @@ order; the first that has a match answers, and a note says how many more match
 in other projects. The words are matched against metadata, never the
 conversation. Without WORDS, the table and browser list top-level sessions
 only: subagent sessions are left out before --limit counts, and the footer
-says how many; a parent shows how many it has. --json lists every session,
-subagents included.
+says how many; a parent shows how many it has. --json without WORDS lists
+every session, subagents included.
 Run inside a project, it lists that repository's sessions (every checkout and
 worktree of it, and its sessions from other machines), with a heading naming the
 repository; when there are none, it lists all projects and says so. --project
@@ -354,9 +413,10 @@ paged through $PAGER unless --no-pager.
                                  configured project labels, exactly, ignoring
                                  case). Default: the current directory's
                                  repository
-  --all-projects                 List every project's sessions. Scripts that
-                                 read every session pass this, since list
-                                 run inside a project now lists only its own
+  --all-projects                 List every project's sessions (not with
+                                 --project). Scripts that read every session
+                                 pass this, since list run inside a project
+                                 now lists only its own
   --rebuild-index                Rebuild the listing index from live metadata;
                                  scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,

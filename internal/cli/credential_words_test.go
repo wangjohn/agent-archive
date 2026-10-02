@@ -485,7 +485,7 @@ func TestInteractiveSetupOnLinuxDoesNotKeepAKeyThatIsOnlyInTheEnvironment(t *tes
 
 	// The file is lost; the shell still exports the variables.
 	must(t, os.Remove(filepath.Join(credentials.FileStoreDir(home), cfg.Storage.R2CredentialRef+".json")))
-	output := setupRun(t, env, "storage\nr2\n"+testR2Account+"\nmy-bucket\nACCESS2\nnew-private-value\ny\n", 0)
+	output := setupRun(t, env, "storage\nchange\nr2-existing\n"+testR2Account+"\nmy-bucket\nACCESS2\nnew-private-value\ny\n", 0)
 	if strings.Contains(output, "Keep stored R2 credentials?") || !strings.Contains(output, "can't be read from the credentials file; enter them again.") {
 		t.Fatalf("setup counted the environment's key as stored:\n%s", output)
 	}

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/pairing-ledger.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "pairing_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "recipient_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "issuer_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "destination_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "access_key_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "credential_ref": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "kind": {
+      "enum": [
+        "r2_shared",
+        "aws_profile"
+      ]
+    },
+    "state": {
+      "enum": [
+        "prepared",
+        "delivery-intent",
+        "delivered",
+        "claim-observed",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "delivered_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observed_machine_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    }
+  },
+  "required": [
+    "version",
+    "pairing_id",
+    "recipient_id",
+    "issuer_id",
+    "name",
+    "destination_id",
+    "kind",
+    "state",
+    "created_at",
+    "expires_at"
+  ]
+}

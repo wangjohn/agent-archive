@@ -425,3 +425,8 @@ States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
 `issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
 `local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
 `local_committed_binding`. Failures return available observations and exit 1.
+
+`machines --json` additionally includes optional `pairing_warnings`, an array of
+secret-free local pending, uncertain-delivery or expired pairing descriptions.
+These warnings require no conversation scan or provider-management credential.
+An observed matching bucket claim does not prove machine ownership or revocation.

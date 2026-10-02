@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,7 @@ const defaultRetentionDays = 90
 var allHarnesses = []string{"codex", "claude", "cursor"}
 
 type setupDraft struct {
+	PairingID     string        `json:"pairing_id,omitempty"`
 	StagedRefs    []string      `json:"staged_credential_refs,omitempty"`
 	Version       int           `json:"version"`
 	Config        config.Config `json:"config"`
@@ -112,11 +114,17 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
+	if opts.pair || opts.pairFile != "" {
+		return runPairingSetupCommand(opts, *refresh, *abandon, fs, stdin, stdout, stderr, env)
+	}
 	if *refresh {
 		if other := refreshCompanions(fs); other != "" {
 			return fs.usageError("--refresh takes no other flag than --verbose, and %s was given", other)
 		}
 		return runSetupRefresh(stdout, stderr, env, opts.verbose)
+	}
+	if opts.requireSkillSupplied && opts.noRequireSkillSupplied {
+		return fs.usageError("--require-skill-use and --no-require-skill-use contradict each other; give one")
 	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
@@ -268,7 +276,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// A saved draft that names a bucket has already been past this.
 	if !found && unfinished.Config.Storage.Bucket == "" {
-		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
+		terminal.Println(out, "Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.")
 	}
 	draft, done, err := selectSetupDraft(p, home, userHome, env, existing, found, installed, known)
 	if err != nil {
@@ -488,7 +496,9 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 	}
 	if draft.Step == 1 {
 		p.step(2, "Connect storage")
-		cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
+		active, installed, _ := config.Load(home)
+		offerKeep := installed && active.Storage == draft.Config.Storage && draft.FailedRegion == ""
+		cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion, offerKeep)
 		if e != nil {
 			return false, e
 		}
@@ -738,7 +748,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printAnotherMachine(p, cfg, finish.userHome)
+	printAnotherMachine(p, cfg, finish.userHome, finish.env)
 	return nil
 }
 
@@ -1018,25 +1028,28 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 
 // printAnotherMachine ends a committed setup with the command that sets up
 // another machine with the same storage.
-func printAnotherMachine(p *prompter, cfg config.Config, userHome string) {
+func printAnotherMachine(p *prompter, cfg config.Config, userHome string, environments ...Env) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
 		terminal.Println(p.out, "\nTo set up another machine with this storage, run there:")
 	}
-	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome)))
-	// setup --yes has no flag for the folder inside the bucket: it stores in
-	// the default one, which would split the archive from this machine's.
-	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
-		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
-	}
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMachineCommand(cfg, userHome, environments...)))
 }
 
 // anotherMachineCommand is the setup --yes command that sets up another machine
-// like this one: the same storage, apps and projects. Projects in the home
+// like this one: the same storage, capture rules, skills, apps and projects.
+// Projects in the home
 // folder are written from ~, which setup resolves on that machine. An R2 key is
 // never written: setup --yes reads it from its environment variables there.
-func anotherMachineCommand(cfg config.Config, userHome string) string {
+func anotherMachineCommand(cfg config.Config, userHome string, environments ...Env) string {
+	var env Env
+	if len(environments) > 0 {
+		env = environments[0]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	keys := map[string]string{}
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1049,11 +1062,41 @@ func anotherMachineCommand(cfg config.Config, userHome string) string {
 	if len(cfg.Harnesses) > 0 {
 		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
 	}
+	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix), "--retention-days", strconv.Itoa(cmp.Or(cfg.RetentionDays, defaultRetentionDays)))
+	if cfg.RequireSkillUse {
+		args = append(args, "--require-skill-use")
+	} else {
+		args = append(args, "--no-require-skill-use")
+	}
+	args = append(args, "--skill-evidence", string(cfg.EffectiveSkillEvidence()))
+	if cfg.NoSkills {
+		args = append(args, "--no-skills")
+	} else {
+		args = append(args, "--skills")
+	}
+
 	for _, project := range cfg.Archive.Projects {
 		if !project.Included {
 			continue
 		}
-		args = append(args, "--project", homeRelative(project.Root, userHome))
+		key, checked := keys[project.Root]
+		if !checked {
+			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
+			// A key describes the whole repository. A configured subdirectory
+			// must keep its path to avoid widening capture on another machine.
+			if child.Err() == nil {
+				if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+					key = env.projectRepoKey(child, project.Root)
+				}
+			}
+			done()
+			keys[project.Root] = key
+		}
+		if key != "" {
+			args = append(args, "--project-repo", key)
+		} else {
+			args = append(args, "--project", homeRelative(project.Root, userHome))
+		}
 	}
 	for i, arg := range args {
 		args[i] = shellWord(arg)
@@ -1299,100 +1342,9 @@ func storedCredentialReadable(env Env, ref string) bool {
 // menu's instructions point at.
 const bucketDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/bucket.md"
 
-// storageMenuOptions is the storage menu: the providers to use an existing
-// bucket with, then the instructions.
+// storageMenuOptions lists only the two storage providers.
 func storageMenuOptions() []option {
-	options := []option{
-		{"r2", "Cloudflare R2"},
-		{"s3", "Amazon S3"},
-	}
-	options = append(options, guidedStorageOptions()...)
-	return append(options, option{"help", "Show setup instructions"})
-}
-
-// guidedStorageOptions is where the "Create a new bucket for me" choices go
-// (dev/proposals/implemented/portable-handoff-and-onboarding.md, Part 2).
-func guidedStorageOptions() []option {
-	return []option{{storageChoiceS3New, storageLabelS3New}}
-}
-
-func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
-	cfg := existing
-	var secret credentials.R2Credentials
-	providers := storageMenuFor(env)
-	// A saved provider wins, so discovery runs only when there is none.
-	defaultProvider := existing.Provider
-	if defaultProvider == "" {
-		defaultProvider = defaultStorageProvider(env)
-	}
-	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
-	for err == nil && choice == "help" {
-		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
-		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
-		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create an Amazon S3 bucket for you.")
-		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
-	}
-	if err != nil {
-		return cfg, secret, false, err
-	}
-	if choice == guidedR2Choice {
-		cfg, secret, saved, e := createR2Bucket(p, env)
-		if !errors.Is(e, errChooseStorageAgain) {
-			return cfg, secret, saved, e
-		}
-		return promptStorage(p, existing, env, failedRegion)
-	}
-	createS3 := choice == storageChoiceS3New
-	if createS3 {
-		choice = credentials.ProviderS3
-	}
-	if cfg.Provider != choice {
-		cfg = credentials.Config{Provider: choice}
-	}
-	if choice == "r2" {
-		// The account comes first, so a pasted bucket URL can fill in the
-		// bucket too.
-		fromURL, e := promptR2Location(p, &cfg)
-		if e != nil {
-			return cfg, secret, false, e
-		}
-		if !fromURL {
-			if cfg.Bucket, err = p.required("Bucket name", cfg.Bucket); err != nil {
-				return cfg, secret, false, err
-			}
-		}
-		reuse := false
-		if cfg.R2CredentialRef != "" {
-			// A rebuilt or reinstalled binary can lose access to the item it
-			// stored; offering to keep it would only fail after the
-			// questions, so ask for the key again right away.
-			if storedCredentialReadable(env, cfg.R2CredentialRef) {
-				reuse, err = p.yesNo("Keep stored R2 credentials?", true)
-				if err != nil {
-					return cfg, secret, false, err
-				}
-			} else {
-				terminal.Println(p.out, "The stored R2 credentials can't be read from the "+credentials.StoreName(credentialOS)+"; enter them again.")
-			}
-		}
-		if !reuse {
-			secret.AccessKeyID, err = p.required("Access key ID", "")
-			if err != nil {
-				return cfg, secret, false, err
-			}
-			for secret.SecretAccessKey == "" {
-				secret.SecretAccessKey, err = p.secret("Secret access key (hidden): ")
-				if err != nil {
-					return cfg, secret, false, err
-				}
-			}
-		}
-	} else if err = promptS3Bucket(p, &cfg, env, failedRegion, createS3); err != nil {
-		return cfg, secret, false, err
-	}
-	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)
-
-	return cfg, secret, secret.SecretAccessKey != "", err
+	return []option{{"r2", "Cloudflare R2"}, {"s3", "Amazon S3"}}
 }
 
 // promptR2Location asks for the R2 account ID, or a URL: the bucket URL
@@ -2144,4 +2096,15 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 func isGoBuildDir(name string) bool {
 	digits, ok := strings.CutPrefix(name, "go-build")
 	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
+}
+
+func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 {
+		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
+	}
+	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {
+		terminal.Printf(stderr, "Pairing incomplete: %v\n", err)
+		return 1
+	}
+	return 0
 }

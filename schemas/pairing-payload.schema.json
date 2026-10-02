@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/pairing-payload.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "pairing_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "recipient_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "issuer_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "issuer_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "enum": [
+            "r2",
+            "s3"
+          ]
+        },
+        "bucket": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "r2_account": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "r2_endpoint": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "aws_profile": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "region": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "provider",
+        "bucket",
+        "prefix"
+      ]
+    },
+    "access_key_id": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "secret_access_key": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "apps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "claude",
+          "codex",
+          "cursor"
+        ]
+      }
+    },
+    "retention_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 36500
+    },
+    "require_skill_use": {
+      "type": "boolean"
+    },
+    "skill_evidence": {
+      "enum": [
+        "none",
+        "metadata",
+        "body"
+      ]
+    },
+    "no_skills": {
+      "type": "boolean"
+    },
+    "handoff_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claude": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "codex": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "cursor": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      }
+    },
+    "handoff_default": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "claude": {
+          "enum": [
+            "claude",
+            "codex",
+            "cursor"
+          ]
+        },
+        "codex": {
+          "enum": [
+            "claude",
+            "codex",
+            "cursor"
+          ]
+        },
+        "cursor": {
+          "enum": [
+            "claude",
+            "codex",
+            "cursor"
+          ]
+        }
+      }
+    },
+    "inclusions": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "repo_key": {
+            "type": "string",
+            "pattern": "^repo-[a-f0-9]{16}$"
+          },
+          "repo_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Canonical slash-separated relative path; no traversal, absolute path, controls or symlink escape."
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "home_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Canonical slash-separated relative path; no traversal, absolute path, controls or symlink escape."
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ]
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inclusion_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Canonical slash-separated relative path; no traversal, absolute path, controls or symlink escape."
+          },
+          "home_relative": {
+            "type": "boolean"
+          },
+          "unresolved": {
+            "type": "boolean"
+          },
+          "affected": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            }
+          }
+        },
+        "required": [
+          "affected"
+        ]
+      }
+    }
+  },
+  "required": [
+    "version",
+    "pairing_id",
+    "recipient_id",
+    "issuer_id",
+    "issuer_name",
+    "name",
+    "created_at",
+    "expires_at",
+    "storage",
+    "apps",
+    "retention_days",
+    "require_skill_use",
+    "skill_evidence",
+    "no_skills",
+    "inclusions"
+  ]
+}

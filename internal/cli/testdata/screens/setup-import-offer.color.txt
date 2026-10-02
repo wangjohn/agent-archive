@@ -2,7 +2,7 @@ $ agent-archive setup
 Checking installed applications...
   \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
   \e[32m✓\e[0m Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
@@ -13,12 +13,11 @@ On the review screen: Edit a setting adds projects, drops apps, and changes how 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should sessions be stored?\e[0m
+\e[1mWhere should your archive live?\e[0m
   1) Cloudflare R2
   2) Amazon S3
-  3) Amazon S3: create a new bucket for me
-  4) Show setup instructions
-Enter 1-4 [\e[1m1\e[0m] › 2
+[h] Setup instructions
+Choose [\e[1m1\e[0m] › s3-existing
 
 \e[1mAWS profile\e[0m › work
 
@@ -78,5 +77,5 @@ See them with \e[36magent-archive list --imported\e[0m.
 Undo with \e[36magent-archive backfill undo 2026-09-25-1\e[0m.
 
 To set up another machine with this storage, run there:
-  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app\e[0m
+  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app\e[0m
 [exit 0]
