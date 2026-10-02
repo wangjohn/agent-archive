@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -78,12 +79,13 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	integration, ok := env.agentRegistry().Lookup(*harness)
-	if !ok || integration.Decoder == nil {
+	registry := env.agentRegistry()
+	decoder, ok := registry.LookupDecoder(*harness)
+	if !ok {
 		return 0
 	}
-	*harness = string(integration.Descriptor.ID)
-	diagnostic, _ = integration.Decoder.(agentapi.HookDiagnosticDecoder)
+	*harness = agentmeta.Canonical(registry.Catalog(), *harness)
+	diagnostic, _ = decoder.(agentapi.HookDiagnosticDecoder)
 	var now time.Time
 	var clockFailure any
 	func() {
@@ -95,11 +97,11 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		// batch, and preserve the original failure if the decoder also panics.
 		func() {
 			defer func() { _ = recover() }()
-			batch, _ = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
+			batch, _ = decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
 		}()
 		panic(clockFailure)
 	}
-	batch, err = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: now})
+	batch, err = decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: now})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 		return 0

@@ -137,16 +137,29 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 		child = &agentapi.ChildObservation{ID: first(payload, "agent_id"), Path: first(payload, "agent_transcript_path"), Type: archive.SanitizeSubagentType(first(payload, "agent_type")), CaptureTranscript: d.Spec.ChildTranscript, MissingDetail: "SubagentStop omitted agent_id"}
 	}
 	session := agentapi.NativeSession{Agent: d.Spec.Agent, NativeID: id, Version: version, Mode: mode}
-	event := agentapi.LifecycleEvent{Kind: kind, Session: session, ProjectRoot: root(payload), Reason: strings.ToLower(name), NativeEvent: name, Source: source, Locator: locator, Start: proof, Deferred: deferred, Child: child}
+	reason := strings.ToLower(name)
+	event := agentapi.LifecycleEvent{Kind: kind, Session: session, ProjectRoot: root(payload), Reason: reason, NativeEvent: name, Source: source, Locator: locator, Start: proof, Deferred: deferred, Child: child}
 	if kind == agentapi.EventSubagent {
 		return []agentapi.LifecycleEvent{event}, nil
 	}
 	lifecycle := kind == agentapi.EventStart || kind == agentapi.EventTurnStart || kind == agentapi.EventStop
+	final := kind == agentapi.EventStop || kind == agentapi.EventResponse
+	count := 0
 	if lifecycle {
-		event.Evidence = append(event.Evidence, d.evidence(archive.EvidenceKindLifecycleHook, name, payload, false, input))
+		count++
 	}
-	if kind == agentapi.EventStop || kind == agentapi.EventResponse {
-		event.Evidence = append(event.Evidence, d.evidence(archive.EvidenceKindFinalResponse, name, payload, true, input))
+	if final {
+		count++
+	}
+	if count > 0 {
+		event.Evidence = make([]archive.SupplementalEvidence, 0, count)
+	}
+	provenance := "hook:" + string(d.Spec.Agent) + ":" + reason
+	if lifecycle {
+		event.Evidence = append(event.Evidence, d.evidence(archive.EvidenceKindLifecycleHook, name, provenance, payload, false, input))
+	}
+	if final {
+		event.Evidence = append(event.Evidence, d.evidence(archive.EvidenceKindFinalResponse, name, provenance, payload, true, input))
 	}
 	if kind == agentapi.EventTurnStart && d.Spec.PromptStarts {
 		candidate := event
@@ -160,7 +173,7 @@ func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agenta
 	return []agentapi.LifecycleEvent{event}, nil
 }
 
-func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event string, payload map[string]any, final bool, input agentapi.HookInput) archive.SupplementalEvidence {
+func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event, provenance string, payload map[string]any, final bool, input agentapi.HookInput) archive.SupplementalEvidence {
 	out := map[string]any{"event_name": first(payload, "hook_event_name")}
 	for _, key := range []string{"message_id", "turn_id", "agent_id", "model", "model_id"} {
 		if v := first(payload, key); v != "" {
@@ -200,7 +213,6 @@ func (d Decoder) evidence(kind archive.SupplementalEvidenceKind, event string, p
 			out["status"] = v
 		}
 	}
-	provenance := "hook:" + string(d.Spec.Agent) + ":" + strings.ToLower(event)
 	return archive.SupplementalEvidence{Kind: kind, ObservedAt: input.ObservedAt, Provenance: provenance, Payload: out}
 }
 

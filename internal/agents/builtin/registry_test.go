@@ -1,8 +1,14 @@
 package builtin
 
 import (
+	"context"
+	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -141,6 +147,109 @@ func TestHookOperationProjectionsAgreeWithCatalog(t *testing.T) {
 			if !reflect.DeepEqual(got.Descriptor, want) {
 				t.Fatalf("%s projection differs from catalog: %+v, want %+v", operation, got.Descriptor, want)
 			}
+		}
+	}
+}
+
+// Narrow operational lookup must not clone public metadata on each hook.
+func TestLookupDecoderPreservesResolutionWithoutMetadataAllocation(t *testing.T) {
+	r := NewBuiltins()
+	for _, name := range []string{"codex", "claude", "claude-code", "cursor"} {
+		full, ok := r.Lookup(name)
+		narrow, found := r.LookupDecoder(name)
+		if !ok || !found || !reflect.DeepEqual(narrow, full.Decoder) {
+			t.Fatalf("decoder %s changed", name)
+		}
+		allocs := testing.AllocsPerRun(100, func() { _, _ = r.LookupDecoder(name) })
+		t.Logf("%s narrow lookup allocations=%g", name, allocs)
+		if allocs != 0 {
+			t.Errorf("%s narrow lookup clones metadata: %g allocations", name, allocs)
+		}
+	}
+	for _, name := range []string{"missing", ""} {
+		if d, ok := r.LookupDecoder(name); ok || d != nil {
+			t.Fatalf("unknown decoder %q", name)
+		}
+	}
+}
+
+type narrowTestDecoder struct{}
+
+func (*narrowTestDecoder) Decode(context.Context, agentapi.HookInput) ([]agentapi.LifecycleEvent, error) {
+	return nil, nil
+}
+
+func TestNarrowDecoderInjectedAliasAndMissingCapability(t *testing.T) {
+	c, err := agentmeta.New([]agentmeta.Descriptor{{ID: testID, DisplayName: "Test", Aliases: []string{"alias"}}, {ID: unknownID, DisplayName: "Unknown"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := &narrowTestDecoder{}
+	r, err := New(c, []Integration{{Descriptor: agentmeta.Descriptor{ID: testID}, Decoder: decoder}, {Descriptor: agentmeta.Descriptor{ID: unknownID}, Launcher: &fakeLauncher{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"test", "alias", " ALIAS "} {
+		if d, ok := r.LookupDecoder(name); !ok || d != decoder {
+			t.Fatalf("alias %q: %v %v", name, d, ok)
+		}
+	}
+	if d, ok := r.LookupDecoder("unknown"); ok || d != nil {
+		t.Fatal("fabricated absent decoder")
+	}
+	b, _ := r.Lookup("alias")
+	b.Descriptor.Aliases[0] = "broken"
+	b.Descriptor.Operations[0] = brokenOperation
+	if d, ok := r.LookupDecoder("alias"); !ok || d != decoder {
+		t.Fatal("full descriptor mutation corrupted narrow lookup")
+	}
+}
+
+func TestNativeDecodeEvidenceAndInputSnapshots(t *testing.T) {
+	r := NewBuiltins()
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, name := range []string{"claude", "codex", "cursor"} {
+		port, _ := r.LookupDecoder(name)
+		decoder := port.(hookconfig.Decoder)
+		var events []string
+		for event := range decoder.Spec.Events {
+			events = append(events, event)
+		}
+		slices.Sort(events)
+		for _, event := range events {
+			payload := map[string]any{"hook_event_name": event, "session_id": "native", "conversation_id": "conversation", "cwd": "/synthetic/project", "source": "startup", "transcript_path": "/synthetic/source", "agent_id": "child", "agent_transcript_path": "/synthetic/child", "agent_type": "explorer", "generation_id": "turn", "model": "model", "message_id": "message", "status": "completed", "last_assistant_message": "final", "text": "response", "prompt": "PRIVATE-PROMPT", "tool_input": "PRIVATE-TOOL", "model_params": []any{map[string]any{"id": "safe", "value": "chosen", "extra": "PRIVATE-EXTRA"}}}
+			before, _ := json.Marshal(payload)
+			batch, err := port.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: at})
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, _ := json.Marshal(payload)
+			if string(before) != string(after) {
+				t.Fatalf("%s/%s mutated input", name, event)
+			}
+			encoded, err := json.Marshal(batch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, private := range []string{"PRIVATE-PROMPT", "PRIVATE-TOOL", "PRIVATE-EXTRA"} {
+				if strings.Contains(string(encoded), private) {
+					t.Fatalf("%s/%s leaked %s", name, event, private)
+				}
+			}
+			for _, item := range batch {
+				if item.NativeEvent != event || item.Reason != strings.ToLower(event) {
+					t.Fatalf("%s/%s native identity changed", name, event)
+				}
+				if item.Kind == agentapi.EventStop && len(item.Evidence) != 2 {
+					t.Fatalf("%s/%s stop lost distinct evidence", name, event)
+				}
+				for _, e := range item.Evidence {
+					if e.Provenance != "hook:"+name+":"+strings.ToLower(event) || !e.ObservedAt.Equal(at) {
+						t.Fatal("evidence provenance/time changed")
+					}
+				}
+			}
+			t.Logf("SNAPSHOT %s/%s %s", name, event, encoded)
 		}
 	}
 }
