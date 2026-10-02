@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -42,7 +41,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	}
 	hook := func(payload map[string]any, when time.Time) {
 		t.Helper()
-		if err := capture.HandleEvent(home, "claude", payload, when, capture.WithDecoders(productionAgents)); err != nil {
+		if err := handleTestHookEvent(home, "claude", payload, when); err != nil {
 			t.Fatal(err)
 		}
 	}

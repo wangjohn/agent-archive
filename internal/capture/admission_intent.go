@@ -216,7 +216,7 @@ func eventAdmissionIntent(home string, batch []agentapi.LifecycleEvent, now time
 		event.Evidence = nil
 		event.Child = nil
 		if start {
-			event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: "retained_hook_proof"}
+			event.Start = agentapi.StartEvidence{Kind: agentapi.FreshExplicit, Reason: agentapi.FreshnessRetainedProof}
 		}
 		effects = append(effects, agentapi.ReplayEffect{Event: event})
 	}
@@ -289,7 +289,8 @@ func ReplayAdmissionIntents(home string, now time.Time, lookups ...agentapi.Deco
 	}
 	return replayAdmissionIntents(home, now, lookup, nil)
 }
-func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(string) error) error {
+
+func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
 	if setupjournal.TransactionPending(home) {
 		return nil
 	}
@@ -340,7 +341,7 @@ func replayAdmissionIntents(home string, now time.Time, lookup agentapi.Decoders
 	return errors.Join(failures...)
 }
 
-func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time, lookup agentapi.DecodersLookup, after func(string) error) (*deferredFollowup, error) {
+func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) (*deferredFollowup, error) {
 	var intent admissionIntent
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
@@ -428,7 +429,8 @@ func intentEvents(intent admissionIntent, lookup agentapi.DecodersLookup) ([]age
 	}
 	return legacy.DecodeLegacy(intent)
 }
-func replayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, events []agentapi.LifecycleEvent, registered bool, after func(string) error) error {
+
+func replayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, events []agentapi.LifecycleEvent, registered bool, after func(effectName) error) error {
 	prepared := make([]agentapi.LifecycleEvent, len(events))
 	copy(prepared, events)
 	for i, event := range prepared {
@@ -484,10 +486,12 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 	}
 	return nil
 }
+
 func minimalReplayEvidence(kind archive.SupplementalEvidenceKind, event agentapi.LifecycleEvent, at time.Time) archive.SupplementalEvidence {
 	return archive.SupplementalEvidence{Kind: kind, ObservedAt: at, Provenance: "hook:" + string(event.Session.Agent) + ":" + event.Reason, Payload: map[string]any{"event_name": event.NativeEvent}}
 }
-func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup, after func(string) error) error {
+
+func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup, after func(effectName) error) error {
 	key, err := agentmeta.NewSessionKey(followup.intent.Harness, followup.intent.NativeSessionID)
 	if err != nil {
 		return err
@@ -512,11 +516,11 @@ func replayDeferredFollowup(store *state.Store, cfg config.Config, followup defe
 	return acknowledgeIntent(followup.path, after)
 }
 
-func acknowledgeIntent(path string, after func(string) error) error {
+func acknowledgeIntent(path string, after func(effectName) error) error {
 	if err := removeAdmissionIntent(path); err != nil {
 		return err
 	}
-	return effectBoundary(after, "intent-ack")
+	return effectBoundary(after, effectIntentAck)
 }
 
 func removeAdmissionIntent(path string) error {

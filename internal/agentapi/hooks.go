@@ -7,14 +7,17 @@ import (
 
 // HookLocations supplies observed native environment locations without host calls.
 type HookLocations struct {
-	UserHome, WorkingDirectory string
-	Environment                map[string]string
+	UserHome         string
+	WorkingDirectory string
+	Environment      map[string]string
 }
 
 // HookOwner identifies the installation whose handlers may be changed.
 type HookOwner struct {
-	Executable, DataHome, DefaultDataHome string
-	Locations                             map[string]string
+	Executable      string
+	DataHome        string
+	DefaultDataHome string
+	Locations       map[string]string
 }
 
 // HookFile is a bounded caller observation, including symlink and permission facts.

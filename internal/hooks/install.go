@@ -148,8 +148,8 @@ func Validate(files Files, ports agentapi.HooksLookup) []Problem {
 			continue
 		}
 		path := files[harness]
-		p := Problem{Harness: harness, Path: path, Err: err}
-		p.Line, p.Column, p.Reason = jsonedit.Problem(err)
+		line, column, reason := jsonedit.Problem(err)
+		p := Problem{Harness: harness, Path: path, Err: err, Line: line, Column: column, Reason: reason}
 		if p.Reason == "" {
 			p.Reason = strings.TrimPrefix(strings.TrimPrefix(err.Error(), path+": "), jsonedit.ErrInvalidConfiguration.Error()+": ")
 			var unread *readError
@@ -223,18 +223,5 @@ func Inspect(files Files, hook Hook, harness string) (agentapi.HookInspection, e
 // ErrChanged reports a concurrent edit after planning.
 var ErrChanged = fileapply.ErrChanged
 
-// Applied reports whether a file retains the planned result.
-func Applied(c Change) bool { return fileapply.Applied(c) }
-
-// Unapplied reports whether a file retains the original observation.
-func Unapplied(c Change) bool { return fileapply.Unapplied(c) }
-
 // Apply applies generic byte plans with rollback on failure.
 func Apply(c []Change) error { return fileapply.Apply(c) }
-
-// Rollback restores generic plans in reverse order.
-func Rollback(c []Change) error { return fileapply.Rollback(c) }
-func apply(c []Change, target func(string) (string, error)) error {
-	return fileapply.ApplyWithTarget(c, target)
-}
-func resolveTarget(path string) (string, error) { return fileapply.ResolveTarget(path) }

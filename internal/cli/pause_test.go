@@ -81,7 +81,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "queued-before-pause", "cwd": project}
-	if err := capture.HandleEvent(home, "claude", payload, at, capture.WithDecoders(productionAgents)); err != nil {
+	if err := handleTestHookEvent(home, "claude", payload, at); err != nil {
 		release()
 		t.Fatal(err)
 	}

@@ -152,7 +152,7 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
-	if err := HandleEvent(home, "claude", claudeStart(project, "parent", "startup", "/synthetic/parent.jsonl"), at); err != nil {
+	if err := HandleEvent(home, "claude", claudeStart(project, "parent", "startup", "/synthetic/parent.jsonl"), at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store := state.OpenReadOnly(home)
@@ -160,10 +160,10 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 	corruptQualifiedIndex(t, home, child)
 	payload := map[string]any{"hook_event_name": "SubagentStop", "session_id": "parent", "cwd": project, "agent_id": "child", "agent_transcript_path": "/synthetic/child.jsonl"}
 	for range 2 {
-		if err := HandleEvent(home, "claude", payload, at.Add(time.Minute)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 			t.Fatalf("lookup: %v", err)
 		}
-		if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+		if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,13 +173,13 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 	if err := store.RecoverSessionIndex(context.Background()); err != nil {
 		t.Fatalf("child recovery stranded: %v", err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	if regs, err := store.LoadRegistrations(); err != nil || len(regs) != 1 {
 		t.Fatalf("unproved child admitted: %#v %v", regs, err)
 	}
-	if err := HandleEvent(home, "claude", payload, at.Add(2*time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", payload, at.Add(2*time.Minute), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	candidates, err := store.LoadSubagentCandidates()

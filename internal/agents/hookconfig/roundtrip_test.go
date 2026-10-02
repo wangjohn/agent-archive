@@ -3,10 +3,13 @@ package hookconfig
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"testing"
 )
 
 const Owner = "agent-archive lifecycle capture"
+
 const prototypeOwner = "Recording private skill-run evidence"
 
 type testHook struct{ Executable string }
@@ -14,21 +17,25 @@ type testHook struct{ Executable string }
 func fuzzSpec(name string) Spec {
 	flat := name == "cursor"
 	events := []string{"SessionStart", "UserPromptSubmit", "Stop", "SessionEnd", "SubagentStop"}
-	if name == "claude" {
+	switch agentmeta.ID(name) {
+	case agentmeta.Claude:
 		events = append(events, "StopFailure")
-	} else if name == "codex" {
+	case agentmeta.Codex:
 		events = append(events, "Interrupt")
-	} else {
+	case agentmeta.Cursor:
 		events = []string{"sessionStart", "beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd", "subagentStop"}
 	}
 	return Spec{Name: name, Events: events, Flat: flat, Version: flat, Owner: Owner, PrototypeOwner: prototypeOwner}
 }
+
 func Merge(data []byte, name string, h testHook) ([]byte, error) {
 	return merge(data, fuzzSpec(name), Hook{Executable: h.Executable})
 }
+
 func Remove(data []byte, name string, h testHook) ([]byte, bool, error) {
 	return remove(data, fuzzSpec(name), Hook{Executable: h.Executable})
 }
+
 func FuzzMergeRemove(f *testing.F) {
 	for _, seed := range []string{
 		"", "{}", "{}\n", `{"model":"opus"}`, "{\n\t\"model\": \"opus\"\n}\n",
@@ -114,3 +121,5 @@ func sameJSON(a, b any) bool {
 }
 
 // Regression: hook ownership review, 2026-09 (1a9420b).
+
+func encodeValue(dst *bytes.Buffer, v any) error { return jsonedit.EncodeValue(dst, v) }

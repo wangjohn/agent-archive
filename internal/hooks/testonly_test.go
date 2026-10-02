@@ -1,8 +1,12 @@
 package hooks
 
 import (
+	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/agents/hookconfig"
+	"github.com/wangjohn/agent-archive/internal/fileapply"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -46,3 +50,60 @@ func PlanRemoval(files Files, hook Hook, harnesses []string) ([]Change, error) {
 }
 
 func CommandDataHome(command string) (string, bool) { return hookconfig.CommandDataHome(command) }
+
+func Merge(existing []byte, name string, h Hook) ([]byte, error) {
+	p, err := h.port(name)
+	if err != nil {
+		return nil, err
+	}
+	file := agentapi.HookFile{Path: "/hook-settings", Bytes: existing, Present: len(existing) > 0, Mode: 0600, Regular: true}
+	owner, err := resolveOwners(p, file, h.owner())
+	if err != nil {
+		return nil, err
+	}
+	changes, err := p.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: file, Owner: owner})
+	if err != nil {
+		return nil, err
+	}
+	if len(changes) != 1 {
+		return nil, errors.New("hook install must plan one file")
+	}
+	return changes[0].After, nil
+}
+
+func Remove(existing []byte, name string, h Hook) ([]byte, bool, error) {
+	p, err := h.port(name)
+	if err != nil {
+		return nil, false, err
+	}
+	file := agentapi.HookFile{Path: "/hook-settings", Bytes: existing, Present: true, Mode: 0600, Regular: true}
+	owner, err := resolveOwners(p, file, h.owner())
+	if err != nil {
+		return nil, false, err
+	}
+	changes, err := p.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: file, Owner: owner})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(changes) == 0 {
+		return existing, false, nil
+	}
+	return changes[0].After, true, nil
+}
+
+func Empty(data []byte) bool {
+	d, err := jsonedit.Parse(data)
+	return err == nil && len(d.Root.Members) == 0
+}
+
+func Applied(c Change) bool { return fileapply.Applied(c) }
+
+func Unapplied(c Change) bool { return fileapply.Unapplied(c) }
+
+func Rollback(c []Change) error { return fileapply.Rollback(c) }
+
+func apply(c []Change, target func(string) (string, error)) error {
+	return fileapply.ApplyWithTarget(c, target)
+}
+
+func resolveTarget(path string) (string, error) { return fileapply.ResolveTarget(path) }

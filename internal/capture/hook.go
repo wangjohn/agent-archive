@@ -2,7 +2,6 @@
 package capture
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -33,49 +32,33 @@ func RecordFailure(home, harness, root string) {
 
 // Option adjusts narrow capture dependencies.
 type Option func(*eventOptions)
+
 type eventOptions struct {
 	repoKey     RepoKeyFunc
 	decoders    agentapi.DecodersLookup
 	stat        func(string) (os.FileInfo, error)
-	afterEffect func(string) error
+	afterEffect func(effectName) error
 }
+
+type effectName string
+
+const (
+	effectRegistrationCreate effectName = "registration-create"
+	effectRegistrationUpdate effectName = "registration-update"
+	effectEvidenceSave       effectName = "evidence-save"
+	effectLocatorUpdate      effectName = "locator-update"
+	effectRequestSave        effectName = "request-save"
+	effectChildReservation   effectName = "child-reservation"
+	effectChildLink          effectName = "child-link"
+	effectChildCandidate     effectName = "child-candidate"
+	effectIntentAck          effectName = "intent-ack"
+)
 
 // RepoKeyFunc is the command-owned, bounded repository lookup.
 type RepoKeyFunc func(string) string
 
 // WithRepoKey injects a repository lookup before hooks.lock.
 func WithRepoKey(f RepoKeyFunc) Option { return func(o *eventOptions) { o.repoKey = f } }
-
-// WithDecoders injects only lifecycle decoding and legacy translation ports.
-func WithDecoders(d agentapi.DecodersLookup) Option { return func(o *eventOptions) { o.decoders = d } }
-
-// WithStat injects the bounded local freshness observation operation.
-func WithStat(f func(string) (os.FileInfo, error)) Option {
-	return func(o *eventOptions) { o.stat = f }
-}
-
-// HandleEvent decodes a bounded native payload and applies its entire validated batch.
-func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...Option) error {
-	var o eventOptions
-	for _, option := range options {
-		option(&o)
-	}
-	if payload == nil {
-		return nil
-	}
-	if o.decoders == nil {
-		return errors.New("lifecycle decoder lookup required")
-	}
-	decoder, ok := o.decoders.LookupDecoder(harness)
-	if !ok {
-		return nil
-	}
-	batch, err := decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: now})
-	if err != nil {
-		return err
-	}
-	return handleBatch(home, harness, batch, now, nil, nil, o)
-}
 
 // HandleBatch is the common typed capture entry used by injected integrations.
 func HandleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time.Time, options ...Option) error {
@@ -221,6 +204,7 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	}
 	return nil
 }
+
 func eventKey(event agentapi.LifecycleEvent) (agentmeta.SessionKey, error) {
 	return agentmeta.NewSessionKey(string(event.Session.Agent), event.Session.NativeID)
 }
@@ -230,6 +214,7 @@ func HasRegistration(store *state.Store, key agentmeta.SessionKey) (bool, error)
 	_, found, err := store.ArchiveSessionID(key)
 	return found, err
 }
+
 func newSessionRepoKey(home string, event agentapi.LifecycleEvent, now time.Time, repoKey RepoKeyFunc) string {
 	if repoKey == nil {
 		return ""
@@ -251,6 +236,7 @@ func newSessionRepoKey(home string, event agentapi.LifecycleEvent, now time.Time
 	}
 	return boundedRepoKey(repoKey, owner.Root)
 }
+
 func resolveFreshness(batch []agentapi.LifecycleEvent, stat func(string) (os.FileInfo, error)) []agentapi.LifecycleEvent {
 	if stat == nil {
 		stat = os.Stat
@@ -272,6 +258,7 @@ func resolveFreshness(batch []agentapi.LifecycleEvent, stat func(string) (os.Fil
 	}
 	return batch
 }
+
 func recordHookBusyEvent(home string, event agentapi.LifecycleEvent, now time.Time) error {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
@@ -283,6 +270,7 @@ func recordHookBusyEvent(home string, event agentapi.LifecycleEvent, now time.Ti
 	}
 	return recordDiagnostic(home, Diagnostic{Code: DiagnosticHookBusy, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now}, true)
 }
+
 func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Time) error {
 	for _, event := range batch {
 		if event.Kind != agentapi.EventStart {
@@ -313,7 +301,8 @@ func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Tim
 	}
 	return nil
 }
-func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, repoKey string, after func(string) error) error {
+
+func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, repoKey string, after func(effectName) error) error {
 	switch event.Kind {
 	case agentapi.EventStart:
 		return handleSessionStart(home, store, cfg, event, now, repoKey, after)
@@ -338,13 +327,15 @@ func applyEvent(home string, store *state.Store, cfg config.Config, event agenta
 	}
 	return errors.New("invalid lifecycle effect")
 }
-func effectBoundary(after func(string) error, name string) error {
+
+func effectBoundary(after func(effectName) error, name effectName) error {
 	if after != nil {
 		return after(name)
 	}
 	return nil
 }
-func handleSessionStart(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, repoKey string, after func(string) error) error {
+
+func handleSessionStart(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, repoKey string, after func(effectName) error) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
@@ -384,7 +375,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 			return err
 		}
 		if updated {
-			if err := effectBoundary(after, "registration-update"); err != nil {
+			if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
 				return err
 			}
 			return saveLifecycleEvidence(store, existingID, event, now, after)
@@ -404,11 +395,12 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 	if err != nil {
 		return fmt.Errorf("register session: %w", err)
 	}
-	if err := effectBoundary(after, "registration-create"); err != nil {
+	if err := effectBoundary(after, effectRegistrationCreate); err != nil {
 		return err
 	}
 	return saveLifecycleEvidence(store, reg.ArchiveSessionID, event, now, after)
 }
+
 func declinedStart(cfg config.Config, root string, now time.Time, start agentapi.StartEvidence) DiagnosticCode {
 	if !cfg.Archive.Eligible(root, now) {
 		return DiagnosticPreActivationStart
@@ -420,6 +412,7 @@ func declinedStart(cfg config.Config, root string, now time.Time, start agentapi
 }
 
 var errContinuationDeclined = errors.New("continuation not accepted by the current configuration")
+
 var errSessionIdentityConflict = errors.New("session identity conflicts with the accepted registration")
 
 func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
@@ -427,9 +420,10 @@ func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
 		target.Version = session.Version
 	}
 	if session.Mode != "" {
-		target.Mode = session.Mode
+		target.Mode = string(session.Mode)
 	}
 }
+
 func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEvent) {
 	if event.Source.Path == "" || !reg.ReadsTranscriptFile() {
 		return
@@ -438,7 +432,8 @@ func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEven
 		reg.TranscriptPath = event.Source.Path
 	}
 }
-func adoptLocator(store *state.Store, reg *archive.SessionRegistration, event agentapi.LifecycleEvent, after func(string) error) error {
+
+func adoptLocator(store *state.Store, reg *archive.SessionRegistration, event agentapi.LifecycleEvent, after func(effectName) error) error {
 	if event.Source.Path == "" || event.Locator != agentapi.LocatorFillFile || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
 		return nil
 	}
@@ -460,9 +455,10 @@ func adoptLocator(store *state.Store, reg *archive.SessionRegistration, event ag
 	if !found {
 		return state.ErrSessionNotRegistered
 	}
-	return effectBoundary(after, "locator-update")
+	return effectBoundary(after, effectLocatorUpdate)
 }
-func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, now time.Time, after func(string) error) error {
+
+func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
@@ -483,18 +479,20 @@ func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, no
 	}
 	return saveLifecycleEvidence(store, id, event, now, after)
 }
-func saveLifecycleEvidence(store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time, after func(string) error) error {
+
+func saveLifecycleEvidence(store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
 	for _, evidence := range event.Evidence {
 		if err := store.SaveEvidence(id, event.Reason, now, evidence); err != nil {
 			return err
 		}
-		if err := effectBoundary(after, "evidence-save"); err != nil {
+		if err := effectBoundary(after, effectEvidenceSave); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now time.Time, after func(string) error) error {
+
+func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
@@ -516,7 +514,7 @@ func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now ti
 	if err := store.SaveRequest(id, event.Reason, now, event.Evidence...); err != nil {
 		return err
 	}
-	return effectBoundary(after, "request-save")
+	return effectBoundary(after, effectRequestSave)
 }
 
 // loadHookCaptureWindow reads the active capture configuration. When observed
