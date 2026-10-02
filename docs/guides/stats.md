@@ -68,10 +68,13 @@ MOST USED
 Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · styleprofile · long context, 38 subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Claude Code:
+2, Cursor: 8).
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html
 ```
@@ -100,11 +103,13 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   plugin's prefix is dropped, so `anthropic-skills:docs` reads `docs`) and
   MCP servers (in calls, for the agents that record them). A row appears only
   when there is data for it.
-- **Heads up** is up to three things worth a look, in this order: subagents
+- **Findings** shows usage insights from the engine’s up to three notes:
+  subagents
   using a quarter or more of your tokens (a subagent run is counted as a run,
   never as a session), one session costing a tenth or more of your spend (with
-  more than one session in the window) and what likely made it costly, sessions with no token data, and a cache hit
-  rate under 60%.
+  more than one session in the window) and what likely made it costly, and a
+  cache hit rate under 60%. Missing token data appears separately under
+  **Coverage**.
 
 The colors are the terminal's own 16 (so they follow your theme): Claude Code
 yellow, Cursor blue, Codex green; models by family (opus magenta, fable red,
@@ -112,6 +117,17 @@ sonnet cyan, haiku yellow, GPT and Codex models green); projects and the
 daily chart cyan. Color is never the only cue: every legend names what it
 colors. `NO_COLOR` turns color off, and so does anything that is not a
 terminal.
+
+The daily chart begins at the first session day in the available history when
+that is later than the requested window start. Earlier days are omitted,
+with a caption explaining why. Empty days within that history mean no archived
+sessions, not proof that the collector ran or that you did no work. The requested
+window and totals stay unchanged; retained and filtered history can be incomplete.
+
+Known MCP identifiers such as `Claude_Browser` and `Claude_Code_iOS_Simulator`
+have readable labels. To name opaque or custom servers, add exact ID-to-name
+entries in `mcp_server_names` in [configuration](../reference/configuration.md).
+Unresolved UUIDs get neutral labels; stats never guesses the service behind one.
 
 ### The detail screen (`--detail`)
 
@@ -169,10 +185,9 @@ Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 Skills count the sessions that used each one; MCP counts calls.
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · styleprofile · long context, 38 subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 NOTES
 Scope: this archive only.
@@ -270,12 +285,11 @@ columns:
 ```text
 agent-archive stats · last 30 days · 3 agents
 
-  ~$3,989              93 sessions   10B tokens
-  ▲ 18% vs prior 30d   673 prompts   97% served from cache
+  ~$3,989                   93 sessions               10B tokens
+  at list price             673 prompts               97% served from cache
 
-AGENTS  █████████████████████████ ██ █
-        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%
-        of sessions
+AGENTS  ███████████████████████████████████████████ ████ █
+        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%   of sessions
 
 DAILY SPEND                           peak ~$2,910 · Sep 27
                                                       █
@@ -284,33 +298,26 @@ DAILY SPEND                           peak ~$2,910 · Sep 27
 Aug 31                                               Sep 29
 
 WHERE IT WENT
-By project
-agent-archive  ██████████████████████████████  $1,862
-levenshtein    ████████████                      $751
-styleprofile   █████████                         $586
-family_books   ███████                           $427
+By project                                By model
+agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
+levenshtein    ██████             $751    fable   ███                       $386
+styleprofile   █████              $586    sonnet  ██                        $320
+family_books   ███                $427    + 2 more
 + 6 more
 
-By model
-opus           ██████████████████████████████  $3,270
-fable          ████                              $386
-sonnet         ███                               $320
-+ 2 more
-
 MOST USED
-Skills  code-review 10 · review-pr 4 · docs 3 ·
-        cursor-guide 2 sessions
-MCP     github 41 · linear 12 calls (Claude Code and Cursor
-        only)
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
-● Costliest session ~$564 · styleprofile · long context, 38
-  subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
+● Costliest session ~$564 · styleprofile · long context, 38 subagents
 
-Estimated at list price, not a bill.
---detail for more · --by project · --html
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Claude Code:
+2, Cursor: 8).
+
+Estimated at list price, not a bill.   --detail for more · --by project · --html
 ```
 
 Printed without the [interactive screen](#the-interactive-screen), the text
@@ -415,9 +422,9 @@ cache, since most tokens are cache reads). Then the agents as one bar with
 each agent's share of sessions, daily **spend** as a bar chart with its
 dearest day named (a day whose sessions could not be priced gets a short grey
 mark, not a zero), where the spend went by project and by model, the skills
-and MCP servers used most, and up to three things worth a second look ("Heads
-up": subagents using a large share of your tokens, one session costing much of
-the spend, sessions with no token data, a low cache-hit rate). Under a
+and MCP servers used most, and usage findings (subagents using a large share
+of your tokens, one session costing much of the spend, a low cache-hit rate).
+Missing token data and available-history limits appear under "Coverage". Under a
 "Details" divider come the agents' table (sessions, tokens, spend, cache-hit
 rate), what used your tokens (the donut), a few facts (days active and
 streaks, busiest day, favorite model, costliest session, tool errors, month

@@ -3,13 +3,14 @@
 `agent-archive setup` writes the configuration; every other command reads
 it. It lives in `config.json` in the data directory (see
 [local state](local-state.md)) and holds no secrets. Edit it through setup,
-not by hand: setup checks storage, rewrites hooks, and keeps the fields
+not by hand (except the optional MCP display names and handoff preferences below): setup checks storage, rewrites hooks, and keeps the fields
 consistent with each other.
 
 ## Fields
 
 | Field | Meaning |
 | --- | --- |
+| `mcp_server_names` | Optional map, edited by hand; setup keeps it. Exact recorded MCP server IDs mapped to display names, for example `{"opaque-server-id": "GitHub"}`. Stats uses these labels in terminal output and HTML with names included; JSON preserves each original `name` and adds `display_name`. Unknown UUIDs receive neutral labels rather than guessed service names. |
 | `schema_version` | Shape of this file. Currently `1`. |
 | `machine_id` | This machine's random identity, written into every session it captures. Kept across reconfiguration, and copied with the data directory by Migration Assistant, a backup restore, or a VM or container clone; see [multiple machines](../guides/multiple-machines.md#migration-assistant-and-time-machine-macos) and [on Linux](../guides/multiple-machines.md#cloned-machines-on-linux). |
 | `host_id` | Linux only: a digest of the machine ID (`/etc/machine-id`) of the machine setup first ran on, recorded once beside `machine_id` and never uploaded. `status` and `setup` warn when it differs from the machine they run on, which means the data directory was copied (a cloned VM or container image). If the original is retired, or the operating system was reinstalled on the same machine, remove the entry and setup records the current machine. Absent on macOS and where there is no machine ID (or only one made anew at every boot). |
@@ -105,3 +106,40 @@ stays pending and is retried by the collector without another setup.
 Resuming an ordinary setup draft keeps the latest committed machine name and
 credential provenance for unchanged credentials. Changing the destination or
 credential reference clears old provenance; a draft cannot restore it.
+
+### Experimental dedicated key spares
+
+`spare_keys` is an optional integer from 0 through 5; absence means 2. Zero
+suppresses spare reservation/refill without deleting existing provider keys.
+`spare_credential_refs` contains only opaque `issued-<32 lowercase hex>` references
+and is an advisory index. Validated private `issued/slot-<id>.json` records own
+eligibility and immutable destination/recipient/issuer/slot lineage. Refilling occurs
+only during explicit `machines add` or experimental guided R2 creation while a
+management token is available. Listing, collection and revocation never refill.
+This dedicated issuance phase remains a gated draft pending live acceptance.
+
+## Experimental management token source
+
+`cloudflare_token_command` is an optional argv array, for example
+`["op", "read", "op://Private/Cloudflare/agent-archive"]`. Store a reference to
+an external secret, never the token itself or a literal secret argument. Guided
+R2 creation and experimental `machines --verify` share this source. Both prefer
+`CLOUDFLARE_API_TOKEN` and remove that variable before management requests;
+removal failure stops the operation. Otherwise an interactive invocation runs
+the configured program directly, without a shell, or asks for a hidden token.
+
+The command receives no stdin, has a 20-second deadline and a 4 KiB stdout
+limit, and suppresses stderr and failure output. Its environment excludes
+credential variables. `--yes`, `--json`, pipes and the noninteractive policy
+never run the configured command or prompt; explicit verification in those
+modes requires the environment token. Ordinary listing, status and collection
+never acquire a management token. See [experimental provider observations](../guides/multiple-machines.md#experimental-provider-observations)
+for the opt-in gate and limits. This command configuration is local and is not
+part of a pairing payload.
+
+`AGENT_ARCHIVE_PAIRING_CODE` supplies the six-word pairing code only to
+`setup --pair-file PATH --yes` (or `--pair-file -`). The receiver reads and removes
+it from its process environment; it is never saved. Deliver it separately from
+the encrypted bundle, and clear it in the parent shell afterward. There is no
+code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
+redirected bundle input uses a private terminal for the code and destination review.

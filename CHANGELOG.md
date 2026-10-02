@@ -10,12 +10,33 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Draft experimental revocation with verified immutable selection, per-key
+  recovery journals, serialized issuance selection and independent publication,
+  plus transaction-based
+  `machines own-key` migration. General availability and first-run pairing
+  remain disabled pending combined and live provider acceptance.
+
+- Draft experimental dedicated R2 issuance for `machines add` and guided bucket
+  creation: exact immutable provider identities, verified fresh keys, default
+  two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
+  Creation, reservation, delivery, and uncertain cleanup are tracked durably;
+  management tokens are never persisted. This phase remains gated and unmerged
+  pending live provider acceptance and integrated revocation/recovery review.
+
 - Handoff before setup discovers Claude Code and Codex native conversations in
   the current checkout, with filtered batches of 50 previews, explicit older
   loading, native ID selection and modification-time latest selection. It writes
   no archive or configuration; private launch files have seven-day best-effort
   cleanup on later local handoffs. Disposable real-app acceptance is still
   unverified on macOS and Linux.
+- Experimental read-only `machines --verify` provider observations, gated by
+  `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1`, and an interactive argv-based
+  `cloudflare_token_command` source shared with guided setup. Provider inventory
+  visibility and machine ownership remain explicitly unknown.
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
 
 - Linux support with user systemd scheduling and private file credentials,
   alongside macOS support. Release builds cover amd64 and arm64 on both systems.
@@ -31,6 +52,18 @@ Planned for v0.2.0. This release has not been tagged or published.
   refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
+
+- Draft machine revocation rejects forged self labels, leaves registry commands
+  usable after progress publication, and preserves unverified request targets.
+  Own-key migrations retire completed checkpoints and disclose shared access
+  retained through retired local credential aliases. Staged migration retries
+  refuse a shared credential reference replaced by later setup, retaining the
+  stage for safe cancellation. Pre-slot interruptions can be safely retired
+  locally after setup changes, while uncertain issuance and secret cleanup
+  remain recorded. Confirmed-deleted own-key stages retry exact local secret
+  removal after credential-store recovery without deleting the provider again.
+  Own-key commit requires a persisted staged credential even when the shell
+  supplies a matching key.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
@@ -71,6 +104,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 setup validates pasted replacement management tokens before
+  creating a client, matching its environment, command and initial prompt sources.
+- Experimental provider verification identifies existing permissions without
+  requiring permission to create a new token with them.
+
 - Guided R2 setup checks the token before asking for bucket settings, offers
   token replacement or retry on failure, and summarizes the bucket and
   automatic or customized location before creation.
@@ -93,6 +131,10 @@ intermediate parser versions and interaction details. The summary above describe
 the release behavior.
 
 #### Changed
+
+- Scripted setup accepts `--prefix`, `--retention-days`, and explicit skill-use
+  capture choices. The command printed for another machine now carries these
+  settings, skill evidence, and the agent skill installation policy.
 
 - The handoff picker, `show --json` with no ID, and the pickers for an
   ambiguous `show` or `handoff` query open the browser's alternate screen on a

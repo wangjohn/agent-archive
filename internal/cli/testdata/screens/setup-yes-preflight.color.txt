@@ -20,5 +20,5 @@ Import sessions from before setup with \e[36magent-archive backfill\e[0m.
 Check progress with \e[36magent-archive status\e[0m.
 
 To set up another machine with this storage, run there:
-  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --project ~/src/web-app\e[0m
+  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app\e[0m
 [exit 0]

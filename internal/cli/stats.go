@@ -136,7 +136,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	opts.filter.From = statsFetchFrom(now, loc, slices.Max(windows))
 
-	store, _, found, err := openReadOnlyStore(env)
+	store, cfg, found, err := openReadOnlyStore(env)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return 1
@@ -156,7 +156,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// spend or use, unless --json --all asks for every row.
 	textPage := !*jsonOut && !htmlFlags.html
 	computed := stats.Compute(sessions, stats.Options{
-		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage || *all,
+		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage || *all, MCPServerNames: cfg.MCPServerNames,
 	})
 	filters := statsFiltersOf(opts)
 	if *jsonOut {
@@ -173,7 +173,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// have something: w moves on. Nothing at all is the message below.
 	if screen && len(sessions) > 0 {
 		start := statsBrowserStart{
-			inputs:  statsInputs{sessions: sessions, now: now, location: loc, prices: table, filters: filters},
+			inputs:  statsInputs{sessions: sessions, now: now, location: loc, prices: table, filters: filters, mcpServerNames: cfg.MCPServerNames},
 			windows: windows, window: windowIndex, first: computed, view: view,
 		}
 		if code, ran := runStatsBrowser(env, stdin, stdout, stderr, start); ran {

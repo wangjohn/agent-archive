@@ -310,7 +310,8 @@ func TestLargeArchiveStaysWithinItsBudget(t *testing.T) {
 		if bars := strings.Count(string(out), `<g class="slot">`); bars > maxBars {
 			t.Errorf("by %q: %d bars, over %d", by, bars, maxBars)
 		}
-		if !strings.Contains(string(out), "Each bar is 31 days and shows its busiest day.") {
+		per := (len(s.ChartDays()) + maxBars - 1) / maxBars
+		if !strings.Contains(string(out), fmt.Sprintf("Each bar is %d days and shows its busiest day.", per)) {
 			t.Errorf("by %q: the chart does not say what a bar is", by)
 		}
 	}

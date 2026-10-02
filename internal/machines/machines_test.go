@@ -219,3 +219,31 @@ func TestListKeepsRecordsBeforeRejectingOversizedContinuation(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestListIgnoresOperationNamespaceAndKeepsMalformedRootDiagnostics(t *testing.T) {
+	t.Parallel()
+	store := &boundedStore{MemoryStore: storagetest.NewMemoryStore()}
+	id := strings.Repeat("a", 32)
+	record := sample(t, id)
+	if err := Publish(t.Context(), store, record); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range [][]byte{[]byte(`{}`), []byte(`{"name":"forged"}`)} {
+		if err := store.Put(t.Context(), "machines/revocations/"+id+".json", body); err != nil {
+			t.Fatal(err)
+		}
+		got := List(t.Context(), store)
+		if got.Partial || len(got.Unreadable) != 0 || len(got.Records) != 1 || got.Records[0].MachineID != id {
+			t.Fatalf("informational operation treated as identity: %+v", got)
+		}
+	}
+	if store.reads.Load() != 2 {
+		t.Fatal("operation content fetched for registry identity")
+	}
+	if err := store.Put(t.Context(), "machines/bad-root.json", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := List(t.Context(), store); !got.Partial || len(got.Unreadable) != 1 || len(got.Records) != 1 {
+		t.Fatalf("malformed root hidden: %+v", got)
+	}
+}

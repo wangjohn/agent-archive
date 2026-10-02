@@ -414,7 +414,7 @@ func TestHeadsUpSentences(t *testing.T) {
 	section := out[strings.Index(out, `id="h-heads"`):strings.Index(out, `id="h-detail"`)]
 	for _, want := range []string{
 		"<li>82% of tokens came from subagents (497 runs)</li>",
-		"<li>10 sessions have no token data (Cursor 8, Claude Code 2)</li>",
+		`<p class="note">10 sessions have no token data (Cursor 8, Claude Code 2)</p>`,
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("heads up lacks %q", want)
@@ -431,15 +431,15 @@ func TestHeadsUpSentences(t *testing.T) {
 		t.Error("the page with real names does not name the costliest session's project")
 	}
 	// The order and number of notes are the engine's.
-	if got := strings.Count(section, "<li>"); got != 3 {
-		t.Errorf("%d notes, want the three of the fixture", got)
+	if got := strings.Count(section, "<li>"); got != 2 {
+		t.Errorf("%d notes, want the two findings of the fixture", got)
 	}
 
 	s := deepCopy(modelStats(t, realisticSessions(), realisticPrices, stats.GroupNone))
 	// A note without its numbers, and a kind the page does not know, say nothing.
 	s.HeadsUp = []stats.Note{{Kind: stats.NoteSubagentShare}, {Kind: stats.NoteCostliestSession}, {Kind: stats.NoteUnmeteredSessions}, {Kind: stats.NoteLowCacheHit}, {Kind: futureNoteKind}}
 	page := string(render(t, s, Options{}))
-	if strings.Contains(page, "Heads up") {
+	if strings.Contains(page, "Findings") {
 		t.Error("notes without their numbers are still shown")
 	}
 	one := 1
@@ -449,7 +449,7 @@ func TestHeadsUpSentences(t *testing.T) {
 		{Kind: stats.NoteLowCacheHit, HitRate: &rate, InputTokens: &tokens},
 	}
 	page = string(render(t, s, Options{}))
-	for _, want := range []string{"<li>1 session has no token data (Cursor 1)</li>", "<li>Cache hit rate is 40% over 120M input-side tokens, which is low</li>"} {
+	for _, want := range []string{`<p class="note">1 session has no token data (Cursor 1)</p>`, "<li>Cache hit rate is 40% over 120M input-side tokens, which is low</li>"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page lacks %q", want)
 		}

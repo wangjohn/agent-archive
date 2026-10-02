@@ -31,7 +31,11 @@ hooks, collector, and local state.
   machine's Keychain on macOS, or in a private file under its data directory
   on Linux; see [where credentials are kept](../security/privacy.md#where-credentials-are-kept)).
   [`setup --yes`](../getting-started/setup.md#set-up-without-questions)
-  sets up another machine from a script. A key limited to one prefix (see
+  sets up another machine from a script. The command printed after setup
+  carries the bucket folder, retention, skill-use capture rule, skill evidence,
+  and agent skill installation policy. Whole repositories with a known origin
+  use [repository matching](#repository-matching-in-setup-commands); adjust
+  other project paths for the new machine. A key limited to one prefix (see
   [bucket permissions](../security/bucket-permissions.md)) works for several
   machines sharing that prefix.
 
@@ -233,3 +237,225 @@ Provider verification, pairing and revocation are not part of these commands.
 not publish a record or write registration state, including when nothing needs
 refreshing. The next collector pass publishes a changed application version
 through its normal fingerprint check, without waiting for the daily heartbeat.
+
+### Experimental provider observations
+
+Provider verification remains experimental and has not passed live Phase 4
+acceptance. Opt in with `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1` and run
+`agent-archive machines --verify`. This reads Cloudflare account token metadata
+for the configured R2 destination; it does not create or revoke keys. Arbitrary
+S3-compatible endpoints are refused.
+
+The management token comes from `CLOUDFLARE_API_TOKEN` first, which is read and
+removed before provider work. Otherwise an interactive invocation can use
+`cloudflare_token_command` in config, an argv array such as
+`["op", "read", "op://Private/Cloudflare/agent-archive"]`, or a hidden prompt.
+The command runs without a shell, has a 20-second budget and a 4 KiB output
+limit, and receives an environment without token, secret, object-access or
+pairing variables. Its stderr and failure output are suppressed. The token
+is held in memory and is never saved. Ordinary listing and collection never
+run this command. `--yes` and `--json` require the environment token and never
+prompt or run the configured command.
+
+Use Account API Tokens Read or Write. A successful list may expose only tokens
+created by the caller (`list_self`), so completed pagination is not evidence of
+account-wide completeness. Missing metadata means missing **or not visible**,
+not revoked. Checks read at most 20 pages / 1,000 tokens and 16 supplemental
+details within one 20-second provider budget; partial observations remain
+available when requests fail.
+
+Canonical issued names are `agent-archive r=<32hex> i=<32hex> k=<32hex>` (118
+bytes, within Cloudflare's 120-character limit). Bucket-bearing names from the
+original proposal are not accepted. Exact provider policy must independently
+match the configured account, jurisdiction, bucket and verified permission
+group. Unsupported policy fields or inconsistent pagination evidence remain
+unknown. A matching name describes issuance, not machine ownership. Only the
+current destination-bound local assignment establishes a committed local
+binding; other bucket records remain untrusted claims. Legacy/manual keys
+remain unknown. “Claim not observed” keys are candidates for inspection, never
+proof that a key is unused or safe to revoke.
+
+## Encrypted pairing (shared-key beta)
+
+On a configured source, run `agent-archive machines add --name laptop --share-key`
+for R2, or omit `--share-key` for S3. The source checks storage before creating a
+pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
+separate channel. On the receiver run `agent-archive setup --pair`, paste the
+bundle, and enter the code privately. The first three characters of each word
+are sufficient; use `yo-` for `yo-yo`, including the hyphen.
+Review the destination before capture settings: an existing destination change
+requires explicit consent. Source apps that are absent here are skipped.
+
+This beta shares the active R2 key. Cancelling a pairing, expiry, and deleting a
+machine record do not remove access. Replace the shared key on every machine to
+revoke it. S3 bundles contain a profile name and settings, without AWS credentials;
+configure that local profile with `aws configure --profile NAME` or
+`aws configure sso --profile NAME` before receiving. No provider management token
+is requested. Registry claims remain informational and untrusted.
+
+Use `--print` for encrypted bundle output or `--file PATH` for an exclusive private
+0600 file. Interactive source delivery requires terminal input and output;
+codes appear only on a cleared alternate screen and the
+clipboard is cleared on normal exit only when it still contains that exact bundle.
+A crash or interruption leaves delivery uncertain; check `status` or `machines`.
+Do not record or screen-share code display. Delete explicitly saved bundle files
+when no longer needed. The default expiry is 15 minutes; `--expires` accepts 5m
+through 24h, with five minutes of authenticated clock-skew tolerance.
+
+For deliberately scripted use, `machines add --yes --name laptop` prints both
+pieces (or prints the code with `--file`). Receive with `setup --pair-file PATH`
+or `setup --pair-file -`, plus `--yes` and `AGENT_ARCHIVE_PAIRING_CODE`; the receiver
+reads and removes that variable before setup. There is no code command-line flag.
+`--yes` refuses to replace an existing destination. Any presence of
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` refuses pairing before
+home, credential, storage, trace, or output changes, regardless of other overrides.
+
+Repository matching is bounded by one five-second deadline, 128 canonical roots,
+four Git workers, and 250ms per Git lookup. It does not crawl home directories or
+search conversation bodies. Native filesystem calls cannot always be cancelled;
+the deadline prevents new work once they return. Relative subtree paths retain
+inclusion scope after a repository moves. Known origin mismatches never fall back
+to a home path. Ambiguous, incomplete, and unresolved exclusions are skipped under
+`--yes`; local exclusions remain. Choose skipped scopes deliberately with ordinary
+`setup --project DIR`. Unmapped source exclusions withhold affected inclusions.
+
+The receiver keeps its immutable machine ID and commits through ordinary setup's
+credential staging, hook, and scheduler transaction. Interrupted staging retries
+reuse a matching opaque credential reference. Codes, bundles and decrypted payloads
+are never saved in drafts or ledgers. After commit, machine publication failure
+remains pending without disabling capture; the collector can reconstruct paired
+assignment metadata and publish after the bundle expires. App approval and history
+imports remain separate steps.
+
+### Dedicated issuance draft
+
+Dedicated R2 issuance is experimental and awaits live Cloudflare acceptance and
+integrated revocation before general availability. In a reviewed development
+build, set `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1` to use `machines add` without
+`--share-key`. The configured destination must be an exact Cloudflare R2 endpoint,
+not a compatible third-party endpoint.
+
+A `CLOUDFLARE_API_TOKEN` or interactive `cloudflare_token_command` creates a fresh
+bucket-scoped key. The environment token is removed from the command's environment;
+your shell may still retain it. The management token stays in memory and is discarded
+at exit. Without a token, an eligible spare is reserved; without a spare, interactive
+use offers a hidden token prompt, explicit sharing, or cancellation. `--yes` never
+shares implicitly and never runs a token command; supply the environment token or
+use an existing spare. `--share-key` deliberately retains the shared beta behavior.
+
+`machines add --spares N` saves a target from zero through five; the default is two.
+Zero disables spare use/refill. Lowering the target does not silently delete existing
+provider keys. Guided R2 creation also prepares spares while its management token
+is available. Listing, collector activity, and revocation never create or refill keys.
+Spare refill failure is separate from pairing delivery: the delivered bundle remains
+valid even when refill or an advisory config index update fails.
+
+The private `issued/slot-<slot-id>.json` ledger owns eligibility. Its durable records
+precede creation, credential staging, reservation, and bundle exposure. Interrupted
+creation is reconciled using the exact immutable provider name and exact bucket policy;
+lost one-time token values cannot be recovered. Guided retries require confirmed cleanup
+of the previous slot. A guided setup key stays staged until configuration commits;
+discarding its draft retains provider cleanup lineage. Uncertain cleanup stays pending and
+requires explicit management access. Never edit the ledger or reuse config spare
+references as proof of eligibility. Corrupt records withhold spare use.
+
+A file, clipboard, or print error may have exposed the bundle, so its key stays reserved.
+Expiry is not key revocation. Delivered issuer-local secrets are removed at command
+exit; immutable issuance lineage remains for later verification. Local cancellation
+needs management access to delete a dedicated token; otherwise access may remain.
+No provider propagation or independent cutoff guarantee has passed live acceptance.
+
+### Experimental revocation and shared-key migration
+
+These Phase 4 commands remain draft code. Live Cloudflare and combined
+acceptance have not enabled general availability or the first-run pairing
+question. Read-only verification and complete pagination never prove ownership
+or account-wide visibility.
+
+With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1`, use
+`agent-archive machines revoke NAME` or select exactly one `--machine-id`,
+`--recipient-id`, `--pairing-id`, or retry `--operation-id`. A bucket name or
+machine record is a hint, never deletion authority. A current destination-bound
+local assignment supports self-revocation; a healthy issuer's ledger supports
+recipient/pairing selection. A remote machine requires a private
+`--binding-file` independently established from the machine's committed local
+assignment and an out-of-band check. Never copy bucket claims into this file.
+Its strict JSON shape is `{"machine_id":"<32hex>","independently_verified":true,
+"assignment":{...}}`, with the destination-bound assignment fields from
+`machine-assignment.schema.json`. The declaration records operator evidence;
+the software still verifies exact provider token ID, scope and immutable name.
+It cannot establish that an operator's assertion is honest. Unknown ownership
+refuses even with `--yes`.
+
+Normal revocation selects verified dedicated/retired keys and unused spares;
+it excludes keys delivered to other recipients merely by the target issuer.
+`--include-issued` requires an independently bound issuer machine ID and checks
+all visible provider descendants, including delivered recipients and potentially
+copied credentials, without trusting a compromised ledger to exclude keys.
+Creator-only visibility and legacy/shared gaps remain explicit. Replace keys
+from a healthy issuer before compromise recovery where practical.
+
+Each random operation is persisted privately in `revocations/`, then published
+as `machines/revocations/<operation-id>.json`. At most 128 verified keys fit one
+operation. Selection and execution each have a 20-second provider budget;
+initial and final publication each have a separate five-second budget. Retries use exactly the
+local selected set and never regress a confirmed result. Different revokers
+publish distinct objects. Setup and issuance locks preserve the selection
+through deletion; selected local slots are withheld from delivery even when
+provider outcomes are unknown. Confirmed retries finish local slot retirement. Only a successful provider delete confirms a key;
+404 or missing metadata remains unknown until live absence semantics are
+verified. Self's active object key is last. Final bucket publication can fail
+while local deletion results remain confirmed. No-token and AWS-profile requests
+say access was not removed and preserve the requested name or immutable ID as
+explicitly unverified operation metadata. A named self-revocation requires the
+locally committed name (or explicit immutable ID); a forged bucket label cannot
+redirect the command to this machine's trusted key. Revocation never creates or refills keys, never
+promises immediate cutoff, and leaves sessions/downloaded data intact.
+
+With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1`, run
+`agent-archive machines own-key` to migrate shared/legacy R2 access. The exact
+slot is checkpointed before minting, verified/staged privately, and committed
+through setup's rollback-capable transaction. The existing machine ID is its
+immutable recipient. Retry resumes the exact staged slot only while its original
+pre-migration credential reference remains active. A later setup that replaces
+that reference blocks resume before token/provider or setup work, even if the
+new reference loads the same shared key. The staged key remains recorded; use
+safe `own-key --cancel` before starting a new migration. Recovery after the
+exact staged slot has already committed still finishes its cleanup. An interruption
+before slot allocation leaves no provider key: a validated checkpoint with no
+remaining issuance or cleanup obligation can be retired locally on retry or
+cancel, including after setup changes destination. This cancellation needs no
+management token. Uncertain issuance and pending secret removal stay recorded. After confirmed
+provider deletion, retry or cancellation can finish exact staged local secret
+removal when the credential store recovers. Active or retained aliases, unknown
+identity, and further cleanup failures keep the obligation recorded.
+Only after commit
+can the obsolete shared local secret be deleted; another local destination's
+reference, a matching retired alias, an unreadable binding, or a cleanup failure
+keeps access explicitly present. Completed cleanup retires its checkpoint so a
+later supported setup/migration can create a new own key; incomplete cleanup
+and staged keys remain recorded. Earlier dedicated keys retain their issuance
+lineage and are never deleted by checkpoint retirement. The shared
+provider key is never deleted. Registration failure is separate from commit.
+Both commands use the explicit token sources described above; `--yes` and JSON
+revocation do not prompt or run a configured token command.
+
+For a staged own-key operation that has not committed, run
+`agent-archive machines own-key --cancel --yes` with an environment management
+token. Cancellation reloads the committed config and active stored credential
+and all retained local destination credentials
+under locks before deleting the exact staged dedicated key. It refuses if the
+key is active, the binding is unknown, or setup recovery is pending. A committed
+own-key operation cannot be cancelled this way; use verified revocation.
+
+The fake combined acceptance recipe is
+`go test ./internal/cli -run TestMachineTwoHomeFakeAcceptance -count=1`.
+It uses two temporary homes, an in-memory credential store and object store,
+and a loopback fake provider. It exercises own-key, dedicated add, pair setup,
+list with provider verification, rename preserving identity, and receiver
+revocation. The focused revocation tests cover forged mappings, delivered-key
+exclusion and issuer inclusion, scope mismatch, unknown 404 outcomes, and
+publication failure. This establishes local contracts only. Live provider
+permission, inventory visibility, absence semantics and revocation propagation
+acceptance remain unrun; all Phase 4 commands remain experimental draft features
+and the first-setup pairing question remains disabled.

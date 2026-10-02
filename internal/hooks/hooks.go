@@ -109,7 +109,7 @@ func observe(files Files, h Hook, name string) (agentapi.HookFile, agentapi.Hook
 }
 
 func resolveOwners(p agentapi.HookConfigurator, file agentapi.HookFile, owner agentapi.HookOwner) (agentapi.HookOwner, error) {
-	first, err := p.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
+	first, err := p.Inspect(agentapi.HookInspectionRequest{File: cloneHookFile(file), Owner: owner})
 	if err != nil {
 		return owner, err
 	}

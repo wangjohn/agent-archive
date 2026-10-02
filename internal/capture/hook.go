@@ -123,15 +123,22 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	if len(batch) == 0 {
 		return nil
 	}
-	batch, err := validateBatch(harness, batch, now)
-	if err != nil {
+	if err := validateBatchStructure(harness, batch, now); err != nil {
 		return err
 	}
 	if setupjournal.TransactionPending(home) {
-		return recordSetupBatch(home, batch, now)
+		filtered, err := filterBatchEvidence(batch)
+		if err != nil {
+			return err
+		}
+		return recordSetupBatch(home, filtered, now)
 	}
 	observedConfig, active, err := loadHookCaptureWindow(home, nil)
 	if err != nil || !active {
+		return err
+	}
+	batch, err = filterBatchEvidence(batch)
+	if err != nil {
 		return err
 	}
 	batch = resolveFreshness(batch, o.stat)
@@ -179,21 +186,22 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 		return fmt.Errorf("open local store: %w", err)
 	}
 	store = store.ForHook()
+	// An absent-parent followup must wait for this batch's later start. Keep
+	// the whole content-free retry record until the native ordered effects
+	// finish, just as lock-contention replay does.
+	ordered, orderErr := needsOrderedAdmission(store, cfg, batch, now)
+	// Let the existing loop request qualified-index recovery on lookup failure.
+	if orderErr == nil && ordered {
+		err = applyOrderedAdmission(home, store, cfg, batch, now, repoKey, o.afterEffect)
+		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, err)
+		}
+		return err
+	}
 	for _, event := range batch {
 		err = applyEvent(home, store, cfg, event, now, repoKey, o.afterEffect)
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			key, keyErr := eventKey(event)
-			if keyErr != nil {
-				return keyErr
-			}
-			recoveryErr := store.RequestSessionIndexRecovery(key)
-			_, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, nil)
-			project, owned := ConfiguredProjectActivationFor(observedConfig, event.ProjectRoot)
-			var diagnosticErr error
-			if owned && project.Included {
-				diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now})
-			}
-			return errors.Join(err, recoveryErr, queueErr, diagnosticErr)
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, err)
 		}
 		if errors.Is(err, state.ErrSessionNotRegistered) {
 			continue
@@ -203,6 +211,95 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 		}
 	}
 	return nil
+}
+
+func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, cause error) error {
+	key, err := eventKey(event)
+	if err != nil {
+		return err
+	}
+	recoveryErr := store.RequestSessionIndexRecovery(key)
+	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil)
+	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	var diagnosticErr error
+	if owned && project.Included {
+		diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now})
+	}
+	return errors.Join(cause, recoveryErr, queueErr, diagnosticErr)
+}
+
+// Ordinary native batches have no followup before a proven deferred start;
+// their existing loop needs no additional index lookup or allocation.
+func needsOrderedAdmission(store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time) (bool, error) {
+	followup := false
+	for _, event := range batch {
+		if event.Deferred == agentapi.DeferredFollowup {
+			followup = true
+		}
+		if followup && event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit {
+			owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+			if !owned || !owner.Included || !cfg.Archive.Eligible(owner.Root, now) {
+				return false, nil
+			}
+			key, err := eventKey(event)
+			if err != nil {
+				return false, err
+			}
+			found, err := HasRegistration(store, key)
+			return !found, err
+		}
+	}
+	return false, nil
+}
+
+func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time, repoKey string, after func(effectName) error) error {
+	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil)
+	if err != nil || path == "" {
+		return err
+	}
+	var waiting []agentapi.LifecycleEvent
+	for _, event := range batch {
+		if event.Deferred == agentapi.DeferredFollowup {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				waiting = append(waiting, event)
+				continue
+			}
+		}
+		if err := applyEvent(home, store, cfg, event, now, repoKey, after); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
+			return err
+		}
+		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			for _, pending := range waiting {
+				if err := applyEvent(home, store, cfg, pending, now, repoKey, after); err != nil {
+					return err
+				}
+			}
+			waiting = nil
+		}
+	}
+	if len(waiting) > 0 {
+		return state.ErrSessionNotRegistered
+	}
+	return acknowledgeIntent(path, after)
 }
 
 func eventKey(event agentapi.LifecycleEvent) (agentmeta.SessionKey, error) {
