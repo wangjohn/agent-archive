@@ -48,20 +48,14 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	claude, codex := e.appSessionDirs(home, config.Config{})
+	locations := e.nativeSessionDirectories(home, config.Config{})
 	var roots []nativesessions.StoreRoot
 	for _, name := range e.agentRegistry().NativeHeaderAgents() {
 		if harness != "" && harness != name {
 			continue
 		}
 		provider, _ := e.agentRegistry().LookupNativeHeaders(name)
-		dirs := []string(nil)
-		if name == "claude" {
-			dirs = claude
-		}
-		if name == "codex" {
-			dirs = codex
-		}
+		dirs := locations[name]
 		roots = append(roots, provider.Roots(agentapi.NativeLocations{UserHome: home, Directories: dirs}, agentapi.DiscoveryHandoff)...)
 	}
 

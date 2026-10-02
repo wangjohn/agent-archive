@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -27,50 +28,34 @@ type KnownProject struct {
 // as are the home directory, temporary folders, folders that no longer
 // exist, and sessions whose project cannot be told.
 func KnownProjects(ctx context.Context, env Environment, cfg config.Config) ([]KnownProject, error) {
-	found, _, err := discover(ctx, env)
-	if err != nil {
-		return nil, err
-	}
-	var items []*work
-	for _, t := range found {
-		if t.harness != harnessCursor {
-			items = append(items, &work{t: t})
-		}
-	}
-	workers := env.Workers
-	if workers <= 0 {
-		workers = defaultWorkers()
-	}
-	if err := forEach(ctx, workers, items, func(w *work) {
-		if readHead(env, w.t) != nil {
-			w.vanished = true
-		}
-	}); err != nil {
-		return nil, err
-	}
 	r := newResolver(env, cfg, Filters{})
 	byRoot := map[string]*KnownProject{}
-	for _, w := range items {
-		if w.vanished {
-			continue
+	_, err := enumerateDiscovery(ctx, env, agentapi.DiscoveryProjects, func(c agentapi.DiscoveryCandidate) error {
+		if c.IdentityError != nil {
+			return nil
 		}
-		res := r.resolve(w.t.cwd)
+		res := r.resolve(c.Header.Directory)
 		if res.skip != "" || res.root == "" || res.included || res.kind == ProjectKindHome || res.kind == ProjectKindTemporary {
-			continue
+			return nil
 		}
 		project := byRoot[res.root]
 		if project == nil {
 			if !env.exists(res.root) {
-				continue
+				return nil
 			}
 			project = &KnownProject{Root: res.root, Kind: res.kind}
 			byRoot[res.root] = project
 		}
 		project.Sessions++
-		if info, err := env.lstat(w.t.path); err == nil && info.ModTime().After(project.LastUsed) {
+		if info, err := env.lstat(c.Source.Path); err == nil && info.ModTime().After(project.LastUsed) {
 			project.LastUsed = info.ModTime()
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
 	projects := make([]KnownProject, 0, len(byRoot))
 	for _, project := range byRoot {
 		projects = append(projects, *project)

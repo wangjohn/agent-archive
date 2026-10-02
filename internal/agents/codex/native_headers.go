@@ -1,9 +1,12 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/discoveryio"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,7 +20,7 @@ var rolloutUUID = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 // InspectHeader preserves the native 16-record metadata compatibility scan.
 func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
-	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff {
+	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects {
 		return agentapi.NativeHeader{}, fmt.Errorf("invalid native header request")
 	}
 	var h agentapi.NativeHeader
@@ -73,15 +76,29 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 }
 
 // Roots declares purpose-specific native store traversal.
-func (NativeHeaders) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryPurpose) []agentapi.NativeStoreRoot {
+func (p NativeHeaders) Roots(l agentapi.NativeLocations, purpose agentapi.DiscoveryPurpose) []agentapi.NativeStoreRoot {
 	dirs := l.Directories
 	if dirs == nil {
-		dirs = []string{filepath.Join(l.UserHome, ".codex")}
+		dirs = p.DefaultDirectories(l.UserHome)
 	}
 	var out []agentapi.NativeStoreRoot
 	for _, dir := range dirs {
-		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "sessions"), Depth: -1, Recursive: true, Prefix: "rollout-", Suffix: ".jsonl"})
-		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "archived_sessions"), Depth: 0, Recursive: purpose == agentapi.DiscoveryHandoff, Prefix: "rollout-", Suffix: ".jsonl"})
+		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "sessions"), Priority: 1, Depth: -1, Recursive: true, Prefix: "rollout-", Suffix: ".jsonl"})
+		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "archived_sessions"), Historical: true, Depth: 0, Recursive: purpose == agentapi.DiscoveryHandoff, Prefix: "rollout-", Suffix: ".jsonl"})
 	}
 	return out
+}
+
+// Discover emits native candidates without archive policy or a second inventory.
+func (p NativeHeaders) Discover(ctx context.Context, r agentapi.DiscoveryRequest, emit func(agentapi.DiscoveryCandidate) error) (agentapi.DiscoveryReport, error) {
+	roots := r.Roots
+	if roots == nil {
+		roots = p.Roots(r.Locations, r.Purpose)
+	}
+	return discoveryio.Files(ctx, r, agentmeta.Codex, roots, p, true, emit)
+}
+
+// DefaultDirectories declares the native configuration location without host probes.
+func (NativeHeaders) DefaultDirectories(home string) []string {
+	return []string{filepath.Join(home, ".codex")}
 }

@@ -52,7 +52,7 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 		{"linux with XDG_CONFIG_HOME", platform.Linux, "/xdg", "/xdg/Cursor"},
 		{"linux with a relative XDG_CONFIG_HOME", platform.Linux, "xdg", "/home/me/.config/Cursor"},
 	} {
-		env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: tc.system, Getenv: func(string) string { return tc.xdg }}
+		env := Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: tc.system, Getenv: func(string) string { return tc.xdg }}
 		wantDir := filepath.FromSlash(tc.wantDir)
 		if got := env.locations().CursorAppDir; got != wantDir {
 			t.Errorf("%s: data folder %q, want %q", tc.name, got, wantDir)
@@ -71,7 +71,7 @@ func TestCursorPathsFollowTheOperatingSystem(t *testing.T) {
 func TestCursorPathsOnMacOSAreUnchanged(t *testing.T) {
 	t.Parallel()
 	home := "/Users/me"
-	env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: platform.Darwin}
+	env := Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: platform.Darwin}
 	if got, want := cursorWorkspaceStorage(env), "/Users/me/Library/Application Support/Cursor/User/workspaceStorage"; got != want {
 		t.Errorf("workspaceStorage %q, want %q", got, want)
 	}
@@ -187,13 +187,13 @@ func TestPrivacyProtectedFoldersAreMacOSOnly(t *testing.T) {
 	t.Parallel()
 	home := "/home/me"
 	id := func(p string) (string, error) { return p, nil }
-	if got := privacyProtectedFolders(Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: platform.Linux, EvalSymlinks: id}); len(got) != 0 {
+	if got := privacyProtectedFolders(Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: platform.Linux, EvalSymlinks: id}); len(got) != 0 {
 		t.Fatalf("linux protected folders: %v", got)
 	}
-	if got := privacyProtectedFolders(Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: platform.Darwin, EvalSymlinks: id}); len(got) == 0 {
+	if got := privacyProtectedFolders(Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: platform.Darwin, EvalSymlinks: id}); len(got) == 0 {
 		t.Fatal("darwin protected folders: none")
 	}
-	if protectedOutside("/home/me/Documents/x", "/home/me", privacyProtectedFolders(Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: platform.Linux, EvalSymlinks: id})) {
+	if protectedOutside("/home/me/Documents/x", "/home/me", privacyProtectedFolders(Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: platform.Linux, EvalSymlinks: id})) {
 		t.Fatal("~/Documents is protected on Linux")
 	}
 }
@@ -248,31 +248,31 @@ func TestDefaultTempDirsByOS(t *testing.T) {
 	t.Parallel()
 	mac := []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
 	linux := []string{"/tmp", "/var/tmp"}
-	if got := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Darwin}).DefaultTempDirs(); !reflect.DeepEqual(got, mac) {
+	if got := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Darwin}).DefaultTempDirs(); !reflect.DeepEqual(got, mac) {
 		t.Errorf("darwin %v, want %v", got, mac)
 	}
-	if got := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
+	if got := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
 		t.Errorf("linux %v, want %v", got, linux)
 	}
 	// An unknown system errs toward more temporary directories, so it skips
 	// every folder either system would.
-	unknown := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Unknown}).DefaultTempDirs()
+	unknown := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Unknown}).DefaultTempDirs()
 	for _, dir := range append(slices.Clone(mac), linux...) {
 		if !slices.Contains(unknown, dir) {
 			t.Errorf("unknown system does not skip %s: %v", dir, unknown)
 		}
 	}
 	// An Environment without TempDirs answers for its own system.
-	if got := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Linux}).tempDirs(); !reflect.DeepEqual(got, linux) {
+	if got := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Linux}).tempDirs(); !reflect.DeepEqual(got, linux) {
 		t.Errorf("linux environment %v", got)
 	}
-	if got := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Darwin}).tempDirs(); !reflect.DeepEqual(got, mac) {
+	if got := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Darwin}).tempDirs(); !reflect.DeepEqual(got, mac) {
 		t.Errorf("darwin environment %v", got)
 	}
 	// The result is the caller's to change.
-	first := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs()
+	first := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs()
 	first[0] = "/changed"
-	if got := (Environment{NativeHeaders: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
+	if got := (Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), OS: platform.Linux}).DefaultTempDirs(); !reflect.DeepEqual(got, linux) {
 		t.Errorf("a caller's change reached the next answer: %v", got)
 	}
 }
@@ -315,7 +315,7 @@ func TestUnknownSystemFailsClosed(t *testing.T) {
 func TestVarTmpIsATemporaryDirectoryOnLinux(t *testing.T) {
 	t.Parallel()
 	tr := newTree(t)
-	env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: tr.home, OS: platform.Linux, EvalSymlinks: func(p string) (string, error) { return p, nil }}
+	env := Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: tr.home, OS: platform.Linux, EvalSymlinks: func(p string) (string, error) { return p, nil }}
 	got := newResolver(env, config.Config{}, Filters{}).resolve("/var/tmp/run-1")
 	if got.kind != ProjectKindTemporary || got.skip != SkipTemporaryDirectory {
 		t.Fatalf("/var/tmp/run-1: %+v", got)
@@ -336,7 +336,7 @@ func TestUndoReadsTheLinuxCursorDatabase(t *testing.T) {
 	reg := archive.SessionRegistration{ArchiveSessionID: "s-new", NativeSessionID: "new", Harness: archive.Harness{Name: "cursor"},
 		SourceKind: archive.SourceKindCursorSQLite, SourceKey: "new", AdmittedAt: admitted, Origin: archive.SessionOriginImport}
 	rows := chatRows("new", map[string]any{"lastUpdatedAt": admitted.Add(time.Hour).UnixMilli()}, "a")
-	env := Environment{NativeHeaders: builtin.NewBuiltins(), Home: home, OS: platform.Linux, Getenv: func(string) string { return "" }}
+	env := Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home, OS: platform.Linux, Getenv: func(string) string { return "" }}
 
 	// A database only at the macOS location is not seen on Linux.
 	writeCursorDB(t, platform.NewLocations(platform.Darwin, home, nil, platform.LocationDeps{}).CursorStateDB, false, rows)

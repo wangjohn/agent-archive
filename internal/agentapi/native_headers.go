@@ -8,6 +8,7 @@ type DiscoveryPurpose uint8
 const (
 	DiscoveryImport DiscoveryPurpose = iota + 1
 	DiscoveryHandoff
+	DiscoveryProjects
 )
 
 // NativeHeader contains only inspected native identity and checkout evidence.
@@ -27,6 +28,8 @@ type NativeHeaderRequest struct {
 // NativeHeaderInspector interprets native headers without host operations.
 // NativeStoreRoot declares native traversal layout for one purpose.
 type NativeStoreRoot struct {
+	Priority       int
+	Historical     bool
 	Harness, Path  string
 	Recursive      bool
 	Depth          int

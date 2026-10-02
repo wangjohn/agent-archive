@@ -14,14 +14,20 @@ import (
 
 // Integration binds implemented operations to an identity declaration.
 type Integration struct {
-	Descriptor    agentmeta.Descriptor
-	Launcher      agentapi.Launcher
-	Hooks         agentapi.HookConfigurator
-	Decoder       agentapi.HookDecoder
-	Skills        agentapi.SkillProvider
-	NativeHeaders agentapi.NativeHeaderInspector
-	Evidence      agentapi.CapabilityEvidenceProvider
-	Version       agentapi.VersionInspector
+	Descriptor      agentmeta.Descriptor
+	Launcher        agentapi.Launcher
+	Hooks           agentapi.HookConfigurator
+	Decoder         agentapi.HookDecoder
+	Skills          agentapi.SkillProvider
+	NativeHeaders   agentapi.NativeHeaderInspector
+	Evidence        agentapi.CapabilityEvidenceProvider
+	Version         agentapi.VersionInspector
+	Discovery       agentapi.Discoverer
+	DatabaseCatalog agentapi.DatabaseCatalogInspector
+	NativePaths     agentapi.NativePathsProvider
+	Worktrees       agentapi.MissingWorktreeResolver
+	Workspace       agentapi.WorkspaceResolver
+	Children        agentapi.ChildDiscoverer
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -81,6 +87,35 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("typed nil evidence provider for %s", d.ID)
 		}
 
+		for _, entry := range []struct {
+			name string
+			port any
+		}{{"native paths", b.NativePaths}, {"worktrees", b.Worktrees}, {"workspace", b.Workspace}} {
+			if entry.port != nil && nilImplementation(entry.port) {
+				return nil, fmt.Errorf("typed nil %s for %s", entry.name, d.ID)
+			}
+		}
+		if b.NativePaths != nil || b.Worktrees != nil || b.Workspace != nil {
+			d.Operations = append(d.Operations, agentmeta.NativeProjects)
+		}
+		if b.Children != nil {
+			if nilImplementation(b.Children) {
+				return nil, fmt.Errorf("typed nil children for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.ChildDiscovery)
+		}
+		if b.DatabaseCatalog != nil {
+			if nilImplementation(b.DatabaseCatalog) {
+				return nil, fmt.Errorf("typed nil database catalog for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.DatabaseInspection)
+		}
+		if b.Discovery != nil {
+			if nilImplementation(b.Discovery) {
+				return nil, fmt.Errorf("typed nil discovery for %s", d.ID)
+			}
+			d.Operations = append(d.Operations, agentmeta.HistoricalDiscovery)
+		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
 	}
@@ -139,9 +174,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}},
 	})
 	if err != nil {
 		panic(err)
@@ -223,4 +258,60 @@ func (r *Registry) VersionAgents() []string {
 		}
 	}
 	return names
+}
+
+// LookupDiscovery resolves native read-only discovery.
+func (r *Registry) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
+	b, ok := r.Lookup(name)
+	return b.Discovery, ok && b.Discovery != nil
+}
+
+// DiscoveryAgents lists actual discovery bindings in catalog order.
+func (r *Registry) DiscoveryAgents() []string {
+	var names []string
+	for _, d := range r.catalog.All() {
+		if _, ok := r.LookupDiscovery(string(d.ID)); ok {
+			names = append(names, string(d.ID))
+		}
+	}
+	return names
+}
+
+// LookupDatabaseCatalog resolves native compact catalog interpretation without opening a database.
+func (r *Registry) LookupDatabaseCatalog(name string) (agentapi.DatabaseCatalogInspector, bool) {
+	b, ok := r.Lookup(name)
+	return b.DatabaseCatalog, ok && b.DatabaseCatalog != nil
+}
+
+func (r *Registry) LookupNativePaths(name string) (agentapi.NativePathsProvider, bool) {
+	b, ok := r.Lookup(name)
+	return b.NativePaths, ok && b.NativePaths != nil
+}
+func (r *Registry) NativePathAgents() []string {
+	var out []string
+	for _, d := range r.catalog.All() {
+		if r.bindings[d.ID].NativePaths != nil {
+			out = append(out, string(d.ID))
+		}
+	}
+	return out
+}
+func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
+	var out []agentapi.MissingWorktreeResolver
+	for _, d := range r.catalog.All() {
+		if p := r.bindings[d.ID].Worktrees; p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, bool) {
+	b, ok := r.Lookup(name)
+	return b.Workspace, ok && b.Workspace != nil
+}
+
+// LookupChildren resolves native child discovery without admitting registrations.
+func (r *Registry) LookupChildren(name string) (agentapi.ChildDiscoverer, bool) {
+	b, ok := r.Lookup(name)
+	return b.Children, ok && b.Children != nil
 }

@@ -3,6 +3,8 @@ package backfill
 import (
 	"context"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"path/filepath"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
@@ -19,5 +21,49 @@ func CursorStateDatabase(home string) string {
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under
 // home on this machine.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	return CursorDatabaseReaderFor(Environment{NativeHeaders: builtin.NewBuiltins(), Home: home})
+	return CursorDatabaseReaderFor(Environment{Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Home: home})
+}
+
+// cursorSlug is the folder name Cursor gives a workspace under
+// ~/.cursor/projects: the absolute path without its leading separator, with
+// every character other than an ASCII letter or digit replaced by '-'. It
+// cannot be reversed reliably, so candidates are converted and compared.
+func cursorSlug(path string) string {
+	path = strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator))
+	return slugName(path)
+}
+
+func slugName(name string) string {
+	b := []byte(name)
+	for i, c := range b {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			b[i] = '-'
+		}
+	}
+	return string(b)
+}
+
+func cursorWorkspaceFolders(env Environment) []string {
+	storage := cursorWorkspaceStorage(env)
+	if storage == "" {
+		return nil
+	}
+	entries, err := env.readDir(storage)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		data, err := env.readFile(filepath.Join(storage, entry.Name(), "workspace.json"))
+		if err != nil {
+			continue
+		}
+		if folder := workspaceMetadataFolder(env, "cursor", data); folder != "" {
+			out = append(out, folder)
+		}
+	}
+	return out
 }

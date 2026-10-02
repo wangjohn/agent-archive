@@ -14,6 +14,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"io"
 	"os"
@@ -438,7 +439,11 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	return platform.NewLocations(e.operatingSystem(), home, e.getenv, platform.LocationDeps{}).CursorStateDB
+	provider, ok := e.agentRegistry().LookupNativePaths("cursor")
+	if !ok {
+		return ""
+	}
+	return provider.ProjectPaths(agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home}, OperatingSystem: string(e.operatingSystem()), Getenv: e.getenv}).Database
 }
 
 // getenv reads one variable of the Env's environment (LookupEnv; the process

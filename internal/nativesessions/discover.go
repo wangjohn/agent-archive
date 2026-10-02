@@ -6,6 +6,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
+	"io"
 	"io/fs"
 	"path/filepath"
 	"sort"
@@ -94,12 +95,12 @@ func InspectNative(ctx context.Context, ports agentapi.NativeHeadersLookup, s *t
 
 // Discover enumerates bounded references and inspects them with a fixed pool.
 // Only the coordinator canonicalizes checkout paths or mutates the catalog.
-func Discover(ctx context.Context, ports agentapi.NativeHeadersLookup, files FileSystem, roots []StoreRoot, scope Scope, limits Limits) (Result, error) {
+func Discover(ctx context.Context, ports agentapi.NativeDiscoveryLookup, files FileSystem, roots []StoreRoot, scope Scope, limits Limits) (Result, error) {
 	var out Result
 	if ports == nil || files == nil || limits.Files <= 0 || limits.HeaderBytes <= 0 || limits.RecordBytes <= 0 || limits.TotalBytes <= 0 || limits.Workers <= 0 {
 		return out, errors.New("native discovery requires filesystem and positive limits")
 	}
-	refs, coverage, err := enumerateNativeRefs(ctx, files, roots, limits.Files)
+	refs, coverage, err := enumerateNativeRefs(ctx, ports, files, roots, limits.Files)
 	if err != nil {
 		return out, err
 	}
@@ -134,7 +135,7 @@ func candidateBefore(a, b Candidate) bool {
 	return a.Ref.Path < b.Ref.Path
 }
 
-func enumerateNativeRefs(ctx context.Context, files FileSystem, roots []StoreRoot, capFiles int) ([]Ref, Coverage, error) {
+func enumerateNativeRefs(ctx context.Context, ports agentapi.DiscoveryLookup, files FileSystem, roots []StoreRoot, capFiles int) ([]Ref, Coverage, error) {
 	c := Coverage{IdentityComplete: true}
 	roots = append([]StoreRoot(nil), roots...)
 	sort.Slice(roots, func(i, j int) bool {
@@ -167,21 +168,32 @@ func enumerateNativeRefs(ctx context.Context, files FileSystem, roots []StoreRoo
 			c.Reason = "file limit"
 			break
 		}
-		coverage, err := Walk(ctx, files, root, remaining, func(ref Ref) (bool, error) {
+		provider, ok := ports.LookupDiscovery(root.Harness)
+		if !ok {
+			c.IdentityComplete = false
+			c.Reason = "native discovery unavailable"
+			continue
+		}
+		report, err := provider.Discover(ctx, agentapi.DiscoveryRequest{Purpose: agentapi.DiscoveryHandoff, Stage: agentapi.DiscoveryReferences, Roots: []agentapi.NativeStoreRoot{root}, Files: nativeDiscoveryFiles{files}, MaxFiles: remaining}, func(candidate agentapi.DiscoveryCandidate) error {
+			ref := Ref{Harness: string(candidate.Session.Agent), Path: candidate.Source.Path, Store: candidate.Root}
 			key := ref.Harness + "\x00" + ref.Path
 			if !seen[key] {
 				seen[key] = true
 				refs = append(refs, ref)
 			}
-			return len(refs) < capFiles, nil
+			if len(refs) >= capFiles {
+				return errEnumerationLimit
+			}
+			return nil
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, errEnumerationLimit) {
 			return refs, c, err
 		}
-		if !coverage.Complete {
+		if report.Incomplete || errors.Is(err, errEnumerationLimit) {
 			c.IdentityComplete = false
 			c.Reason = "incomplete enumeration"
 		}
+
 	}
 	c.Enumerated = len(refs)
 	return refs, c, nil
@@ -357,4 +369,17 @@ func directoryInScope(candidate string, dirs []string, all bool) bool {
 	}
 
 	return false
+}
+
+var errEnumerationLimit = errors.New("bounded native enumeration stopped")
+
+// Reference enumeration cannot open transcripts before cumulative reservations.
+type nativeDiscoveryFiles struct{ files FileSystem }
+
+func (n nativeDiscoveryFiles) ReadDir(path string) ([]fs.DirEntry, error) {
+	return n.files.ReadDir(path)
+}
+func (n nativeDiscoveryFiles) Lstat(path string) (fs.FileInfo, error) { return n.files.Lstat(path) }
+func (nativeDiscoveryFiles) Open(string) (io.ReadCloser, error) {
+	return nil, errors.New("reference enumeration cannot open transcript")
 }

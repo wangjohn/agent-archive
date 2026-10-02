@@ -237,15 +237,17 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
-	NativeHeaders agentapi.NativeHeadersLookup
+	Discovery        agentapi.DiscoveryLookup
+	DatabaseCatalogs agentapi.DatabaseCatalogLookup
+	NativePaths      agentapi.NativePathsLookup
+	Worktrees        agentapi.WorktreeLookup
+	Workspaces       agentapi.WorkspaceLookup
+	Children         agentapi.ChildrenLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
-	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep
-	// their sessions in: ~/.claude and ~/.codex, and any other folder
-	// CLAUDE_CONFIG_DIR or CODEX_HOME names, now or when setup ran. Nil
-	// means the default one under Home.
-	ClaudeDirs []string
-	CodexDirs  []string
+	// NativeDirectories are observed current and previously configured native locations.
+	// Nil entries use the integration's declared default; no native paths live here.
+	NativeDirectories map[string][]string
 	// TempDirs are the temporary directories (rule 6 of project resolution).
 	// Nil means DefaultTempDirs; the CLI adds $TMPDIR.
 	TempDirs []string
@@ -315,7 +317,7 @@ func (e Environment) getenv(key string) string {
 
 // cursorStateDatabase is Cursor's state.vscdb under Home, "" where the
 // environment's operating system has no known place for it.
-func (e Environment) cursorStateDatabase() string { return e.locations().CursorStateDB }
+func (e Environment) cursorStateDatabase() string { return e.nativeProjectPaths("cursor").Database }
 
 func (e Environment) now() time.Time {
 	if e.Now != nil {
@@ -388,18 +390,16 @@ func (e Environment) fileCreated(path string) (time.Time, error) {
 	return info.ModTime(), nil
 }
 
-func (e Environment) claudeDirs() []string {
-	if e.ClaudeDirs != nil {
-		return e.ClaudeDirs
+func (e Environment) nativeDirectories(name string) []string {
+	if dirs, ok := e.NativeDirectories[name]; ok {
+		return dirs
 	}
-	return []string{filepath.Join(e.Home, ".claude")}
-}
-
-func (e Environment) codexDirs() []string {
-	if e.CodexDirs != nil {
-		return e.CodexDirs
+	if e.Discovery != nil {
+		if provider, ok := e.Discovery.LookupDiscovery(name); ok {
+			return provider.DefaultDirectories(e.Home)
+		}
 	}
-	return []string{filepath.Join(e.Home, ".codex")}
+	return nil
 }
 
 func (e Environment) tempDirs() []string {
@@ -436,4 +436,16 @@ func (e Environment) resolved(path string) string {
 			return path
 		}
 	}
+}
+
+func (e Environment) nativePathEnvironment(name string) agentapi.NativePathEnvironment {
+	return agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: e.Home, Directories: e.nativeDirectories(name)}, OperatingSystem: string(e.operatingSystem()), Getenv: e.getenv}
+}
+func (e Environment) nativeProjectPaths(name string) agentapi.NativeProjectPaths {
+	if e.NativePaths != nil {
+		if provider, ok := e.NativePaths.LookupNativePaths(name); ok {
+			return provider.ProjectPaths(e.nativePathEnvironment(name))
+		}
+	}
+	return agentapi.NativeProjectPaths{}
 }

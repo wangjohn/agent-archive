@@ -1,13 +1,13 @@
 package backfill
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
-	"net/url"
 	"path/filepath"
 	"strings"
 
+	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -67,9 +67,11 @@ func newResolver(env Environment, cfg config.Config, filters Filters) *resolver 
 		}
 	}
 	var worktreeStores []string
-	stores := []string{filepath.Join(env.Home, ".cursor", "worktrees")}
-	for _, dir := range env.codexDirs() {
-		stores = append(stores, filepath.Join(dir, "worktrees"))
+	var stores []string
+	if env.NativePaths != nil {
+		for _, name := range env.NativePaths.NativePathAgents() {
+			stores = append(stores, env.nativeProjectPaths(name).Worktrees...)
+		}
 	}
 	for _, store := range stores {
 		worktreeStores = append(worktreeStores, uniquePaths(filepath.Clean(store), env.resolved(store))...)
@@ -207,11 +209,10 @@ func documentsInUse(env Environment, resolvedHome string, cfg config.Config) boo
 // CodexDocuments. Both are Mac desktop-app locations; on any other operating
 // system there are none, and those paths are not consulted.
 func workspaceFolders(env Environment) []string {
-	loc := env.locations()
 	var out []string
-	for _, folder := range []string{loc.ClaudeDesktopScratch, loc.CodexDocuments} {
-		if folder != "" {
-			out = append(out, folder)
+	if env.NativePaths != nil {
+		for _, name := range env.NativePaths.NativePathAgents() {
+			out = append(out, env.nativeProjectPaths(name).DesktopWorkspaces...)
 		}
 	}
 	return out
@@ -275,23 +276,16 @@ type archiveProject struct {
 	Included bool
 }
 
-// claudeWorktreeRepo maps <repo>/.claude/worktrees/<name>[/...] to <repo> by
-// its path alone, for a worktree that no longer exists.
-func claudeWorktreeRepo(dir string) (string, bool) {
-	marker := string(filepath.Separator) + filepath.Join(".claude", "worktrees") + string(filepath.Separator)
-	i := strings.Index(dir, marker)
-	if i <= 0 || len(dir) == i+len(marker) {
-		return "", false
-	}
-	return dir[:i], true
-}
-
 // missingWorktree handles a worktree that cannot be followed: its folder or
 // its git directory is gone. A Claude Code worktree maps to its repository by
 // path; a Codex or Cursor one cannot be mapped.
 func (r *resolver) missingWorktree(dir string) (repo string, found bool, skip SkipReason) {
-	if repo, ok := claudeWorktreeRepo(dir); ok {
-		return r.env.resolved(repo), true, ""
+	if r.env.Worktrees != nil {
+		for _, provider := range r.env.Worktrees.WorktreeResolvers() {
+			if repo, ok := provider.MissingWorktreeRepository(dir); ok {
+				return r.env.resolved(repo), true, ""
+			}
+		}
 	}
 	if withinAny(dir, r.worktreeStores) {
 		return "", false, SkipWorktreeUnresolved
@@ -398,150 +392,57 @@ func (r *resolver) kindOf(root string) ProjectKind {
 	return ProjectKindDirectory
 }
 
-// cursorSlug is the folder name Cursor gives a workspace under
-// ~/.cursor/projects: the absolute path without its leading separator, with
-// every character other than an ASCII letter or digit replaced by '-'. It
-// cannot be reversed reliably, so candidates are converted and compared.
-func cursorSlug(path string) string {
-	path = strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator))
-	return slugName(path)
-}
-
-func slugName(name string) string {
-	b := []byte(name)
-	for i, c := range b {
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
-			b[i] = '-'
-		}
-	}
-	return string(b)
-}
-
-// cursorMatcher resolves Cursor project slugs to folders.
-type cursorMatcher struct {
-	env Environment
-	// candidates are folders a slug may name: configured roots, roots and
-	// working directories from Claude Code and Codex sessions, and Cursor's
-	// own workspaceStorage folders.
+// workspaceMatcher lazily opens one compact native workspace inventory per
+// native owner. Shared admission still applies configured-project and Git rules.
+type workspaceMatcher struct {
+	env        Environment
+	agent      string
 	candidates []string
-	cache      map[string][]string
+	pass       agentapi.WorkspacePass
 }
 
-// cursorWalkBudget bounds how many directories one slug's file system walk
-// lists.
-const cursorWalkBudget = 4096
-
-func newCursorMatcher(env Environment, candidates []string) *cursorMatcher {
-	m := &cursorMatcher{env: env, cache: map[string][]string{}}
-	m.candidates = append(m.candidates, candidates...)
-	m.candidates = append(m.candidates, cursorWorkspaceFolders(env)...)
-	return m
-}
-
-// cursorWorkspaceStorage is Cursor's folder of per-workspace state:
-// User/workspaceStorage in its data folder (platform.Locations), "" where
-// the environment's operating system has no known place for it.
-func cursorWorkspaceStorage(env Environment) string {
-	return env.locations().CursorWorkspaceStorage
-}
-
-// cursorWorkspaceFolders reads the folder of each
-// <Cursor data folder>/User/workspaceStorage/*/workspace.json
-// (~/Library/Application Support/Cursor on macOS, ~/.config/Cursor on
-// Linux).
-func cursorWorkspaceFolders(env Environment) []string {
-	storage := cursorWorkspaceStorage(env)
-	if storage == "" {
-		return nil
-	}
-	entries, err := readDirIfExists(env, storage)
-	if err != nil {
-		return nil
-	}
-	var folders []string
-	for _, e := range entries {
-		if !e.dir {
-			continue
+func (m *workspaceMatcher) match(ctx context.Context, key string) (string, bool, error) {
+	if m.pass == nil {
+		if m.env.Workspaces == nil {
+			return "", false, nil
 		}
-		data, err := env.readFile(filepath.Join(storage, e.name, "workspace.json"))
+		provider, ok := m.env.Workspaces.LookupWorkspace(m.agent)
+		if !ok {
+			return "", false, nil
+		}
+		var err error
+		m.pass, err = provider.OpenWorkspace(ctx, agentapi.WorkspaceRequest{Candidates: m.candidates, Environment: m.env.nativePathEnvironment(m.agent), Files: workspaceFiles{m.env}, ResolvePath: m.env.resolved})
 		if err != nil {
-			continue
-		}
-		if folder := workspaceJSONFolder(data); folder != "" {
-			folders = append(folders, folder)
+			return "", false, err
 		}
 	}
-	return folders
-}
-
-// workspaceJSONFolder is the local folder a workspace.json names, "" when it
-// names none (a multi-root or remote workspace).
-func workspaceJSONFolder(data []byte) string {
-	var ws struct {
-		Folder string `json:"folder"`
-	}
-	if json.Unmarshal(data, &ws) != nil || ws.Folder == "" {
-		return ""
-	}
-	u, err := url.Parse(ws.Folder)
-	if err != nil || u.Scheme != "file" || !filepath.IsAbs(u.Path) {
-		return ""
-	}
-	return filepath.Clean(u.Path)
-}
-
-// match returns the one folder slug names, or false when none or several do.
-func (m *cursorMatcher) match(slug string) (string, bool) {
-	matches, ok := m.cache[slug]
-	if !ok {
-		seen := map[string]bool{}
-		add := func(p string) {
-			key := m.env.resolved(p)
-			if !seen[key] {
-				seen[key] = true
-				matches = append(matches, p)
-			}
-		}
-		for _, c := range m.candidates {
-			if cursorSlug(c) == slug {
-				add(c)
-			}
-		}
-		budget := cursorWalkBudget
-		m.walk(string(filepath.Separator), slug, &budget, add)
-		m.cache[slug] = matches
+	matches, err := m.pass.MatchWorkspace(ctx, key)
+	if err != nil {
+		return "", false, err
 	}
 	if len(matches) != 1 {
-		return "", false
+		return "", false, nil
 	}
-	return matches[0], true
+	return matches[0], true, nil
 }
 
-// walk finds existing folders under dir whose slug is rest, trying each '-'
-// in the slug as a path separator. Each directory level is listed once and
-// its entries compared by their own slug, so '.', '_', and '-' in real names
-// all match.
-func (m *cursorMatcher) walk(dir, rest string, budget *int, found func(string)) {
-	if *budget <= 0 {
-		return
-	}
-	*budget--
-	entries, err := m.env.readDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := slugName(e.Name())
-		switch {
-		case name == rest:
-			found(filepath.Join(dir, e.Name()))
-		case strings.HasPrefix(rest, name+"-"):
-			m.walk(filepath.Join(dir, e.Name()), rest[len(name)+1:], budget, found)
+type workspaceFiles struct{ env Environment }
+
+func (h workspaceFiles) ReadDir(path string) ([]fs.DirEntry, error) { return h.env.readDir(path) }
+func (h workspaceFiles) ReadFile(path string) ([]byte, error)       { return h.env.readFile(path) }
+func cursorWorkspaceStorage(env Environment) string {
+	return env.nativeProjectPaths("cursor").WorkspaceStorage
+}
+func workspaceMetadataFolder(env Environment, agent string, data []byte) string {
+	if env.Workspaces != nil {
+		if provider, ok := env.Workspaces.LookupWorkspace(agent); ok {
+			folders := provider.WorkspaceFolders(agentapi.WorkspaceEvidence{Purpose: agentapi.WorkspaceProjectFile, Bytes: data})
+			if len(folders) == 1 {
+				return folders[0]
+			}
 		}
 	}
+	return ""
 }
 
 func isNotExist(err error) bool { return errors.Is(err, fs.ErrNotExist) }
