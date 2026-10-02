@@ -8,7 +8,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -25,16 +27,26 @@ import (
 // model on Stop), so a panic is recovered, recorded, and exits 0 too.
 func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (code int) {
 	var (
-		home    string
-		harness = new(string)
-		payload map[string]any
-		batch   []agentapi.LifecycleEvent
+		home       string
+		harness    = new(string)
+		payload    map[string]any
+		batch      []agentapi.LifecycleEvent
+		diagnostic agentapi.HookDiagnosticDecoder
 	)
 	defer func() {
 		if r := recover(); r != nil {
 			terminal.Printf(stderr, "agent-archive: hook: internal error: %v\n", r)
 			root := ""
-			if len(batch) > 0 {
+			if diagnostic != nil {
+				func() {
+					defer func() { _ = recover() }()
+					candidate := diagnostic.DiagnosticProject(agentapi.HookInput{Payload: payload})
+					if len(candidate) <= 16<<20 && utf8.ValidString(candidate) && filepath.IsAbs(candidate) {
+						root = candidate
+					}
+				}()
+			}
+			if root == "" && len(batch) > 0 {
 				root = batch[0].ProjectRoot
 			}
 			capture.RecordFailure(home, *harness, root)
@@ -71,6 +83,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		return 0
 	}
 	*harness = string(integration.Descriptor.ID)
+	diagnostic, _ = integration.Decoder.(agentapi.HookDiagnosticDecoder)
 	var now time.Time
 	var clockFailure any
 	func() {

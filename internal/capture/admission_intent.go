@@ -382,7 +382,13 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 			return nil, removeAdmissionIntent(path)
 		}
 	}
-	if !registered && events[0].Deferred == agentapi.DeferredFollowup {
+	hasStart := false
+	for _, event := range events {
+		if event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit {
+			hasStart = true
+		}
+	}
+	if !registered && !hasStart && events[0].Deferred == agentapi.DeferredFollowup {
 		return &deferredFollowup{path: path, intent: intent, events: events}, nil
 	}
 	if err := replayEffects(home, store, cfg, intent, events, registered, after); err != nil {
@@ -450,7 +456,22 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 	if err != nil {
 		return err
 	}
+	var waiting []agentapi.LifecycleEvent
 	for _, event := range prepared {
+		if event.Deferred == agentapi.DeferredFollowup {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				waiting = append(waiting, event)
+				continue
+			}
+		}
 		if registered && event.Deferred == agentapi.DeferredStart {
 			key, err := eventKey(event)
 			if err != nil {
@@ -483,6 +504,31 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
 			return err
 		}
+		// Complete earlier waiting effects immediately after the admitting
+		// start, before any subsequent native effect. The durable original
+		// batch remains the retry record until all effects succeed.
+		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
+			for _, event := range waiting {
+				key, err := eventKey(event)
+				if err != nil {
+					return err
+				}
+				found, err := HasRegistration(store, key)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return state.ErrSessionNotRegistered
+				}
+				if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
+					return err
+				}
+			}
+			waiting = nil
+		}
+	}
+	if len(waiting) > 0 {
+		return state.ErrSessionNotRegistered
 	}
 	return nil
 }

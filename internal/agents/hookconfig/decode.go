@@ -90,6 +90,11 @@ func (d Decoder) locator(payload map[string]any, id string) string {
 	return path
 }
 
+// DiagnosticProject interprets native project facts independently of event decoding.
+func (d Decoder) DiagnosticProject(input agentapi.HookInput) string {
+	return root(input.Payload)
+}
+
 // Decode interprets only the events declared by the native integration.
 func (d Decoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agentapi.LifecycleEvent, error) {
 	if err := ctx.Err(); err != nil {

@@ -121,6 +121,12 @@ type HookDecoder interface {
 	Decode(context.Context, HookInput) ([]LifecycleEvent, error)
 }
 
+// HookDiagnosticDecoder supplies only a project root for panic diagnostics.
+// It is pure, optional, and conveys no admission or lifecycle authority.
+type HookDiagnosticDecoder interface {
+	DiagnosticProject(HookInput) string
+}
+
 // DecodersLookup is the narrow port consumed by capture and replay.
 type DecodersLookup interface {
 	LookupDecoder(string) (HookDecoder, bool)
