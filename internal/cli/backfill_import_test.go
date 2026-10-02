@@ -865,7 +865,10 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 // A diagnostic-only discovery candidate must not abort foreground publication
 // after the valid import's registrations and batch have already committed.
 func TestBackfillForegroundUploadSkipsMalformedNeighbors(t *testing.T) {
-	for _, tc := range []struct{ name, nativeID string }{
+	for _, tc := range []struct {
+		name     string
+		nativeID string
+	}{
 		{"empty", ""}, {"whitespace", " \t "}, {"invalid-utf8", string([]byte{0xff})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
