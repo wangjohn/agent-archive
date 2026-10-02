@@ -57,23 +57,24 @@ func FilterJSONL(ctx context.Context, in agentapi.NativeInput, c agentapi.Filter
 	}
 	boundary, err := transcriptio.CompleteJSONLBoundary(contextAt{ctx, in.File}, in.File.Length(), limit)
 	if err != nil {
-		return archive.FilteredTranscript{}, errors.Join(Classify(err), Classify(in.File.Check()))
+		return archive.FilteredTranscript{}, errors.Join(Classify(err), Classify(in.File.Check()), ctx.Err())
 	}
 	r := &recordReader{r: Reader(ctx, in.File, boundary), limit: limit}
 	out, err := filter(r)
 	if r.exceeded {
-		return archive.FilteredTranscript{}, errors.Join(agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), Classify(in.File.Check()))
+		return archive.FilteredTranscript{}, errors.Join(agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), Classify(in.File.Check()), ctx.Err())
 	}
 	if err != nil {
-		return out, errors.Join(Classify(err), Classify(in.File.Check()))
+		return out, errors.Join(Classify(err), Classify(in.File.Check()), ctx.Err())
 	}
-	return out, Classify(in.File.Check())
+	return out, errors.Join(Classify(in.File.Check()), ctx.Err())
 }
 
 type recordReader struct {
-	r           io.Reader
-	limit, line int64
-	exceeded    bool
+	r        io.Reader
+	limit    int64
+	line     int64
+	exceeded bool
 }
 
 func (l *recordReader) Read(p []byte) (int, error) {
@@ -100,8 +101,12 @@ func (l *recordReader) Read(p []byte) (int, error) {
 
 // RefilterJSONL streams existing retained records without another whole bundle.
 func RefilterJSONL(ctx context.Context, a archive.Adapter, b archive.SourceBundle) (archive.FilteredTranscript, error) {
+	if err := ctx.Err(); err != nil {
+		return archive.FilteredTranscript{}, err
+	}
 	r := &retainedReader{ctx: ctx, records: b.NativeRecords}
-	return a.FilterJSONL(r)
+	out, err := a.FilterJSONL(r)
+	return out, errors.Join(err, ctx.Err())
 }
 
 type retainedReader struct {
@@ -142,5 +147,9 @@ func RefilterText(ctx context.Context, b archive.SourceBundle, at time.Time, fil
 	if len(b.NativeText) != 1 || len(b.NativeRecords) != 0 {
 		return archive.FilteredTranscript{}, errors.New("invalid retained text source")
 	}
-	return filter(&contextReader{ctx, strings.NewReader(b.NativeText[0].Content)}, at)
+	if err := ctx.Err(); err != nil {
+		return archive.FilteredTranscript{}, err
+	}
+	out, err := filter(&contextReader{ctx, strings.NewReader(b.NativeText[0].Content)}, at)
+	return out, errors.Join(err, ctx.Err())
 }

@@ -48,16 +48,18 @@ func (p *sourcePass) Read(ctx context.Context, r agentapi.SourceRef, l agentapi.
 	if err != nil {
 		return nil, err
 	}
-	s := &sourceSnapshot{SourceSnapshot: snap, owner: p}
+	var meta []byte
 	if l.SubagentMetadata {
-		s.meta, err = readMetadata(r.Path, p.files)
+		meta, err = readMetadata(r.Path, p.files)
 		if err != nil {
 			return nil, errors.Join(err, snap.Close())
 		}
 	}
+	s := &sourceSnapshot{SourceSnapshot: snap, owner: p, meta: meta}
 	p.live[s] = true
 	return s, nil
 }
+
 func (p *sourcePass) Close() error {
 	if p.closed {
 		return p.err
@@ -83,6 +85,7 @@ func (s *sourceSnapshot) Input() agentapi.NativeInput {
 	in.SubagentMeta = s.meta
 	return in
 }
+
 func (s *sourceSnapshot) Close() error {
 	if s.closed {
 		return s.err

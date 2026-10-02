@@ -28,9 +28,9 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		}
 		out, err = f.FilterText(sourceio.Reader(ctx, in.File, in.File.Length()), c.StartedAt)
 		if err != nil {
-			return out, errors.Join(sourceio.Classify(err), sourceio.Classify(in.File.Check()))
+			return out, errors.Join(sourceio.Classify(err), sourceio.Classify(in.File.Check()), ctx.Err())
 		}
-		return out, sourceio.Classify(in.File.Check())
+		return out, errors.Join(sourceio.Classify(in.File.Check()), ctx.Err())
 	}
 	if in.Records == nil {
 		return archive.FilteredTranscript{}, errors.New("cursor native input required")
@@ -45,16 +45,16 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 			break
 		}
 		switch r.Kind {
-		case "composer":
+		case agentapi.ComposerRecord:
 			composer.Composer = r.Raw
-		case "bubble":
+		case agentapi.BubbleRecord:
 			composer.Bubbles = append(composer.Bubbles, archive.CursorBubble{ID: r.Key, Value: r.Raw})
 		default:
 			return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("unexpected Cursor record framing"))
 		}
 	}
 	out, err := f.FilterComposer(composer)
-	return out, sourceio.Classify(err)
+	return out, errors.Join(sourceio.Classify(err), ctx.Err())
 }
 
 // Refilter applies current privacy rules to retained native evidence.

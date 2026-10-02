@@ -17,7 +17,7 @@ func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"lastUpdatedAt":1,"fullConversationHeadersOnly":[]}')`); err != nil {
+	if _, err = db.ExecContext(t.Context(), `CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"lastUpdatedAt":1,"fullConversationHeadersOnly":[]}')`); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {
@@ -47,7 +47,7 @@ func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`UPDATE cursorDiskKV SET value='{"lastUpdatedAt":2,"fullConversationHeadersOnly":[]}'`); err != nil {
+	if _, err = db.ExecContext(t.Context(), `UPDATE cursorDiskKV SET value='{"lastUpdatedAt":2,"fullConversationHeadersOnly":[]}'`); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {

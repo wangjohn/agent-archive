@@ -618,28 +618,31 @@ func queryComposerLimited(ctx context.Context, db *sql.DB, id string, rawLimit, 
 	}
 	return c, sig, nil
 }
+
 func limitedFailure(sig Signature, err error) (Composer, Signature, error) {
 	o := agentapi.SourceObservation{Signature: sig.SourceSignature(), Present: true, Empty: sig.HeaderCount == 0, Activity: time.UnixMilli(sig.LastUpdatedAt)}
 	return Composer{}, sig, &agentapi.SourceError{Kind: agentapi.Limit, Err: err, Observed: &o}
 }
-func bubbleLengths(ctx context.Context, q querier, id string) (map[string]int64, error) {
+
+func bubbleLengths(ctx context.Context, q querier, id string) (out map[string]int64, err error) {
 	prefix := bubblePrefix(id)
 	rows, err := q.QueryContext(ctx, `SELECT key,length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= ? AND key < ?`, prefix, bubbleUpper(prefix))
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]int64{}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	out = map[string]int64{}
 	for rows.Next() {
 		var key string
 		var n sql.NullInt64
 		if err = rows.Scan(&key, &n); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		out[strings.TrimPrefix(key, prefix)] = n.Int64
 	}
-	return out, errors.Join(rows.Err(), rows.Close())
+	return out, rows.Err()
 }
+
 func listedBubbles(ctx context.Context, q querier, id string, ids []string, present map[string]int64) (map[string]json.RawMessage, error) {
 	out := map[string]json.RawMessage{}
 	seen := map[string]bool{}
@@ -659,24 +662,28 @@ func listedBubbles(ctx context.Context, q querier, id string, ids []string, pres
 			args[i] = key
 		}
 		query := `SELECT key,value FROM cursorDiskKV WHERE key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
-		rows, err := q.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var key string
-			var value []byte
-			if err = rows.Scan(&key, &value); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			out[strings.TrimPrefix(key, prefix)] = value
-		}
-		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		if err := readListedBubbles(ctx, q, query, args, prefix, out); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+func readListedBubbles(ctx context.Context, q querier, query string, args []any, prefix string, out map[string]json.RawMessage) (err error) {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var key string
+		var value []byte
+		if err = rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		out[strings.TrimPrefix(key, prefix)] = value
+	}
+	return rows.Err()
 }
 
 // ErrRecordLimit marks a native value larger than the read policy permits.
@@ -700,7 +707,7 @@ func (s Signature) SourceSignature() agentapi.SourceSignature {
 	return agentapi.SourceSignature{Version: 1, Provider: "cursor/sqlite", Token: hex.EncodeToString(h.Sum(nil))}
 }
 
-func signatureRows(ctx context.Context, q querier, id string, sig Signature, ids []string) (Signature, error) {
+func signatureRows(ctx context.Context, q querier, id string, sig Signature, ids []string) (out Signature, err error) {
 	if len(ids) == 0 {
 		return sig, nil
 	}
@@ -709,16 +716,16 @@ func signatureRows(ctx context.Context, q querier, id string, sig Signature, ids
 	if err != nil {
 		return Signature{}, err
 	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	present := map[string]bool{}
 	for rows.Next() {
 		var key string
 		if err = rows.Scan(&key); err != nil {
-			_ = rows.Close()
 			return Signature{}, err
 		}
 		present[strings.TrimPrefix(key, prefix)] = true
 	}
-	err = errors.Join(rows.Err(), rows.Close())
+	err = rows.Err()
 	if err != nil {
 		return Signature{}, err
 	}
@@ -730,12 +737,13 @@ func signatureRows(ctx context.Context, q querier, id string, sig Signature, ids
 	sig.LastMessageHash, err = messageHashAt(ctx, q, prefix+ids[len(ids)-1])
 	return sig, err
 }
+
 func messageHashAt(ctx context.Context, q querier, key string) (string, error) {
 	const chunkSize = 64 * 1024
 	var chunk []byte
 	var size sql.NullInt64
 	var null bool
-	var kind string
+	var kind sqliteValueKind
 	err := q.QueryRowContext(ctx, `SELECT CASE WHEN typeof(value) IN ('blob','text') THEN substr(CAST(value AS BLOB),1,?) ELSE value END,length(CAST(value AS BLOB)),value IS NULL,typeof(value) FROM cursorDiskKV WHERE key = ?`, chunkSize, key).Scan(&chunk, &size, &null, &kind)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && null {
 		return "", nil
@@ -743,7 +751,7 @@ func messageHashAt(ctx context.Context, q querier, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if kind != "blob" && kind != "text" {
+	if kind != sqliteBlob && kind != sqliteText {
 		return messageHash(chunk), nil
 	}
 	h := sha256.New()
@@ -776,11 +784,11 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 	if err != nil {
 		return Signature{}, err
 	}
-	if !valid.Bool || kind.String != "object" {
+	if !valid.Bool || sqliteValueKind(kind.String) != sqliteObject {
 		return Signature{}, NotChecked(UnknownFormat)
 	}
-	field := func(name string) (string, any, error) {
-		var t string
+	field := func(name string) (sqliteValueKind, any, error) {
+		var t sqliteValueKind
 		var v any
 		err := q.QueryRowContext(ctx, `SELECT type, value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t, &v)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -794,25 +802,27 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 		return Signature{}, err
 	}
 	switch t {
-	case "", "null":
-	case "integer":
+	case "", sqliteNull:
+	case sqliteInteger:
 		n, ok := v.(int64)
 		if !ok {
 			return Signature{}, NotChecked(UnknownFormat)
 		}
 		sig.LastUpdatedAt = int64(float64(n))
-	case "real":
+	case sqliteReal:
 		n, ok := v.(float64)
 		if !ok {
 			return Signature{}, NotChecked(UnknownFormat)
 		}
 		sig.LastUpdatedAt = int64(n)
+	case sqliteBlob, sqliteText, sqliteArray, sqliteObject:
+		return Signature{}, NotChecked(UnknownFormat)
 	default:
 		return Signature{}, NotChecked(UnknownFormat)
 	}
 	// Only query field type here: returning the array value would duplicate the whole inline conversation.
-	fieldType := func(name string) (string, error) {
-		var t string
+	fieldType := func(name string) (sqliteValueKind, error) {
+		var t sqliteValueKind
 		err := q.QueryRowContext(ctx, `SELECT type FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
@@ -825,7 +835,7 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 		return Signature{}, err
 	}
 	inline := false
-	if t == "" || t == "null" {
+	if t == "" || t == sqliteNull {
 		name = "conversation"
 		inline = true
 		t, err = fieldType(name)
@@ -833,10 +843,10 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 	if err != nil {
 		return Signature{}, err
 	}
-	if t == "" || t == "null" {
+	if t == "" || t == sqliteNull {
 		return sig, nil
 	}
-	if t != "array" {
+	if t != sqliteArray {
 		return Signature{}, NotChecked(UnknownFormat)
 	}
 	return signatureOnlyHeaders(ctx, q, key, id, name, inline, sig)
@@ -853,12 +863,12 @@ func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, 
 	defer func() { _ = rows.Close() }()
 	var ids []string
 	for rows.Next() {
-		var object string
+		var object sqliteValueKind
 		var idtype, identity sql.NullString
 		if err = rows.Scan(&object, &idtype, &identity); err != nil {
 			return Signature{}, err
 		}
-		if object != "object" && object != "null" || idtype.Valid && idtype.String != "text" && idtype.String != "null" {
+		if object != sqliteObject && object != sqliteNull || idtype.Valid && sqliteValueKind(idtype.String) != sqliteText && sqliteValueKind(idtype.String) != sqliteNull {
 			return Signature{}, NotChecked(UnknownFormat)
 		}
 		if !inline && (!identity.Valid || identity.String == "") {
@@ -878,3 +888,16 @@ func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, 
 	}
 	return signatureRows(ctx, q, id, sig, ids)
 }
+
+// sqliteValueKind preserves SQLite's actual storage and JSON type spellings.
+type sqliteValueKind string
+
+const (
+	sqliteBlob    sqliteValueKind = "blob"
+	sqliteText    sqliteValueKind = "text"
+	sqliteNull    sqliteValueKind = "null"
+	sqliteInteger sqliteValueKind = "integer"
+	sqliteReal    sqliteValueKind = "real"
+	sqliteArray   sqliteValueKind = "array"
+	sqliteObject  sqliteValueKind = "object"
+)

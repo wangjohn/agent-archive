@@ -50,6 +50,7 @@ func TestBorrowedFileLifetimeAndIdempotentClose(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestProviderSignatureCeilingAndLegacy32Hash(t *testing.T) {
 	legacy := cursorstore.Signature{LastUpdatedAt: -1, HeaderCount: 2, LastBubbleID: strings.Repeat("opaque-", 10000), MessageRows: 1, LastMessageHash: strings.Repeat("a", 32)}
 	cursor := CursorSignature(legacy)
@@ -86,6 +87,7 @@ func TestProviderSignatureCeilingAndLegacy32Hash(t *testing.T) {
 		t.Fatal("unknown signature version")
 	}
 }
+
 func TestCancellationAndRawBoundaryLimit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -170,5 +172,29 @@ func TestFailedFilterStillVerifiesSnapshot(t *testing.T) {
 	})
 	if !agentapi.HasFailure(err, agentapi.FormatMismatch) || !agentapi.HasFailure(err, agentapi.Changed) || agentapi.Deterministic(err) {
 		t.Fatalf("lost snapshot verification: %v", err)
+	}
+}
+
+func TestRefusedFilterRetainsCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := (FileProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	snap, err := pass.Read(context.Background(), agentapi.SourceRef{Path: path}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err = FilterJSONL(ctx, snap.Input(), agentapi.FilterContext{}, func(io.Reader) (archive.FilteredTranscript, error) {
+		cancel()
+		return archive.FilteredTranscript{}, &archive.FilterError{Reason: "transcript cannot be read"}
+	})
+	if !errors.Is(err, context.Canceled) || agentapi.Deterministic(err) {
+		t.Fatalf("filter refusal hid cancellation: %v", err)
 	}
 }

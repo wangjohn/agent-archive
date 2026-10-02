@@ -31,6 +31,7 @@ func TestBoundedComposerPreservesMissingAndNullRows(t *testing.T) {
 		t.Fatalf("record limit: %v", err)
 	}
 }
+
 func TestFailedSnapshotPreparationAttemptIsReused(t *testing.T) {
 	root := useTempSnapshots(t)
 	path := StateDatabase(t.TempDir())

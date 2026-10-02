@@ -65,8 +65,8 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // (FuzzFilterJSONL, FuzzCursorText), so under newer rules only what they
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
-func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	filtered, err := refilterNative(reg, adapter, bundle)
+func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -80,12 +80,12 @@ func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bu
 
 // refilterNative runs a snapshot's native records, or its native text, back
 // through the filter.
-func refilterNative(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
+func refilterNative(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
 	f, ok := adapter.(agentapi.TranscriptFilter)
 	if !ok {
 		return archive.FilteredTranscript{}, errors.New("native refilter port required")
 	}
-	return f.Refilter(context.Background(), bundle, reg.SessionStartedAt)
+	return f.Refilter(ctx, bundle, reg.SessionStartedAt)
 }
 
 // mergeCaptureGaps is first followed by each gap of second not already in
@@ -107,13 +107,16 @@ func mergeCaptureGaps(first, second []archive.CaptureGap) []archive.CaptureGap {
 // snapshot that cannot be filtered again leaves candidate to replace it, as
 // before this existed, with a warning: the new filter's output, though
 // poorer, is still safer to publish than the old filter's.
-func (s *sessionScan) refilterRewritten(read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
+func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
 	rewritten, err := s.rewrittenSinceCapture(read)
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(s.reg, read.adapter, snapshot)
+	refiltered, err := refilterBundle(ctx, s.reg, read.adapter, snapshot)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return candidate, false, err
+		}
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))
 		return candidate, false, nil
 	}

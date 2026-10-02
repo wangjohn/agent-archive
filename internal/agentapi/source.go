@@ -33,8 +33,9 @@ type SourceEnvironment struct {
 
 // ReadLimits bounds raw values and each native record before filtering.
 type ReadLimits struct {
-	RawBytes, RecordBytes int64
-	SubagentMetadata      bool
+	RawBytes         int64
+	RecordBytes      int64
+	SubagentMetadata bool
 }
 
 // SourceSignature is a bounded, provider-qualified equality token.
@@ -46,10 +47,11 @@ type SourceSignature struct {
 
 // SourceObservation separates presence, activity and emptiness from equality.
 type SourceObservation struct {
-	Signature      SourceSignature
-	Present, Empty bool
-	Activity       time.Time
-	Size           int64
+	Signature SourceSignature
+	Present   bool
+	Empty     bool
+	Activity  time.Time
+	Size      int64
 }
 
 // SourceProvider owns native reads but never shared publication policy.
@@ -75,11 +77,21 @@ type SourceSnapshot interface {
 // FileInput exposes verified bounded reads, coverage, and post-read verification.
 type FileInput = transcriptio.Input
 
+// NativeRecordKind identifies a provider-owned record frame.
+type NativeRecordKind string
+
+// ComposerRecord and BubbleRecord are the Cursor provider's actual ordered frames.
+const (
+	ComposerRecord NativeRecordKind = "composer"
+	BubbleRecord   NativeRecordKind = "bubble"
+)
+
 // NativeRecord borrows one immutable ordered native value until snapshot close.
 type NativeRecord struct {
-	Kind, Key string
-	Raw       []byte
-	Missing   bool
+	Kind    NativeRecordKind
+	Key     string
+	Raw     []byte
+	Missing bool
 }
 
 // RecordInput yields composer first and bubbles in header order, with no export envelope.
@@ -92,7 +104,6 @@ type NativeInput struct {
 	File         FileInput
 	Records      RecordInput
 	SubagentMeta []byte
-	Framing      string
 }
 
 // FilterContext supplies existing native filtering observations without path access.
