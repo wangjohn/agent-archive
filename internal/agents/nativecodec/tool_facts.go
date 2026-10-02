@@ -175,7 +175,7 @@ func observedTool(call archive.NormalizedToolCall, raw map[string]any) archive.N
 		}
 	}
 	// A specialized tool with no meaningful arguments uses the original generic fallback.
-	if action.Text == "" && action.Path == "" && len(action.Files) == 0 && action.Kind != archive.ToolActionPlan && action.Kind != archive.ToolActionEdit {
+	if action.Text == "" && (action.Kind != archive.ToolActionRead || action.Path == "") && len(action.Files) == 0 && action.Kind != archive.ToolActionPlan && action.Kind != archive.ToolActionEdit {
 		action.Kind = archive.ToolActionGeneric
 		action.Text = firstString(input, "title")
 		if action.Text == "" && input != nil {
