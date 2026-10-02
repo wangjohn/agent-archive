@@ -508,27 +508,34 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 		// start, before any subsequent native effect. The durable original
 		// batch remains the retry record until all effects succeed.
 		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
-			for _, event := range waiting {
-				key, err := eventKey(event)
-				if err != nil {
-					return err
-				}
-				found, err := HasRegistration(store, key)
-				if err != nil {
-					return err
-				}
-				if !found {
-					return state.ErrSessionNotRegistered
-				}
-				if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
-					return err
-				}
+			if err := applyWaitingReplayEffects(home, store, cfg, intent, waiting, after); err != nil {
+				return err
 			}
 			waiting = nil
 		}
 	}
 	if len(waiting) > 0 {
 		return state.ErrSessionNotRegistered
+	}
+	return nil
+}
+
+func applyWaitingReplayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, waiting []agentapi.LifecycleEvent, after func(effectName) error) error {
+	for _, event := range waiting {
+		key, err := eventKey(event)
+		if err != nil {
+			return err
+		}
+		found, err := HasRegistration(store, key)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return state.ErrSessionNotRegistered
+		}
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
+			return err
+		}
 	}
 	return nil
 }
