@@ -365,7 +365,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	for _, m := range sessions {
-		row := handoffPickerRow{metadata: m, active: m.CapturedAt}
+		row := handoffPickerRow{metadata: m, active: lastActivity(m)}
 		if m.ParentSessionID == "" {
 			r.archive = append(r.archive, row)
 		} else {

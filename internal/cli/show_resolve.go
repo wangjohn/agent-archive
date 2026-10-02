@@ -67,6 +67,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
+	sortByActivity(sessions)
 	// Search every listed sidecar — do not apply list's --limit window, or
 	// older title matches would be silently invisible.
 	found := searchSessions(sessions, parseSessionQuery(query), scope, func(m archive.Metadata) sessionFields {
