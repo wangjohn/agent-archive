@@ -4,7 +4,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -92,7 +91,7 @@ func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormat
 				terminal.Printf(w, "%s (%d)\n", group.label, group.count)
 			}
 		}
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		tw := &columnWriter{out: w}
 		printSessionHeader(tw, opts)
 		for _, r := range group.rows {
 			printSessionRow(tw, r, opts)
@@ -119,7 +118,7 @@ func projectGroupKey(row listRow) string {
 	return "name:" + row.Project
 }
 
-func printSessionHeader(tw *tabwriter.Writer, opts listFormatOptions) {
+func printSessionHeader(tw io.Writer, opts listFormatOptions) {
 	if opts.Verbose {
 		if opts.Numbered {
 			terminal.Println(tw, "#\tTITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
@@ -250,7 +249,7 @@ func tableCells(r listRow, opts listFormatOptions) []string {
 	return append(cells, id)
 }
 
-func printSessionRow(tw *tabwriter.Writer, r listRow, opts listFormatOptions) {
+func printSessionRow(tw io.Writer, r listRow, opts listFormatOptions) {
 	if opts.Verbose {
 		if opts.Numbered {
 			terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -262,4 +261,58 @@ func printSessionRow(tw *tabwriter.Writer, r listRow, opts listFormatOptions) {
 		return
 	}
 	terminal.Println(tw, strings.Join(tableCells(r, opts), "\t"))
+}
+
+// columnGap is the room between the columns of a table.
+const columnGap = 2
+
+// columnWriter lines up tab-separated cells as text/tabwriter does with
+// padding columnGap, but measures a cell by visibleWidth: tabwriter counts
+// the bytes of a color code (a dimmed hint, a dimmed ID) as width, which
+// pushes the rest of a colored row out of line. A line's last cell is not
+// padded. Lines are held until Flush, and every line is expected to have
+// the same cells, as a table's do.
+type columnWriter struct {
+	out io.Writer
+	buf strings.Builder
+}
+
+func (c *columnWriter) Write(p []byte) (int, error) { return c.buf.Write(p) }
+
+// Flush writes the held lines, lined up.
+func (c *columnWriter) Flush() error {
+	text := c.buf.String()
+	c.buf.Reset()
+	if text == "" {
+		return nil
+	}
+	ended := strings.HasSuffix(text, "\n")
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	cells := make([][]string, len(lines))
+	var widths []int
+	for i, line := range lines {
+		cells[i] = strings.Split(line, "\t")
+		for j, cell := range cells[i][:len(cells[i])-1] {
+			if j == len(widths) {
+				widths = append(widths, 0)
+			}
+			widths[j] = max(widths[j], visibleWidth(cell))
+		}
+	}
+	var b strings.Builder
+	for i, row := range cells {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		for j, cell := range row[:len(row)-1] {
+			b.WriteString(cell)
+			b.WriteString(strings.Repeat(" ", widths[j]-visibleWidth(cell)+columnGap))
+		}
+		b.WriteString(row[len(row)-1])
+	}
+	if ended {
+		b.WriteString("\n")
+	}
+	_, err := io.WriteString(c.out, b.String())
+	return err
 }

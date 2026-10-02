@@ -566,10 +566,7 @@ var (
 // <user_query>…</user_query>), and turns Claude Code's slash-command tags
 // back into the command line (/review-pr 12). Other prompts are only trimmed.
 func cleanPrompt(text string) string {
-	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
-	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
-		text = stripHarnessTag(text, "user_query")
-	}
+	text = stripCursorWrapper(text)
 	if strings.HasPrefix(strings.TrimSpace(text), "<command-") {
 		if name := slashCommandName.FindStringSubmatch(text); name != nil {
 			command := strings.TrimSpace(name[1])
@@ -580,6 +577,17 @@ func cleanPrompt(text string) string {
 		}
 	}
 	return strings.TrimSpace(text)
+}
+
+// stripCursorWrapper removes the wrapper Cursor puts around a query: a
+// <timestamp>…</timestamp> line, then <user_query>…</user_query>. Other text
+// is only trimmed.
+func stripCursorWrapper(text string) string {
+	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
+	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
+		text = stripHarnessTag(text, "user_query")
+	}
+	return text
 }
 
 // stripHarnessTag removes a Claude Code harness wrapper such as
