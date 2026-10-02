@@ -310,7 +310,16 @@ func readCursorDatabaseChats(ctx context.Context, env Environment, workers int, 
 		case err != nil:
 			w.unsafe = true
 		default:
-			w.empty = !carriesConversation(filtered)
+			if env.Imports == nil {
+				w.unsafe = true
+				break
+			}
+			inspector, ok := env.Imports.LookupImport(string(w.t.harness))
+			if !ok {
+				w.unsafe = true
+				break
+			}
+			applyImportInspection(ctx, inspector, w, filtered)
 		}
 	}); err != nil {
 		return err
@@ -404,6 +413,21 @@ func messageWorkspaceFolders(env Environment, c cursorstore.Composer) []string {
 // databaseCatalogHost supplies read-only rows; native query/schema stay behind the port.
 type databaseCatalogHost struct{ db *sql.DB }
 
-func (h databaseCatalogHost) Query(ctx context.Context, query string) (agentapi.DatabaseRows, error) {
-	return h.db.QueryContext(ctx, query)
+func (h databaseCatalogHost) Query(ctx context.Context, query string, visit func(agentapi.DatabaseRecord) error) (err error) {
+	rows, err := h.db.QueryContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var key string
+		var value []byte
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		if err := visit(agentapi.DatabaseRecord{Key: key, Value: value}); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

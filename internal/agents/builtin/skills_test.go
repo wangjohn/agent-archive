@@ -22,6 +22,7 @@ func TestSkillsConformance(t *testing.T) {
 		})
 	}
 }
+
 func TestSkillsPurposeLocationsPreserveCurrentCoverage(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()

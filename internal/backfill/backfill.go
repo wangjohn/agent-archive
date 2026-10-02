@@ -243,6 +243,7 @@ type Environment struct {
 	Worktrees        agentapi.WorktreeLookup
 	Workspaces       agentapi.WorkspaceLookup
 	Children         agentapi.ChildrenLookup
+	Imports          agentapi.ImportsLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// NativeDirectories are observed current and previously configured native locations.
@@ -439,8 +440,9 @@ func (e Environment) resolved(path string) string {
 }
 
 func (e Environment) nativePathEnvironment(name string) agentapi.NativePathEnvironment {
-	return agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: e.Home, Directories: e.nativeDirectories(name)}, OperatingSystem: string(e.operatingSystem()), Getenv: e.getenv}
+	return agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: e.Home, Directories: e.nativeDirectories(name)}, OperatingSystem: e.operatingSystem(), Getenv: e.getenv}
 }
+
 func (e Environment) nativeProjectPaths(name string) agentapi.NativeProjectPaths {
 	if e.NativePaths != nil {
 		if provider, ok := e.NativePaths.LookupNativePaths(name); ok {

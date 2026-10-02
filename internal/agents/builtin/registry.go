@@ -28,6 +28,7 @@ type Integration struct {
 	Worktrees       agentapi.MissingWorktreeResolver
 	Workspace       agentapi.WorkspaceResolver
 	Children        agentapi.ChildDiscoverer
+	Imports         agentapi.ImportInspector
 }
 
 // Registry holds validated immutable lookups and operation projections.
@@ -58,64 +59,11 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
 			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
 		}
-		d.Operations = []agentmeta.Operation{agentmeta.Launch}
-		if b.Hooks != nil {
-			if nilImplementation(b.Hooks) {
-				return nil, fmt.Errorf("typed nil hooks for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
+		operations, err := implementedOperations(b)
+		if err != nil {
+			return nil, err
 		}
-		if b.Skills != nil {
-			if nilImplementation(b.Skills) {
-				return nil, fmt.Errorf("typed nil skills for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.Skills)
-		}
-		if b.NativeHeaders != nil {
-			if nilImplementation(b.NativeHeaders) {
-				return nil, fmt.Errorf("typed nil native headers for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.NativeInspection)
-		}
-		if b.Version != nil {
-			if nilImplementation(b.Version) {
-				return nil, fmt.Errorf("typed nil version inspector for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.VersionInspection)
-		}
-		if b.Evidence != nil && nilImplementation(b.Evidence) {
-			return nil, fmt.Errorf("typed nil evidence provider for %s", d.ID)
-		}
-
-		for _, entry := range []struct {
-			name string
-			port any
-		}{{"native paths", b.NativePaths}, {"worktrees", b.Worktrees}, {"workspace", b.Workspace}} {
-			if entry.port != nil && nilImplementation(entry.port) {
-				return nil, fmt.Errorf("typed nil %s for %s", entry.name, d.ID)
-			}
-		}
-		if b.NativePaths != nil || b.Worktrees != nil || b.Workspace != nil {
-			d.Operations = append(d.Operations, agentmeta.NativeProjects)
-		}
-		if b.Children != nil {
-			if nilImplementation(b.Children) {
-				return nil, fmt.Errorf("typed nil children for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.ChildDiscovery)
-		}
-		if b.DatabaseCatalog != nil {
-			if nilImplementation(b.DatabaseCatalog) {
-				return nil, fmt.Errorf("typed nil database catalog for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.DatabaseInspection)
-		}
-		if b.Discovery != nil {
-			if nilImplementation(b.Discovery) {
-				return nil, fmt.Errorf("typed nil discovery for %s", d.ID)
-			}
-			d.Operations = append(d.Operations, agentmeta.HistoricalDiscovery)
-		}
+		d.Operations = operations
 		b.Descriptor = d
 		r.bindings[d.ID] = b
 	}
@@ -136,6 +84,44 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		return nil, err
 	}
 	return r, nil
+}
+
+// implementedOperations validates optional ports and derives promises only from
+// actual implementations. Multiple project ports contribute one capability.
+func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
+	ports := []struct {
+		name           string
+		operation      agentmeta.Operation
+		implementation any
+	}{
+		{"hooks", agentmeta.ManagedHooks, b.Hooks},
+		{"skills", agentmeta.Skills, b.Skills},
+		{"native headers", agentmeta.NativeInspection, b.NativeHeaders},
+		{"version inspector", agentmeta.VersionInspection, b.Version},
+		{"evidence provider", "", b.Evidence},
+		{"native paths", agentmeta.NativeProjects, b.NativePaths},
+		{"worktrees", agentmeta.NativeProjects, b.Worktrees},
+		{"workspace", agentmeta.NativeProjects, b.Workspace},
+		{"import inspector", agentmeta.HistoricalInspection, b.Imports},
+		{"children", agentmeta.ChildDiscovery, b.Children},
+		{"database catalog", agentmeta.DatabaseInspection, b.DatabaseCatalog},
+		{"discovery", agentmeta.HistoricalDiscovery, b.Discovery},
+	}
+	operations := []agentmeta.Operation{agentmeta.Launch}
+	seen := map[agentmeta.Operation]bool{}
+	for _, port := range ports {
+		if port.implementation == nil {
+			continue
+		}
+		if nilImplementation(port.implementation) {
+			return nil, fmt.Errorf("typed nil %s for %s", port.name, b.Descriptor.ID)
+		}
+		if port.operation != "" && !seen[port.operation] {
+			seen[port.operation] = true
+			operations = append(operations, port.operation)
+		}
+	}
+	return operations, nil
 }
 
 func nilImplementation(v interface{}) bool {
@@ -174,9 +160,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}},
 	})
 	if err != nil {
 		panic(err)
@@ -287,6 +273,7 @@ func (r *Registry) LookupNativePaths(name string) (agentapi.NativePathsProvider,
 	b, ok := r.Lookup(name)
 	return b.NativePaths, ok && b.NativePaths != nil
 }
+
 func (r *Registry) NativePathAgents() []string {
 	var out []string
 	for _, d := range r.catalog.All() {
@@ -296,6 +283,7 @@ func (r *Registry) NativePathAgents() []string {
 	}
 	return out
 }
+
 func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 	var out []agentapi.MissingWorktreeResolver
 	for _, d := range r.catalog.All() {
@@ -305,6 +293,7 @@ func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 	}
 	return out
 }
+
 func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, bool) {
 	b, ok := r.Lookup(name)
 	return b.Workspace, ok && b.Workspace != nil
@@ -314,4 +303,10 @@ func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, boo
 func (r *Registry) LookupChildren(name string) (agentapi.ChildDiscoverer, bool) {
 	b, ok := r.Lookup(name)
 	return b.Children, ok && b.Children != nil
+}
+
+// LookupImport resolves native historical observation without admission policy.
+func (r *Registry) LookupImport(name string) (agentapi.ImportInspector, bool) {
+	b, ok := r.Lookup(name)
+	return b.Imports, ok && b.Imports != nil
 }

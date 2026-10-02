@@ -13,9 +13,11 @@ const (
 
 // NativeHeader contains only inspected native identity and checkout evidence.
 type NativeHeader struct {
-	NativeID, Directory            string
-	StartedAt                      time.Time
-	IdentityMismatch, SubagentOnly bool
+	NativeID         string
+	Directory        string
+	StartedAt        time.Time
+	IdentityMismatch bool
+	SubagentOnly     bool
 }
 
 // NativeHeaderRequest supplies a caller-owned bounded scan; codecs cannot open paths.
@@ -28,12 +30,14 @@ type NativeHeaderRequest struct {
 // NativeHeaderInspector interprets native headers without host operations.
 // NativeStoreRoot declares native traversal layout for one purpose.
 type NativeStoreRoot struct {
-	Priority       int
-	Historical     bool
-	Harness, Path  string
-	Recursive      bool
-	Depth          int
-	Prefix, Suffix string
+	Priority   int
+	Historical bool
+	Harness    string
+	Path       string
+	Recursive  bool
+	Depth      int
+	Prefix     string
+	Suffix     string
 }
 
 // NativeLocations supplies observed native configuration directories.

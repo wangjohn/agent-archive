@@ -2,6 +2,7 @@ package codex
 
 import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"path/filepath"
 )
 
@@ -9,10 +10,11 @@ import (
 type ProjectEvidence struct{}
 
 func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
-	var out agentapi.NativeProjectPaths
-	if e.OperatingSystem == "darwin" && e.Locations.UserHome != "" {
-		out.DesktopWorkspaces = []string{filepath.Join(e.Locations.UserHome, "Documents", "Codex")}
+	var desktop []string
+	if e.OperatingSystem == platform.Darwin && e.Locations.UserHome != "" {
+		desktop = []string{filepath.Join(e.Locations.UserHome, "Documents", "Codex")}
 	}
+	out := agentapi.NativeProjectPaths{DesktopWorkspaces: desktop}
 	dirs := e.Locations.Directories
 	if dirs == nil {
 		dirs = (NativeHeaders{}).DefaultDirectories(e.Locations.UserHome)

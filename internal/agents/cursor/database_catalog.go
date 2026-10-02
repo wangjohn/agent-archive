@@ -25,28 +25,17 @@ const maxComposerVersion = 18
 const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'`
 
 func (DatabaseCatalogInspector) InspectCatalog(ctx context.Context, host agentapi.DatabaseCatalogHost) (agentapi.DatabaseCatalog, error) {
-	rows, err := host.Query(ctx, cursorComposerQuery)
-	if err != nil {
-		return agentapi.DatabaseCatalog{}, err
-	}
-	defer func() { _ = rows.Close() }()
-
 	var chats []agentapi.DatabaseChat
 	newer := 0
 	subagents := map[string]bool{}
 	parents := map[string][]string{}
-	for rows.Next() {
-		var key string
-		var value []byte
-		if err := rows.Scan(&key, &value); err != nil {
-			return agentapi.DatabaseCatalog{}, err
+	err := host.Query(ctx, cursorComposerQuery, func(record agentapi.DatabaseRecord) error {
+		if record.Value == nil {
+			return nil
 		}
-		if value == nil {
-			continue
-		}
-		d, ok := decodeComposerData(key, value)
+		d, ok := decodeComposerData(record.Key, record.Value)
 		if !ok {
-			return agentapi.DatabaseCatalog{}, cursorstore.NotChecked(cursorstore.UnknownFormat)
+			return cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
 		if d.newer {
 			newer++
@@ -60,8 +49,9 @@ func (DatabaseCatalogInspector) InspectCatalog(ctx context.Context, host agentap
 		if d.counted {
 			chats = append(chats, d.chat)
 		}
-	}
-	if err := rows.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return agentapi.DatabaseCatalog{}, err
 	}
 	// A subagent's composer is part of its parent chat, not a chat of its

@@ -333,7 +333,7 @@ type queryIndexHost struct {
 	t  *testing.T
 }
 
-func (h queryIndexHost) Query(ctx context.Context, query string) (agentapi.DatabaseRows, error) {
+func (h queryIndexHost) Query(ctx context.Context, query string, visit func(agentapi.DatabaseRecord) error) error {
 	rows, err := h.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query)
 	if err != nil {
 		h.t.Fatal(err)
@@ -354,8 +354,9 @@ func (h queryIndexHost) Query(ctx context.Context, query string) (agentapi.Datab
 	if got := strings.Join(plan, "; "); !strings.Contains(got, "USING INDEX") || !strings.Contains(got, "key>? AND key<?") {
 		h.t.Fatalf("query plan %q does not search the key index", got)
 	}
-	return h.db.QueryContext(ctx, query)
+	return (databaseCatalogHost{h.db}).Query(ctx, query, visit)
 }
+
 func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 	t.Parallel()
 	db := openCursorWriter(t, filepath.Join(t.TempDir(), "state.vscdb"), false)

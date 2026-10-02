@@ -12,27 +12,30 @@ import (
 
 // Root declares native evidence suffix and scope conventions.
 type Root struct {
-	Suffix, Scope string
-	Project       bool
+	Suffix  string
+	Scope   string
+	Project bool
 }
 
 // Provider holds native conventions and performs no host operations.
 type Provider struct {
-	ManagedSuffix string
-	Claude        bool
-	Roots         []Root
+	ManagedSuffix  string
+	ConfiguredRoot bool
+	DefaultRoot    string
+	Frontmatter    bool
+	Roots          []Root
 }
 
 // Destination resolves a managed path from caller-supplied locations.
 func (p Provider) Destination(l agentapi.SkillLocations) agentapi.SkillDestination {
 	root := l.UserHome
-	if p.Claude {
+	if p.ConfiguredRoot {
 		root = l.ClaudeDirectory
 		if root == "" {
-			root = filepath.Join(l.UserHome, ".claude")
+			root = filepath.Join(l.UserHome, p.DefaultRoot)
 		}
 	}
-	return agentapi.SkillDestination{Directory: filepath.Join(root, p.ManagedSuffix), Boundary: root, ClaudeFrontmatter: p.Claude}
+	return agentapi.SkillDestination{Directory: filepath.Join(root, p.ManagedSuffix), Boundary: root, ClaudeFrontmatter: p.Frontmatter}
 }
 
 // EvidenceRoots declares current inventory coverage independently of installation.
@@ -46,13 +49,13 @@ func (p Provider) EvidenceRoots(l agentapi.SkillLocations) []agentapi.SkillRoot 
 		if base == "" {
 			continue
 		}
-		root := agentapi.SkillRoot{Path: filepath.Join(base, r.Suffix), Scope: r.Scope}
+		var userBoundary, projectBoundary string
 		if r.Project {
-			root.ProjectBoundary = base
+			projectBoundary = base
 		} else {
-			root.UserBoundary = base
+			userBoundary = base
 		}
-		out = append(out, root)
+		out = append(out, agentapi.SkillRoot{Path: filepath.Join(base, r.Suffix), Scope: r.Scope, UserBoundary: userBoundary, ProjectBoundary: projectBoundary})
 	}
 	return out
 }

@@ -379,7 +379,9 @@ type nativeDiscoveryFiles struct{ files FileSystem }
 func (n nativeDiscoveryFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 	return n.files.ReadDir(path)
 }
+
 func (n nativeDiscoveryFiles) Lstat(path string) (fs.FileInfo, error) { return n.files.Lstat(path) }
+
 func (nativeDiscoveryFiles) Open(string) (io.ReadCloser, error) {
 	return nil, errors.New("reference enumeration cannot open transcript")
 }

@@ -443,7 +443,7 @@ func (e Env) cursorDatabase() string {
 	if !ok {
 		return ""
 	}
-	return provider.ProjectPaths(agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home}, OperatingSystem: string(e.operatingSystem()), Getenv: e.getenv}).Database
+	return provider.ProjectPaths(agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home}, OperatingSystem: e.operatingSystem(), Getenv: e.getenv}).Database
 }
 
 // getenv reads one variable of the Env's environment (LookupEnv; the process

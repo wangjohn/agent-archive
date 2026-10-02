@@ -31,24 +31,23 @@ func KnownProjects(ctx context.Context, env Environment, cfg config.Config) ([]K
 	r := newResolver(env, cfg, Filters{})
 	byRoot := map[string]*KnownProject{}
 	_, err := enumerateDiscovery(ctx, env, agentapi.DiscoveryProjects, func(c agentapi.DiscoveryCandidate) error {
-		if c.IdentityError != nil {
-			return nil
-		}
-		res := r.resolve(c.Header.Directory)
-		if res.skip != "" || res.root == "" || res.included || res.kind == ProjectKindHome || res.kind == ProjectKindTemporary {
-			return nil
-		}
-		project := byRoot[res.root]
-		if project == nil {
-			if !env.exists(res.root) {
+		if c.IdentityError == nil {
+			res := r.resolve(c.Header.Directory)
+			if res.skip != "" || res.root == "" || res.included || res.kind == ProjectKindHome || res.kind == ProjectKindTemporary {
 				return nil
 			}
-			project = &KnownProject{Root: res.root, Kind: res.kind}
-			byRoot[res.root] = project
-		}
-		project.Sessions++
-		if info, err := env.lstat(c.Source.Path); err == nil && info.ModTime().After(project.LastUsed) {
-			project.LastUsed = info.ModTime()
+			project := byRoot[res.root]
+			if project == nil {
+				if !env.exists(res.root) {
+					return nil
+				}
+				project = &KnownProject{Root: res.root, Kind: res.kind}
+				byRoot[res.root] = project
+			}
+			project.Sessions++
+			if info, err := env.lstat(c.Source.Path); err == nil && info.ModTime().After(project.LastUsed) {
+				project.LastUsed = info.ModTime()
+			}
 		}
 		return nil
 	})

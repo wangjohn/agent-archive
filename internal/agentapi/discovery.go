@@ -24,13 +24,14 @@ type DiscoveryFiles interface {
 
 // DiscoveryRequest supplies observed locations, purpose and caller-owned limits.
 type DiscoveryRequest struct {
-	Purpose                  DiscoveryPurpose
-	Stage                    DiscoveryStage
-	Locations                NativeLocations
-	Roots                    []NativeStoreRoot
-	Files                    DiscoveryFiles
-	MaxFiles                 int
-	HeaderBytes, RecordBytes int64
+	Purpose     DiscoveryPurpose
+	Stage       DiscoveryStage
+	Locations   NativeLocations
+	Roots       []NativeStoreRoot
+	Files       DiscoveryFiles
+	MaxFiles    int
+	HeaderBytes int64
+	RecordBytes int64
 }
 
 // DiscoveryCandidate contains local evidence, never an admitted registration.
@@ -49,8 +50,11 @@ type DiscoveryCandidate struct {
 
 // DiscoveryReport distinguishes incomplete and unreadable stores from empty ones.
 type DiscoveryReport struct {
-	Enumerated, UnreadableFolders               int
-	StoreUnreadable, HistoricalOnly, Incomplete bool
+	Enumerated        int
+	UnreadableFolders int
+	StoreUnreadable   bool
+	HistoricalOnly    bool
+	Incomplete        bool
 }
 
 // Discoverer emits candidates directly into the caller's existing plan or bounded catalog.

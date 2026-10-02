@@ -490,7 +490,7 @@ func installedApps(cfg config.Config, found bool) []string {
 // leftovers, so one that cannot be parsed (the user's own, half-edited
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
-func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string, sources ...agentapi.SkillsLookup) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
 	for _, app := range allHarnesses {
 		for i, set := range []hooks.Files{files, legacy} {
 			if i == 1 && legacy[app] == files[app] {

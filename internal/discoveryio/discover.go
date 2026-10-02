@@ -38,22 +38,19 @@ func Files(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, ro
 			if deduplicateNames && r.Purpose != agentapi.DiscoveryHandoff && seen[filepath.Base(ref.Path)] {
 				return true, nil
 			}
-			c := agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: id}, Source: agentapi.SourceRef{Path: ref.Path}, Root: root.Path, SourcePriority: root.Priority}
+			var c agentapi.DiscoveryCandidate
 			if r.Stage == agentapi.DiscoveryIdentities {
-				info, e := r.Files.Lstat(ref.Path)
-				if e != nil || !info.Mode().IsRegular() {
+				candidate, valid := inspectCandidate(ctx, r, id, root, ref, inspector)
+				if !valid {
 					return true, nil
 				}
-				c.Bytes = info.Size()
+				c = candidate
 				seen[filepath.Base(ref.Path)] = true
-				c.Header, c.IdentityError = inspector.InspectHeader(agentapi.NativeHeaderRequest{Purpose: r.Purpose, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
-					return ScanRecords(ctx, r.Files, ref.Path, r.HeaderBytes, r.RecordBytes, visit)
-				}})
-				c.IdentityInspected = true
-				c.Session.NativeID = c.Header.NativeID
-				if errors.Is(c.IdentityError, fs.ErrNotExist) {
+				if !candidatePresent(c) {
 					return true, nil
 				}
+			} else {
+				c = agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: id}, Source: agentapi.SourceRef{Path: ref.Path}, Root: root.Path, SourcePriority: root.Priority}
 			}
 			out.Enumerated++
 			if e := emit(c); e != nil {
@@ -77,4 +74,21 @@ func Files(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, ro
 	}
 	out.HistoricalOnly = out.StoreUnreadable && !unreadActive
 	return out, ctx.Err()
+}
+
+// inspectCandidate keeps unavailable files out of enumeration while retaining
+// other bounded identity errors as local candidate evidence.
+func inspectCandidate(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, root agentapi.NativeStoreRoot, ref Ref, inspector agentapi.NativeHeaderInspector) (agentapi.DiscoveryCandidate, bool) {
+	info, err := r.Files.Lstat(ref.Path)
+	if err != nil || !info.Mode().IsRegular() {
+		return agentapi.DiscoveryCandidate{}, false
+	}
+	header, identityErr := inspector.InspectHeader(agentapi.NativeHeaderRequest{Purpose: r.Purpose, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
+		return ScanRecords(ctx, r.Files, ref.Path, r.HeaderBytes, r.RecordBytes, visit)
+	}})
+	return agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: id, NativeID: header.NativeID}, Source: agentapi.SourceRef{Path: ref.Path}, Root: root.Path, SourcePriority: root.Priority, Bytes: info.Size(), Header: header, IdentityInspected: true, IdentityError: identityErr}, true
+}
+
+func candidatePresent(c agentapi.DiscoveryCandidate) bool {
+	return !errors.Is(c.IdentityError, fs.ErrNotExist)
 }

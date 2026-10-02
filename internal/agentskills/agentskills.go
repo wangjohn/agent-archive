@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -114,14 +115,7 @@ func shellQuote(s string) string {
 // does, and its command names dataHome, or no data directory for the
 // default installation: another installation sharing this HOME, with hook
 // files of its own, keeps its file.
-func contains(names []string, name string) bool {
-	for _, n := range names {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
+func contains(names []string, name string) bool { return slices.Contains(names, name) }
 
 // PlanInstall plans the skill files for harnesses, running executable:
 // each is written where there is none and replaced only while it is setup's

@@ -429,10 +429,13 @@ func (m *workspaceMatcher) match(ctx context.Context, key string) (string, bool,
 type workspaceFiles struct{ env Environment }
 
 func (h workspaceFiles) ReadDir(path string) ([]fs.DirEntry, error) { return h.env.readDir(path) }
-func (h workspaceFiles) ReadFile(path string) ([]byte, error)       { return h.env.readFile(path) }
+
+func (h workspaceFiles) ReadFile(path string) ([]byte, error) { return h.env.readFile(path) }
+
 func cursorWorkspaceStorage(env Environment) string {
 	return env.nativeProjectPaths("cursor").WorkspaceStorage
 }
+
 func workspaceMetadataFolder(env Environment, agent string, data []byte) string {
 	if env.Workspaces != nil {
 		if provider, ok := env.Workspaces.LookupWorkspace(agent); ok {

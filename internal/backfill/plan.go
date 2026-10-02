@@ -2,7 +2,6 @@ package backfill
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -247,7 +246,6 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
 	var unread unreadable
-	unread.stores = map[string]bool{}
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
@@ -352,7 +350,7 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	if err := forEach(ctx, workers, toFilter, func(w *work) {
 		n := budget.acquire(w.t.size)
 		defer budget.release(n)
-		runAdapter(env, w)
+		runAdapter(ctx, env, w)
 	}); err != nil {
 		return err
 	}
@@ -490,9 +488,18 @@ func (w *work) reason(now time.Time) SkipReason {
 // runAdapter filters the whole transcript with the collector's own code and
 // keeps only what the plan needs: whether anything is left, the IDs the
 // records carry, and the earliest record's time.
-func runAdapter(env Environment, w *work) {
+func runAdapter(ctx context.Context, env Environment, w *work) {
+	if env.Imports == nil {
+		w.unsafe = true
+		return
+	}
+	inspector, ok := env.Imports.LookupImport(string(w.t.harness))
+	if !ok {
+		w.unsafe = true
+		return
+	}
 	var freshStart time.Time
-	if w.t.harness == harnessCursor {
+	if inspector.ImportPolicy(agentapi.SourceRef{Path: w.t.path}).Start == agentapi.ImportFileCreatedStart {
 		// Cursor records carry no timestamps; the file's creation is the
 		// start, and the text filter needs it as its fresh-start proof.
 		created, err := env.fileCreated(w.t.path)
@@ -524,60 +531,20 @@ func runAdapter(env Environment, w *work) {
 		}
 		return
 	}
-	w.empty = !carriesConversation(filtered)
-	switch w.t.harness {
-	case harnessClaude:
-		// The file stem is the ID hooks register. A fork or resume can copy
-		// records carrying an earlier session's ID, so the stem must be among
-		// the records' IDs rather than the only one. A conversation whose
-		// records carry no ID at all cannot be matched with a hook's
-		// registration either; a file with no conversation is reported as
-		// empty, which says more.
-		if (len(filtered.SessionIDs) > 0 || !w.empty) && !slices.Contains(filtered.SessionIDs, w.t.nativeID) {
-			w.t.identityMismatch = true
-		}
-		if !filtered.NativeStartAt.IsZero() {
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
-		}
-	case harnessCodex:
-		switch {
-		case !w.t.metaStart.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = w.t.metaStart, archive.StartedAtSourceTranscript
-		case !filtered.NativeStartAt.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
-		}
-	case harnessCursor:
-		// Its start is the file's creation, set above.
-	}
+	applyImportInspection(ctx, inspector, w, filtered)
 }
 
-// conversationTypes are the retained record types that hold a turn of the
-// conversation, as opposed to bookkeeping (summaries, turn context, session
-// metadata).
-var conversationTypes = map[string]bool{
-	"user": true, "assistant": true, "message": true, "response_item": true,
-	"tool_use": true, "tool_result": true, "tool_call": true,
-}
-
-// carriesConversation reports whether a filtered transcript holds anything a
-// person or agent said. A transcript without it would become a registration
-// that never publishes anything.
-func carriesConversation(filtered archive.FilteredTranscript) bool {
-	for _, text := range filtered.Text {
-		if strings.TrimSpace(text) != "" {
-			return true
-		}
+func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspector, w *work, filtered archive.FilteredTranscript) {
+	observed, err := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(w.t.harness), NativeID: w.t.nativeID}, Source: agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, Header: agentapi.NativeHeader{NativeID: w.t.nativeID, Directory: w.t.cwd, StartedAt: w.t.metaStart}, Filtered: filtered})
+	if err != nil {
+		w.unsafe = true
+		return
 	}
-	for _, record := range filtered.Records {
-		var r struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(record, &r) == nil && (conversationTypes[r.Type] || r.Role != "") {
-			return true
-		}
+	w.empty = !observed.Conversation
+	w.t.identityMismatch = w.t.identityMismatch || observed.IdentityMismatch
+	if !observed.StartedAt.IsZero() {
+		w.c.StartedAt, w.c.StartedAtSource = observed.StartedAt.UTC(), archive.StartedAtSourceTranscript
 	}
-	return false
 }
 
 // discoverChildren consumes native association evidence while retaining shared

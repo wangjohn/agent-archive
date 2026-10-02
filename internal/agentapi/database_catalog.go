@@ -8,10 +8,12 @@ import (
 // DatabaseChat is compact native catalog evidence for a possible historical session.
 // KeyID is the native record locator; identity disagreement is not silently repaired.
 type DatabaseChat struct {
-	ID, KeyID           string
-	CreatedAt           time.Time
-	Folder, WorkspaceID string
-	Malformed           bool
+	ID          string
+	KeyID       string
+	CreatedAt   time.Time
+	Folder      string
+	WorkspaceID string
+	Malformed   bool
 }
 
 // DatabaseCatalog retains only compact planning metadata, never raw message content.
@@ -22,18 +24,17 @@ type DatabaseCatalog struct {
 	Subagents   map[string][]string
 }
 
-// DatabaseRows supplies a read-only query cursor whose lifetime ends at Close.
-type DatabaseRows interface {
-	Next() bool
-	Scan(...any) error
-	Err() error
-	Close() error
+// DatabaseRecord borrows one indexed native metadata value for its callback.
+// No raw value remains valid after the callback returns.
+type DatabaseRecord struct {
+	Key   string
+	Value []byte
 }
 
-// DatabaseCatalogHost allows a native owner to choose its indexed metadata query.
-// The shared host owns database opening, locks, snapshots and cleanup.
+// DatabaseCatalogHost owns query cursors, row errors and cleanup; the native
+// owner chooses its indexed metadata query and interprets each borrowed value.
 type DatabaseCatalogHost interface {
-	Query(context.Context, string) (DatabaseRows, error)
+	Query(context.Context, string, func(DatabaseRecord) error) error
 }
 
 // DatabaseCatalogInspector owns native catalog schema and metadata interpretation.

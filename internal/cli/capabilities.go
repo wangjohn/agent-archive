@@ -18,6 +18,7 @@ import (
 )
 
 type capabilityEvidence = agentapi.CapabilityEvidence
+
 type captureCapabilities = agentapi.CaptureCapabilities
 
 const (
@@ -92,10 +93,12 @@ func (versionHost) Exists(path string) (bool, bool) {
 	info, err := os.Stat(path)
 	return err == nil, err == nil && info.IsDir()
 }
+
 func (versionHost) ResolveExecutable(name string) (string, bool) {
 	path, err := exec.LookPath(name)
 	return path, err == nil
 }
+
 func (versionHost) Directories(path string) []agentapi.VersionDirectory {
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -107,6 +110,7 @@ func (versionHost) Directories(path string) []agentapi.VersionDirectory {
 	}
 	return out
 }
+
 func (versionHost) ProbeVersion(p agentapi.VersionProbe) (string, bool) {
 	switch p.Kind {
 	case agentapi.VersionCLI:
@@ -172,7 +176,8 @@ func installedVersionSupportDetail(discovery applicationDiscovery, verifiedVersi
 }
 
 func normalizedVersion(value string) string { return versioninfo.Normalize(value) }
-func versionShape(value string) string      { return versioninfo.Shape(value) }
+
+func versionShape(value string) string { return versioninfo.Shape(value) }
 
 type cappedBuffer struct{ bytes.Buffer }
 

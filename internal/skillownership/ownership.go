@@ -3,6 +3,7 @@ package skillownership
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 )
 
@@ -11,14 +12,7 @@ const Marker = "<!-- Written by agent-archive setup, which replaces this file; a
 
 // Owned requires the exact setup marker and installation data-home convention.
 func Owned(content []byte, dataHome string) bool {
-	found := false
-	for _, line := range strings.Split(string(content), "\n") {
-		if line == Marker {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.Contains(strings.Split(string(content), "\n"), Marker) {
 		return false
 	}
 	if dataHome == "" {
@@ -26,6 +20,7 @@ func Owned(content []byte, dataHome string) bool {
 	}
 	return bytes.Contains(content, []byte("AGENT_ARCHIVE_HOME="+quote(dataHome)+" "))
 }
+
 func quote(s string) string {
 	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+") == "" {
 		return s

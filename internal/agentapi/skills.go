@@ -3,10 +3,19 @@ package agentapi
 import "github.com/wangjohn/agent-archive/internal/filechange"
 
 // SkillLocations contains observed locations, without filesystem operations.
-type SkillLocations struct{ UserHome, ProjectRoot, ClaudeDirectory string }
+type SkillLocations struct {
+	UserHome        string
+	ProjectRoot     string
+	ClaudeDirectory string
+}
 
 // SkillRoot declares one purpose-specific inventory location and its boundary.
-type SkillRoot struct{ Path, Scope, UserBoundary, ProjectBoundary string }
+type SkillRoot struct {
+	Path            string
+	Scope           string
+	UserBoundary    string
+	ProjectBoundary string
+}
 
 // SkillDestination declares managed installation conventions separately from evidence.
 type SkillDestination struct {

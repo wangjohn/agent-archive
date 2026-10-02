@@ -2,6 +2,7 @@ package claude
 
 import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"path/filepath"
 	"strings"
 )
@@ -10,12 +11,13 @@ import (
 type ProjectEvidence struct{}
 
 func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.NativeProjectPaths {
-	var out agentapi.NativeProjectPaths
-	if e.OperatingSystem == "darwin" && e.Locations.UserHome != "" {
-		out.DesktopWorkspaces = []string{filepath.Join(e.Locations.UserHome, "Library", "Application Support", "Claude", "scratch-workspaces")}
+	var desktop []string
+	if e.OperatingSystem == platform.Darwin && e.Locations.UserHome != "" {
+		desktop = []string{filepath.Join(e.Locations.UserHome, "Library", "Application Support", "Claude", "scratch-workspaces")}
 	}
-	return out
+	return agentapi.NativeProjectPaths{DesktopWorkspaces: desktop}
 }
+
 func (ProjectEvidence) MissingWorktreeRepository(dir string) (string, bool) {
 	marker := string(filepath.Separator) + filepath.Join(".claude", "worktrees") + string(filepath.Separator)
 	i := strings.Index(dir, marker)

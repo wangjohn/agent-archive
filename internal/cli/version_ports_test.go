@@ -13,6 +13,7 @@ import (
 func versionEnvironment(home string, system platform.OS) agentapi.VersionEnvironment {
 	return agentapi.VersionEnvironment{UserHome: home, MacOS: system == platform.Darwin, Host: versionHost{}}
 }
+
 func argvCandidates(paths []string) [][]string {
 	var out [][]string
 	for _, path := range paths {
@@ -20,18 +21,23 @@ func argvCandidates(paths []string) [][]string {
 	}
 	return out
 }
+
 func claudeVersionCandidates(home string, system platform.OS) [][]string {
 	return argvCandidates(claude.VersionInspector{}.Candidates(versionEnvironment(home, system)))
 }
+
 func codexVersionCandidates(home string, system platform.OS) [][]string {
 	return argvCandidates(codex.VersionInspector{}.Candidates(versionEnvironment(home, system)))
 }
+
 func claudeDesktopBundledCLIs(home string) []string {
 	return claude.VersionInspector{}.BundledCLIs(versionEnvironment(home, platform.Darwin))
 }
+
 func discoverCursorVersion(home string, system platform.OS) applicationDiscovery {
 	return cursor.VersionInspector{}.ObserveVersion(versionEnvironment(home, system))
 }
+
 func discoverCommandVersion(name string, candidates [][]string) applicationDiscovery {
 	var paths []string
 	for _, c := range candidates {
@@ -39,6 +45,7 @@ func discoverCommandVersion(name string, candidates [][]string) applicationDisco
 	}
 	return versionprobe.Commands(versionHost{}, name, paths)
 }
+
 func compareDottedVersions(a, b string) int { return versioninfo.Compare(a, b) }
 
 var versionDirPattern = versioninfo.DirectoryPattern

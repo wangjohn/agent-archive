@@ -20,10 +20,9 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects {
 		return agentapi.NativeHeader{}, fmt.Errorf("invalid native header request")
 	}
-	var h agentapi.NativeHeader
 	stem := strings.TrimSuffix(filepath.Base(r.Path), ".jsonl")
 	if r.Purpose != agentapi.DiscoveryHandoff {
-		h.NativeID = stem
+		h := agentapi.NativeHeader{NativeID: stem}
 		err := r.Scan(func(line []byte) bool {
 			var v struct {
 				Cwd string `json:"cwd"`
@@ -36,6 +35,7 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 		})
 		return h, err
 	}
+	var h agentapi.NativeHeader
 	sidechain := false
 	err := r.Scan(func(line []byte) bool {
 		var v struct {

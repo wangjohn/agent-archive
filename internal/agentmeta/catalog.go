@@ -47,6 +47,9 @@ const NativeProjects Operation = "native-projects"
 // ChildDiscovery means native child transcript enumeration is implemented.
 const ChildDiscovery Operation = "child-discovery"
 
+// HistoricalInspection means native historical admission evidence is implemented.
+const HistoricalInspection Operation = "historical-inspection"
+
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
 	ID          ID
@@ -84,7 +87,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != ManagedHooks && op != Skills && op != NativeInspection && op != VersionInspection && op != HistoricalDiscovery && op != DatabaseInspection && op != NativeProjects && op != ChildDiscovery) || seen[op] {
+			if (op != Launch && op != ManagedHooks && op != Skills && op != NativeInspection && op != VersionInspection && op != HistoricalDiscovery && op != DatabaseInspection && op != NativeProjects && op != ChildDiscovery && op != HistoricalInspection) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

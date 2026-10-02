@@ -2,11 +2,9 @@ package backfill
 
 import (
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"sort"
-	"syscall"
 	"time"
 
 	"fmt"
@@ -49,37 +47,6 @@ type unreadable struct {
 	cursorIncomplete bool
 }
 
-// listDir lists a folder inside an app's store. A missing folder, or a path
-// that is not a folder, is empty; one that cannot be read is counted and
-// treated as empty.
-func listDir(env Environment, dir string, u *unreadable) []dirEntry {
-	entries, ok := tryList(env, dir)
-	if !ok {
-		u.folders++
-	}
-	return entries
-}
-
-// listStore lists the root of app's store, recording app when it cannot be
-// read: then none of the sessions below it are found.
-func listStore(env Environment, dir, app string, u *unreadable) []dirEntry {
-	entries, ok := tryList(env, dir)
-	if !ok {
-		u.stores[app] = true
-	}
-	return entries
-}
-
-// tryList lists dir; ok is false only when it exists as a folder and cannot
-// be read.
-func tryList(env Environment, dir string) ([]dirEntry, bool) {
-	entries, err := readDirIfExists(env, dir)
-	if err != nil {
-		return nil, errors.Is(err, syscall.ENOTDIR)
-	}
-	return entries, true
-}
-
 // readDirIfExists lists dir, treating a missing directory as empty.
 func readDirIfExists(env Environment, dir string) ([]dirEntry, error) {
 	entries, err := env.readDir(dir)
@@ -103,17 +70,6 @@ type dirEntry struct {
 	regular bool
 }
 
-// fileSize stats a regular file without following symlinks; ok is false when
-// it is gone or is not one. A symlinked transcript is skipped: discovery
-// never follows a link out of an app's store.
-func fileSize(env Environment, path string) (int64, bool) {
-	info, err := env.lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return 0, false
-	}
-	return info.Size(), true
-}
-
 // Import compatibility header bounds are distinct from native preview framing.
 const (
 	headLineLimit = 1 << 20
@@ -124,8 +80,10 @@ const (
 type discoveryFiles struct{ env Environment }
 
 func (d discoveryFiles) ReadDir(path string) ([]fs.DirEntry, error) { return d.env.readDir(path) }
-func (d discoveryFiles) Lstat(path string) (fs.FileInfo, error)     { return d.env.lstat(path) }
-func (d discoveryFiles) Open(path string) (io.ReadCloser, error)    { return d.env.open(path) }
+
+func (d discoveryFiles) Lstat(path string) (fs.FileInfo, error) { return d.env.lstat(path) }
+
+func (d discoveryFiles) Open(path string) (io.ReadCloser, error) { return d.env.open(path) }
 
 func enumerateDiscovery(ctx context.Context, env Environment, purpose agentapi.DiscoveryPurpose, emit func(agentapi.DiscoveryCandidate) error) (unread unreadable, err error) {
 	unread.stores = map[string]bool{}

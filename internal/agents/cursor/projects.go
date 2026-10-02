@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -17,11 +18,13 @@ func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.N
 	var app string
 	home := e.Locations.UserHome
 	switch e.OperatingSystem {
-	case "darwin":
+	case platform.Darwin:
 		if home != "" {
 			app = filepath.Join(home, "Library", "Application Support", "Cursor")
 		}
-	case "linux":
+	case platform.Unknown:
+	// No native application data root is declared on an unknown operating system.
+	case platform.Linux:
 		var xdg string
 		if e.Getenv != nil {
 			xdg = e.Getenv("XDG_CONFIG_HOME")
@@ -32,13 +35,14 @@ func (ProjectEvidence) ProjectPaths(e agentapi.NativePathEnvironment) agentapi.N
 			app = filepath.Join(home, ".config", "Cursor")
 		}
 	}
-	out := agentapi.NativeProjectPaths{Worktrees: []string{filepath.Join(home, ".cursor", "worktrees")}}
-	if app != "" {
-		out.Database = filepath.Join(app, "User", "globalStorage", "state.vscdb")
-		out.WorkspaceStorage = filepath.Join(app, "User", "workspaceStorage")
+	worktrees := []string{filepath.Join(home, ".cursor", "worktrees")}
+	if app == "" {
+		return agentapi.NativeProjectPaths{Worktrees: worktrees}
 	}
-	return out
+	return agentapi.NativeProjectPaths{Worktrees: worktrees, Database: filepath.Join(app, "User", "globalStorage", "state.vscdb"), WorkspaceStorage: filepath.Join(app, "User", "workspaceStorage")}
+
 }
+
 func (ProjectEvidence) OpenWorkspace(ctx context.Context, r agentapi.WorkspaceRequest) (agentapi.WorkspacePass, error) {
 	if r.Files == nil || r.ResolvePath == nil {
 		return nil, fmt.Errorf("workspace dependencies required")
@@ -50,6 +54,7 @@ func (ProjectEvidence) OpenWorkspace(ctx context.Context, r agentapi.WorkspaceRe
 	m.context = ctx
 	return m, ctx.Err()
 }
+
 func (m *cursorMatcher) MatchWorkspace(ctx context.Context, key string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -58,6 +63,7 @@ func (m *cursorMatcher) MatchWorkspace(ctx context.Context, key string) ([]strin
 	m.match(key)
 	return m.cache[key], ctx.Err()
 }
+
 func (ProjectEvidence) WorkspaceFolders(e agentapi.WorkspaceEvidence) []string {
 	switch e.Purpose {
 	case agentapi.WorkspaceProjectFile:

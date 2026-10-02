@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"io/fs"
 )
 
@@ -9,15 +10,17 @@ import (
 // Getenv is read-only; providers must never probe host paths while declaring them.
 type NativePathEnvironment struct {
 	Locations       NativeLocations
-	OperatingSystem string
+	OperatingSystem platform.OS
 	Getenv          func(string) string
 }
 
 // NativeProjectPaths declares native storage and project conventions. Empty paths
 // mean unavailable; callers must not turn them into relative paths by joining them.
 type NativeProjectPaths struct {
-	Database, WorkspaceStorage   string
-	DesktopWorkspaces, Worktrees []string
+	Database          string
+	WorkspaceStorage  string
+	DesktopWorkspaces []string
+	Worktrees         []string
 }
 
 // NativePathsProvider owns native path inventories without performing host I/O.

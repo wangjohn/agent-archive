@@ -14,8 +14,10 @@ import (
 type discoveryFiles struct{ opens int }
 
 func (*discoveryFiles) ReadDir(p string) ([]fs.DirEntry, error) { return os.ReadDir(p) }
-func (*discoveryFiles) Lstat(p string) (fs.FileInfo, error)     { return os.Lstat(p) }
-func (f *discoveryFiles) Open(p string) (io.ReadCloser, error)  { f.opens++; return os.Open(p) }
+
+func (*discoveryFiles) Lstat(p string) (fs.FileInfo, error) { return os.Lstat(p) }
+
+func (f *discoveryFiles) Open(p string) (io.ReadCloser, error) { f.opens++; return os.Open(p) }
 
 // Discovery checks reference enumeration and caller cancellation against a
 // provider-owned synthetic layout. Every fixture must contain at least two files.
