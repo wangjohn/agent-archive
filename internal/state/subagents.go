@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -59,6 +60,14 @@ func (s *Store) subagentCandidatePath(id string) string {
 func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
+	}
+	if err := config.ProtectIdentityWriter(s.home); err != nil {
+		return err
+	}
+	for _, record := range []identityRecord{{archive.CanonicalHarness(candidate.Harness.Name), candidate.NativeSessionID, candidate.ArchiveSessionID}, {archive.CanonicalHarness(candidate.Harness.Name), candidate.ParentNativeSessionID, candidate.ParentArchiveSessionID}} {
+		if err := s.journalIdentity(record.Agent, record.Native, record.ID); err != nil {
+			return fmt.Errorf("%w: %w", ErrSubagentCandidateConflict, err)
+		}
 	}
 	// The write syncs outside the candidate's lock, which a hook waits only
 	// a second for (see writeUnderLock).

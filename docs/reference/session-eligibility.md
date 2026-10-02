@@ -46,3 +46,10 @@ backfill does not import it again unless you pass `--include-removed`.
 
 How admission is implemented, check by check, and the guard tests that keep
 it so, are in [session admission](../../dev/contributing/session-admission.md).
+
+Automatic Codex discovery foundations use native starts within the current
+project/agent/destination authorization generation and unpaused intervals;
+mtime, birthtime, dated filenames and scan time never establish eligibility.
+A start during pause stays ineligible after resume. Previously registered
+sessions retain ordinary catch-up behavior. Current producer support is gated,
+so production sources still require hooks or deliberate backfill.

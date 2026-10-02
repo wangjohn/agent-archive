@@ -81,3 +81,40 @@ within the selected skill root. Change the policy with interactive setup's
 The change applies to future publications, including rebuilt pending work;
 it does not delete older local copies or bucket objects. See
 [privacy](../security/privacy.md) for cleanup guidance.
+
+## Discovery authorization and rollback
+
+Legacy configuration schema 1 has discovery disabled. Discovery-bearing
+configuration uses schema 2 and keeps `discovery` even after disablement.
+Its Codex homes are persisted, independent of a scheduled process's shell;
+current per-project/destination generations hold half-open unpaused intervals.
+Pause closes an interval, resume opens another, and reconfiguration starts a
+new generation when scope changes. Starts in excluded/disabled/pause periods
+remain ineligible after re-enable. Unknown or expired start evidence fails closed.
+
+A deliberate writer compatibility encoding changes the known version field:
+`schema_version` is `{"version":2,"writer":"discovery-v2"}` for protected
+configuration. Published v0.1.0/v0.1.1 expect an integer there, so their JSON
+decoder rejects this configuration before a write can discard unknown fields.
+A numeric schema version alone does not make those releases refuse a rewrite.
+Current readers keep version 2 internally and also preserve the effective skill
+policy with `none+discovery-v2`, `metadata+discovery-v2`, or `body+discovery-v2`.
+That suffix additionally blocks later intermediate writers with skill enum
+validation, but the suffix alone does not block the published releases.
+Previously written numeric version-2 configurations remain readable and are
+atomically rewritten with the object fence before a namespaced identity write
+or before setup/refresh captures protected rollback snapshots.
+Already fenced configurations need no extra rewrite. Both guards survive
+disablement and journal recovery. Published readers refuse routine configuration
+and capture writes; setup may create locks or restore matching transaction
+snapshots before loading configuration. Protected snapshot migration retains
+the fence across that recovery path. Do not edit the guards away:
+rollback needs an explicit safe downgrade that disables discovery and resets
+future-only authorization. No downgrade command is supplied in this release.
+
+The first namespaced identity write also installs this compatibility marker on
+a legacy configuration, with discovery disabled and no authorization intervals.
+It preserves the effective skill setting. This protects identity history even
+when automatic discovery has never been enabled; earlier binaries refuse the
+configuration. Keep the marked configuration and identity journal together
+when restoring state.

@@ -174,10 +174,37 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	}
 	want := imported
 	want.TranscriptPath, want.RegisteredAt = got.TranscriptPath, got.RegisteredAt
+	want.HookObservedAt = resumeAt
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resume changed the import's provenance:\n got %#v\nwant %#v", got, want)
 	}
 	if requests, _ := store.LoadRequests(); len(requests) != 1 || requests[0].ArchiveSessionID != imported.ArchiveSessionID {
 		t.Fatalf("the resume's lifecycle evidence was not queued: %#v", requests)
+	}
+}
+
+func TestSubagentStopDurablyObservesHookOnImportedParent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := store.RegisterOrMerge("imported-parent", func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "imported-parent", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget", Harness: archive.Harness{Name: "claude"}, SessionStartedAt: at.Add(-24 * time.Hour), AdmittedAt: at, RegisteredAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("import-1")}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookAt := at.Add(time.Minute)
+	payload := map[string]any{"hook_event_name": "SubagentStop", "session_id": reg.NativeSessionID, "cwd": reg.ProjectRoot}
+	if err := HandleEvent(home, "claude", payload, hookAt); err != nil {
+		t.Fatal(err)
+	}
+	after, found, err := store.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || !after.HookObservedAt.Equal(hookAt) || !after.InBatch("import-1") || !after.AdmittedAt.Equal(reg.AdmittedAt) {
+		t.Fatalf("hook observation/provenance lost: %#v %v", after, err)
 	}
 }

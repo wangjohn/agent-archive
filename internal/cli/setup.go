@@ -118,6 +118,13 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return runSetupRefresh(stdout, stderr, env, opts.verbose)
 	}
+	setting := discoverySetting(opts.codexDiscovery)
+	if setting != "" && setting != discoveryOn && setting != discoveryOff {
+		return fs.usageError("--codex-discovery requires on or off")
+	}
+	if setting == discoveryOn {
+		return fs.usageError("automatic Codex discovery is unavailable for current producers: local-origin evidence has not passed release acceptance; use hooks or deliberate backfill")
+	}
 	if opts.noSkills && opts.skills {
 		return fs.usageError("--no-skills and --skills contradict each other; give one")
 	}
@@ -701,6 +708,9 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
+	if containsString(cfg.Harnesses, "codex") {
+		p.note("Automatic Codex discovery is unavailable until local-origin evidence passes release acceptance. Use approved hooks or deliberate backfill.")
+	}
 	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture

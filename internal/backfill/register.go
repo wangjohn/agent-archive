@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -111,6 +112,18 @@ type parentWork struct {
 // Run registers every candidate, in order.
 func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	var result RegistrationResult
+	for {
+		if r.Stop != nil && r.Stop() {
+			return result, ErrStopped
+		}
+		complete, err := capture.PrepareIdentityIndexes(r.Home, 256)
+		if err != nil {
+			return result, err
+		}
+		if complete {
+			break
+		}
+	}
 	works := make([]*parentWork, len(candidates))
 	for i, c := range candidates {
 		works[i] = &parentWork{c: c}
@@ -252,7 +265,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 			result.Invalid++
 			return true, nil
 		}
-		w.id, _, err = r.Store.EnsureArchiveSessionID(c.NativeSessionID)
+		w.id, _, err = r.Store.EnsureAgentSessionID(c.Harness, c.NativeSessionID)
 		return false, err
 	}
 	if w.next < len(c.Subagents) {
@@ -271,7 +284,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if err != nil || skip {
 		return true, err
 	}
-	reg, err := r.Store.RegisterNewSession(c.NativeSessionID, func(id string) archive.SessionRegistration {
+	reg, err := r.Store.RegisterOrMerge(c.NativeSessionID, func(id string) archive.SessionRegistration {
 		return r.registration(c, id, w.repoKey)
 	})
 	if err != nil {
@@ -306,7 +319,7 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		result.Gone++
 		return true, nil
 	}
-	id, found, err := r.Store.ArchiveSessionID(c.NativeSessionID)
+	id, found, err := r.Store.AgentSessionID(c.Harness, c.NativeSessionID)
 	if err != nil {
 		return false, err
 	}
@@ -336,7 +349,7 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 	}
 	c := w.c
 	childNativeID := c.NativeSessionID + ":subagent:" + sub.AgentID
-	childID, _, err := r.Store.EnsureArchiveSessionID(childNativeID)
+	childID, _, err := r.Store.EnsureAgentSessionID(c.Harness, childNativeID)
 	if err != nil {
 		return fmt.Errorf("assign a subagent archive session ID: %w", err)
 	}

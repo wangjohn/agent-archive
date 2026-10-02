@@ -872,11 +872,11 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
-		t.Fatal("cross-harness identity accepted")
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
 	}
-	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
-		t.Fatal("cross-harness stop accepted")
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()

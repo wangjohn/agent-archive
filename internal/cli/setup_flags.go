@@ -25,6 +25,13 @@ const (
 	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY" //nolint:gosec // G101: a variable's name, not a credential.
 )
 
+type discoverySetting string
+
+const (
+	discoveryOn  discoverySetting = "on"
+	discoveryOff discoverySetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
 	provider             string
@@ -37,6 +44,7 @@ type setupOptions struct {
 	projects             []string
 	yes                  bool
 	verbose              bool
+	codexDiscovery       string
 	skillEvidence        string
 	noSkills             bool
 	skills               bool
@@ -109,6 +117,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.awsProfile, "aws-profile", "", "AWS profile for S3")
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
+	fs.StringVar(&opts.codexDiscovery, "codex-discovery", "", "on or off; automatic Codex capture requires an accepted producer")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
@@ -132,7 +141,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
+	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != "" || o.codexDiscovery != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -290,6 +299,11 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	}
 	if opts.skillEvidence != "" {
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
+	}
+	if discoverySetting(opts.codexDiscovery) == discoveryOff && cfg.Discovery != nil {
+		d := *cfg.Discovery
+		d.Enabled = false
+		cfg.Discovery = &d
 	}
 	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
 	cfg.AllowNetworkHome = env.networkHomeOptIn(home, userHome, opts.allowNetworkHome, existing)

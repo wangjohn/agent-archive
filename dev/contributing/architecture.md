@@ -122,3 +122,31 @@ flowchart TD
   `_hook` command exits 0 whatever happens.
 - Every side effect in `cli` goes through `Env`, so tests never touch the real
   home, launchd, Keychain, or a bucket.
+
+## Local discovery foundations
+
+`internal/sourcefacts` owns bounded Codex metadata reads, safe confined regular
+file opening, nearest project rules and Git worktree metadata. Backfill shares
+these facts while retaining historical-import policy. `internal/discovery`
+rotates bounded directory batches and caches metadata in private local state;
+it runs under `collector.lock` before storage initialization and takes
+`hooks.lock` only for each configuration revalidation and durable admission.
+The collector reopens discovery sources inside their approved roots and checks
+identity, native start and cwd before the existing filter runs.
+
+Production producer support is empty until the [evidence gate](../specs/local-discovery-evidence.md)
+passes. A private test seam proves synthetic machinery without creating a
+runtime switch that bypasses this gate. Discovery never executes hooks or
+changes Codex trust.
+
+Optional settled `state_5.sqlite` creation/update indexes can prioritize source
+locators. The read-only Go VFS confines DB opens and counts bounded page reads;
+live WAL or unsupported indexes fall back to filesystem continuation. Index
+hints carry no admission, local-origin or complete-coverage authority.
+
+The compile-time `discovery.SourceAdapter` registry supplies bounded source
+batches and typed candidates/descriptors; only Codex is registered. Shared
+admission uses candidate agent/native/start/cwd facts rather than Codex header
+fields. Catalog version 1 stores these typed observations; earlier disposable
+catalogs rebuild without altering authoritative registration or permission
+state. Cached facts still pass the current adapter producer-support gate.

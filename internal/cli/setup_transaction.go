@@ -221,6 +221,9 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if !reflect.DeepEqual(withoutBucketPrivacy(current), withoutBucketPrivacy(old)) {
 		return fmt.Errorf("settings changed while setup was open; restart setup to review the current settings")
 	}
+	if err := protectSetupWriter(home, current); err != nil {
+		return err
+	}
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
 		next.BucketPrivacy = fresher
 	}
@@ -366,6 +369,16 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	next.HookFiles = map[string]string{}
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
+	}
+	if next.Discovery != nil {
+		d := *next.Discovery
+		if len(d.CodexHomes) == 0 && files["codex"] != "" {
+			d.CodexHomes = []string{filepath.Dir(files["codex"])}
+		}
+		next.Discovery = &d
+	}
+	if err := config.ReconcileDiscovery(next, old, env.now()); err != nil {
+		return setupjournal.Journal{}, err
 	}
 	// Another installation's hooks in a file this one would install into
 	// mean every session would be captured twice; they are its to remove.
@@ -600,4 +613,17 @@ func freshestBucketPrivacy(cfg config.Config, candidate *storage.PrivacyReport) 
 		return nil
 	}
 	return candidate
+}
+
+// Callers hold hooks.lock and have settled any previous setup journal. Protect
+// rollback snapshots too: an older recovery must not restore numeric schema2
+// over a newly fenced config that already has namespaced identities.
+func protectSetupWriter(home string, current config.Config) error {
+	if setupjournal.TransactionPending(home) {
+		return errors.New("setup pending before writer protection")
+	}
+	if current.Discovery == nil {
+		return nil
+	}
+	return config.ProtectIdentityWriter(home)
 }

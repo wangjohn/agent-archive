@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -175,5 +176,52 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 	var out strings.Builder
 	if code := runStatusCommand([]string{"--verbose"}, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") || strings.Contains(out.String(), " imported") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
+	}
+}
+
+// Actual hook execution on an imported identity is durable observation, but
+// neither its import nor its publication verifies fresh automatic capture.
+func TestStatusObservesLaterHookOnImportWithoutPromotingCapture(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	cfg := pairTestConfig(now, []string{"codex"}, project)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := saveImportedSession(t, store, now, "imported", project)
+	env := pairStatusEnv(t, home, userHome, now, "codex")
+	before, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Apps[0].HookObserved || before.Apps[0].Projects[0].HookObserved {
+		t.Fatal("import alone established hooks")
+	}
+	payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": reg.NativeSessionID, "cwd": project}
+	if err := capture.HandleEvent(home, "codex", payload, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := after.Apps[0]
+	if !app.HookObserved || !app.Projects[0].HookObserved {
+		t.Fatal("later actual hook observation lost")
+	}
+	if app.Sessions != 0 || app.ImportedSessions != 1 || app.CapturedLocally || app.Published || app.ReadBackVerified || app.Projects[0].ReadBackVerified {
+		t.Fatalf("imported hook promoted fresh capture: %#v", app)
+	}
+	if app.State != "hook observed; waiting for capture" {
+		t.Fatalf("state=%q", app.State)
+	}
+	saved, found, err := store.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || !saved.Imported() || !saved.InBatch("batch-1") || !saved.AdmittedAt.Equal(reg.AdmittedAt) {
+		t.Fatalf("hook changed import: %#v %v", saved, err)
 	}
 }

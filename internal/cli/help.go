@@ -39,6 +39,7 @@ report next to the plan. A plan expires five minutes after creation.
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
+               [--codex-discovery on|off]
                [--allow-network-home]
        agent-archive setup --refresh [--verbose]
 
@@ -95,6 +96,7 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --codex-discovery MODE on or off; on requires accepted local producer evidence
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs

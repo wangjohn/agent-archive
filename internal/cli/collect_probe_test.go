@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,68 @@ func TestScheduledProbeContinuesToPublication(t *testing.T) {
 	objects, err := remote.List(context.Background(), ".setup-test/")
 	if err != nil || len(objects) != 0 {
 		t.Fatalf("probe cleanup: %v %v", objects, err)
+	}
+	current, found, err := config.Load(home)
+	if err != nil || !found || current.Discovery == nil || current.Discovery.Enabled || current.SchemaVersion != 2 || config.ValidSkillEvidence(current.SkillEvidence) {
+		t.Fatalf("privacy refresh erased identity writer protection: %#v %v", current, err)
+	}
+}
+
+type privacyUpdateStore struct {
+	*storagetest.MemoryStore
+	inspect func() storage.PrivacyReport
+}
+
+func (s privacyUpdateStore) InspectPrivacy(context.Context) storage.PrivacyReport {
+	return s.inspect()
+}
+
+func TestPrivacyInspectionPreservesConcurrentConfigurationUpdate(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Now().UTC()
+	stale := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
+	if err := config.Save(home, stale); err != nil {
+		t.Fatal(err)
+	}
+	latest := stale
+	latest.SkillEvidence = config.SkillEvidenceNone
+	latest.Discovery = &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{t.TempDir()}}
+	latest.Archive.Projects = append([]archive.ProjectActivation(nil), stale.Archive.Projects...)
+	latest.Archive.Projects = append(latest.Archive.Projects, archive.ProjectActivation{Root: filepath.Join(project, "excluded"), Included: false})
+	if err := config.ReconcileDiscovery(&latest, stale, at); err != nil {
+		t.Fatal(err)
+	}
+	remote := privacyUpdateStore{MemoryStore: storagetest.NewMemoryStore(), inspect: func() storage.PrivacyReport {
+		// A hook's writer guard may commit while storage inspection is outside
+		// hooks.lock. Use a richer committed scope to pin whole-config preservation.
+		unlock, err := local.NamedLock(home, "hooks.lock")
+		if err != nil {
+			t.Fatal("privacy inspection held the admission lock", err)
+		}
+		defer unlock()
+		if err := config.Save(home, latest); err != nil {
+			t.Fatal(err)
+		}
+		return storage.UnknownPrivacy(latest.Storage.Provider)
+	}}
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, current, err := openPassStorage(context.Background(), home, stale, env, store, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, found, err := config.Load(home)
+	if err != nil || !found || want.BucketPrivacy == nil {
+		t.Fatal("privacy report not committed", err)
+	}
+	latest.BucketPrivacy = want.BucketPrivacy
+	if !reflect.DeepEqual(current, latest) || !reflect.DeepEqual(want, latest) {
+		t.Fatal("privacy inspection overwrote current consent, scope or skill policy")
 	}
 }
 

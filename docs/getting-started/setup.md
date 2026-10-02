@@ -628,3 +628,19 @@ carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
 `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. `--yes` has
 no option for the folder inside the bucket, so when you changed it, setup
 adds a line saying to set it there with `agent-archive setup`.
+
+## Automatic Codex discovery
+
+Automatic discovery is not enabled for current production Codex versions.
+Fresh setup and upgrades retain the hook path; approved hooks or deliberate
+[backfill](../guides/backfill.md) remain the supported capture paths. Installing
+hooks does not establish that Codex approved or ran them. Desktop release and
+local-origin evidence must pass acceptance before automatic capture is offered.
+`agent-archive setup --yes --codex-discovery on` currently refuses with that
+explanation. There is no experimental environment switch to bypass it.
+
+Once a producer is accepted, enablement must be explicit for an existing
+installation and forward-looking. The consent summary is: “Automatically
+archive new local Codex tasks in these projects to this destination. Existing
+history requires backfill.” Noninteractive setup must provide an explicit
+choice. This release does not silently grant that permission or run backfill.

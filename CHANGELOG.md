@@ -28,6 +28,11 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Empty identity migration completes atomically before concurrent fresh hooks
+  can queue behind a pending marker. Setup and refresh fence existing protected
+  configuration before capturing rollback snapshots, preserving old-writer
+  refusal after interrupted transactions.
+
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.
   Incomplete local `--latest` offers an explicit picker or known-ID recipes
@@ -36,6 +41,17 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Changed
 
+- Native session identities are now namespaced by agent. Compatible legacy
+  mappings keep their archive IDs. Hooks and discovery preserve original
+  admission, provenance and destination when they meet an existing session.
+  Retention and undo removal records prevent automatic resurrection.
+  Scheduled privacy refresh preserves the current consent and identity writer
+  protection; malformed legacy identity mappings require repair.
+  Protected configuration uses a version/writer object in the known schema
+  field so published older integer decoders refuse before discarding new state.
+- Status JSON version 4 separates actual hook observation from discovery
+  provenance. Parser 0.19.0 adds truthful discovery provenance and the
+  `discovered_without_hook_evidence` capture gap without an import timestamp.
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
 - Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
 - The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
@@ -93,6 +109,22 @@ the release behavior.
   sessions whose source is unavailable keep their existing preview.
 
 #### Added
+
+- Optional settled Codex SQLite indexes prioritize bounded source probes
+  without changing native files or granting source/admission authority. Live
+  WAL and unavailable indexes retain filesystem fallback. Hooks preserve
+  discovery locators; status observes actual later hooks on imported sessions
+  independently of automatic-capture verification. Native session creation
+  still governs consent after an arbitrarily delayed first task; future task
+  timestamps are checked against the scan clock.
+- Bounded Codex source discovery foundations, running before storage access,
+  with durable forward-only authorization intervals, a private bounded
+  catalog, and separate scan health. **Automatic admission remains disabled
+  for every production producer.** Current native, migrated and copied
+  histories need verified local-origin evidence; desktop release acceptance
+  is outstanding. `setup --codex-discovery on` explains this gate, while
+  `off` disables a previously enabled synthetic/test configuration. Upgrades
+  never opt existing installations into broader capture.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches

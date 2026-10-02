@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -34,7 +36,7 @@ func (s *Store) ArchiveSessionID(nativeSessionID string) (string, bool, error) {
 	err := local.Read(nativeSessionIndexPath(s.home, nativeSessionID), &entry)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return "", false, nil
+		return s.indexFromRegistrations(nativeSessionID)
 	case IsUndecodable(err) || (err == nil && !safeFileComponent(entry.ArchiveSessionID)):
 		// The index is derived from the registrations, so an entry that no
 		// longer decodes is recovered from the registration naming this
@@ -55,14 +57,18 @@ func (s *Store) indexFromRegistrations(nativeSessionID string) (string, bool, er
 	if err != nil {
 		return "", false, fmt.Errorf("recover session index: %w", err)
 	}
+	foundID := ""
 	for _, id := range ids {
-		reg, found, err := readJSON[struct {
-			ArchiveSessionID string `json:"archive_session_id"`
-			NativeSessionID  string `json:"native_session_id"`
-		}](s.registrationPath(id))
-		if err == nil && found && reg.NativeSessionID == nativeSessionID && reg.ArchiveSessionID == id {
-			return id, true, nil
+		reg, found, e := s.LoadRegistration(id)
+		if e == nil && found && reg.NativeSessionID == nativeSessionID && reg.ArchiveSessionID == id {
+			if foundID != "" && foundID != id {
+				return "", false, errors.New("ambiguous native identity; specify agent")
+			}
+			foundID = id
 		}
+	}
+	if foundID != "" {
+		return foundID, true, nil
 	}
 	return "", false, nil
 }
@@ -95,4 +101,93 @@ func (s *Store) EnsureArchiveSessionID(nativeSessionID string) (id string, creat
 		return "", false, fmt.Errorf("write session index: %w", err)
 	}
 	return fresh, true, nil
+}
+
+// AgentSessionID looks up a native identity in its agent namespace. Legacy
+// mappings migrate only after the referenced registration proves ownership.
+// Callers serialize admission with hooks.lock.
+func (s *Store) AgentSessionID(agent, native string) (string, bool, error) {
+	agent = archive.CanonicalHarness(agent)
+	if agent == "" || strings.TrimSpace(native) == "" {
+		return "", false, errors.New("agent and native identity required")
+	}
+	path := nativeSessionIndexPath(s.home, agent+"\x00"+native)
+	var entry sessionIndexEntry
+	err := local.Read(path, &entry)
+	if err == nil {
+		if !safeFileComponent(entry.ArchiveSessionID) {
+			return "", false, errors.New("identity index needs repair")
+		}
+		reg, found, e := s.LoadRegistration(entry.ArchiveSessionID)
+		if e != nil {
+			return "", false, e
+		}
+		if found && (archive.CanonicalHarness(reg.Harness.Name) != agent || reg.NativeSessionID != native) {
+			return "", false, errors.New("identity index conflict")
+		}
+		return entry.ArchiveSessionID, true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", false, errors.New("identity index needs repair")
+	}
+	if id, found, e := s.journalLookup(agent, native); e != nil || found {
+		return id, found, e
+	}
+	var legacy sessionIndexEntry
+	err = local.Read(nativeSessionIndexPath(s.home, native), &legacy)
+	if err == nil && !safeFileComponent(legacy.ArchiveSessionID) {
+		return "", false, errors.New("legacy identity index needs repair")
+	}
+	if err == nil {
+		reg, found, e := s.LoadRegistration(legacy.ArchiveSessionID)
+		if e != nil {
+			return "", false, e
+		}
+		if found && reg.NativeSessionID != native {
+			return "", false, errors.New("legacy identity index ownership conflict")
+		}
+		if found && archive.CanonicalHarness(reg.Harness.Name) == agent && reg.NativeSessionID == native {
+			return legacy.ArchiveSessionID, true, nil
+		}
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", false, errors.New("legacy identity index needs repair")
+	}
+	return "", false, nil
+}
+
+// EnsureAgentSessionID allocates an identity in an agent namespace.
+func (s *Store) EnsureAgentSessionID(agent, native string) (string, bool, error) {
+	if err := config.ProtectIdentityWriter(s.home); err != nil {
+		return "", false, err
+	}
+	if err := s.ensureIdentityReady(); err != nil {
+		return "", false, err
+	}
+	id, found, err := s.AgentSessionID(agent, native)
+	if err != nil {
+		return id, false, err
+	}
+	if found {
+		if err := s.journalIdentity(agent, native, id); err != nil {
+			return "", false, err
+		}
+		path := nativeSessionIndexPath(s.home, archive.CanonicalHarness(agent)+"\x00"+native)
+		var entry sessionIndexEntry
+		if e := local.Read(path, &entry); errors.Is(e, os.ErrNotExist) {
+			if e := local.Write(path, sessionIndexEntry{ArchiveSessionID: id}); e != nil {
+				return "", false, e
+			}
+		}
+		return id, false, nil
+	}
+	id, err = local.ID()
+	if err != nil {
+		return "", false, err
+	}
+	if err := s.journalIdentity(agent, native, id); err != nil {
+		return "", false, err
+	}
+	err = local.Write(nativeSessionIndexPath(s.home, archive.CanonicalHarness(agent)+"\x00"+native), sessionIndexEntry{ArchiveSessionID: id})
+	return id, true, err
 }

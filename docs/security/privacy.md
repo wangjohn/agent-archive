@@ -871,3 +871,20 @@ References used for the implementation:
 - [R2 public bucket settings](https://developers.cloudflare.com/r2/buckets/public-buckets/)
 
 Synthetic tests cover allowed, denied, incomplete, public-policy, public-ACL, R2-unavailable, expired, and changed-configuration results. Actual AWS inspection and R2 dashboard verification remain live acceptance checks.
+
+## Local discovery foundations
+
+Before project authorization, discovery reads at most 256 KiB and 64 leading
+records per candidate for identity, working directory, native start and
+execution classification. It records only metadata facts in private local
+state, discarding arbitrary nested marker values and conversation bodies.
+Routine diagnostics use fixed categories without source paths or native IDs.
+Discovery sources are confined to approved roots, restricted to regular files,
+and revalidated when opened for filtering. The existing filter and verified
+publication pipeline remain the only upload path. No agent hook trust is changed.
+
+Production automatic admission remains gated because a freshly copied native
+rollout can resemble one created here, and Codex can rebuild its local thread
+index from that copy. These are current-user filesystem evidence, not
+cryptographic execution attestation. No supported desktop capture claim is
+made by synthetic machinery tests.

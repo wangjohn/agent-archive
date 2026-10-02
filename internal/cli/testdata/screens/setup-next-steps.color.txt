@@ -66,6 +66,7 @@ Enter 1-3 [\e[1m1\e[0m] ›
 
 
 Configuration saved.
+  \e[2m·\e[0m Automatic Codex discovery is unavailable until local-origin evidence passes release acceptance. Use approved hooks or deliberate backfill.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.

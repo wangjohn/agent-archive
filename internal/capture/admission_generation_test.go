@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -141,5 +142,56 @@ func TestHookAdmissionWaitDoesNotCrossPauseResume(t *testing.T) {
 				t.Fatalf("stale queue=%v", files)
 			}
 		})
+	}
+}
+
+func TestFreshHookDefersAndReplaysDuringIdentityMigration(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an upgrade with a backlog of old registrations and missing derived indexes.
+	for i := range 120 {
+		r := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("legacy-%03d", i), NativeSessionID: fmt.Sprintf("old-%03d", i), Harness: archive.Harness{Name: "claude"}, ProjectRoot: project, ProjectID: archive.ProjectID(project), SessionStartedAt: at.Add(-time.Minute)}
+		if err := store.SaveRegistration(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := HandleEvent(home, "claude", claudeStart(project, "fresh", "startup", ""), at); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.AgentSessionID("claude", "fresh"); err != nil || found {
+		t.Fatal("fresh start allocated before migration", err)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if err != nil || len(entries) != 1 {
+		t.Fatal("fresh proof not durably deferred", err)
+	}
+	for range 20 {
+		done, err := PrepareIdentityIndexes(home, 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done {
+			break
+		}
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	id, found, err := store.AgentSessionID("claude", "fresh")
+	if err != nil || !found {
+		t.Fatal("deferred hook not admitted", err)
+	}
+	r, _, _ := store.LoadRegistration(id)
+	if !r.SessionStartedAt.Equal(at) {
+		t.Fatal("replay substituted migration time for start")
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil || cfg.Discovery == nil || cfg.Discovery.Enabled {
+		t.Fatal("upgrade accidentally enabled discovery", err)
 	}
 }

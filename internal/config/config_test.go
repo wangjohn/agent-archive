@@ -60,7 +60,7 @@ func TestAcceptSessionAdmissionMatrix(t *testing.T) {
 						// An import's start is its true start, long before
 						// every boundary; only its admission can pass them.
 						reg.SessionStartedAt, reg.AdmittedAt = yearsAgo, admitted
-					case archive.SessionOriginHook:
+					case archive.SessionOriginHook, archive.SessionOriginDiscovery:
 						reg.SessionStartedAt, reg.AdmittedAt = admitted, admitted
 					default:
 						// A registration from before AdmittedAt existed.

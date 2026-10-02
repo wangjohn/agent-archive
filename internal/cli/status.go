@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
@@ -35,15 +36,17 @@ import (
 )
 
 type appStatus struct {
-	PublishedSessions int       `json:"published_sessions"`
-	VerifiedSessions  int       `json:"verified_sessions"`
-	Configured        bool      `json:"configured"`
-	HookObserved      bool      `json:"hook_observed"`
-	CapturedLocally   bool      `json:"captured_locally"`
-	Published         bool      `json:"published"`
-	ReadBackVerified  bool      `json:"read_back_verified"`
-	VerifiedAt        time.Time `json:"verified_at,omitzero"`
-	VerificationState string    `json:"verification_state"`
+	// Discovery health is independent of hook execution and publication verification.
+	Discovery         *discovery.Health `json:"discovery,omitempty"`
+	PublishedSessions int               `json:"published_sessions"`
+	VerifiedSessions  int               `json:"verified_sessions"`
+	Configured        bool              `json:"configured"`
+	HookObserved      bool              `json:"hook_observed"`
+	CapturedLocally   bool              `json:"captured_locally"`
+	Published         bool              `json:"published"`
+	ReadBackVerified  bool              `json:"read_back_verified"`
+	VerifiedAt        time.Time         `json:"verified_at,omitzero"`
+	VerificationState string            `json:"verification_state"`
 	// VerificationDetail explains a read-back that has not succeeded yet for
 	// the current publication: the last error, attempts so far, and when the
 	// collector will retry. Empty once every publication is verified.
@@ -349,7 +352,7 @@ func readStatus(env Env) (view statusView, err error) {
 	// missing, as launchd reports a job that is not loaded, and storage not
 	// configured; neither is unknown.
 	view = statusView{
-		Version:        3,
+		Version:        4,
 		State:          "Not set up",
 		Privacy:        "not_verified",
 		Background:     "missing",
@@ -616,9 +619,16 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			continue
 		}
 		if reg.Imported() {
-			// An import is not evidence that this app's hooks work: it
-			// never counts toward the app's sessions, hook observation,
-			// or verification, only toward its imports and uploads.
+			// Import provenance alone is not hook or automatic-capture
+			// evidence. A later actual hook is independent evidence, while
+			// the session still counts only toward imports and uploads.
+			if !reg.HookObservedAt.IsZero() {
+				app.HookObserved = true
+				project(reg.ProjectRoot).HookObserved = true
+				if app.State == "waiting for first session" {
+					app.State = "hook observed; waiting for capture"
+				}
+			}
 			// Subagents go with their parent.
 			if reg.ParentSessionID == "" {
 				app.ImportedSessions++
@@ -645,6 +655,13 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			pair = &app.Projects[position]
 		}
 		s.addSession(&app, pair, reg, cfg, home, issues, &readBackIssue)
+	}
+	if name == "codex" {
+		health := discovery.LoadHealth(home)
+		if cfg.Discovery != nil {
+			health.Enabled = cfg.Discovery.Enabled
+		}
+		app.Discovery = &health
 	}
 	finishReadBack(&app, readBackIssue)
 	sortUploading(app.Uploading)
@@ -704,9 +721,11 @@ func sortUploading(sessions []uploadingSession) {
 // whose files cannot be read is skipped where it fails.
 func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, issues map[string]string, readBackIssue *verificationOutcome) {
 	app.Sessions++
-	app.HookObserved = true
+	if reg.Origin != archive.SessionOriginDiscovery || !reg.HookObservedAt.IsZero() {
+		app.HookObserved = true
+	}
 	gapsBefore := len(app.CaptureGaps)
-	if pair != nil {
+	if pair != nil && (reg.Origin != archive.SessionOriginDiscovery || !reg.HookObservedAt.IsZero()) {
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
@@ -716,7 +735,11 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
 	}
 	if app.State == "waiting for first session" {
-		app.State = "hook observed; waiting for capture"
+		if app.HookObserved {
+			app.State = "hook observed; waiting for capture"
+		} else {
+			app.State = "task found; waiting for capture"
+		}
 	}
 	bundle, _, cacheStatus, found, err := s.store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
@@ -2496,11 +2519,28 @@ func subagentDetailLines(collector state.Status) []string {
 
 // printAppDetails writes one app's lines in the Details section.
 func printAppDetails(out io.Writer, app appStatus) {
+
 	gaps := ""
 	if len(app.CaptureGaps) > 0 {
 		gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
 	}
 	terminal.Printf(out, "  %s: %s (%s; %d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Code, app.Sessions, gaps, app.Hooks)
+	if app.Discovery != nil {
+		d := app.Discovery
+		switch {
+		case !d.Enabled:
+			terminal.Println(out, "    Automatic discovery: disabled; current Codex producers are not accepted for automatic local capture.")
+		case len(d.Errors) > 0:
+			terminal.Println(out, "    Automatic discovery: degraded; retry sync after restoring source permissions or local state.")
+		case !d.Supported:
+			terminal.Println(out, "    Automatic discovery: unsupported producer; use approved hooks or deliberate backfill.")
+		case d.Pending:
+			terminal.Println(out, "    Automatic discovery: scan coverage pending; additional scans are required.")
+		default:
+			terminal.Println(out, "    Automatic discovery: ready for a new task in an included project.")
+		}
+	}
+
 	if app.Trust == "unknown" {
 		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.")
 	}

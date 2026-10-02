@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -146,6 +148,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	defer cancel()
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
+	}
+	if _, migrationErr := capture.PrepareIdentityIndexes(home, 256); migrationErr != nil {
+		recordPreflightError(localStore, migrationErr)
+	}
+	if _, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop}); discoveryErr != nil {
+		recordPreflightError(localStore, discoveryErr)
 	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
@@ -295,18 +303,41 @@ func openPassStorage(ctx context.Context, home string, cfg config.Config, env En
 			}
 		}
 		// Privacy evidence is persisted in config.json exactly as setup saves
-		// it, so status and setup review read one source. The config was
-		// re-read under the lock above, so the save cannot lose another
-		// writer's update.
+		// it, so status and setup review read one source. Merge it into the
+		// current configuration under the admission lock after inspection.
 		if bucketPrivacyNeedsRefresh(cfg, env.now()) {
-			cfg.BucketPrivacy = inspectBucketPrivacyContext(ctx, cfg, objectStore, env.now())
-			if err := config.Save(home, cfg); err != nil {
+			report := inspectBucketPrivacyContext(ctx, cfg, objectStore, env.now())
+			cfg, err = savePassPrivacy(home, report)
+			if err != nil {
 				return nil, cfg, fmt.Errorf("save bucket privacy evidence: %w", err)
 			}
 		}
 	}
 
 	return objectStore, cfg, nil
+}
+
+// savePassPrivacy merges the inspected report with the current configuration.
+// The caller holds collector.lock; hooks.lock also protects a concurrent hook's
+// identity-writer upgrade. Storage inspection finishes before taking hooks.lock.
+func savePassPrivacy(home string, report *storage.PrivacyReport) (config.Config, error) {
+	unlock, err := local.NamedLockWait(home, "hooks.lock", 2*time.Second)
+	if err != nil {
+		return config.Config{}, err
+	}
+	defer unlock()
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if !found {
+		return config.Config{}, errNotSetUp
+	}
+	if report.ConfigurationID != privacyConfigurationID(cfg) {
+		return config.Config{}, errors.New("storage configuration changed during privacy inspection; retry sync")
+	}
+	cfg.BucketPrivacy = report
+	return cfg, config.Save(home, cfg)
 }
 
 // collectorPassHolder names the lock owner in status and busy errors.

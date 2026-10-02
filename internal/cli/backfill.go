@@ -734,9 +734,9 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // Classify reports already_archived when the native session has a
 // registration the configuration accepts, and registered_not_admitted when it
 // has one the configuration no longer accepts. An index entry without a
-// registration does not count, as for hooks (capture.HasRegistration).
+// registration does not count, as for hooks (capture.HasAgentRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
-	archiveID, found, err := s.store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := s.store.AgentSessionID(harness, nativeSessionID)
 	if err != nil {
 		return "", err
 	}

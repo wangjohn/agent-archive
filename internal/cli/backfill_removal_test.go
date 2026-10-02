@@ -48,10 +48,9 @@ func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 	}
 }
 
-// Removal records only keep backfill from importing a transcript again.
-// Hooks ignore them: a fresh start of a native session undo or retention
-// removed registers as any other start.
-func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
+// All automatic admission paths honor removal records. Deliberate backfill
+// with --include-removed is the only path that can reimport removed history.
+func TestHookFreshStartHonorsRemovalRecord(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []state.RemovalReason{state.RemovalReasonUndo, state.RemovalReasonRetention} {
 		t.Run(string(reason), func(t *testing.T) {
@@ -70,14 +69,14 @@ func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 				"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 			}
-			if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
-				t.Fatal(err)
+			if err := capture.HandleEvent(home, "codex", payload, now); err == nil {
+				t.Fatal("removed session accepted")
 			}
 			regs, err := store.LoadRegistrations()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(regs) != 1 || regs[0].NativeSessionID != "native-1" || regs[0].Imported() || !regs[0].SessionStartedAt.Equal(now) {
+			if len(regs) != 0 {
 				t.Fatalf("regs=%#v", regs)
 			}
 		})

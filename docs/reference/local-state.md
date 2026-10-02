@@ -135,3 +135,19 @@ list in step with `state.OwnedEntries()`.
   backup tools to skip it; never `/tmp` and never the data directory, which
   may be backed up or synced. The copy is removed when the read ends, and an
   abandoned one is swept by the next read.
+
+`discovery-catalog.json` contains bounded private source fingerprints, metadata
+facts, directory continuation cookies and sanitized scan outcomes. It never
+contains prompt/response bodies. Source paths and native IDs stay private here,
+not in routine scan diagnostics. Corruption rebuilds this disposable catalog;
+a rebuilt catalog cannot widen authorization. `sessions/` indexes now hash
+canonical agent plus native ID; verified legacy mappings migrate lazily without
+changing archive IDs. Removal records continue to outlive indexes.
+
+Namespaced identity writing also owns `identity-journal/` (authoritative
+agent/native-to-archive mappings), `identity-migration.json` (bounded legacy
+continuation) and `identity-migration.lock`. Derived index loss recovers from
+the journal. Corrupt authoritative identity state refuses allocation and needs
+repair; it is not silently discarded as a cache. Migration is independent of
+discovery consent and storage availability. Fresh hook starts defer durably
+until their legacy identity catalog is reconciled.

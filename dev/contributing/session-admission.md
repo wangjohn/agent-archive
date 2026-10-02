@@ -40,3 +40,27 @@ A hook that later resumes an imported session continues it: the
 registration keeps its start, admission, destination ID, and origin.
 Retention and undo leave a removal record when they forget a session, so
 backfill does not import it again (unless `--include-removed`).
+
+## Discovery admission
+
+`Config.DiscoveryGeneration` is the named fresh native-start guard. Only the
+current agent/project/destination generation can admit new discovery sessions.
+Unpaused intervals are half-open, and pauses preserve earlier intervals in the
+same generation for delayed discovery. Reconfiguration, disable/re-enable,
+project exclusion/reinclude and destination changes rotate forward-only scope.
+Invalid timestamps have no file-time or scan-time fallback. The future skew
+limit is two minutes. Publication still compares `Admitted()`, never native
+start, with project/destination boundaries.
+
+Setup journals configuration and permission history together. Pause/resume
+commits both in one atomic config write under collector then hooks locks.
+`RegisterOrMerge` namespaces native identity by canonical agent, validates
+legacy ownership, preserves original origin/admission/start/destination, and
+honors automatic-admission tombstones. A registration exists before a request;
+collector registration scanning recovers a crash between these durable writes.
+Actual `HookObservedAt` is distinct from origin; imported sessions alone and
+discovery registrations alone do not establish hook execution. A later actual
+hook on an import establishes observation while preserving import attribution
+and leaving fresh automatic-capture verification unproven. Hook continuations
+preserve discovery-managed locators; only validated source discovery handles
+their active/archive replacement.
