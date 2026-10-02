@@ -72,11 +72,15 @@ func TestStatsChartOmitsLeadingDaysAndSeparatesCoverage(t *testing.T) {
 	if strings.Contains(chart, "Aug 31") || !strings.Contains(chart, "Sep 26") || !strings.Contains(chart, "Earlier days omitted") {
 		t.Fatalf("chart implies earlier observation:\n%s", chart)
 	}
-	findings := out[strings.Index(out, "FINDINGS"):strings.Index(out, "COVERAGE")]
+	coverageStart := strings.Index(out, "COVERAGE")
+	if coverageStart < 0 {
+		t.Fatal("coverage section missing")
+	}
+	findings := out[strings.Index(out, "FINDINGS"):coverageStart]
 	if strings.Contains(findings, "no token data") || !strings.Contains(findings, "77% of tokens came from subagents") {
 		t.Fatal("coverage and findings mixed")
 	}
-	if !strings.Contains(out[strings.Index(out, "COVERAGE"):], "no token data") {
+	if !strings.Contains(out[coverageStart:], "no token data") {
 		t.Fatal("coverage note lost")
 	}
 }

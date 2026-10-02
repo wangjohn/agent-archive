@@ -13,15 +13,17 @@ func (s MCPServer) Label() string {
 	return s.Name
 }
 
+var knownMCPDisplayNames = map[string]string{
+	"Claude_Browser":            "Claude Browser",
+	"Claude_Code_iOS_Simulator": "iOS Simulator",
+}
+
 func mcpDisplayName(name string, aliases map[string]string, ordinal int) string {
 	if label := strings.TrimSpace(aliases[name]); label != "" {
 		return label
 	}
-	switch name {
-	case "Claude_Browser":
-		return "Claude Browser"
-	case "Claude_Code_iOS_Simulator":
-		return "iOS Simulator"
+	if label := knownMCPDisplayNames[name]; label != "" {
+		return label
 	}
 	// A UUID gives no reliable evidence of which service it represents.
 	if isUUID(name) {
