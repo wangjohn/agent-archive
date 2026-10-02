@@ -11,9 +11,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
+
+type unreadableExtensionDiscovery struct{ agentapi.DiscoveryLookup }
+
+func (d unreadableExtensionDiscovery) DiscoveryAgents() []string {
+	return append(d.DiscoveryLookup.DiscoveryAgents(), "orbifold")
+}
+
+func (d unreadableExtensionDiscovery) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
+	if name == "orbifold" {
+		return d, true
+	}
+	return d.DiscoveryLookup.LookupDiscovery(name)
+}
+
+func (unreadableExtensionDiscovery) DefaultDirectories(string) []string { return nil }
+
+func (unreadableExtensionDiscovery) Discover(context.Context, agentapi.DiscoveryRequest, func(agentapi.DiscoveryCandidate) error) (agentapi.DiscoveryReport, error) {
+	return agentapi.DiscoveryReport{StoreUnreadable: true, Incomplete: true}, nil
+}
+
+func TestExtensionUnreadableStoreIsNamed(t *testing.T) {
+	t.Parallel()
+	env := newTree(t).env()
+	env.Discovery = unreadableExtensionDiscovery{env.Discovery}
+	p := plan(t, env, nil, config.Config{}, Filters{Harnesses: []string{"orbifold"}})
+	if strings.Join(p.UnreadableStores, ",") != "orbifold" {
+		t.Fatalf("extension store warning lost: %v", p.UnreadableStores)
+	}
+	var text, js bytes.Buffer
+	RenderText(&text, p)
+	if err := RenderJSON(&js, p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), "orbifold's session folder could not be read") || !strings.Contains(js.String(), `"orbifold"`) {
+		t.Fatalf("extension warning absent: text %s; json %s", text.String(), js.String())
+	}
+	if p := plan(t, env, nil, config.Config{}, Filters{Harnesses: []string{"claude"}}); len(p.UnreadableStores) != 0 {
+		t.Fatalf("filtered-out extension warning reported: %v", p.UnreadableStores)
+	}
+}
 
 // Discovery never follows a symlink out of an app's store.
 //

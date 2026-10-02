@@ -203,7 +203,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 	var unreadableStores []string
-	for _, h := range harnessOrder {
+	for _, h := range presentationAgents(sortedAgentKeys(unread.stores)) {
 		// A store the filters leave out is not reported.
 		if unread.stores[h] && harnessMatches(filters.Harnesses, h) {
 			unreadableStores = append(unreadableStores, h)
