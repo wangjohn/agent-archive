@@ -78,11 +78,10 @@ MCP     github 5,000 · linear 4,993 · server-02 4,986 ·
 Skills count the sessions that used each one; MCP counts
 calls.
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · styleprofile · long context, 38
   subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 NOTES
 Scope: this archive only.

@@ -343,6 +343,12 @@ at the top level. Read the rules below before using a number:
   prints a document with zero sessions. Usage errors (exit 2) print no JSON.
   `--json` is never paged.
 
+Stats `coverage.first_recorded_day` is the earliest available session day,
+clamped to the requested window start if earlier history exists. Charts omit
+preceding days; `daily` retains the full requested window, with leading zero
+placeholders that do not establish measured inactivity. `mcp.servers[].name`
+remains the recorded ID; optional `display_name` supplies a friendly label.
+
 ## `status --json`
 
 Top-level fields (versioned by `schema_version`, currently `3`):

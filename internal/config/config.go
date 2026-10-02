@@ -72,7 +72,10 @@ type Config struct {
 	// MachineName is a chosen label, never a detected hostname.
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
-	MachineAssignment     *MachineAssignment     `json:"machine_assignment,omitempty"`
+	MachineAssignment *MachineAssignment `json:"machine_assignment,omitempty"`
+	// MCPServerNames supplies display labels for server IDs in stats.
+	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
+
 	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
 	RetiredCredentialRefs []string               `json:"retired_credential_refs,omitempty"`
 	StorageVerifiedAt     time.Time              `json:"storage_verified_at,omitempty"`
