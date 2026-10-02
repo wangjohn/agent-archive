@@ -190,3 +190,46 @@ wider ancestor. Failed or nonportable origin lookups make discovery incomplete. 
 `--project DIR` to select a path independently. There is no home-directory
 crawl or transcript-body search. Filesystem cancellation is cooperative:
 a native filesystem call already in progress can outlast the budget.
+
+## Machine records and names
+
+`agent-archive machines` lists informational records from this destination.
+Interactive setup and `setup --yes` publish a record after they commit, and the collector retries failed
+publication independently of capture and retention. A successful heartbeat
+is refreshed at most daily; it is not a signal of current activity. Paused
+machines need not send heartbeats. A missing record is recreated on the next
+daily publication. Older installations appear as `unnamed-` followed by four
+characters of their machine ID, without reading a hostname.
+
+Interactive first setup offers **Name this machine** at the final review.
+Leave the default to use a neutral name without reading your hostname. Chosen
+names are checked against bounded bucket observations before saving; concurrent
+choices can still race. The list shows pairing dates when known and shared-key
+source names with their immutable IDs, or the ID alone if its record is absent.
+These are unverified claims; a shared key cannot be revoked independently.
+
+Run `agent-archive machines rename work-laptop` on the machine being named.
+Names contain 1 to 40 lowercase letters, digits, or hyphens and start with a
+letter or digit. Observed duplicates are refused; concurrent naming can race.
+When selecting an existing name, `agent-archive machines rename MACHINE_ID NEW_NAME`
+uses the full immutable ID to distinguish duplicates. Renaming changes a label,
+never machine or credential identity. A failed upload keeps the local name
+and reports registration pending; the collector retries.
+
+`agent-archive machines --json` reports records, omitted objects and whether
+results are partial. Listing reads only machine records, at most 1000 pages or objects
+and 16 KiB per record, with four concurrent reads and a shared five-second
+budget. Oversized continuation tokens also stop listing. Unsupported schemas,
+malformed records and read failures are reported
+as omitted objects; incomplete results exit with code 1.
+
+Every bucket credential can forge these records. They are not provider-verified,
+never prove exclusive key ownership, and never authorize removing access.
+Manual R2 credentials are labelled `r2_unknown`; one observed user does not
+make a key exclusively owned. S3 records carry `aws_profile` as their kind.
+Provider verification, pairing and revocation are not part of these commands.
+
+`setup --refresh` keeps its existing no-storage/no-credentials promise. It does
+not publish a record or write registration state, including when nothing needs
+refreshing. The next collector pass publishes a changed application version
+through its normal fingerprint check, without waiting for the daily heartbeat.

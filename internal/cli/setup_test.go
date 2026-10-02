@@ -458,9 +458,15 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-			attempts := 0
+			attempts, publications := 0, 0
 			env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
-				attempts++
+				if _, committed, err := config.Load(home); err != nil {
+					t.Fatal(err)
+				} else if committed {
+					publications++
+				} else {
+					attempts++
+				}
 				fixed := cfg.Storage.Region == "eu-west-1"
 				if choice == "prefix" {
 					fixed = cfg.Storage.Prefix == "allowed/"
@@ -473,8 +479,8 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 			}
 			input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 			setupRun(t, env, input+"edit\n"+choice+"\n"+value+"\ny\n", 0)
-			if attempts != 2 {
-				t.Fatalf("attempts=%d", attempts)
+			if attempts != 2 || publications != 1 {
+				t.Fatalf("verification attempts=%d postcommit publications=%d", attempts, publications)
 			}
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {

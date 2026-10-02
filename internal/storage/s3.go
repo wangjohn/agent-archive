@@ -175,6 +175,16 @@ func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 // ErrObjectTooLarge. A 403 is ErrNotFound only when a listing confirms the
 // key is absent (see confirmedAbsent); otherwise it is returned as is.
 func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
+	return s.GetLimited(ctx, relative, s.maxGetBytes)
+}
+
+// GetLimited reads an object with a caller's allocation limit, also honoring
+// the store's own maximum. It never reads more than limit plus one bytes.
+func (s *S3Store) GetLimited(ctx context.Context, relative string, limit int64) ([]byte, error) {
+	if limit < 1 {
+		return nil, errors.New("object read limit must be positive")
+	}
+	limit = min(limit, s.maxGetBytes)
 	key, err := s.key(relative)
 	if err != nil {
 		return nil, err
@@ -187,13 +197,13 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = output.Body.Close() }()
-	limited := io.LimitReader(output.Body, s.maxGetBytes+1)
+	limited := io.LimitReader(output.Body, limit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > s.maxGetBytes {
-		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, s.maxGetBytes)
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
 	}
 	return data, nil
 }
