@@ -540,7 +540,19 @@ func TestCursorTodoWriteMergeUpdatesThePlanByID(t *testing.T) {
 			t.Errorf("plan[%d] = %+v, want %+v", i, h.Plan[i], want[i])
 		}
 	}
-
+	// Without merge a call replaces the complete earlier plan, as before.
+	lines = append(lines, `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"todo_write","input":{"todos":[{"id":"9","content":"Only this"}]}}]}}`)
+	filtered, err = (CursorAdapter{}).FilterJSONL(strings.NewReader(strings.Join(lines, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err = BuildHandoff(parserTestBundle(t, "cursor", CursorAdapter{}, filtered), nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Plan) != 1 || h.Plan[0].Text != "Only this" {
+		t.Errorf("replace = %+v", h.Plan)
+	}
 }
 
 // A-23: token totals saturate at the largest count instead of overflowing.
