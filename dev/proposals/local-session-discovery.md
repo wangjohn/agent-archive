@@ -107,7 +107,7 @@ Worktree mapping must not automatically include every directory under `~/.codex/
 
 ### 4. One identity and atomic admission
 
-The native-session index currently keys by native ID alone. Namespace new identity lookups by `(agent, native session ID)` within the local state store. Preserve existing archive IDs with a lazy, atomic legacy migration: accept a legacy mapping only after checking the registration's agent and native ID. An ambiguous or corrupt mapping produces a repair diagnostic, not an overwrite or a second upload. Removal-record lookups must remain effective across the migration.
+The native-session index already uses agent-qualified `agentmeta.SessionKey` identities and supports legacy migration, reservations, conflict detection, and bounded recovery. Extend those existing APIs for discovery; do not add a parallel index or replace recovery with a discovery-specific migration. Preserve archive IDs, qualified child reservations, and the existing registration census used for recovery. Legacy mappings must still be accepted only after matching agent and native ID; ambiguous or corrupt mappings require repair rather than an overwrite or second upload. Removal-record lookups must remain effective.
 
 Introduce a shared register-or-merge operation used by discovery, hooks, pending hook-intent replay, and backfill. The current `RegisterNewSession` operation is not sufficient as an insert-if-absent primitive: it can rewrite a registration. The shared operation must re-read state and configuration under the existing admission serialization and either:
 
@@ -141,7 +141,7 @@ flowchart LR
 
 Track hook observation separately from origin. A later prompt, stop, or other supported hook on a discovery registration can establish hook observation even if its start hook never ran. The evidence must be durable and independent of whether an upload succeeds. Legacy hook registrations keep their current interpretation; imported registrations alone do not prove hooks work.
 
-Discovery cannot manufacture stop/end events, final-response evidence, or proof of transcript completeness. Existing parser-derived timestamps and available subagent links remain usable, with gaps reported honestly. Emit discovery provenance and a specific missing-hook-evidence gap where appropriate; do not reuse an import-only gap or make `ImportedAt` appear on a discovery session. Later hook observation does not retroactively prove earlier lifecycle coverage. Automatic admission of child sessions requires an admitted parent and validated linkage; otherwise leave them unsupported in the first release. Hooks continue to improve timeliness and evidence when approved.
+Discovery cannot manufacture stop/end events, final-response evidence, or proof of transcript completeness. Existing parser-derived timestamps and available subagent links remain usable, with gaps reported honestly. Emit discovery provenance and a specific missing-hook-evidence gap where appropriate; do not reuse an import-only gap or make `ImportedAt` appear on a discovery session. Later hook observation does not retroactively prove earlier lifecycle coverage. Automatic discovery admission of child sessions is unsupported in the first release, even when their parent is admitted. Preserve existing hook-driven child capture and parser-derived linkage. Future automatic child support requires an admitted parent, validated linkage, and a separately reviewed safe content boundary. Hooks continue to improve timeliness and evidence when approved.
 
 ### 6. Collector orchestration, budgets, and recovery
 
@@ -198,7 +198,7 @@ Keep overall capture, discovery health, hook observation, and storage verificati
 | Phase | Work | Exit condition |
 | --- | --- | --- |
 | 0. Bound source investigation | Inspect pinned producer formats and disposable execution/import/copy probes; record actual desktop versus CLI coverage. | Document supported metadata, identifiable rejection cases, and the indistinguishable-copy limitation. Missing execution provenance alone does not block discovery. |
-| 1. Shared foundations | Extract source catalog/resolver; add namespaced index migration and atomic admission; define durable authorization intervals and rollback compatibility. | Existing hook/backfill behavior passes; races, pause, exclusions, destination changes, and tombstones covered. |
+| 1. Shared foundations | Extract source catalog/resolver; preserve and extend qualified identity, reservations, and recovery; add shared atomic admission and durable authorization intervals with rollback compatibility. | Existing hook/backfill behavior passes; races, pause, exclusions, destination changes, and tombstones covered. |
 | 2. Codex discovery | Add adapter, bounded incremental scan, retry/reconciliation, and local admission independent of storage availability. | Correct capture with hooks absent or unapproved; no duplicate uploads; measured resource budgets. |
 | 3. Onboarding and status | Transactional enablement, existing-install opt-in, capture verification, separate discovery/hook health, docs and schemas. | Desktop user can enable capture and verify a new task without opening Codex CLI. |
 | 4. Release acceptance | Disposable machine and bucket acceptance, upgrade/rollback checks, failure injection, and benchmark evidence. | All correctness/security gates pass; remaining fidelity limitations are explicit. |
@@ -217,7 +217,7 @@ Merge in A → B → C → D order. B does not need A's documentation commits in
 | Area | Implementation ownership |
 | --- | --- |
 | Source facts and resolution | Extract from `internal/backfill/discover.go` and `resolve.go` into reusable lower-level packages; keep historical import policy in backfill. |
-| Admission and identity | Shared policy below CLI; `internal/state` owns namespaced indexes, migration, atomic registration, and removal-record checks. `internal/capture` retains hook interpretation and evidence. |
+| Admission and identity | Shared policy below CLI; `internal/state` retains its qualified identity, reservation, migration, census/recovery, and removal-record APIs; shared admission extends atomic registration without replacing them. `internal/capture` retains hook interpretation and evidence. |
 | Configuration lifecycle | `internal/config`, setup journal, and CLI setup/pause/resume persist and validate authorization generations. |
 | Scheduled work | CLI collector orchestration invokes discovery; `internal/collector` continues filtering and publishing registrations. |
 | Provenance and UX | Archive types/parser, JSON schemas, CLI status/setup, and contributor/user docs change together. |
