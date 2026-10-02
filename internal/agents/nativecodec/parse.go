@@ -19,6 +19,9 @@ const (
 )
 
 func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile) (archive.Analysis, error) {
+	if err := ctx.Err(); err != nil {
+		return archive.Analysis{}, err
+	}
 	if err := archive.ValidateSourceBundle(bundle); err != nil {
 		return archive.Analysis{}, &archive.ParseError{Reason: err.Error()}
 	}
@@ -117,6 +120,9 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 	}
 	if agent == profileCursor && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0 {
 		analysis.Observability.ToolResults = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
+	}
+	if err := ctx.Err(); err != nil {
+		return archive.Analysis{}, err
 	}
 	return analysis, nil
 }

@@ -10,8 +10,8 @@ import (
 // composerData value and its messages in header order. A message whose row
 // is missing has a nil Value.
 type CursorComposer struct {
-	Composer json.RawMessage
-	Bubbles  []CursorBubble
+	Composer json.RawMessage `json:"composer"`
+	Bubbles  []CursorBubble  `json:"bubbles"`
 }
 
 // FilterComposer filters one chat from Cursor's database into native records,

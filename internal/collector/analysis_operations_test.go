@@ -49,8 +49,9 @@ type countedCodexFilter = codex.Filter
 
 type operationFilter struct {
 	countedCodexFilter
-	calls     int
-	refilters int
+	calls       int
+	refilters   int
+	comparisons int
 }
 
 func (f *operationFilter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
@@ -61,6 +62,58 @@ func (f *operationFilter) Filter(ctx context.Context, in agentapi.NativeInput, c
 func (f *operationFilter) Refilter(ctx context.Context, b archive.SourceBundle, at time.Time) (archive.FilteredTranscript, error) {
 	f.refilters++
 	return f.countedCodexFilter.Refilter(ctx, b, at)
+}
+
+func (f *operationFilter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
+	f.comparisons++
+	return f.countedCodexFilter.EvidenceExtends(previous, candidate)
+}
+
+type allocatingSources struct{ filters []*operationFilter }
+
+func (s *allocatingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	f := &operationFilter{}
+	s.filters = append(s.filters, f)
+	return codex.SourceProvider{}, f, name == "codex"
+}
+
+func TestFilteringAndComparisonUseTheSameInjectedInstance(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	directory := t.TempDir()
+	path := writeTranscript(t, directory, "session.jsonl", codexTranscript)
+	reg := registration(t, path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	sources := &allocatingSources{}
+	parsers := &operationBindings{parser: &operationParser{version: "same"}}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: sources, Parsers: parsers, MachineID: "machine", Now: func() time.Time { return now }}
+	run := func() {
+		t.Helper()
+		result, err := Run(context.Background(), local, remote, opts)
+		if err != nil || len(result.Errors) != 0 {
+			t.Fatalf("run: %#v %v", result, err)
+		}
+	}
+	run()
+	writeTranscript(t, directory, "session.jsonl", codexTranscript+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":"next prompt"}}`)
+	now = now.Add(time.Hour)
+	run()
+	compared := 0
+	for _, filter := range sources.filters {
+		if filter.comparisons > 0 {
+			compared++
+			if filter.calls != 1 {
+				t.Fatalf("comparison used a filter that did not consume this input: %d calls", filter.calls)
+			}
+		}
+	}
+	if compared == 0 {
+		t.Fatal("extension guard did not compare changed evidence")
+	}
 }
 
 func TestInjectedParserUpgradeReadsRetainedSourceOnce(t *testing.T) {

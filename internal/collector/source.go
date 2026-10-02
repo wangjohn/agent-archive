@@ -125,10 +125,14 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	return observe(r.reg.SourceKind, o), err
 }
 
-func (r providerReader) Filter(ctx context.Context, _ archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
-	provider, f, err := r.binding()
+func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
+	provider, _, err := r.binding()
 	if err != nil {
 		return out, observed, err
+	}
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return out, observed, errors.New("native filter port required")
 	}
 	p, closePass, err := r.pass(ctx, provider, f.Name())
 	if err != nil {
