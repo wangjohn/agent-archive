@@ -33,6 +33,14 @@ func (s sourceState) empty() bool {
 	return s.file.Size == 0
 }
 
+// size is raw observation data, independent of native locator framing.
+func (s sourceState) size() int64 {
+	if s.observation.Present {
+		return s.observation.Size
+	}
+	return s.file.Size
+}
+
 func (s sourceState) matches(old state.ScanSignature) bool {
 	if old.SourceKind != s.kind {
 		return false

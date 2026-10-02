@@ -22,6 +22,8 @@ type Operation string
 
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
+
+// Parse means an integration interprets retained safe transcript evidence.
 const Parse Operation = "parse"
 
 // Source means an integration provides bounded sources and native filtering.

@@ -88,7 +88,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			model, reasoning, modelSource = codexModel, codexReasoning, archive.TurnModelSourceTurnContext
 		case profileClaude:
 			responseModel, modelSource = recordModel(record), archive.TurnModelSourceNativeResponse
-		default:
+		case profileCursor:
 			model, reasoning, modelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), archive.TurnModelSourceNativeTranscript
 		}
 		view.Turns = append(view.Turns, archive.NormalizedTurn{
