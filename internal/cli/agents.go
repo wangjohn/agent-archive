@@ -40,7 +40,9 @@ func skillPorts(sources []agentapi.SkillsLookup) agentapi.SkillsLookup {
 	}
 	return productionAgents
 }
-func parsersFor(deps any) agentapi.ParsersLookup    { return registryFor(deps) }
+
+func parsersFor(deps any) agentapi.ParsersLookup { return registryFor(deps) }
+
 func previewsFor(deps any) agentapi.PreviewsLookup  { return registryFor(deps) }
 func (e Env) runtimeLookup() agentapi.RuntimeLookup { return e.agentRegistry() }
 

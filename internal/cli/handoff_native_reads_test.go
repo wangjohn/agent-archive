@@ -185,8 +185,18 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 	n := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: nativeReadBudget - 1, stderr: io.Discard, now: f.at}
 	more, err := n.load()
 	after, _, active, full := meter.counts()
-	if err != nil || more || !n.exhausted || n.next != 0 || before != after || active != 0 || full != 0 {
+	if err != nil || more || !n.exhausted || n.next != 0 || len(n.rows) != 53 || before != after || active != 0 || full != 0 {
 		t.Fatalf("exhausted batch reads: %v %v %d %d %+v", more, err, before, after, n)
+	}
+	for i, row := range n.rows {
+		if nativeRowIndex(row, r.Candidates) != i || row.Index != i+1 || row.Title != r.Candidates[i].NativeID || row.SkillHint != " · label not inspected" || row.fields.Title != "" || row.fields.Name != "" {
+			t.Fatalf("untruthful fallback row %d: %+v", i, row)
+		}
+	}
+	more, err = n.load()
+	after, _, _, _ = meter.counts()
+	if err != nil || more || len(n.rows) != 53 || before != after {
+		t.Fatal("exhaustion allowed further reads or duplicated fallback rows")
 	}
 	// Allow exactly the first batch's verified sizes, then attempt another.
 	allowance := int64(0)
@@ -201,7 +211,7 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 	before, _, _, _ = meter.counts()
 	more, err = n.load()
 	after, _, active, full = meter.counts()
-	if err != nil || more || !n.exhausted || n.next != 50 || before != after || n.reserved > nativeReadBudget || active != 0 || full != 0 {
+	if err != nil || more || !n.exhausted || n.next != 50 || len(n.rows) != 53 || before != after || n.reserved > nativeReadBudget || active != 0 || full != 0 {
 		t.Fatalf("raised cumulative budget %+v %v before=%d after=%d", n, err, before, after)
 	}
 }

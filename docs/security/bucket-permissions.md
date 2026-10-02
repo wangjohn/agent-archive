@@ -153,6 +153,14 @@ Write** (create the bucket's key and, if that key fails its check or can't be
 stored, revoke it). It is a much broader credential than the archive's key,
 so it is never saved; see [privacy](privacy.md#guided-r2-bucket-creation).
 
+These are API permission names. In the custom account token form under
+**Manage account → Account API tokens**, choose **Account → Workers R2
+Storage → Edit** and **Account → Account API Tokens → Edit**. The R2-specific
+token form only offers R2 permission presets; it cannot grant the token
+management permission. For a setup without this broader credential, create
+the bucket by hand and use an **Object Read & Write** token limited to that
+bucket; see [R2 setup](../getting-started/bucket.md#cloudflare-r2-recommended).
+
 ## One key per machine
 
 Use separate credentials on each machine where you can, so revoking one machine

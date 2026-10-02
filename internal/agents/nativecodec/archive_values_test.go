@@ -610,7 +610,7 @@ func Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error
 }
 
 func deriveGitActivity(calls []NormalizedToolCall) []GitEvent {
-	return callMetadata(calls, "").GitActivity
+	return callMetadata(calls).GitActivity
 }
 
 func textTranscriptExchanges(texts []TextTranscript) ([]HandoffExchange, string) {
@@ -637,10 +637,10 @@ const maxModelNameRunes = 128
 
 const toolNameLimit = 128
 
-func callMetadata(calls []NormalizedToolCall, root string) Metadata {
+func callMetadata(calls []NormalizedToolCall) Metadata {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "synthetic"}, AdapterName: "synthetic", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{{"safe": "retained"}}}
-	analysis := archive.Analysis{View: NormalizedView{ToolCalls: calls}, Facts: archive.NativeFacts{WorkspaceRoot: root}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}}}
+	analysis := archive.Analysis{View: NormalizedView{ToolCalls: calls}, Facts: archive.NativeFacts{}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}}}
 	m, err := archive.BuildMetadataWithAnalysis(b, analysis, nil, "m", now, now, SourceReference{Key: "synthetic", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
 	if err != nil {
 		panic(err)
@@ -649,11 +649,11 @@ func callMetadata(calls []NormalizedToolCall, root string) Metadata {
 }
 
 func deriveToolsUsed(calls []NormalizedToolCall) []ToolUsage {
-	return callMetadata(calls, "").ToolsUsed
+	return callMetadata(calls).ToolsUsed
 }
 
 func deriveMCPCalls(calls []NormalizedToolCall) []ToolUsage {
-	return callMetadata(calls, "").MCPCalls
+	return callMetadata(calls).MCPCalls
 }
 
 func metadataToolName(name string) string {

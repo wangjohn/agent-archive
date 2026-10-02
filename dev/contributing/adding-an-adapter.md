@@ -1,65 +1,101 @@
-# Adding an agent adapter
+# Adding an agent integration
 
-Supporting another coding agent means teaching agent-archive four things:
-where its hooks go, what its hook payloads say, how to filter its transcript
-safely, and how to read the filtered result back. Start from the closest
-existing app (Codex for a JSONL CLI agent, Cursor for an editor) and follow
-its trail through the packages below. Read the [architecture](architecture.md)
-first.
+Add a concrete package under `internal/agents/<name>` and bind its implemented
+ports once in `agents/builtin`. Shared archive, capture, collector, reader,
+backfill and CLI policies consume narrow `agentapi` lookups. Native vocabulary
+belongs to the integration. Read [architecture](architecture.md) and the
+[integration contracts](../proposals/agent-integration-contracts.md) first.
 
-## 1. Evidence first
+## Establish evidence and declare identity
 
-Before writing code, collect real, synthetic-content transcripts and hook
-payloads from the app, and record what you observed, for which version, in
-[capture capabilities](../../docs/reference/capture-capabilities.md). Support stays
-`unverified` until a session from an observed version is published end to
-end. Don't infer a field from documentation alone.
+Collect synthetic-content native transcripts and hooks from a dated observed
+version. Record the evidence in [capture capabilities](../../docs/reference/capture-capabilities.md).
+Fixture success establishes fixture coverage; installed-version capture remains
+unverified until a real session is published and read back on that machine.
 
-## 2. The adapter (`internal/archive`)
+Declare a canonical `agentmeta.Descriptor` and aliases. Native IDs remain opaque
+UTF-8 values qualified by the canonical agent. Do not apply UUID assumptions,
+case folding, trimming, or filename rules to shared session keys. Consumer
+restrictions, such as native handoff's bounded ASCII IDs, remain separate.
 
-- Add a type implementing `Adapter` (`Name`, `Version`, `FilterJSONL`) in
-  `adapters.go`, and a case in `NewAdapter`. List the record types you
-  accept explicitly; unknown record types are a capture gap, never passed
-  through.
-- Reuse `sanitizeObject`/`sanitizeValue`: the key allowlist, the blocked keys,
-  tool-argument handling, value redaction, binary-block dropping, and the
-  64 KB string cap. Add allowlist keys only for fields you have seen, with a
-  comment saying why each is needed. Hidden reasoning and injected
-  instructions must be dropped and reported as gaps.
-- Add fixtures under `internal/archive/testdata/` named `<app>-<shape>.jsonl`
-  (the round-trip test requires every fixture to have an app prefix), and
-  regenerate `filter-golden.json` (`go test ./internal/archive -update`;
-  see [goldens](testing.md#fixtures-and-goldens)). Review every retained line.
-- Teach the normalized view (`views.go`) and handoff (`handoff.go`) to find
-  turns, prompts, and tool calls in the new records, with fixtures and
-  golden output in `testdata/handoff/`.
-- This is a filter change: bump `FilterVersion` and `adapterVersion` and
-  document it (see [versions](../maintainers/versions.md)).
+## Bind source, filter and retained parser
 
-## 3. Hooks and setup (`internal/hooks`, `internal/cli`)
+Implement `SourceProvider.Describe/OpenPass` and the serial `SourcePass` contract.
+File providers reuse `sourceio` and verified `transcriptio` handles. Record
+providers return bounded borrowed records and close snapshots before their
+pass ends. A snapshot's independent record cursors must fail after ownership
+ends. Keep missing, empty, unavailable, changed, limit and unsafe outcomes
+separate. Declare append-only or replaceable behavior; shared orchestration
+owns rewrite gaps, retry, retained baselines and publication.
 
-- `hooks`: where the app reads hook configuration, the events to install,
-  and how to merge into its file without disturbing anything else.
-- `cli`: detecting the app in setup, parsing its hook payloads in `_hook`
-  (session ID, transcript path, working directory, start provenance), and
-  its status lines. A hook must stay fast, silent, and offline.
-- Session eligibility: decide how a never-seen session proves it started
-  fresh (see [session eligibility](../../docs/reference/session-eligibility.md)); if
-  the app can't say, don't guess.
+Implement `TranscriptFilter.Filter/Refilter/EvidenceExtends`, declaring the
+retained format and allowlisted native fields. Reuse shared privacy helpers;
+never pass unknown native shapes or hidden reasoning through. Keep filter-time
+identity, timestamp bounds and completeness even when records are omitted.
+Filtering receives native input, not an archive JSON serialization.
 
-## 4. The rest
+Implement a pure `TranscriptParser`. It derives `archive.Analysis` once from
+retained evidence, including normalized turns, native identity facts, and
+availability for this actual format/filter version. Unavailable and unknown
+metrics remain distinct from measured zero. Shared builders render metadata,
+transcript and handoff from that same Analysis. A parser-only version change
+must not reread or refilter native sources. Implement `RecordPreviewer` only
+when bounded records can safely expose labels without a full source parse.
 
-- `internal/evidence`: the app's skill directories, if it has any.
-- `internal/backfill`: discovering the app's existing transcripts.
-- `internal/reader`: add the app to `Harnesses`, the key segments listings
-  probe.
-- `schemas/` and docs: the app name in enums, the README's supported apps,
-  and [privacy](../../docs/security/privacy.md) for anything new that is uploaded.
+## Bind hook, setup and inspection operations
 
-## Tests to write
+Implement the pure `HookDecoder` with your observed native event names and
+freshness evidence. Shared capture owns admission, locks, qualified identity,
+config ownership and replayed effects. A follow-up or continuation cannot admit
+a never-seen session. Current lifecycle locators permit files; a record provider
+may interpret that file as its manifest. Provider-qualified nonfile locators
+are available to source and historical registration consumers.
 
-A fixture per record shape you retain or drop, a test that the unknown shapes
-you saw are reported as gaps rather than retained, a hook payload test, a
-setup round trip against a temporary `HOME` (see [testing](testing.md)), and
-a handoff golden. Fuzz the new filter path briefly (`-fuzz` with
-`-fuzzminimizetime 2s`).
+Implement `HookConfigurator.Location/Plan/Inspect` with observed files and
+installation ownership. Return expected-byte `filechange.Change` values;
+shared `fileapply` and setup journals perform mutations. Foreign handlers and
+other installations must survive removal.
+
+Declare skill installation and evidence locations separately through
+`SkillProvider`. Use shared rendered templates, marker ownership and transaction
+application. `Plan` and `Inspect` receive existing bytes. Evidence roots include
+their user/project boundaries. Preserve path/content deduplication when agents
+share a destination. Current Cursor installation uses `.agents/skills`, whereas
+its inventory uses `.cursor/skills`; extension must explicitly declare its own
+behavior rather than silently expand coverage.
+
+## Bind discovery and host observations only where supported
+
+`Discoverer` emits candidates into the caller's existing inventory. Reference
+enumeration must not open transcripts. Declare purpose-specific roots and
+bounded header interpretation through `NativeHeaderInspector`: compatibility
+import and no-setup handoff can have different formats and availability.
+`ImportInspector` interprets filtered admission observations without reparsing
+a full transcript. Native project/workspace/worktree and child discovery ports
+own their conventions. A database catalog inspector receives borrowed rows
+through the narrow callback host, retaining compact metadata only.
+
+A launcher returns argv; a runtime detector reads only the injected environment;
+a version inspector requests fixed supported host probes. Integrations never
+run programs or contact storage/network themselves. Capability declarations,
+implemented ports, host presence and capture verification are separate facts.
+Unsupported operations remain absent from the registry.
+
+## Verify the real consumers
+
+Use capability-specific suites in `internal/testutil/agenttest` and synthetic
+fixtures for the implemented ports. Register the shared golden `-update` flag
+in every new tested package, including packages without local golden cases.
+Check ordinary registry injection across hook admission, filtering, publication,
+readback, metadata and handoff, plus discovery/backfill and setup/removal where
+implemented. Include colliding agent-qualified IDs, multiple records/files,
+unavailable metrics, repeated effects, transient reads/publication failures,
+permitted replacements and append-only refusal.
+
+`internal/testutil/orbifold` and `TestFourthNormalRegistryFlow` demonstrate an
+independent test-only vocabulary, record framing and retained format through
+normal ports. They are synthetic extension evidence, not certification of a
+fourth production agent or installed native version. Run the repository's
+architecture, normal lint, shipped Levenshtein policy, golden-flag smoke, fuzz
+and platform checks against the final ancestry. See [testing](testing.md) for
+the required commands and review every changed golden before regeneration.

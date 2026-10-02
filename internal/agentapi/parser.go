@@ -45,6 +45,9 @@ func Analyze(ctx context.Context, parser TranscriptParser, bundle archive.Source
 	}
 	analysis, err := parser.Parse(ctx, bundle)
 	if err == nil {
+		if err := ctx.Err(); err != nil {
+			return archive.Analysis{}, err
+		}
 		return analysis, nil
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

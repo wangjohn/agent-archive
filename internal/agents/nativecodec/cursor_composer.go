@@ -15,8 +15,8 @@ import (
 // CursorBubble is one message row: the bubble ID from the chat's header and
 // the bubbleId:<chat>:<message> value, nil when the row is missing.
 type CursorBubble struct {
-	ID    string
-	Value json.RawMessage
+	ID    string          `json:"id"`
+	Value json.RawMessage `json:"value"`
 }
 
 // cursorComposerFormat is the source format of a chat filtered from Cursor's
