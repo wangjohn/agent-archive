@@ -37,6 +37,16 @@ added since a promptless archive snapshot; archive-only selection retains that
 snapshot's result. Preserve this behavior when Analysis availability and the
 native/configured-archive handoff consumers move.
 
+Live target `e3b82989d56903966a0fb1c6a774c18c15f5e838` additionally preserves
+cancellation during checkout canonicalization and before preview loading.
+After header workers finish, discovery releases unused reservations and carries
+actual read bytes into the preview budget. Exhausting that budget leaves verified
+identity-only rows selectable without further preview reads. Incomplete identity
+discovery refuses automatic latest selection even with a destination/current
+session: interactive use requires an explicit picker choice; noninteractive use
+returns qualified ID/agent/checkout recipes. Preserve these separate discovery,
+preview and shared selection policies through phases 2, 4, 5 and 6.
+
 ## Qualified identity and local migration (phase 3a)
 
 Use `SessionKey{Agent, NativeID}`. Canonicalize the agent once (trim, lowercase,

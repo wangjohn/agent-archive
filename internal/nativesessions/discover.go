@@ -162,7 +162,13 @@ func Discover(ctx context.Context, files FileSystem, roots []StoreRoot, scope Sc
 	if err != nil {
 		return out, err
 	}
-	out.Candidates, err = scopeNativeCandidates(files, scope, answers, &out.Coverage)
+	// All header jobs have finished, so unused worst-case reservations can be
+	// released without making scheduling depend on worker completion order.
+	for _, a := range answers {
+		out.Coverage.ReadBytes += a.bytes
+	}
+	out.Coverage.ReservedBytes = out.Coverage.ReadBytes
+	out.Candidates, err = scopeNativeCandidates(ctx, files, scope, answers, &out.Coverage)
 	out.Coverage.InScope = len(out.Candidates)
 	if !out.Coverage.IdentityComplete && out.Coverage.Reason == "" {
 		out.Coverage.Reason = "unverified identities or checkouts"
@@ -350,22 +356,32 @@ func inspectNativeHeaders(ctx context.Context, files FileSystem, scheduled []hea
 	return answers, nil
 }
 
-func scopeNativeCandidates(files FileSystem, scope Scope, answers []headerAnswer, c *Coverage) ([]Candidate, error) {
+func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, answers []headerAnswer, c *Coverage) ([]Candidate, error) {
 	cache := map[string]string{}
-	canonical := func(dir string) string {
+	canonical := func(dir string) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if d, ok := cache[dir]; ok {
-			return d
+			return d, nil
 		}
 		d, err := files.EvalSymlinks(dir)
+		if canceled := ctx.Err(); canceled != nil {
+			return "", canceled
+		}
 		if err != nil {
 			d = ""
 		}
 		cache[dir] = d
-		return d
+		return d, nil
 	}
 	var dirs []string
 	for _, dir := range scope.Directories {
-		if d := canonical(dir); d != "" {
+		d, err := canonical(dir)
+		if err != nil {
+			return nil, err
+		}
+		if d != "" {
 			dirs = append(dirs, d)
 		}
 	}
@@ -374,8 +390,10 @@ func scopeNativeCandidates(files FileSystem, scope Scope, answers []headerAnswer
 	}
 	var candidates []Candidate
 	for _, a := range answers {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		c.Inspected++
-		c.ReadBytes += a.bytes
 		if a.err != nil {
 			c.Skipped++
 			if !errors.Is(a.err, errSubagent) {
@@ -383,7 +401,11 @@ func scopeNativeCandidates(files FileSystem, scope Scope, answers []headerAnswer
 			}
 			continue
 		}
-		a.c.Directory = canonical(a.c.Directory)
+		var err error
+		a.c.Directory, err = canonical(a.c.Directory)
+		if err != nil {
+			return nil, err
+		}
 		if a.c.Directory == "" {
 			c.Skipped++
 			c.IdentityComplete = false
