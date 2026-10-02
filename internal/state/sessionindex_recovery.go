@@ -18,8 +18,9 @@ import (
 const sessionIndexMarkerFile = "session-index.json"
 
 type sessionIndexMarker struct {
-	Version  int  `json:"version"`
-	Complete bool `json:"complete"`
+	Version    int    `json:"version"`
+	Complete   bool   `json:"complete"`
+	Generation string `json:"generation,omitempty"`
 }
 
 func (s *Store) sessionIndexMissAllowed() error {
@@ -37,7 +38,35 @@ func (s *Store) sessionIndexMissAllowed() error {
 // MarkSessionIndexRecoveryNeeded records known damaged or incomplete migration
 // evidence. It does not claim released old binaries understand this marker.
 func (s *Store) MarkSessionIndexRecoveryNeeded() error {
-	return local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1})
+	_, err := s.beginSessionIndexRecovery()
+	return err
+}
+
+// Collector/retention marker writes are serialized by collector.lock; requests
+// already hold hooks.lock. Completion takes hooks.lock only for compare/rename,
+// so it cannot erase a newer request. No request lock acquires hooks.lock here.
+func (s *Store) beginSessionIndexRecovery() (string, error) {
+	generation, err := local.ID()
+	if err != nil {
+		return "", err
+	}
+	err = local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Generation: generation})
+	return generation, err
+}
+
+func (s *Store) completeSessionIndexRecovery(generation string) error {
+	return s.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return local.NamedLockWait(s.home, "hooks.lock", time.Second) },
+		path: filepath.Join(s.home, sessionIndexMarkerFile),
+		change: func(current fileSnapshot) (any, bool, error) {
+			var marker sessionIndexMarker
+			if !current.found || json.Unmarshal(current.data, &marker) != nil || marker.Version != 1 || marker.Complete || marker.Generation != generation {
+				return nil, false, ErrSessionIndexRecoveryRequired
+			}
+			marker.Complete = true
+			return marker, true, nil
+		},
+	})
 }
 
 // RequestSessionIndexRecovery retains the damaged key so a complete census
@@ -69,7 +98,8 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-begin"); err != nil {
 		return err
 	}
-	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
+	generation, err := s.beginSessionIndexRecovery()
+	if err != nil {
 		return err
 	}
 	if err := s.indexStep("recovery-incomplete"); err != nil {
@@ -154,7 +184,7 @@ func (s *Store) RecoverSessionIndex(ctx context.Context) error {
 	if err := s.indexStep("recovery-completing"); err != nil {
 		return err
 	}
-	if err := local.Write(filepath.Join(s.home, sessionIndexMarkerFile), sessionIndexMarker{Version: 1, Complete: true}); err != nil {
+	if err := s.completeSessionIndexRecovery(generation); err != nil {
 		return err
 	}
 	return s.indexStep("recovery-complete")

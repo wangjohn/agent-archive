@@ -12,6 +12,7 @@ import (
 )
 
 const maxLifecycleEvents = 64
+
 const maxLifecycleBytes = 16 << 20
 
 // validateBatch checks every decoded fact and filters every evidence candidate
@@ -54,6 +55,7 @@ func validateBatch(harness string, in []agentapi.LifecycleEvent, now time.Time) 
 	}
 	return out, nil
 }
+
 func validateEventShape(event agentapi.LifecycleEvent) error {
 	if event.Kind < agentapi.EventStart || event.Kind > agentapi.EventSubagent {
 		return errors.New("invalid lifecycle kind")
@@ -75,6 +77,7 @@ func validateEventShape(event agentapi.LifecycleEvent) error {
 	}
 	return validateEventValues(event)
 }
+
 func validateEventValues(event agentapi.LifecycleEvent) error {
 	if event.Source.Kind != "" && event.Source.Kind != archive.SourceKindFile {
 		return errors.New("hook locator must name a file source")
@@ -96,8 +99,9 @@ func validateEventValues(event agentapi.LifecycleEvent) error {
 	}
 	return nil
 }
+
 func validateEventFields(event agentapi.LifecycleEvent, budget *int) error {
-	fields := []string{string(event.Session.Agent), event.Session.NativeID, event.Session.Version, event.Session.Mode, event.ProjectRoot, event.Source.Path, event.Source.Key, event.Start.Path, event.Start.Reason, event.Reason, event.NativeEvent}
+	fields := []string{string(event.Session.Agent), event.Session.NativeID, event.Session.Version, string(event.Session.Mode), event.ProjectRoot, event.Source.Path, event.Source.Key, event.Start.Path, string(event.Start.Reason), event.Reason, event.NativeEvent}
 	if event.Child != nil {
 		fields = append(fields, event.Child.ID, event.Child.Path, event.Child.Type, event.Child.MissingDetail)
 	}
@@ -112,6 +116,7 @@ func validateEventFields(event agentapi.LifecycleEvent, budget *int) error {
 	}
 	return nil
 }
+
 func validateEventEvidence(event agentapi.LifecycleEvent, now time.Time, budget *int) ([]archive.SupplementalEvidence, error) {
 	if len(event.Evidence) > 16 {
 		return nil, errors.New("lifecycle evidence count exceeded")
@@ -142,6 +147,7 @@ func validateEventEvidence(event agentapi.LifecycleEvent, now time.Time, budget 
 	}
 	return retained, nil
 }
+
 func boundedEvidence(value any, budget *int, depth int) bool {
 	if depth > 32 || *budget < 0 {
 		return false
@@ -179,9 +185,9 @@ func boundedEvidence(value any, budget *int, depth int) bool {
 	return *budget >= 0
 }
 
-func validFreshnessReason(reason string) bool {
+func validFreshnessReason(reason agentapi.FreshnessReason) bool {
 	switch reason {
-	case "empty_native_path", "invalid_native_path", "inspect_native_path", "explicit_start", "explicit_continuation", "unknown_native_source", "retained_hook_proof":
+	case agentapi.FreshnessEmptyPath, agentapi.FreshnessInvalidPath, agentapi.FreshnessInspectPath, agentapi.FreshnessExplicitStart, agentapi.FreshnessContinuation, agentapi.FreshnessUnknownSource, agentapi.FreshnessRetainedProof:
 		return true
 	}
 	return false

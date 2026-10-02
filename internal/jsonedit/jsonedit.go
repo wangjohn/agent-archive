@@ -195,6 +195,7 @@ type edit struct {
 
 // ErrInvalidConfiguration identifies a refused JSON Document.
 var ErrInvalidConfiguration = errors.New("invalid existing hook configuration")
+
 var errInvalidConfiguration = ErrInvalidConfiguration
 
 // configError is errInvalidConfiguration for one file. Its message is what
@@ -332,7 +333,6 @@ func Parse(src []byte, ownedKeys ...string) (*Document, error) {
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
 		// so a duplicate of a Member it owns is refused.
-		//lint:ignore LV1001 top-level Member names of a user's JSON file are an open set; only these two are setup's
 		if _, dup := d.span(key); dup && slices.Contains(ownedKeys, key) {
 			return nil, refused(d.src, keyStart, fmt.Sprintf("more than one top-level %q key; remove the duplicate", key))
 		}

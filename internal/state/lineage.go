@@ -382,14 +382,7 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.refreshSkipPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		if err := s.removeSessionIndex(key, archiveSessionID); err != nil {
-			return err
-		}
-	}
+
 	// The session's own candidate is gone (removed above, under this lock),
 	// so its lock file goes too. Unlinking a lock file is safe:
 	// local.NamedLock only reports a lock held once the path still names the
@@ -403,8 +396,19 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	// fresh file at once, so everything a hook rechecks under that lock (the
 	// registration, the request, and the native-session index a new
 	// registration would reuse) must already be gone by then.
-	paths = append(paths, filepath.Join(s.home, requestLockName(archiveSessionID)))
+	requestLockPath := filepath.Join(s.home, requestLockName(archiveSessionID))
+	paths = append(paths, requestLockPath)
 	for _, path := range paths {
+		// Keep registration deletion before index deletion: interrupted expiry
+		// must never leave an admitted owner invisible to bounded lookup.
+		if path == requestLockPath && key.NativeID != "" {
+			if err := s.removeSessionIndex(key, archiveSessionID); err != nil {
+				return err
+			}
+			if err := s.indexStep("forget-indexes"); err != nil {
+				return err
+			}
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}

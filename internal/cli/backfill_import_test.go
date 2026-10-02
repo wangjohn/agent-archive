@@ -18,7 +18,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -817,10 +816,10 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 				return
 			case <-time.After(25 * time.Millisecond):
 			}
-			err := capture.HandleEvent(home, "claude", map[string]any{
+			err := handleTestHookEvent(home, "claude", map[string]any{
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("hook-%d", i), "cwd": project,
 				"transcript_path": filepath.Join(project, fmt.Sprintf("hook-%d.jsonl", i)),
-			}, time.Now(), capture.WithDecoders(productionAgents))
+			}, time.Now())
 			mu.Lock()
 			if err != nil {
 				hookErrs = append(hookErrs, err)

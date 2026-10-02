@@ -15,8 +15,10 @@ type HookInput struct {
 
 // NativeSession contains exact native identity and observed native version facts.
 type NativeSession struct {
-	Agent                   agentmeta.ID
-	NativeID, Version, Mode string
+	Agent    agentmeta.ID
+	NativeID string
+	Version  string
+	Mode     NativeMode
 }
 
 // EventKind is an archive-relevant lifecycle action, independent of native names.
@@ -42,10 +44,30 @@ const (
 	FreshStat
 )
 
+// NativeMode retains the exact observed native mode, including future values.
+type NativeMode string
+
+// NativeModeUnspecified is the absence of a native mode observation.
+const NativeModeUnspecified NativeMode = ""
+
+// FreshnessReason is a fixed explanation of native freshness evidence.
+type FreshnessReason string
+
+// These reason codes describe proof without retaining raw native source values.
+const (
+	FreshnessEmptyPath     FreshnessReason = "empty_native_path"
+	FreshnessInvalidPath   FreshnessReason = "invalid_native_path"
+	FreshnessInspectPath   FreshnessReason = "inspect_native_path"
+	FreshnessExplicitStart FreshnessReason = "explicit_start"
+	FreshnessContinuation  FreshnessReason = "explicit_continuation"
+	FreshnessUnknownSource FreshnessReason = "unknown_native_source"
+	FreshnessRetainedProof FreshnessReason = "retained_hook_proof"
+)
+
 // StartEvidence requests at most one bounded stat and never a source read.
 type StartEvidence struct {
 	Kind   Freshness
-	Reason string
+	Reason FreshnessReason
 	Path   string
 }
 
@@ -71,7 +93,9 @@ const (
 
 // ChildObservation contains native child facts, without archive admission policy.
 type ChildObservation struct {
-	ID, Path, Type    string
+	ID                string
+	Path              string
+	Type              string
 	MissingDetail     string
 	CaptureTranscript bool
 }

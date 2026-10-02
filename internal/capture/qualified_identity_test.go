@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -139,8 +140,50 @@ func TestQualifiedSubagentParentCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, evidence := range request.HookEvidence {
-		if evidence.Kind == "linked_session" {
+		if evidence.Kind == archive.EvidenceKindLinkedSession {
 			t.Fatal("child linked wrong parent")
 		}
+	}
+}
+
+// A failed child lookup must request that child's recovery, rather than only
+// the healthy parent named in the incoming hook. Regression: phase 3a P3A-R3.
+func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	if err := HandleEvent(home, "claude", claudeStart(project, "parent", "startup", "/synthetic/parent.jsonl"), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	child := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent:subagent:child"}
+	corruptQualifiedIndex(t, home, child)
+	payload := map[string]any{"hook_event_name": "SubagentStop", "session_id": "parent", "cwd": project, "agent_id": "child", "agent_transcript_path": "/synthetic/child.jsonl"}
+	for range 2 {
+		if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			t.Fatalf("lookup: %v", err)
+		}
+		if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if regs, err := store.LoadRegistrations(); err != nil || len(regs) != 1 {
+		t.Fatalf("unproved child admitted: %#v %v", regs, err)
+	}
+	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatalf("child recovery stranded: %v", err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute), testDecoders); err != nil {
+		t.Fatal(err)
+	}
+	if regs, err := store.LoadRegistrations(); err != nil || len(regs) != 1 {
+		t.Fatalf("unproved child admitted: %#v %v", regs, err)
+	}
+	if err := HandleEvent(home, "claude", payload, at.Add(2*time.Minute), WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 1 || candidates[0].NativeSessionID != child.NativeID {
+		t.Fatalf("child retry: %#v %v", candidates, err)
 	}
 }

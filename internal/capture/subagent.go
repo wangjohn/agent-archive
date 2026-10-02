@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, after func(string) error) error {
+func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
 	harness, parentNativeID := string(event.Session.Agent), event.Session.NativeID
 
 	parentID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: parentNativeID})
@@ -44,7 +44,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 		}
 		return fmt.Errorf("assign subagent archive session ID: %w", err)
 	}
-	if err := effectBoundary(after, "child-reservation"); err != nil {
+	if err := effectBoundary(after, effectChildReservation); err != nil {
 		return err
 	}
 	status := archive.LinkedSessionUnavailable
@@ -67,7 +67,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 	if err := saveLinkedSessionEvidence(store, parent.ArchiveSessionID, childID, status, now); err != nil {
 		return err
 	}
-	if err := effectBoundary(after, "child-link"); err != nil {
+	if err := effectBoundary(after, effectChildLink); err != nil {
 		return err
 	}
 	if !event.Child.CaptureTranscript || path == "" {
@@ -83,7 +83,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 	if err != nil {
 		return err
 	}
-	return effectBoundary(after, "child-candidate")
+	return effectBoundary(after, effectChildCandidate)
 }
 
 func saveLinkedSessionEvidence(store *state.Store, parentID, childID string, status archive.LinkedSessionStatus, observedAt time.Time) error {
