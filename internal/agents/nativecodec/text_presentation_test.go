@@ -8,7 +8,11 @@ import (
 
 func TestCursorTextPromptPresentationPreservesHistoricalOutput(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct{ name, input, want string }{
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
 		{"query wrapper", "<timestamp>2026-09-23T09:00:00Z</timestamp>\n<user_query>Review the parser.\nKeep the fixtures.</user_query>", "Review the parser.\nKeep the fixtures."},
 		{"slash command", "<command-name>/review-pr</command-name>\n<command-args>300</command-args>", "/review-pr 300"},
 	} {
