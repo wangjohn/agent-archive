@@ -100,6 +100,11 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 	subagents := subagentShare(current, total)
 	highlighted := highlights(current, units, perDay, first, modelRows, now, loc)
 	cov := coverage(current)
+	for _, u := range units {
+		if u.day <= today && (cov.FirstRecordedDay == "" || dateString(max(first, u.day)) < cov.FirstRecordedDay) {
+			cov.FirstRecordedDay = dateString(max(first, u.day))
+		}
+	}
 	skillLists := skills(current, topN)
 	out := Stats{
 		Window: Window{
@@ -125,7 +130,7 @@ func Compute(sessions []archive.Metadata, opts Options) Stats {
 		Subagents:     subagents,
 		Skills:        skillLists.recorded,
 		DisplaySkills: skillLists.display,
-		MCP:           mcpServers(current, topN),
+		MCP:           mcpServers(current, topN, opts.MCPServerNames),
 		Highlights:    highlighted,
 		HeadsUp:       headsUp(cov, total, subagents, highlighted.CostliestSession),
 		Groups:        grouped,
@@ -527,7 +532,7 @@ func topSkills(counts map[string]int, topN int) []Skill {
 	return out
 }
 
-func mcpServers(current []*unit, topN int) *MCP {
+func mcpServers(current []*unit, topN int, names map[string]string) *MCP {
 	calls := map[string]int64{}
 	sessions := map[string]int{}
 	for _, u := range current {
@@ -541,7 +546,7 @@ func mcpServers(current []*unit, topN int) *MCP {
 	}
 	servers := make([]MCPServer, 0, len(calls))
 	for _, name := range sortedKeys(calls) {
-		servers = append(servers, MCPServer{Name: name, Calls: calls[name], Sessions: sessions[name]})
+		servers = append(servers, MCPServer{Name: name, DisplayName: mcpDisplayName(name, names, len(servers)+1), Calls: calls[name], Sessions: sessions[name]})
 	}
 	sort.SliceStable(servers, func(i, j int) bool { return servers[i].Calls > servers[j].Calls })
 	if len(servers) > topN {
