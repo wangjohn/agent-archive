@@ -732,7 +732,7 @@ human-turn counts, local prompts newer than the archive copy, and exact-ID
 accessibility. These remain shared selection policies when the native facts
 and availability move into Analysis.
 
-Latest target `e3b82989d56903966a0fb1c6a774c18c15f5e838` extends native-handoff
+Target `e3b82989d56903966a0fb1c6a774c18c15f5e838` extends native-handoff
 budget and cancellation behavior: release unused header reservations after
 workers finish, preserve actual cumulative read accounting, and keep verified
 identity-only picker rows available without preview reads after budget exhaustion.
@@ -741,6 +741,16 @@ Incomplete discovery cannot silently choose latest or the current session;
 interactive fallback requires an explicit choice and noninteractive fallback
 offers qualified native-ID/agent/checkout recipes. These remain shared selection
 and resource policies, with no replacement of historical performance samples.
+
+Latest target `0ffa628e84a2b4e6265ffa2ff481788269027567` also introduces
+informational machine registration and independent publication retries, bounded
+portable project matching, revised storage creation/confirmation and filter15
+pairing-bundle redaction. Preserve the target's shared setup, destination,
+credential provenance and capture-scope policies. Discovery extraction must
+retain conservative incomplete matching and bounded native history, while codec
+extraction keeps filter15/adapter0.15.0 redaction and golden output intact.
+Historical timing/instrumentation remains unchanged and does not measure these
+newer filter, setup or registration workloads.
 
 | Artifact | Recommended default | Required before |
 | --- | --- | --- |

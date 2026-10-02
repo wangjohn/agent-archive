@@ -1,0 +1,91 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "destination_id",
+    "kind"
+  ],
+  "properties": {
+    "destination_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "kind": {
+      "enum": [
+        "aws_profile",
+        "r2_unknown",
+        "r2_shared",
+        "r2_own"
+      ]
+    },
+    "access_key_id": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[^\u0000-\u001f\u007f-\u009f]*$"
+    },
+    "recipient_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "issuer_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "slot_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "shared_with": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "pairing_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "paired_from": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "paired_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "r2_own"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "access_key_id",
+          "recipient_id",
+          "issuer_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "r2_shared"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "access_key_id",
+          "shared_with"
+        ]
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/machine-assignment.schema.json",
+  "title": "Locally committed destination-bound machine credential provenance"
+}

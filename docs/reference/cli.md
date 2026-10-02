@@ -28,6 +28,7 @@ Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -117,6 +118,8 @@ An interrupted setup is recovered on the next run.
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repo by key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
@@ -152,6 +155,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--bucket` | a value | — |
 | `--no-skills` | no value | — |
 | `--project` | a value | — |
+| `--project-repo` | a value | — |
 | `--provider` | a value | — |
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |
@@ -161,6 +165,40 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--skills` | no value | — |
 | `--verbose` | no value | — |
 | `--yes` | no value | — |
+
+## agent-archive machines
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines [--json]
+
+List informational machine records from this bucket, without provider checks.
+Anyone with bucket access can forge records; they never authorize revocation.
+Heartbeat is updated at most daily and does not indicate current activity.
+Unreadable records and incomplete listings are reported; those exit with code 1.
+  --json  Write records, omitted objects, and partial-result status as JSON
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--json` | no value | — |
+
+## agent-archive machines rename
+
+Guide: [Multiple machines](../guides/multiple-machines.md).
+
+```text
+Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
+
+Rename this machine only, keeping its immutable machine and credential IDs.
+Use the full MACHINE_ID when a current name is ambiguous. The new name has
+1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.
+Observed duplicate names are refused; concurrent naming can still race.
+A failed publication keeps the local name and the collector retries.
+```
+
+No flags.
 
 ## agent-archive status
 

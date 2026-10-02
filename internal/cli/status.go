@@ -160,9 +160,10 @@ type projectCaptureStatus struct {
 }
 
 type statusView struct {
-	PrivacyEvidence storage.PrivacyReport `json:"privacy_evidence"`
-	ConfigurationID string                `json:"configuration_id,omitempty"`
-	Authentication  storageHealth         `json:"authentication"`
+	MachineRegistrationPending bool                  `json:"machine_registration_pending,omitempty"`
+	PrivacyEvidence            storage.PrivacyReport `json:"privacy_evidence"`
+	ConfigurationID            string                `json:"configuration_id,omitempty"`
+	Authentication             storageHealth         `json:"authentication"`
 
 	Code    string `json:"code"`
 	Version int    `json:"schema_version"`
@@ -422,6 +423,10 @@ func readSetupProgress(view *statusView, home string) {
 // local files say: storage and its privacy and access evidence, capture
 // diagnostics, and the included projects.
 func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
+	view.MachineRegistrationPending = registrationPending(home, cfg)
+	if view.MachineRegistrationPending {
+		view.Warnings = append(view.Warnings, "Machine registration pending; the collector retries independently of capture.")
+	}
 	view.configured = true
 	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
 	view.AgentSkillsDisabled = cfg.NoSkills

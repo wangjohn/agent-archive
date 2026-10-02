@@ -62,6 +62,10 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// MachineName is a chosen label, never a detected hostname.
+	MachineName string `json:"machine_name,omitempty"`
+	// MachineAssignment is locally committed credential provenance for one destination.
+	MachineAssignment     *MachineAssignment         `json:"machine_assignment,omitempty"`
 	BucketPrivacy         *destination.PrivacyReport `json:"bucket_privacy,omitempty"`
 	RetiredCredentialRefs []string                   `json:"retired_credential_refs,omitempty"`
 	StorageVerifiedAt     time.Time                  `json:"storage_verified_at,omitempty"`
@@ -219,6 +223,9 @@ func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, 
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
+	if err := cfg.ValidateMachine(); err != nil {
+		return Config{}, false, err
+	}
 	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
@@ -233,6 +240,9 @@ func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, age
 
 // SaveWithCatalog validates and writes configuration with injected identities.
 func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	if err := cfg.ValidateMachine(); err != nil {
+		return err
+	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
 	}

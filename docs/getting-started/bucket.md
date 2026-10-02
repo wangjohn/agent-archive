@@ -5,7 +5,7 @@ every machine you set up can share it. You need a Cloudflare or AWS account for
 the bucket; there is no agent-archive account or hosted service. Cloudflare
 R2 is the quickest to set up. `agent-archive setup` can create an S3 bucket
 for you and, experimentally, an R2 one (both below), and links here when you
-choose "Show setup instructions" at its storage question.
+choose "Setup instructions" at its storage question.
 
 ## Cloudflare R2 (recommended)
 
@@ -25,9 +25,9 @@ custom account permissions. Automatic bucket creation below needs the latter.
 
 `agent-archive setup` can create the bucket for you. This is **experimental**:
 it has not yet been run against every kind of Cloudflare account, so the
-option is hidden unless you turn it on by setting
+creation flow is disabled unless you turn it on by setting
 `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` in the shell that runs setup. Then, at
-the storage question, choose **Cloudflare R2: create a new bucket for me**. You
+the storage question, choose **Cloudflare R2**, then **Continue**. You
 make one Cloudflare API token by hand, once; setup does the rest. R2 must
 already be enabled on your Cloudflare account (Cloudflare may ask for a
 payment method; see [current R2
@@ -59,17 +59,17 @@ pricing](https://developers.cloudflare.com/r2/pricing/)).
    If the custom permissions aren't available, ask an account administrator
    or use the manual route below.
 2. Run `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1 agent-archive setup`, choose
-   **Cloudflare R2: create a new bucket for me**, and paste the token when
+   **Cloudflare R2**, then **Continue**, and paste the token when
    asked (it is hidden). If your shell sets `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID`, as Cloudflare's own tools expect, setup uses them
    and doesn't ask.
 3. Setup first looks up the archive-key permission and checks
    that it can be granted. If this check fails, no bucket or key is created.
    You can paste a different token, retry after updating its permissions, or
-   go back to choose other storage. Once the lookup succeeds, setup asks for
-   a bucket name (suggesting `agent-archive-` and eight random characters).
-   Storage location is automatic unless you choose to customize it.
-   Setup shows the bucket name and location before asking you to confirm.
+   use an existing bucket, or go back to choose other storage. Once the lookup
+   succeeds, setup shows a suggested bucket name (`agent-archive-` and eight
+   random characters) and automatic location. Press Enter to create it, or
+   choose **Customize** to edit the name and location and return to the summary.
    This does not guarantee that Cloudflare will accept the later token-creation
    request. After your confirmation, setup creates
    a new bucket (Cloudflare buckets have no public access by default), creates
@@ -122,7 +122,7 @@ or if you prefer to do it by hand, follow the manual steps below.
 3. Copy your **Account ID** from the R2 overview page, or the bucket's S3 API
    URL from its **Settings** (`https://<account-id>.r2.cloudflarestorage.com/<bucket>`).
 
-Then run `agent-archive setup`, choose `r2`, and paste the Account ID (then
+Then run `agent-archive setup`, choose **Cloudflare R2**, then **Use an existing bucket**, and paste the Account ID (then
 the bucket name) or the bucket's URL (which names both), and the two keys.
 The secret is kept in the macOS Keychain, or on Linux, which has none, in a
 private credentials file that is not encrypted ([where credentials are
@@ -140,8 +140,10 @@ create a new token if you no longer have it.
 ### Let setup create it
 
 If you have an AWS profile that may create buckets, `agent-archive setup`
-can do the console steps: choose **Amazon S3: create a new bucket for
-me**, pick the profile, and confirm the region and name. Setup creates
+can do the console steps: choose **Amazon S3**, then **Continue**, pick the profile, and review the
+suggested name and profile region. Choose **Customize** to change the name,
+region or creation profile; press Enter on the summary to create. If your
+profile has no region, setup asks for one before the summary. Setup creates
 the bucket, turns on all four **Block Public Access** settings, checks them,
 and prints the [least-privilege
 policy](../security/bucket-permissions.md#amazon-s3) for the new bucket. The
@@ -165,7 +167,8 @@ it as its own profile, and choose it at that question (or run
    that bucket, and an access key for it.
 3. Save the key as an AWS profile: `aws configure --profile agent-archive`.
 
-Then run `agent-archive setup`, choose **Amazon S3**, and pick that profile.
+Then run `agent-archive setup`, choose **Amazon S3**, then **Use an existing
+bucket**, and pick that profile.
 
 ## One key per machine
 
