@@ -151,6 +151,20 @@ func diagnostic(key, reason string) Unreadable {
 	return Unreadable{Key: strconv.QuoteToASCII(key), Reason: reason}
 }
 
+// Nested progress objects never become records or identity proof. They still
+// count toward the caller's bounded listing budget and are never fetched.
+func machineRecordObjects(objects []storage.Object) []storage.Object {
+	const prefix = "machines/revocations/"
+	result := objects[:0]
+	for _, object := range objects {
+		if strings.HasPrefix(object.Key, prefix) && strings.HasSuffix(object.Key, ".json") && config.ValidMachineID(strings.TrimSuffix(strings.TrimPrefix(object.Key, prefix), ".json")) {
+			continue
+		}
+		result = append(result, object)
+	}
+	return result
+}
+
 // List reads only machine records, with one five-second deadline, at most
 // 1000 pages or examined keys and four concurrent allocation-bounded fetches. Stores
 // lacking the required extensions are refused rather than read unboundedly.
@@ -184,6 +198,8 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 			objects = objects[:1000-examined]
 			result.Partial = true
 		}
+		examined += len(objects)
+		objects = machineRecordObjects(objects)
 		type fetched struct {
 			record  Record
 			problem *Unreadable
@@ -192,7 +208,6 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 		var wg sync.WaitGroup
 		slots := make(chan struct{}, 4)
 		for i, obj := range objects {
-			examined++
 			if len(obj.Key) != len("machines/")+32+len(".json") || !strings.HasPrefix(obj.Key, "machines/") || !strings.HasSuffix(obj.Key, ".json") {
 				d := diagnostic(obj.Key, "invalid record path")
 				got[i].problem = &d

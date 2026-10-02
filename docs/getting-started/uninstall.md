@@ -203,3 +203,10 @@ Machine records under `machines/` and remote credential access remain after
 uninstall. Remove access using your storage provider; the informational machine
 list cannot prove or remove it. Include `machines/` when deleting the entire
 archive. `--delete-local-data` also removes local machine registration retry state.
+
+Uninstalling does not revoke provider access. In an experimental Phase 4 build,
+another authorized machine can use `agent-archive machines revoke` with an
+independently verified binding; bucket records alone are insufficient. A
+request or unknown provider result does not mean access was removed. Local data
+removal includes this installation's revocation journals and own-key checkpoint,
+without deleting unrelated files or other users' shared provider key.

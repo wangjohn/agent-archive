@@ -436,3 +436,14 @@ States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
 secret-free local pending, uncertain-delivery or expired pairing descriptions.
 These warnings require no conversation scan or provider-management credential.
 An observed matching bucket claim does not prove machine ownership or revocation.
+
+`machines revoke --json` writes schema-1 revocation operation metadata and its
+exact selected `keys`, whose outcomes are `pending`, `confirmed` or
+`failed-or-unknown`. `publication_pending` describes the distinct bucket write,
+not provider success. `account_inventory_complete` is always false;
+`request_only` means no verified deletion selection. The optional
+`requested_selector` retains the explicitly **unverified** caller request as a
+bounded `kind` (`name`, `machine_id`, `recipient_id`, or `pairing_id`) and `value`.
+It is informational, never deletion authority; request-only operations cannot
+be retried as verified selections. Provider success confirms
+only the selected set, never all possible shared/legacy/creator-hidden access.

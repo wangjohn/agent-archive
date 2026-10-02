@@ -10,6 +10,12 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Draft experimental revocation with verified immutable selection, per-key
+  recovery journals, serialized issuance selection and independent publication,
+  plus transaction-based
+  `machines own-key` migration. General availability and first-run pairing
+  remain disabled pending combined and live provider acceptance.
+
 - Draft experimental dedicated R2 issuance for `machines add` and guided bucket
   creation: exact immutable provider identities, verified fresh keys, default
   two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
@@ -46,6 +52,18 @@ Planned for v0.2.0. This release has not been tagged or published.
   refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
+
+- Draft machine revocation rejects forged self labels, leaves registry commands
+  usable after progress publication, and preserves unverified request targets.
+  Own-key migrations retire completed checkpoints and disclose shared access
+  retained through retired local credential aliases. Staged migration retries
+  refuse a shared credential reference replaced by later setup, retaining the
+  stage for safe cancellation. Pre-slot interruptions can be safely retired
+  locally after setup changes, while uncertain issuance and secret cleanup
+  remain recorded. Confirmed-deleted own-key stages retry exact local secret
+  removal after credential-store recovery without deleting the provider again.
+  Own-key commit requires a persisted staged credential even when the shell
+  supplies a matching key.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.

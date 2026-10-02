@@ -735,7 +735,7 @@ var localStateEntries = []string{
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
-	"cache", handoffDir, "purge-plans", "issued", "issued.lock",
+	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
 	credentials.CredentialsDirName,
 }
