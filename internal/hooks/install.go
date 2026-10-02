@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/filechange"
 	"github.com/wangjohn/agent-archive/internal/jsonedit"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"maps"
 	"os"
 	"path/filepath"
@@ -70,7 +71,21 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 		if err != nil {
 			return nil, err
 		}
-		changes = append(changes, change)
+		duplicate := false
+		for _, prior := range changes {
+			// Atomic replacement writes destinations independently, even for hardlinks.
+			if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+				continue
+			}
+			if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.Before, change.Before) || !bytes.Equal(prior.After, change.After) {
+				return nil, fmt.Errorf("hook owners have conflicting installation plans for %s", change.Path)
+			}
+			duplicate = true
+			break
+		}
+		if !duplicate {
+			changes = append(changes, change)
+		}
 	}
 	return changes, nil
 }

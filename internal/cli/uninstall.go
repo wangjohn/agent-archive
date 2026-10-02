@@ -570,7 +570,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 				}
 				continue
 			}
-			if i == 1 && local.SameLocation(legacy[app], files[app]) {
+			if i == 1 && local.CanonicalPath(legacy[app]) == local.CanonicalPath(files[app]) {
 				continue
 			}
 			change, found, err := hooks.PlanRemovalOf(set, owner, app)
@@ -584,7 +584,8 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 			if found {
 				duplicate := false
 				for _, prior := range changes {
-					if !local.SameLocation(prior.Path, change.Path) {
+					// Hardlinks remain separate atomic-replacement destinations.
+					if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
 						continue
 					}
 					// Distinct owners may select one file only when their complete plans
