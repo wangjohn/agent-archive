@@ -2,4 +2,5 @@
 Remove the archive's hooks and background collector from this machine. Remote archives are kept.
 Local evidence, settings, and credentials will be kept. Run setup to reinstall.
 Left launchd's com.agent-archive.collector job running: it was loaded from another plist, so it belongs to another installation. @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist was kept.
+Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.
 Uninstall complete. Remote archives and the CLI executable were kept.

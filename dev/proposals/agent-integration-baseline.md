@@ -14,7 +14,7 @@ injected repository lookup and fake object storage. Raw results are in
 phase-entry baseline; the unresolved historical timing difference means the
 proposal’s full relative performance gate is **not** declared resolved.
 
-Live integration target is `e3b82989d56903966a0fb1c6a774c18c15f5e838`.
+Live integration target is `0ffa628e84a2b4e6265ffa2ff481788269027567`.
 It includes #277's collector file reads through `transcriptio` and extracted
 `nativesessions` helpers, plus #280's native handoff discovery, bounded filtered
 previews, shared record filtering and cancellable boundary probes. It is not
@@ -26,6 +26,13 @@ unused discovery reservations, checks cancellation during checkout scoping and
 preview loading, keeps verified identity-only rows after preview-budget exhaustion,
 and refuses automatic latest/current selection when discovery is incomplete.
 None of these later targets was timed for this historical reference.
+Latest main also includes filter15/adapter0.15.0 pairing-bundle redaction,
+informational machine registration with independent publication retries,
+bounded portable project matching and revised storage creation/confirmation.
+Their upstream production changes and golden fixtures are preserved. Historical
+98/ff6 timings and immutable instrumentation still use their recorded versions;
+this update neither regenerates raw samples nor claims performance parity for
+the newer filter or machine-publication workloads.
 The core-production equality claim below applies only to the pinned historical
 measurement at `ff6d250`, not to this newer target. Later hot-path comparisons
 must keep pinned-98 and recorded-current results and additionally measure the

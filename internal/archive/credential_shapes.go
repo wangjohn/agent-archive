@@ -106,7 +106,7 @@ var (
 // credentialShapeTable lists the credentials recognizable by their own
 // structure rather than by an assignment around them: a JWT (three
 // base64url segments, the first beginning with `eyJ`) and the prefixed
-// tokens of common services. Each needs enough characters after its prefix
+// tokens of common services. Most need enough characters after their prefix
 // that a word or identifier which merely starts the same way is left alone.
 // Each lists its needles: lower-case literals one of which every match
 // holds (see linePattern); TestCredentialShapeNeedles checks each is in its
@@ -115,6 +115,11 @@ var credentialShapeTable = []struct {
 	pattern string
 	needles []string
 }{
+	// Pairing bundles: redact even truncated payloads, padding, and standard
+	// base64 pasted in place of base64url. No decoding or length validation
+	// belongs in a privacy filter. Quotes, escapes, and prose punctuation stop
+	// the payload; a bare prefix contains no credential.
+	{`\b(?i:aa-pair1):[A-Za-z0-9_+/=-]+`, []string{"aa-pair1:"}},
 	{`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`, []string{"eyj"}},
 	// GitHub.
 	{`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b`, []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_"}},

@@ -198,3 +198,8 @@ Do not remove the data directory by hand while a collector is running.
   `"metadata_only": true` and no `source_bytes`) and reports it as failing on
   every pass. If you already downgraded, deleting those files is safe; the
   metadata is refreshed on the session's next change.
+
+Machine records under `machines/` and remote credential access remain after
+uninstall. Remove access using your storage provider; the informational machine
+list cannot prove or remove it. Include `machines/` when deleting the entire
+archive. `--delete-local-data` also removes local machine registration retry state.
