@@ -68,6 +68,8 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Published v0.1.1 writer refuses protected configuration
+        run: bash scripts/test_published_writer.sh
       - run: go test -race -timeout 20m ./...
       - name: Performance assertions (no race detector)
         run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture

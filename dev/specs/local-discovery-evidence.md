@@ -103,8 +103,12 @@ releases. The retained skill marker also rejects later intermediate
 enum-validating writers. Existing numeric version-2 configs migrate to the
 durable object before identity writing; already fenced configs do not rewrite.
 Disablement preserves both guards; hand editing them is not safe downgrade.
-Released Darwin binary execution remains an outstanding acceptance check;
-source/decoder regressions do not replace it.
+Extended macOS now includes an opt-in probe of the checksum-pinned published
+v0.1.1 Darwin binary: a scalar-schema pause control must write the intended
+isolated archive, while enabled/disabled protected codec configurations must
+fail the known integer-field decode and remain byte-identical. Its hosted
+execution is pending; source/decoder regressions do not replace that result.
+This narrow probe does not establish complete downgrade or journal acceptance.
 
 ## Integrated source and scheduling behavior
 
