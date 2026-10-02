@@ -113,13 +113,18 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 // archive.ErrRecordTooLarge, as for FilterCursorChat. Nothing is registered,
 // written, or uploaded.
 func FilterTranscriptFile(harness, path string, startedAt time.Time, sources agentapi.SourcesLookup) (archive.FilteredTranscript, archive.Adapter, error) {
+	return FilterSource(context.Background(), harness, agentapi.SourceRef{Path: path}, startedAt, sources)
+}
+
+// FilterSource filters an unregistered provider-owned native locator through the actual source port.
+func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, startedAt time.Time, sources agentapi.SourcesLookup) (archive.FilteredTranscript, archive.Adapter, error) {
 	adapter, err := sourceAdapter(sources, harness)
 	if err != nil {
 		return archive.FilteredTranscript{}, nil, err
 	}
-	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: path, SessionStartedAt: startedAt}
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
 	source, _ := newSourceReader(reg, Options{Sources: sources})
-	out, _, err := source.Filter(context.Background(), adapter, DefaultMaxTranscriptBytes)
+	out, _, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
 		return archive.FilteredTranscript{}, nil, errors.Join(archive.ErrRecordTooLarge, err)
 	}

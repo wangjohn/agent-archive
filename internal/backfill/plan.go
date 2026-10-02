@@ -168,7 +168,7 @@ func markDuplicates(group []*work) {
 // BuildPlan finds every session on this machine and decides, for each, whether it
 // is imported or why not. It writes nothing.
 func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg config.Config, filters Filters) (Plan, error) {
-	if err := filters.Validate(); err != nil {
+	if err := filters.Validate(env.Discovery); err != nil {
 		return Plan{}, err
 	}
 	now := env.now()
@@ -254,7 +254,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
-		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		items = append(items, w)
 		return nil
 	})
@@ -499,7 +499,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		return
 	}
 	var freshStart time.Time
-	if inspector.ImportPolicy(agentapi.SourceRef{Path: w.t.path}).Start == agentapi.ImportFileCreatedStart {
+	if inspector.ImportPolicy(agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}).Start == agentapi.ImportFileCreatedStart {
 		// Cursor records carry no timestamps; the file's creation is the
 		// start, and the text filter needs it as its fresh-start proof.
 		created, err := env.fileCreated(w.t.path)
@@ -514,7 +514,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart, env.Sources)
+	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
 	if err != nil {
 		info, statErr := env.lstat(w.t.path)
 		switch {

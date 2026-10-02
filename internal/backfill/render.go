@@ -165,8 +165,8 @@ func (p Plan) AppsWithoutHooks() []string {
 	for _, c := range p.Imported() {
 		importing[c.Harness] = true
 	}
-	for _, h := range harnessOrder {
-		if importing[h] && !slices.Contains(p.Harnesses, h) {
+	for _, h := range sortedAgentKeys(importing) {
+		if !slices.Contains(p.Harnesses, h) {
 			out = append(out, h)
 		}
 	}
@@ -187,7 +187,7 @@ func SearchLine(f Filters) string {
 	var names []string
 	for _, h := range harnessOrder {
 		if harnessMatches(f.Harnesses, h) {
-			names = append(names, harnessNames[h])
+			names = append(names, agentLabel(h))
 		}
 	}
 	return fmt.Sprintf("Looking for %s sessions on this machine…", joinAnd(names))
@@ -321,7 +321,7 @@ func addedProjectMessage(projects []ProjectSummary, harnesses []string) string {
 	var hooked []string
 	for _, h := range harnessOrder {
 		if slices.Contains(harnesses, h) {
-			hooked = append(hooked, harnessNames[h])
+			hooked = append(hooked, agentLabel(h))
 		}
 	}
 	verb := "projects are"
@@ -341,7 +341,7 @@ func addedProjectMessage(projects []ProjectSummary, harnesses []string) string {
 func missingSetupMessage(missing []string) string {
 	var missingNames []string
 	for _, h := range missing {
-		missingNames = append(missingNames, harnessNames[h])
+		missingNames = append(missingNames, agentLabel(h))
 	}
 	if len(missing) == 1 {
 		return fmt.Sprintf("New %s sessions need that app added in setup.", missingNames[0])
@@ -827,4 +827,20 @@ func RenderJSON(w io.Writer, p Plan) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(out)
+}
+
+func sortedAgentKeys(values map[string]bool) []string {
+	var keys []string
+	for name := range values {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func agentLabel(name string) string {
+	if label := harnessNames[name]; label != "" {
+		return label
+	}
+	return name
 }

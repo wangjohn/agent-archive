@@ -233,7 +233,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
-	if err := filters.Validate(); err != nil {
+	if err := filters.Validate(env.agentRegistry()); err != nil {
 		return usageError(err.Error())
 	}
 	if *jsonOut && !*dryRun {

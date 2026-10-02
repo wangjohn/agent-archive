@@ -195,10 +195,13 @@ func (f Filters) Active() bool {
 const dateLayout = "2006-01-02"
 
 // Validate checks the filters' values before any file is read.
-func (f Filters) Validate() error {
+func (f Filters) Validate(discovery agentapi.DiscoveryLookup) error {
 	for _, h := range f.Harnesses {
-		if _, known := archive.KnownHarness(h); !known {
-			return fmt.Errorf("--harness must be claude, codex, or cursor, not %q", h)
+		if discovery == nil {
+			return errors.New("historical discovery integrations are required")
+		}
+		if _, known := discovery.LookupDiscovery(h); !known {
+			return fmt.Errorf("unsupported historical discovery agent %q", h)
 		}
 	}
 	if slices.Contains(f.Projects, "") {

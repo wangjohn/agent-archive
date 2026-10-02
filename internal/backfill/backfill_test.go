@@ -456,7 +456,7 @@ func TestFilterValidation(t *testing.T) {
 		{Harnesses: []string{"vim"}}, {Since: "09/01/2026"}, {Until: "2026-13-01"},
 		{Since: "2026-09-10", Until: "2026-09-01"}, {Projects: []string{""}},
 	} {
-		if err := f.Validate(); err == nil {
+		if err := f.Validate(testSources); err == nil {
 			t.Errorf("%+v: no error", f)
 		}
 	}

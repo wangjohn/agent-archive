@@ -94,7 +94,7 @@ type NativeRecord struct {
 	Missing bool
 }
 
-// RecordInput yields composer first and bubbles in header order, with no export envelope.
+// RecordInput yields provider-declared ordered borrowed frames without an export envelope.
 type RecordInput interface {
 	Next(context.Context) (NativeRecord, bool, error)
 }

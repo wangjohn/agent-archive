@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"time"
 
@@ -27,12 +29,14 @@ type NativePulse struct {
 	Words          string `json:"words"`
 	NativeIdentity string `json:"nativeIdentity"`
 	Clock          string `json:"clock"`
+	Landing        string `json:"landing,omitempty"`
 	Credential     string `json:"credential,omitempty"`
 }
 
 // Ports owns a mutable synthetic source; passes freeze its multiple shard values.
 type Ports struct {
 	Shards         [][]byte
+	ShardPaths     []string
 	Generation     int
 	Mutation       agentapi.Mutation
 	TransientReads int
@@ -92,8 +96,15 @@ func (p *pass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi
 	if limits.RawBytes > 0 && observed.Size > limits.RawBytes {
 		return nil, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 	}
+	shards := p.owner.Shards
+	if len(p.owner.ShardPaths) > 0 {
+		shards, err = ReadManifestShards(p.owner.ShardPaths, func(path string) (io.ReadCloser, error) { return os.Open(path) })
+		if err != nil {
+			return nil, err
+		}
+	}
 	s := &snapshot{observed: observed}
-	for _, raw := range p.owner.Shards {
+	for _, raw := range shards {
 		if limits.RecordBytes > 0 && int64(len(raw)) > limits.RecordBytes {
 			return nil, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 		}
