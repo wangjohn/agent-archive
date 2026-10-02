@@ -58,7 +58,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   Own-key migrations retire completed checkpoints and disclose shared access
   retained through retired local credential aliases. Staged migration retries
   refuse a shared credential reference replaced by later setup, retaining the
-  stage for safe cancellation.
+  stage for safe cancellation. Pre-slot interruptions can be safely retired
+  locally after setup changes, while uncertain issuance and secret cleanup
+  remain recorded.
 
 - Native handoff keeps verified IDs selectable when its cumulative label-read
   budget is exhausted, and reuses unused header reservations after inspection.

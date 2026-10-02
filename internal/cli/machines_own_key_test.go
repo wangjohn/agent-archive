@@ -597,3 +597,180 @@ func TestOwnKeyRecoversExactCommittedSlotBeforeCheckpointPromotion(t *testing.T)
 		t.Fatal("exact committed recovery did not retire completed checkpoint")
 	}
 }
+
+func TestOwnKeyPreSlotCheckpointCanCancelAfterSetupChanges(t *testing.T) {
+	for _, mode := range []struct {
+		otherDestination bool
+		cancel           bool
+	}{{false, true}, {true, true}, {false, false}, {true, false}} {
+		t.Run(strconv.FormatBool(mode.otherDestination)+"/cancel="+strconv.FormatBool(mode.cancel), func(t *testing.T) {
+			env, home, cf, kc, cfg := ownKeyFixture(t)
+			// The command durably writes this checkpoint before slot allocation.
+			checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+			must(t, local.Write(filepath.Join(home, ownKeyFile), checkpoint))
+			next := cfg
+			if mode.otherDestination {
+				next.Storage.Bucket = "replacement-destination"
+			}
+			next.Storage.R2CredentialRef = "replacement-shared"
+			replacement := credentials.R2Credentials{AccessKeyID: strings.Repeat("f", 32), SecretAccessKey: "preslot-shared-canary"}
+			must(t, kc.Save(t.Context(), next.Storage.R2CredentialRef, replacement))
+			next.MachineAssignment = &config.MachineAssignment{DestinationID: next.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: replacement.AccessKeyID, SharedWith: strings.Repeat("b", 32)}
+			userHome, err := env.userHomeDir()
+			must(t, err)
+			executable, err := env.executable()
+			must(t, err)
+			must(t, applySetup(home, userHome, executable, cfg, &next, nil, env))
+			before, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			providerCalls, tokenReads := 0, 0
+			provider := env.Cloudflare
+			env.Cloudflare = func(token string) cloudflare.API { providerCalls++; return provider(token) }
+			env.UnsetEnv = func(string) error { tokenReads++; return nil }
+			var output bytes.Buffer
+			lookup := env.LookupEnv
+			args := []string{"machines", "own-key", "--yes"}
+			wantCode := 1
+			if mode.cancel {
+				args = append(args, "--cancel")
+				wantCode = 0
+			} else {
+				// Stop a restart at token acquisition, after local retirement.
+				env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+			}
+			if code := Run(args, nil, &output, &output, env); code != wantCode || providerCalls != 0 || tokenReads != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+				t.Fatalf("pre-slot cancellation blocked or called provider: %d %s", code, output.String())
+			}
+			after, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			stored, err := kc.Load(t.Context(), next.Storage.R2CredentialRef)
+			must(t, err)
+			if !bytes.Equal(before, after) || stored != replacement {
+				t.Fatal("pre-slot cancellation changed current config or credential")
+			}
+			if _, err = kc.Load(t.Context(), checkpoint.OldRef); err != nil {
+				t.Fatal("pre-slot cancellation removed old credential")
+			}
+			if _, err = os.Stat(filepath.Join(home, ownKeyFile)); !os.IsNotExist(err) {
+				t.Fatal("pre-slot checkpoint retained")
+			}
+			// A later migration starts against the current destination/ref.
+			env.Cloudflare = provider
+			env.LookupEnv = lookup
+			output.Reset()
+			if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != 1 {
+				t.Fatalf("new migration did not complete: %d %s", code, output.String())
+			}
+		})
+	}
+}
+
+type preSlotProof string
+
+const (
+	preSlotCleanup              preSlotProof = "cleanup"
+	preSlotCorruptLedger        preSlotProof = "corrupt-ledger"
+	preSlotOrphanIntent         preSlotProof = "orphan-intent"
+	preSlotSecretRemoval        preSlotProof = "secret-removal"
+	preSlotIncompleteCheckpoint preSlotProof = "incomplete-checkpoint"
+)
+
+func TestOwnKeyPreSlotRetirementPreservesUncertainProof(t *testing.T) {
+	for _, proof := range []preSlotProof{preSlotCleanup, preSlotCorruptLedger, preSlotOrphanIntent, preSlotSecretRemoval, preSlotIncompleteCheckpoint} {
+		t.Run(string(proof), func(t *testing.T) {
+			env, home, cf, _, cfg := ownKeyFixture(t)
+			checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef, CleanupPending: proof == preSlotCleanup}
+			must(t, local.Write(filepath.Join(home, ownKeyFile), checkpoint))
+			if proof == preSlotIncompleteCheckpoint {
+				must(t, os.WriteFile(filepath.Join(home, ownKeyFile), []byte("{}"), 0600))
+			}
+			if proof == preSlotCorruptLedger {
+				must(t, os.MkdirAll(filepath.Join(home, "issued"), 0700))
+				must(t, os.WriteFile(filepath.Join(home, "issued", "slot-broken.json"), []byte("broken"), 0600))
+			}
+			if proof == preSlotOrphanIntent || proof == preSlotSecretRemoval {
+				issuer := fixtureIssuer(t, env, home)
+				// Crash between durable creation intent and its owning callback.
+				func() {
+					defer func() {
+						if recover() != "before-owning-callback" {
+							t.Fatal("missing injected interruption")
+						}
+					}()
+					_, _, _ = issuer.createWithIntent(issuance.Fresh, cfg.MachineID, func(issuance.Slot) error { panic("before-owning-callback") })
+				}()
+				if proof == preSlotSecretRemoval {
+					slots, err := issuance.List(home)
+					must(t, err)
+					slot := slots[0]
+					slot.State = issuance.Deleted
+					slot.SecretRemovalPending = true
+					must(t, issuance.Save(home, slot))
+				}
+			}
+			before, err := os.ReadFile(filepath.Join(home, ownKeyFile))
+			must(t, err)
+			providerCalls := 0
+			env.Cloudflare = func(string) cloudflare.API { providerCalls++; return nil }
+			for _, args := range [][]string{{"machines", "own-key", "--cancel", "--yes"}, {"machines", "own-key", "--yes"}} {
+				var output bytes.Buffer
+				if code := Run(args, nil, &output, &output, env); code != 1 || providerCalls != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
+					t.Fatalf("uncertain pre-slot proof discarded: %d %s", code, output.String())
+				}
+				after, err := os.ReadFile(filepath.Join(home, ownKeyFile))
+				must(t, err)
+				if !bytes.Equal(before, after) {
+					t.Fatal("uncertain checkpoint changed")
+				}
+			}
+		})
+	}
+}
+
+func TestOwnKeyDeletedStageSecretRemovalCannotBeForgotten(t *testing.T) {
+	env, home, cf, kc, cfg := ownKeyFixture(t)
+	issuer := fixtureIssuer(t, env, home)
+	checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}
+	slot, err := ownKeySlot(home, &checkpoint, issuer, issuer.api, env)
+	must(t, err)
+	slot.State = issuance.CleanupPending
+	must(t, issuance.Save(home, slot))
+	issuer.env.Credentials = func() (credentials.CredentialStore, error) {
+		return &failingDeleteKeychain{fakeKeychain: kc, deleteErr: credentials.ErrKeychainLocked}, nil
+	}
+	must(t, issuer.cleanupOwnKeyStage(&slot))
+	if slot.State != issuance.Deleted || !slot.SecretRemovalPending {
+		t.Fatal("synthetic secret cleanup failure did not persist")
+	}
+	creates := cf.Calls(cloudflaretest.RouteCreateToken)
+	if _, err = ownKeySlot(home, &checkpoint, issuer, issuer.api, env); err == nil || checkpoint.SlotID != slot.SlotID || cf.Calls(cloudflaretest.RouteCreateToken) != creates {
+		t.Fatal("deleted stage lost pending secret or minted replacement")
+	}
+	var output bytes.Buffer
+	if code := cancelStagedOwnKey(home, checkpoint, issuer, &output, &output, env); code != 1 {
+		t.Fatal("cancellation discarded secret removal obligation")
+	}
+	var retained ownKeyCheckpoint
+	must(t, local.Read(filepath.Join(home, ownKeyFile), &retained))
+	if retained != checkpoint {
+		t.Fatal("pending secret checkpoint changed")
+	}
+}
+
+func TestOwnKeyPreSlotCancellationDoesNotCancelCompletedOwnership(t *testing.T) {
+	env, home, cf, _, cfg := ownKeyFixture(t)
+	var output bytes.Buffer
+	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 {
+		t.Fatal("synthetic migration failed", output.String())
+	}
+	slots, err := issuance.List(home)
+	must(t, err)
+	// A legacy completed journal can be retired on retry, but is not a
+	// pre-slot interruption that cancellation may report as cancelled.
+	checkpoint := ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef, SlotID: slots[0].SlotID, Committed: true}
+	must(t, local.Write(filepath.Join(home, ownKeyFile), checkpoint))
+	output.Reset()
+	if code := Run([]string{"machines", "own-key", "--cancel", "--yes"}, nil, &output, &output, env); code != 1 || cf.Calls(cloudflaretest.RouteCreateToken) != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 || !providerKeyLive(cf, slots[0].ProviderID) {
+		t.Fatalf("completed ownership treated as cancelled pre-slot: %d %s", code, output.String())
+	}
+}

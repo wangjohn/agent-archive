@@ -58,9 +58,9 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return machineCommandError(errOut, err)
 	}
 	defer issuedRelease()
-	checkpoint, err := ownKeyCheckpointForCommand(home, cfg, *cancelOwn)
-	if err != nil {
-		return machineCommandError(errOut, err)
+	checkpoint, done, code := prepareOwnKeyCheckpoint(home, cfg, *cancelOwn, out, errOut)
+	if done {
+		return code
 	}
 	if checkpoint.Committed || checkpoint.SlotID != "" && cfg.Storage.R2CredentialRef == "issued-"+checkpoint.SlotID {
 		if *cancelOwn {
@@ -127,6 +127,54 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 	return finishOwnKey(home, checkpoint, out, errOut, env)
 }
 
+// Caller holds setup.lock and issued.lock, including local retirement/cancel.
+func prepareOwnKeyCheckpoint(home string, cfg config.Config, cancelStage bool, out, errOut io.Writer) (ownKeyCheckpoint, bool, int) {
+	path := filepath.Join(home, ownKeyFile)
+	_, statErr := os.Stat(path)
+	if cancelStage && statErr == nil {
+		var prior ownKeyCheckpoint
+		if err := local.Read(path, &prior); err != nil {
+			return prior, true, machineCommandError(errOut, errors.New("own-key checkpoint unreadable; cancellation refused"))
+		}
+		if prior.Committed {
+			return prior, true, machineCommandError(errOut, errors.New("dedicated key already committed; cancellation refused"))
+		}
+	}
+	checkpoint, err := ownKeyCheckpointForCommand(home, cfg, cancelStage)
+	if err != nil {
+		return checkpoint, true, machineCommandError(errOut, err)
+	}
+	if cancelStage && checkpoint.SlotID == "" && !checkpoint.Committed && !checkpoint.CleanupPending {
+		if statErr != nil {
+			return checkpoint, true, machineCommandError(errOut, errors.New("no staged own-key operation to cancel"))
+		}
+		terminal.Println(out, "Pre-slot own-key checkpoint cancelled. Provider and local access unchanged.")
+		return checkpoint, true, 0
+	}
+	return checkpoint, false, 0
+}
+
+func retirePreSlotOwnKeyCheckpoint(home string, cfg config.Config, checkpoint ownKeyCheckpoint) (ownKeyCheckpoint, error) {
+	// Before the owning callback records a slot, no provider call is allowed.
+	// Still fail closed on orphaned intent or any remaining cleanup proof.
+	if checkpoint.CleanupPending || checkpoint.OldRef == "" || checkpoint.DestinationID == "" || !config.SafeMachineText(checkpoint.DestinationID, 128) {
+		return checkpoint, errors.New("pre-slot own-key cleanup proof unavailable; checkpoint retained")
+	}
+	slots, err := issuance.List(home)
+	if err != nil {
+		return checkpoint, err
+	}
+	for _, slot := range slots {
+		if slot.IssuerID == cfg.MachineID && slot.RecipientID == cfg.MachineID && (slot.SecretRemovalPending || slot.State != issuance.Own && slot.State != issuance.Deleted) {
+			return checkpoint, errors.New("unbound own-key issuance remains; checkpoint retained")
+		}
+	}
+	if err = os.Remove(filepath.Join(home, ownKeyFile)); err != nil {
+		return checkpoint, err
+	}
+	return ownKeyCheckpoint{DestinationID: cfg.DestinationID(), OldRef: cfg.Storage.R2CredentialRef}, nil
+}
+
 // A staged migration belongs to its exact pre-migration reference. Ordinary
 // setup can replace that reference without changing the destination. Refuse a
 // stale resume before token acquisition, but preserve safe cancellation and
@@ -148,6 +196,8 @@ func readOwnKeyCheckpoint(home string, cfg config.Config) (ownKeyCheckpoint, err
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return checkpoint, nil
 	}
+	// Existing journals must supply their own proof, not inherit current config.
+	checkpoint = ownKeyCheckpoint{}
 	if err := local.Read(path, &checkpoint); err != nil {
 		return checkpoint, errors.New("own-key checkpoint unreadable; no new key created")
 	}
@@ -170,6 +220,9 @@ func readOwnKeyCheckpoint(home string, cfg config.Config) (ownKeyCheckpoint, err
 			}
 		}
 		return checkpoint, errors.New("completed own-key ownership unavailable; checkpoint retained")
+	}
+	if checkpoint.SlotID == "" && !checkpoint.Committed {
+		return retirePreSlotOwnKeyCheckpoint(home, cfg, checkpoint)
 	}
 	if checkpoint.DestinationID != cfg.DestinationID() {
 		return checkpoint, errors.New("own-key checkpoint does not match this destination")
@@ -221,7 +274,11 @@ func ownKeySlot(home string, checkpoint *ownKeyCheckpoint, issuer *keyIssuer, ap
 		}
 	}
 	if slot.State == issuance.Deleted {
+		if slot.SecretRemovalPending {
+			return slot, errors.New("own-key secret removal remains pending; stage retained")
+		}
 		checkpoint.SlotID = ""
+		checkpoint.CleanupPending = false
 		if err := local.Write(filepath.Join(home, ownKeyFile), checkpoint); err != nil {
 			return slot, err
 		}
@@ -425,7 +482,7 @@ func cancelStagedOwnKey(home string, checkpoint ownKeyCheckpoint, issuer *keyIss
 		case issuance.Deleted:
 			// A confirmed prior cleanup only needs its checkpoint removed.
 		}
-		if err != nil || slot.State != issuance.Deleted {
+		if err != nil || slot.State != issuance.Deleted || slot.SecretRemovalPending {
 			return machineCommandError(errOut, errors.New("staged cancellation remains pending; shared access unchanged"))
 		}
 		if err = os.Remove(filepath.Join(home, ownKeyFile)); err != nil {

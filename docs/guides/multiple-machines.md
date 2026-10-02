@@ -421,7 +421,12 @@ pre-migration credential reference remains active. A later setup that replaces
 that reference blocks resume before token/provider or setup work, even if the
 new reference loads the same shared key. The staged key remains recorded; use
 safe `own-key --cancel` before starting a new migration. Recovery after the
-exact staged slot has already committed still finishes its cleanup. Only after commit
+exact staged slot has already committed still finishes its cleanup. An interruption
+before slot allocation leaves no provider key: a validated checkpoint with no
+remaining issuance or cleanup obligation can be retired locally on retry or
+cancel, including after setup changes destination. This cancellation needs no
+management token. Uncertain issuance and pending secret removal stay recorded.
+Only after commit
 can the obsolete shared local secret be deleted; another local destination's
 reference, a matching retired alias, an unreadable binding, or a cleanup failure
 keeps access explicitly present. Completed cleanup retires its checkpoint so a
