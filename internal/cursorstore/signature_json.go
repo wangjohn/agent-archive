@@ -27,8 +27,8 @@ func signatureJSONFallback(ctx context.Context, q querier, key, id string) (Sign
 		if err != nil {
 			return err
 		}
-		switch name {
-		case "lastUpdatedAt":
+		switch signatureField(name) {
+		case signatureUpdatedAt:
 			timestamp, timestampErr = 0, nil
 			if first == 'n' || first == '-' || first >= '0' && first <= '9' {
 				raw, err := p.scalar(first, true)
@@ -42,10 +42,10 @@ func signatureJSONFallback(ctx context.Context, q querier, key, id string) (Sign
 			}
 			timestampErr = NotChecked(UnknownFormat)
 			return p.skip(first, 1)
-		case "fullConversationHeadersOnly":
+		case signatureConversationHeaders:
 			headers, err = p.headers(first, false)
 			return err
-		case "conversation":
+		case signatureConversation:
 			inline, err = p.headers(first, true)
 			return err
 		default:
@@ -110,6 +110,14 @@ func (r *composerJSONReader) Read(p []byte) (int, error) {
 
 type signatureJSON struct{ r *bufio.Reader }
 
+type signatureField string
+
+const (
+	signatureUpdatedAt           signatureField = "lastUpdatedAt"
+	signatureConversationHeaders signatureField = "fullConversationHeadersOnly"
+	signatureConversation        signatureField = "conversation"
+)
+
 type signatureHeaders struct {
 	present bool
 	count   int
@@ -131,7 +139,8 @@ func (p *signatureJSON) headers(first byte, inline bool) (out signatureHeaders, 
 	err = p.array(2, func(first byte) error {
 		var identity *string
 		invalid := false
-		if first == '{' {
+		switch first {
+		case '{':
 			if err := p.object(3, func(name string) error {
 				first, err := jsonNonspace(p.r)
 				if err != nil {
@@ -162,11 +171,11 @@ func (p *signatureJSON) headers(first byte, inline bool) (out signatureHeaders, 
 			}); err != nil {
 				return err
 			}
-		} else if first == 'n' {
+		case 'n':
 			if _, err := p.scalar(first, false); err != nil {
 				return err
 			}
-		} else {
+		default:
 			invalid = true
 			if err := p.skip(first, 2); err != nil {
 				return err
@@ -322,7 +331,7 @@ func (p *signatureJSON) string(limit int) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
-				if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F') {
+				if (b < '0' || b > '9') && (b < 'a' || b > 'f') && (b < 'A' || b > 'F') {
 					return nil, NotChecked(UnknownFormat)
 				}
 				add(b)
