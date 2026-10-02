@@ -51,14 +51,14 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	// error: some hook events (per the harness's own docs) carry no useful
 	// fields at all, and we must never fail loudly on the harness's input.
 	limited := &io.LimitedReader{R: stdin, N: (16 << 20) + 1}
-	_ = json.NewDecoder(limited).Decode(&payload)
-	if limited.N <= 0 {
+	err := json.NewDecoder(limited).Decode(&payload)
+	if err != nil || payload == nil || limited.N <= 0 {
 		return 0
 	}
 
 	// Resolved without creating it: a hook left behind after the data
 	// directory was deleted has nothing to record and must not recreate it.
-	home, err := env.readHome()
+	home, err = env.readHome()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: resolve home: %v\n", err)
 		return 0
@@ -71,16 +71,25 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		return 0
 	}
 	*harness = string(integration.Descriptor.ID)
-	batch, err = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
+	var now time.Time
+	var clockFailure any
+	func() {
+		defer func() { clockFailure = recover() }()
+		now = env.now()
+	}()
+	if clockFailure != nil {
+		// Decode only diagnostic facts when the clock fails. Never admit this
+		// batch, and preserve the original failure if the decoder also panics.
+		func() {
+			defer func() { _ = recover() }()
+			batch, _ = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: time.Now()})
+		}()
+		panic(clockFailure)
+	}
+	batch, err = integration.Decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: now})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 		return 0
-	}
-	now := env.now()
-	for i := range batch {
-		for j := range batch[i].Evidence {
-			batch[i].Evidence[j].ObservedAt = now
-		}
 	}
 	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver())); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
