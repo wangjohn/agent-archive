@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -73,6 +74,8 @@ type Route string
 // Routes the fake serves, as Fail and Requests name them.
 const (
 	RouteAccounts         Route = "GET accounts"
+	RouteListTokens       Route = "GET tokens"
+	RouteTokenDetails     Route = "GET token"
 	RouteCreateBucket     Route = "POST buckets"
 	RoutePermissionGroups Route = "GET permission_groups"
 	RouteCreateToken      Route = "POST tokens"
@@ -100,6 +103,8 @@ type Server struct {
 	CustomDomains []string
 	// ValuePrefix starts the value of every token the fake issues.
 	ValuePrefix string
+	// MetadataTokens extends the visible provider inventory with synthetic metadata.
+	MetadataTokens []map[string]any
 
 	mu       sync.Mutex
 	tokens   []Issued
@@ -197,6 +202,8 @@ var routeTable = []struct {
 	{http.MethodPost, "accounts/*/r2/buckets", RouteCreateBucket},
 	{http.MethodGet, "accounts/*/tokens/permission_groups", RoutePermissionGroups},
 	{http.MethodPost, "accounts/*/tokens", RouteCreateToken},
+	{http.MethodGet, "accounts/*/tokens", RouteListTokens},
+	{http.MethodGet, "accounts/*/tokens/*", RouteTokenDetails},
 	{http.MethodDelete, "accounts/*/tokens/*", RouteDeleteToken},
 	{http.MethodGet, "accounts/*/r2/buckets/*/domains/managed", RouteManagedDomain},
 	{http.MethodGet, "accounts/*/r2/buckets/*/domains/custom", RouteCustomDomains},
@@ -284,6 +291,26 @@ func (s *Server) work(w http.ResponseWriter, r *http.Request, name Route, parts 
 			}
 		}
 		writeResult(w, out, len(out))
+	case RouteListTokens:
+		all := s.metadataTokens()
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		size, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+		if page < 1 || size < 5 || size > 50 || r.URL.Query().Get("include_expired") != "true" {
+			writeError(w, http.StatusBadRequest, 10001, "invalid token pagination", "")
+			return
+		}
+		start := min((page-1)*size, len(all))
+		end := min(start+size, len(all))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": all[start:end], "result_info": map[string]int{"page": page, "per_page": size, "count": end - start, "total_count": len(all)}})
+	case RouteTokenDetails:
+		for _, token := range s.metadataTokens() {
+			if token["id"] == parts[3] {
+				writeResult(w, token, 0)
+				return
+			}
+		}
+		writeError(w, http.StatusNotFound, 1003, "token not found", "")
 	case RouteCreateToken:
 		s.createToken(w, body)
 	case RouteDeleteToken:
@@ -362,6 +389,10 @@ func (s *Server) createToken(w http.ResponseWriter, body []byte) {
 	}
 	n := len(s.tokens) + 1
 	name, _ := req["name"].(string)
+	if len(name) > 120 {
+		writeError(w, http.StatusBadRequest, 10001, "token name exceeds 120 characters", "")
+		return
+	}
 	issued := Issued{ID: fmt.Sprintf("%032x", n), Name: name, Value: fmt.Sprintf("%s-%d", s.ValuePrefix, n), Body: req}
 	s.tokens = append(s.tokens, issued)
 	writeResult(w, map[string]any{"id": issued.ID, "value": issued.Value, "name": issued.Name, "status": "active"}, 0)
@@ -384,4 +415,16 @@ func writeError(w http.ResponseWriter, status, code int, message, retryAfter str
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"success": false, "errors": []map[string]any{{"code": code, "message": message}}, "messages": []any{}, "result": nil,
 	})
+}
+
+func (s *Server) metadataTokens() []map[string]any {
+	all := append([]map[string]any{}, s.MetadataTokens...)
+	for _, token := range s.tokens {
+		status := "active"
+		if s.revoked[token.ID] {
+			status = "disabled"
+		}
+		all = append(all, map[string]any{"id": token.ID, "name": token.Name, "status": status, "policies": token.Body["policies"]})
+	}
+	return all
 }

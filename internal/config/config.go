@@ -63,6 +63,12 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// SpareKeys is the desired unused key count; nil means two.
+	SpareKeys *int `json:"spare_keys,omitempty"`
+	// SpareCredentialRefs is an advisory index. The issued ledger owns eligibility.
+	SpareCredentialRefs []string `json:"spare_credential_refs,omitempty"`
+	// CloudflareTokenCommand returns a management token for explicit interactive operations only.
+	CloudflareTokenCommand []string `json:"cloudflare_token_command,omitempty"`
 	// MachineName is a chosen label, never a detected hostname.
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
@@ -224,6 +230,12 @@ func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, 
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return Config{}, false, err
+	}
+	if err := cfg.ValidateSpares(); err != nil {
+		return Config{}, false, err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return Config{}, false, err
 	}
@@ -241,6 +253,12 @@ func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, age
 
 // SaveWithCatalog validates and writes configuration with injected identities.
 func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSpares(); err != nil {
+		return err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return err
 	}
