@@ -116,6 +116,46 @@ func TestFilteringAndComparisonUseTheSameInjectedInstance(t *testing.T) {
 	}
 }
 
+func TestParserRefreshFilteringAndComparisonUseTheSameInjectedInstance(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	directory := t.TempDir()
+	path := writeTranscript(t, directory, "session.jsonl", codexTranscript)
+	reg := registration(t, path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	sources := &allocatingSources{}
+	parsers := &operationBindings{parser: &operationParser{version: "same"}}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: sources, Parsers: parsers, MachineID: "machine", Now: func() time.Time { return now }}
+	run := func() {
+		t.Helper()
+		result, err := Run(context.Background(), local, remote, opts)
+		if err != nil || len(result.Errors) != 0 {
+			t.Fatalf("run: %#v %v", result, err)
+		}
+	}
+	run()
+	writeTranscript(t, directory, "session.jsonl", codexTranscript+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":"next prompt"}}`)
+	now = now.Add(time.Hour)
+	parsers.parser.version = "upgraded"
+	run()
+	compared := 0
+	for _, filter := range sources.filters {
+		if filter.comparisons > 0 {
+			compared++
+			if filter.calls != 1 {
+				t.Fatalf("comparison used a filter that did not consume this input: %d calls", filter.calls)
+			}
+		}
+	}
+	if compared == 0 {
+		t.Fatal("extension guard did not compare changed evidence")
+	}
+}
+
 func TestInjectedParserUpgradeReadsRetainedSourceOnce(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)

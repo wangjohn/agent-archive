@@ -922,7 +922,7 @@ func textTurnsExchanges(turns []NormalizedTurn, opts HandoffOptions) ([]HandoffE
 	}
 	for _, turn := range turns {
 		kind = turn.Kind
-		body = append(body, turn.Text)
+		body = append(body, turnDisplayText(turn))
 		flushSection()
 	}
 

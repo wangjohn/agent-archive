@@ -28,7 +28,10 @@ func parseText(a *archive.Analysis, b archive.SourceBundle) {
 			case textRoleSystem, textRoleDeveloper, textRoleThinking, textRoleAnalysis:
 				continue
 			}
-			a.View.Turns = append(a.View.Turns, archive.NormalizedTurn{RecordIndex: len(a.View.Turns), Role: string(section.role), Kind: kind, Text: text})
+			a.View.Turns = append(a.View.Turns, archive.NormalizedTurn{
+				RecordIndex: len(a.View.Turns), Role: string(section.role), Kind: kind, Text: text,
+				PresentationText: prepareTurnText(kind, text), PresentationKnown: true,
+			})
 			if kind == archive.TurnKindHumanPrompt && a.Facts.TextTitle == "" {
 				a.Facts.TextTitle = archive.CollapseSessionTitle(text)
 			}
