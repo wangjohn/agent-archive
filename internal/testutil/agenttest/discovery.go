@@ -51,6 +51,17 @@ func Discovery(t *testing.T, p agentapi.Discoverer, request agentapi.DiscoveryRe
 	if !errors.Is(err, context.Canceled) || seen != 0 {
 		t.Fatalf("cancellation: seen=%d err=%v", seen, err)
 	}
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	seen = 0
+	_, err = p.Discover(ctx, request, func(agentapi.DiscoveryCandidate) error {
+		seen++
+		cancel()
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || seen != 1 {
+		t.Fatalf("callback cancellation: seen=%d err=%v", seen, err)
+	}
 	request.MaxFiles = 1
 	seen = 0
 	report, err = p.Discover(t.Context(), request, func(agentapi.DiscoveryCandidate) error { seen++; return nil })

@@ -96,6 +96,10 @@ func (Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, emit
 			chats[id] = agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: agentmeta.Cursor, NativeID: id}, Source: agentapi.SourceRef{Path: path}, Root: root, Bytes: info.Size(), IdentityInspected: true, WorkspaceKey: slug.Name()}
 		}
 		for _, id := range order {
+			if e := ctx.Err(); e != nil {
+				out.Incomplete = true
+				return out, e
+			}
 			if r.MaxFiles > 0 && out.Enumerated >= r.MaxFiles {
 				out.Incomplete = true
 				return out, nil

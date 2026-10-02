@@ -52,8 +52,7 @@ func (ProjectEvidence) OpenWorkspace(ctx context.Context, r agentapi.WorkspaceRe
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	m := newCursorMatcher(r, r.Candidates)
-	m.context = ctx
+	m := newCursorMatcher(ctx, r, r.Candidates)
 	return m, ctx.Err()
 }
 
@@ -127,10 +126,10 @@ type cursorMatcher struct {
 // lists.
 const cursorWalkBudget = 4096
 
-func newCursorMatcher(request agentapi.WorkspaceRequest, candidates []string) *cursorMatcher {
-	m := &cursorMatcher{request: request, cache: map[string][]string{}}
+func newCursorMatcher(ctx context.Context, request agentapi.WorkspaceRequest, candidates []string) *cursorMatcher {
+	m := &cursorMatcher{context: ctx, request: request, cache: map[string][]string{}}
 	m.candidates = append(m.candidates, candidates...)
-	m.candidates = append(m.candidates, cursorWorkspaceFolders(request)...)
+	m.candidates = append(m.candidates, cursorWorkspaceFolders(ctx, request)...)
 	return m
 }
 
@@ -145,7 +144,7 @@ func cursorWorkspaceStorage(request agentapi.WorkspaceRequest) string {
 // <Cursor data folder>/User/workspaceStorage/*/workspace.json
 // (~/Library/Application Support/Cursor on macOS, ~/.config/Cursor on
 // Linux).
-func cursorWorkspaceFolders(request agentapi.WorkspaceRequest) []string {
+func cursorWorkspaceFolders(ctx context.Context, request agentapi.WorkspaceRequest) []string {
 	storage := cursorWorkspaceStorage(request)
 	if storage == "" {
 		return nil
@@ -156,6 +155,9 @@ func cursorWorkspaceFolders(request agentapi.WorkspaceRequest) []string {
 	}
 	var folders []string
 	for _, e := range entries {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if !e.IsDir() {
 			continue
 		}
