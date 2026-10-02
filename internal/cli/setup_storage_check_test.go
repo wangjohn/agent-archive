@@ -44,7 +44,7 @@ func failingStorageEnv(t *testing.T, home string, failure *error) Env {
 	return env
 }
 
-const storageQuestion = "Where should sessions be stored?"
+const storageQuestion = "Where should your archive live?"
 
 // After a failed check, "Continue where you left off" asks the storage
 // questions again, not the check that just failed.
@@ -366,7 +366,7 @@ func TestSetupWrongRegionThenR2AsksNoRegion(t *testing.T) {
 	}
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	setupRun(t, env, input+"cancel\n", 1)
-	output := setupRun(t, env, "continue\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS\nsecret\ny\n", 0)
+	output := setupRun(t, env, "continue\nr2-existing\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS\nsecret\ny\n", 0)
 	if strings.Contains(output, "Bucket region") {
 		t.Fatalf("R2 was asked an AWS region:\n%s", output)
 	}

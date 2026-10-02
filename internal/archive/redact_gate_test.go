@@ -54,6 +54,7 @@ func checkGatedRedactionMatchesWhole(t *testing.T, s string) {
 func gateSeeds() []string {
 	seeds := lineMatchSeeds()
 	seeds = append(seeds,
+		"aa-pair1:a\r\nAA-PAIR1:abc+/==",
 		"DB_PASSWORD=abc\\nnext=1",
 		`{"cmd":"export TOKEN=abc\nmake","env":"PASSWORD=x\r\ny"}`,
 		"pass\nword=abc\nPASS\r\nWORD: x",

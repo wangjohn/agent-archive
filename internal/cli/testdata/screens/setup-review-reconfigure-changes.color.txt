@@ -29,21 +29,12 @@ Add project directories, one per line. Enter a blank line when finished.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should sessions be stored?\e[0m
-  1) Cloudflare R2
-  2) Amazon S3
-  3) Amazon S3: create a new bucket for me
-  4) Show setup instructions
-Enter 1-4 [\e[1m2\e[0m] › 
+Current storage: s3 / team-archive
+\e[1mKeep your current storage?\e[0m
+[Enter] Keep current storage
+[c] Change storage
+Choose › 
 
-\e[1mAWS profile\e[0m [\e[1mwork\e[0m] › 
-
-\e[1mWhich bucket should sessions be stored in?\e[0m
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name [\e[1m2\e[0m] › 
-
-Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
@@ -73,50 +64,9 @@ Checking your storage connection…
   1) Yes, save
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [\e[1m1\e[0m] › 2
+Enter 1-3 [\e[1m1\e[0m] › 30
 
-
-\e[1mWhat would you like to change?\e[0m
-  1) Apps to include
-  2) Projects to include
-  3) All sessions or only sessions using skills
-  4) Skill evidence: none, metadata, or body
-  5) How long sessions are kept
-  6) Bucket or credentials
-  7) Folder inside the bucket
-  8) AWS bucket region
-  9) Nothing, go back to the review
-Enter 1-9 [\e[1m9\e[0m] › 5
-
-\e[1mKeep sessions for how many days?\e[0m [\e[1m90\e[0m] › 30
-
-
-\e[1mStep 3 of 3 · Review your changes\e[0m
-
-\e[33m*\e[0m \e[2mApps      \e[0m Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
-             \e[2mwas Codex 0.121.0\e[0m
-\e[33m*\e[0m \e[2mProjects  \e[0m ~/src/web-app
-  \e[2m          \e[0m ~/src/api
-             \e[2mwas ~/src/web-app\e[0m
-  \e[2mSkills    \e[0m metadata  \e[2mUser skill roots outside selected projects may be scanned; change with Edit a setting\e[0m
-  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
-\e[33m*\e[0m \e[2mKeep for  \e[0m 30 days
-             \e[2mwas 90 days\e[0m
-\e[2m
-  * changed from your current settings\e[0m
-
-  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
-  \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json\e[0m
-
-\e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
-
-\e[1mSave these changes?\e[0m
-  1) Yes, save
-  2) Edit a setting
-  3) Cancel (your setup draft is kept)
+Enter a number from 1 to 3.
 Enter 1-3 [\e[1m1\e[0m] › 
 
 

@@ -25,6 +25,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   statistics with estimated costs.
 - Guided storage setup and archive indexing. Guided R2 bucket creation remains
   experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
+- Informational `machines` records, bounded listing, optional first-setup naming
+  and local rename. The list shows pairing dates and shared-key claims. Setup
+  publishes after commit; the collector independently retries registration and
+  refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
 
@@ -36,9 +40,21 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Changed
 
+- Interactive storage setup has two provider choices, R2 and S3. Creating a
+  bucket is the main flow, with a summary before creation and secondary
+  Customize, Use an existing bucket, and Back actions. R2 creation retains
+  its experimental flag. Installed storage can be kept without re-entering
+  settings. Interactive `r2` and `s3` follow the provider flow;
+  `r2-existing` and `s3-existing` jump to existing storage. `setup --yes`
+  keeps its existing flags and behavior.
+
 - Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
 - Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
 - The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
 
 - Listings default to the current project when available and return at most 50
   sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
@@ -93,6 +109,10 @@ the release behavior.
   sessions whose source is unavailable keep their existing preview.
 
 #### Added
+
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
 
 - **One session browser, with a filter you type into.** The handoff picker,
   `show --json` with no ID, and a `show` or `handoff` query that matches
@@ -174,8 +194,7 @@ the release behavior.
   skills and MCP servers now say `+ N more (all in --json --all)`, and the
   one under the projects screen `--json --all` too. See
   [JSON output](docs/reference/json-output.md#stats---json).
-- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
-  new bucket for me" at the storage question. It creates the bucket
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3", then Continue at the storage question. It creates the bucket
   in your own AWS account with the profile you pick (region and name are
   asked, the name suggested as `agent-archive-` and random characters),
   turns on all four Block Public Access settings, and reads them back, then
@@ -190,8 +209,9 @@ the release behavior.
   not create IAM users or keys, and sets no lifecycle rule. The
   manual steps in the bucket guide still work.
 - **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
-  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
-  bucket for me** at the storage question, then paste one Cloudflare API token
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to enable creation after choosing
+  **Cloudflare R2**, then **Continue** at the storage question, then paste one
+  Cloudflare API token
   (Workers R2 Storage Write and Account API Tokens Write, or set
   `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
   no public access by default) and a key that can read and write only that
