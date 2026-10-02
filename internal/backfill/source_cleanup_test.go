@@ -18,14 +18,14 @@ func TestDatabaseLimitCannotHideCleanupFailure(t *testing.T) {
 		return cursorstore.Composer{}, nil, errors.Join(agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), agentapi.Wrap(agentapi.Cleanup, fault))
 	}
 	work := []*work{{chat: CursorDatabaseChat{KeyID: "synthetic"}}}
-	if err := readCursorDatabaseChats(t.Context(), 2, nil, read, work, testSources); !errors.Is(err, fault) {
+	if err := readCursorDatabaseChats(t.Context(), Environment{Imports: testSources}, 2, nil, read, work, testSources); !errors.Is(err, fault) {
 		t.Fatalf("cleanup was hidden by chat limit: %v", err)
 	}
 }
 
 func TestFilePlanCannotHideCleanupFailure(t *testing.T) {
 	fault := errors.New("synthetic file close fault")
-	env := Environment{Sources: cleanupSources{fault: fault}}
+	env := Environment{Sources: cleanupSources{fault: fault}, Imports: testSources}
 	w := &work{t: &transcript{harness: harnessCodex, path: "/synthetic/native.jsonl", size: 3}, c: Candidate{NativeSessionID: "synthetic"}}
 	if err := classifyPlanWork(t.Context(), env, states{}, Filters{}, []*work{w}, nil, time.Time{}, time.Time{}, 2); !errors.Is(err, fault) {
 		t.Fatalf("file cleanup became a successful plan: %v", err)
