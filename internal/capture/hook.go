@@ -123,15 +123,22 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	if len(batch) == 0 {
 		return nil
 	}
-	batch, err := validateBatch(harness, batch, now)
-	if err != nil {
+	if err := validateBatchStructure(harness, batch, now); err != nil {
 		return err
 	}
 	if setupjournal.TransactionPending(home) {
-		return recordSetupBatch(home, batch, now)
+		filtered, err := filterBatchEvidence(batch)
+		if err != nil {
+			return err
+		}
+		return recordSetupBatch(home, filtered, now)
 	}
 	observedConfig, active, err := loadHookCaptureWindow(home, nil)
 	if err != nil || !active {
+		return err
+	}
+	batch, err = filterBatchEvidence(batch)
+	if err != nil {
 		return err
 	}
 	batch = resolveFreshness(batch, o.stat)
