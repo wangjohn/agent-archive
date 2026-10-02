@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,7 +68,7 @@ func TestRequestLockedWritesSyncWithTheLockFree(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, func(local *Store) error {
-			_, err := local.RegisterNewSession("native-1", func(id string) archive.SessionRegistration {
+			_, err := local.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}, func(id string) archive.SessionRegistration {
 				lockName = requestLockName(id)
 				reg := registration(t)
 				reg.ArchiveSessionID = id
@@ -181,7 +182,7 @@ func TestRequestForASessionForgottenMidWriteIsRefused(t *testing.T) {
 	forgetter := OpenReadOnly(local.home)
 	local.onWriteSync = func() {
 		local.onWriteSync = nil
-		if err := forgetter.ForgetSession(reg.ArchiveSessionID, reg.NativeSessionID); err != nil {
+		if err := forgetter.ForgetSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -283,7 +284,7 @@ func TestNewRegistrationIsNotRewrittenWhenTheFileChangesMidWrite(t *testing.T) {
 			}
 		}
 	}
-	reg, err := local.RegisterNewSession("native-1", func(assigned string) archive.SessionRegistration {
+	reg, err := local.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}, func(assigned string) archive.SessionRegistration {
 		id = assigned
 		reg := registration(t)
 		reg.ArchiveSessionID = assigned

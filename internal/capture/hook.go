@@ -13,6 +13,7 @@ package capture
 import (
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,7 +197,7 @@ func newSessionRepoKey(home, harness string, payload map[string]any, now time.Ti
 	}
 	// An index entry with no registration behind it is treated as never seen
 	// by the registration below, so it still gets a key.
-	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || registered {
+	if registered, err := HasRegistration(state.OpenReadOnly(home), agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID}); err != nil || registered {
 		return ""
 	}
 	return boundedRepoKey(repoKey, owner.Root)
@@ -237,7 +238,7 @@ type lockHooks func(home string, wait time.Duration) (func(), error)
 // busy-lock test can time the hook's wait apart from the writes after it.
 // afterLock is used by the contention test to model a bounded slow durable
 // write while hooks.lock is held. Production calls provide neither.
-func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) error {
+func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) (runErr error) {
 	if payload == nil {
 		return nil
 	}
@@ -288,6 +289,10 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 		return fmt.Errorf("capture registration busy; this hook was not recorded: %w", lockErr)
 	}
 	defer unlock()
+	// Preserve a proven start or validated Cursor path when bounded identity
+	// lookup discovers damage. Continuation alone still cannot admit a session.
+	defer func() { runErr = preserveIdentityRecovery(home, harness, kind, payload, now, observedConfig, runErr) }()
+
 	if afterLock != nil {
 		afterLock()
 	}
@@ -315,7 +320,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, err = HasRegistration(store, nativeSessionID)
+			registered, err = HasRegistration(store, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 			if err != nil {
 				return err
 			}
@@ -337,7 +342,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 		// a later proven start can still be published. This never admits a
 		// session on its own.
 		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, lookupErr := HasRegistration(store, nativeSessionID)
+			registered, lookupErr := HasRegistration(store, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 			if lookupErr != nil {
 				return lookupErr
 			}
@@ -426,7 +431,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 		if nativeSessionID == "" {
 			return nil
 		}
-		registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID)
+		registered, err := HasRegistration(state.OpenReadOnly(home), agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 		if err != nil || registered {
 			return err
 		}
@@ -444,7 +449,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 }
 
 func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -468,8 +473,8 @@ func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventNa
 
 // HasRegistration reports whether a native session already has an accepted
 // registration. An index entry without a registration does not count.
-func HasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+func HasRegistration(store *state.Store, key agentmeta.SessionKey) (bool, error) {
+	archiveID, found, err := store.ArchiveSessionID(key)
 	if err != nil {
 		return false, fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -555,7 +560,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 		root = owner.Root
 	}
 
-	existingID, found, err := store.ArchiveSessionID(nativeSessionID)
+	existingID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -621,7 +626,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 	// RegisterNewSession saves under the archive ID's request lock and
 	// rechecks the index there, so an index entry retention is removing
 	// right now is never reused for a registration that would outlive it.
-	reg, err := store.RegisterNewSession(nativeSessionID, func(archiveID string) archive.SessionRegistration {
+	reg, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID}, func(archiveID string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: archiveID,
 			NativeSessionID:  nativeSessionID,
@@ -819,7 +824,7 @@ func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string
 }
 
 func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
@@ -1003,4 +1008,23 @@ func projectRoot(payload map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func preserveIdentityRecovery(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, observedConfig config.Config, runErr error) error {
+	if !errors.Is(runErr, state.ErrSessionIndexRecoveryRequired) {
+		return runErr
+	}
+	store := state.OpenReadOnly(home)
+	key, keyErr := agentmeta.NewSessionKey(harness, firstNonEmptyString(payload, "session_id", "conversation_id"))
+	markerErr := keyErr
+	if keyErr == nil {
+		markerErr = store.RequestSessionIndexRecovery(key)
+	}
+	_, queueErr := queueAdmissionIntentInGeneration(home, harness, kind, payload, now, observedConfig.PauseGeneration)
+	project, owned := ConfiguredProjectActivationFor(observedConfig, projectRoot(payload))
+	var diagnosticErr error
+	if owned && project.Included {
+		diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: archive.CanonicalHarness(harness), ProjectRoot: project.Root, ObservedAt: now})
+	}
+	return errors.Join(runErr, markerErr, queueErr, diagnosticErr)
 }

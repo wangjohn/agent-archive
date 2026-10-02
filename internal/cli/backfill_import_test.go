@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -603,7 +604,7 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates %+v, %v", candidates, err)
 	}
-	parentID, _, _ := store.ArchiveSessionID("c-aa-2")
+	parentID, _, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-aa-2"})
 	for _, c := range candidates {
 		if c.Origin != archive.SessionOriginImport || !c.ObservedAt.Equal(backfillNow.UTC()) || c.ParentArchiveSessionID != parentID || c.NativeSessionID != "c-aa-2:subagent:"+c.AgentID {
 			t.Errorf("candidate %+v", c)
@@ -858,5 +859,71 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 	}
 	if during == 0 {
 		t.Fatal("no hook ran while registration was in progress")
+	}
+}
+
+// A diagnostic-only discovery candidate must not abort foreground publication
+// after the valid import's registrations and batch have already committed.
+func TestBackfillForegroundUploadSkipsMalformedNeighbors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		nativeID string
+	}{
+		{"empty", ""}, {"whitespace", " \t "}, {"invalid-utf8", string([]byte{0xff})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, bucket := newImportFixture(t)
+			cfg, _, err := config.Load(f.data)
+			must(t, err)
+			var out, errOut bytes.Buffer
+			plan, ok := planBackfill(f.env, &out, &errOut, f.data, f.userHome, cfg, backfillCommandOptions{}, styleFor(&out))
+			if !ok {
+				t.Fatalf("plan: %s", errOut.String())
+			}
+			want := len(plan.Imported())
+			if want == 0 {
+				t.Fatal("fixture contains no valid import")
+			}
+			// Also include a skipped duplicate of a real qualified identity with a
+			// different byte size, so its diagnostic estimate cannot overwrite it.
+			duplicate := plan.Imported()[0]
+			duplicate.Skip = backfill.SkipDuplicateSession
+			duplicate.Bytes = 1 << 40
+			plan.Candidates = append(plan.Candidates, duplicate, backfill.Candidate{
+				Harness: "claude", NativeSessionID: tc.nativeID, Skip: backfill.SkipUnsafeFormat,
+			})
+			out.Reset()
+			code := importPlan(f.env, &out, &errOut, f.data, plan, configFingerprint(cfg), false)
+			parents, children := importRegistrations(t, f.data, firstImport)
+			if len(parents) != want {
+				t.Fatalf("registered %d, want %d", len(parents), want)
+			}
+			batch, _ := loadBatch(t, f.data)
+			if batch.CompletedAt == nil {
+				t.Fatal("batch did not commit")
+			}
+			if code != 0 || !strings.Contains(out.String(), fmt.Sprintf("Uploaded %d sessions", want)) {
+				t.Fatalf("foreground upload: code %d, stderr %s, stdout %s", code, errOut.String(), out.String())
+			}
+			var wantBytes int64
+			for _, c := range plan.Imported() {
+				wantBytes += c.Bytes
+				for _, sub := range c.Subagents {
+					wantBytes += sub.Bytes
+				}
+			}
+			if !strings.Contains(out.String(), "("+backfill.FormatSize(wantBytes)+").") {
+				t.Fatalf("wrong imported byte estimate: %s", out.String())
+			}
+			for _, reg := range append(parents, children...) {
+				key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+				must(t, err)
+				metadata, err := reader.ReadMetadata(context.Background(), bucket, key)
+				must(t, err)
+				if metadata.Origin != archive.SessionOriginImport {
+					t.Fatalf("wrong origin: %s", metadata.Origin)
+				}
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,7 +140,7 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RegisterNewSession("c-archived", func(id string) archive.SessionRegistration {
+	if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-archived"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "c-archived", ProjectID: archive.ProjectID(agentArchive), ProjectRoot: agentArchive,
 			Harness: archive.Harness{Name: "claude"}, SessionStartedAt: day(22, 12), RegisteredAt: day(22, 12)}
 	}); err != nil {

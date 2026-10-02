@@ -95,7 +95,7 @@ func (sessionStub) lookupEnv(key string) (string, bool) {
 func TestCurrentSessionBoundaryTrimsIdentifier(t *testing.T) {
 	t.Parallel()
 	ids := currentSessions(sessionStub{})
-	if len(ids) != 1 || !ids["current-session"] {
+	if len(ids) != 1 || !ids[handoffSessionKey("codex", "current-session")] {
 		t.Fatalf("ids=%v", ids)
 	}
 }

@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"reflect"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 		t.Fatal(err)
 	}
 	start := activated.Add(24 * time.Hour)
-	if _, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration {
+	if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
 			Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl", SessionStartedAt: start, RegisteredAt: start,
@@ -148,7 +149,7 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	importedAt := activated.Add(time.Hour)
-	imported, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration {
+	imported, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
 			Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl",

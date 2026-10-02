@@ -584,7 +584,7 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 // for the next sweep to retry, and takes it back from a session a hook kept
 // alive.
 func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
-	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
+	return local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, deferForWork, &state.RemovalRecord{
 		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,
 	})
 }

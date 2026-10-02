@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
 	"path/filepath"
@@ -351,16 +352,23 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 // beside an archive error.
 var errNotRegisteredHere = errors.New("no session registered on this machine")
 
-// currentSessions returns the native session IDs of the agent this command is
+// currentSessions returns the qualified session identities of the agent this command is
 // running inside, if it says.
-func currentSessions(env currentSessionDependencies) map[string]bool {
-	ids := map[string]bool{}
+func currentSessions(env currentSessionDependencies) map[agentmeta.SessionKey]bool {
+	ids := map[agentmeta.SessionKey]bool{}
 	for _, observation := range runtimeObservations(env) {
 		if observation.NativeID != "" {
-			ids[observation.NativeID] = true
+			key, err := agentmeta.NewSessionKey(string(observation.Agent), observation.NativeID)
+			if err == nil {
+				ids[key] = true
+			}
 		}
 	}
 	return ids
+}
+
+func handoffSessionKey(harness, nativeID string) agentmeta.SessionKey {
+	return agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeID}
 }
 
 // localTarget builds a handoff target from a registration's transcript.
@@ -394,9 +402,9 @@ type handoffResolver struct {
 	cfg     config.Config
 	harness string
 	source  string
-	// skip holds native session IDs `--latest` must pass over: the agent
+	// skip holds qualified session identities `--latest` must pass over: the agent
 	// session running the command.
-	skip map[string]bool
+	skip map[agentmeta.SessionKey]bool
 	// repoKey is the key of the repository the current directory is in (a
 	// hash of its origin, see archive.RepoKey), or "" when it has none.
 	repoKey string
@@ -539,7 +547,7 @@ type localMatches struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) localMatches {
 	var matches localMatches
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] {
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
 			continue
 		}
 		byPath := sameProject(reg.ProjectRoot, dir)
@@ -662,9 +670,9 @@ func (r handoffResolver) firstArchive(a archiveMatches, candidates []archive.Met
 // otherwise by repository when repoKey is not empty and is its repository
 // key (the same repository, wherever it was checked out). Each list keeps the
 // order given; a session that matches by path is never in byRepo.
-func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[string]bool) (byPath, byRepo []archive.Metadata) {
+func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[agentmeta.SessionKey]bool) (byPath, byRepo []archive.Metadata) {
 	for _, m := range sessions {
-		if skip[m.NativeSessionID] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
+		if skip[handoffSessionKey(m.Harness.Name, m.NativeSessionID)] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
 			continue
 		}
 		switch {

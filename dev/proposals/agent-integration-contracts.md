@@ -96,8 +96,14 @@ Migration and interruption rules:
 2. On a qualified miss, read only the single legacy `sessions/SHA256(nativeID)`
    entry and its registration. Adopt only if registration archive ID matches
    the entry and both canonical agent and exact native ID match. A legacy
-   entry naming another agent is a miss, never a reusable ID. A same-agent
-   duplicate registration is an explicit conflict, not a first-match choice.
+   entry naming another agent is a miss, never a reusable ID. This bounded
+   lookup validates only the referenced owner; it does not prove global
+   uniqueness. Directly referenced conflicting owners and durable conflict
+   evidence block adoption. A complete off-hot-path recovery census detects
+   same-agent duplicate registrations and records an explicit conflict, never
+   a first-match choice. Ordinary absence does not require a census before
+   validated fresh admission; arbitrary manually introduced duplicates are
+   undetectable by bounded lookup alone.
 3. Write the qualified entry atomically using `local.Write`. Leave the legacy
    entry as historical recovery evidence, with **no new unqualified writes**.
    Repeating after interruption before/after this write gives the same ID.
