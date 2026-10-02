@@ -81,11 +81,15 @@ func TestSnapshotRemovalFailureStaysVisible(t *testing.T) {
 
 func TestSignatureOnlyMatchesLegacyHeaderDecoding(t *testing.T) {
 	for name, composer := range map[string]string{
-		"header case": `{"fullConversationHeadersOnly":[{"BubbleID":"b1","bubbleid":"b3"}]}`,
-		"duplicates":  `{"lastUpdatedAt":1,"lastUpdatedAt":2,"fullConversationHeadersOnly":[{"bubbleId":"b1","bubbleId":"b3"}]}`,
-		"inline":      `{"lastUpdatedAt":3,"fullConversationHeadersOnly":null,"conversation":[{"bubbleId":"old","text":"omitted"},{}]}`,
-		"missing":     `{"lastUpdatedAt":-1,"fullConversationHeadersOnly":[{"bubbleId":"b1"},{"bubbleId":"absent"}]}`,
-		"invalid":     `{"lastUpdatedAt":"soon"}`,
+		"header case":            `{"fullConversationHeadersOnly":[{"BubbleID":"b1","bubbleid":"b3"}]}`,
+		"duplicates":             `{"lastUpdatedAt":1,"lastUpdatedAt":2,"fullConversationHeadersOnly":[{"bubbleId":"b1","bubbleId":"b3"}]}`,
+		"inline":                 `{"lastUpdatedAt":3,"fullConversationHeadersOnly":null,"conversation":[{"bubbleId":"old","text":"omitted"},{}]}`,
+		"missing":                `{"lastUpdatedAt":-1,"fullConversationHeadersOnly":[{"bubbleId":"b1"},{"bubbleId":"absent"}]}`,
+		"invalid":                `{"lastUpdatedAt":"soon"}`,
+		"invalid UTF8 identity":  "{\"fullConversationHeadersOnly\":[{\"bubbleId\":\"invalid-\xff\xfe\"}]}",
+		"surrogate identity":     `{"fullConversationHeadersOnly":[{"bubbleId":"invalid-\ud800"}]}`,
+		"invalid duplicate type": `{"fullConversationHeadersOnly":[{"bubbleId":7,"bubbleId":"b1"}]}`,
+		"huge number":            `{"lastUpdatedAt":1e400}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := StateDatabase(t.TempDir())
@@ -99,7 +103,7 @@ func TestSignatureOnlyMatchesLegacyHeaderDecoding(t *testing.T) {
 				got, err = signatureOnly(ctx, db, "c")
 				return err
 			})
-			if wantErr == nil && err != nil || wantErr != nil && ReasonOf(err) != ReasonOf(wantErr) || wantErr == nil && got != want {
+			if wantErr == nil && err != nil || wantErr != nil && (err == nil || ReasonOf(err) != ReasonOf(wantErr)) || wantErr == nil && got != want {
 				t.Fatalf("got %+v %v want %+v %v", got, err, want, wantErr)
 			}
 		})

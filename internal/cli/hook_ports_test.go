@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,5 +185,114 @@ func TestInjectedDecoderReachesActualHookCommandThroughDeclaredAlias(t *testing.
 	registration := registrations[0]
 	if registration.NativeSessionID != " exact / λ " || registration.Harness.Name != string(syntheticID) || registration.Harness.Mode != "future native mode" || !registration.SessionStartedAt.Equal(at) {
 		t.Fatalf("lost native or shared facts %+v", registration)
+	}
+}
+
+type observedHookDecoder struct {
+	decode func(agentapi.HookInput) []agentapi.LifecycleEvent
+}
+
+func (d observedHookDecoder) Decode(_ context.Context, input agentapi.HookInput) ([]agentapi.LifecycleEvent, error) {
+	return d.decode(input), nil
+}
+
+func TestHookCommandPreservesDecoderObservationForValidation(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid=%t", invalid), func(t *testing.T) {
+			t.Parallel()
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			env := testEnv(t, home, at)
+			observed := time.Time{}
+			decoder := observedHookDecoder{decode: func(input agentapi.HookInput) []agentapi.LifecycleEvent {
+				observed = input.ObservedAt
+				batch, _ := (syntheticHookDecoder{}).Decode(context.Background(), input)
+				if invalid {
+					batch[0].Evidence[0].ObservedAt = at.Add(time.Hour)
+				}
+				return batch
+			}}
+			env.Agents = registryWithSyntheticHooks(t, syntheticHooks{}, decoder)
+			env.repoKey = func(string) string { return "" }
+			payload := `{"opaque":"native","tree":` + quoteJSON(project) + `}`
+			var stderr bytes.Buffer
+			if code := runHookCommand([]string{"--harness", "native-synth"}, strings.NewReader(payload), &stderr, env); code != 0 {
+				t.Fatalf("hook exit %d", code)
+			}
+			if !observed.Equal(at) {
+				t.Errorf("decoder observed %s, want shared hook time %s", observed, at)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if invalid {
+				if len(regs) != 0 || !strings.Contains(stderr.String(), "inconsistent lifecycle observation time") {
+					t.Fatalf("invalid decoder observation admitted: %+v stderr %s", regs, &stderr)
+				}
+			} else if len(regs) != 1 || stderr.Len() != 0 {
+				t.Fatalf("valid decoder observation refused: %+v stderr %s", regs, &stderr)
+			}
+		})
+	}
+}
+
+func TestMalformedHookInputDoesNotReachInjectedDecoder(t *testing.T) {
+	t.Parallel()
+	for _, payload := range []string{"not json", "", `{"opaque":`, "null", "[]"} {
+		t.Run(payload, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			env := testEnv(t, home, time.Now())
+			called := false
+			decoder := observedHookDecoder{decode: func(agentapi.HookInput) []agentapi.LifecycleEvent {
+				called = true
+				return nil
+			}}
+			env.Agents = registryWithSyntheticHooks(t, syntheticHooks{}, decoder)
+			var stderr bytes.Buffer
+			if code := runHookCommand([]string{"--harness", "native-synth"}, strings.NewReader(payload), &stderr, env); code != 0 || stderr.Len() != 0 || called {
+				t.Fatalf("malformed hook dispatched: code %d stderr %s called %t", code, &stderr, called)
+			}
+		})
+	}
+}
+
+func TestHookClockPanicNeverAdmitsDecodedFacts(t *testing.T) {
+	t.Parallel()
+	for _, decoderPanics := range []bool{false, true} {
+		t.Run(fmt.Sprintf("decoderPanics=%t", decoderPanics), func(t *testing.T) {
+			t.Parallel()
+			home, project := t.TempDir(), t.TempDir()
+			at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			env := testEnv(t, home, at)
+			clockCalls, decoderCalls, policyCalls := 0, 0, 0
+			env.Now = func() time.Time { clockCalls++; panic("clock failure") }
+			env.repoKey = func(string) string { policyCalls++; return "" }
+			decoder := observedHookDecoder{decode: func(input agentapi.HookInput) []agentapi.LifecycleEvent {
+				decoderCalls++
+				if decoderPanics {
+					panic("decoder failure")
+				}
+				batch, _ := (syntheticHookDecoder{}).Decode(context.Background(), input)
+				return batch
+			}}
+			env.Agents = registryWithSyntheticHooks(t, syntheticHooks{}, decoder)
+			payload := `{"opaque":"native","tree":` + quoteJSON(project) + `}`
+			var stderr bytes.Buffer
+			if code := runHookCommand([]string{"--harness", "native-synth"}, strings.NewReader(payload), &stderr, env); code != 0 || !strings.Contains(stderr.String(), "clock failure") || strings.Contains(stderr.String(), "decoder failure") {
+				t.Fatalf("code=%d stderr=%s", code, &stderr)
+			}
+			if clockCalls != 1 || decoderCalls != 1 || policyCalls != 0 {
+				t.Fatalf("calls clock=%d decoder=%d policy=%d", clockCalls, decoderCalls, policyCalls)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil || len(regs) != 0 {
+				t.Fatalf("panic admitted registration: %+v %v", regs, err)
+			}
+		})
 	}
 }
