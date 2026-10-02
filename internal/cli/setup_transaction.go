@@ -394,23 +394,12 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
 		return setupjournal.Journal{}, &otherInstallationError{problems: problems}
 	}
-	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
+	// Compose removals and installations through native ports before journaling;
+	// shared destinations must have one original-to-final atomic change.
+	inHooks := env.installation(home, userHome)
+	changes, err := hooks.PlanReconfiguration(files, previousFiles, inHooks.hook(executable), inHooks.owner(), next.Harnesses, old.Harnesses)
 	if err != nil {
 		return setupjournal.Journal{}, err
-	}
-	// Remove our hooks from apps no longer selected, and from an app's
-	// previous file when its configuration directory has moved.
-	for _, app := range old.Harnesses {
-		if containsString(next.Harnesses, app) && previousFiles[app] == files[app] {
-			continue
-		}
-		removal, found, err := hooks.PlanRemovalOf(previousFiles, env.installation(home, userHome).owner(), app)
-		if err != nil {
-			return setupjournal.Journal{}, err
-		}
-		if found {
-			changes = append(changes, removal)
-		}
 	}
 	// The agent skills (/handoff), for the apps chosen, or none while they
 	// are turned off. Only a file setup wrote is replaced or removed.
