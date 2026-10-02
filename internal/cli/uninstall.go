@@ -589,7 +589,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 					}
 					// Distinct owners may select one file only when their complete plans
 					// agree. Otherwise refuse rather than lose handlers or apply stale bytes.
-					if prior.Delete != change.Delete || !bytes.Equal(prior.After, change.After) || !bytes.Equal(prior.Before, change.Before) {
+					if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.After, change.After) || !bytes.Equal(prior.Before, change.Before) {
 						return nil, nil, fmt.Errorf("hook owners have conflicting removal plans for %s", change.Path)
 					}
 					duplicate = true

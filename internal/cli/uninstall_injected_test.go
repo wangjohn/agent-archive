@@ -158,10 +158,15 @@ func TestInjectedUninstallRecordedAndLegacyBoundaries(t *testing.T) {
 type sharedRemovalHooks struct {
 	syntheticHooks
 	after []byte
+	mode  os.FileMode
 }
 
 func (h sharedRemovalHooks) Plan(r agentapi.HookPlanRequest) ([]filechange.Change, error) {
-	return []filechange.Change{{Path: r.File.Path, Before: r.File.Bytes, After: h.after, Existed: r.File.Present, Mode: r.File.Mode}}, nil
+	mode := r.File.Mode
+	if h.mode != 0 {
+		mode = h.mode
+	}
+	return []filechange.Change{{Path: r.File.Path, Before: r.File.Bytes, After: h.after, Existed: r.File.Present, Mode: mode}}, nil
 }
 
 type sharedRemovalLookup struct {
@@ -218,5 +223,27 @@ func TestUninstallRecordedInstalledOwnerWithoutFormatterFails(t *testing.T) {
 	}
 	if _, skipped, err := planUninstallHooks(hooks.Files(cfg.HookFiles), nil, hooks.Hook{Ports: productionAgents}, nil); err != nil || len(skipped) != 1 {
 		t.Fatalf("optional leftover policy skipped=%v err=%v", skipped, err)
+	}
+}
+
+func TestUninstallSharedFileModeAgreement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings")
+	if err := os.WriteFile(path, []byte("both owners"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, agree := range []bool{true, false} {
+		mode := os.FileMode(0644)
+		if !agree {
+			mode = 0600
+		}
+		ports := sharedRemovalLookup{first: sharedRemovalHooks{after: []byte("removed"), mode: 0644}, second: sharedRemovalHooks{after: []byte("removed"), mode: mode}}
+		changes, _, err := planUninstallHooks(hooks.Files{"first": path, "second": path}, nil, hooks.Hook{Ports: ports}, []string{"first", "second"})
+		if agree {
+			if err != nil || len(changes) != 1 || changes[0].Mode != 0644 {
+				t.Fatalf("agreeing modes plans=%v err=%v", changes, err)
+			}
+		} else if err == nil {
+			t.Fatal("conflicting0644/0600 mode facts silently deduplicated")
+		}
 	}
 }
