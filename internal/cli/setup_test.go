@@ -99,11 +99,11 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 		}
 		return "n"
 	}
-	return strings.Join([]string{yn(codex), yn(claude), yn(cursor), project, "", "s3", profile, bucket, region, "y"}, "\n") + "\n"
+	return strings.Join([]string{yn(codex), yn(claude), yn(cursor), project, "", "s3-existing", profile, bucket, region, "y"}, "\n") + "\n"
 }
 
 func r2SetupInput(project, secret string) string {
-	return strings.Join([]string{"y", "n", "n", project, "", "r2", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
+	return strings.Join([]string{"y", "n", "n", project, "", "r2-existing", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
 }
 
 func setupRun(t *testing.T, env Env, input string, want int) string {
@@ -160,7 +160,7 @@ func TestSetupCancelAndResumeDraft(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
-	const needBucket = "You’ll need a private Cloudflare R2 or Amazon S3 bucket."
+	const needBucket = "Choose Cloudflare R2 or Amazon S3 for private archive storage."
 	if output := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0); !strings.Contains(output, needBucket) {
 		t.Fatalf("a first setup did not say a bucket is needed:\n%s", output)
 	}
@@ -198,7 +198,7 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 	setupRun(t, env, r2SetupInput(project, "old-private-value"), 0)
 	old, _, _ := config.Load(home)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("offline") }
-	input := "storage\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nn\nACCESS2\nnew-private-value\ny\n"
+	input := "storage\nchange\nr2-existing\n0123456789abcdef0123456789abcdef\ntest-bucket\nn\nACCESS2\nnew-private-value\ny\n"
 	output := setupRun(t, env, input, 1)
 	secret, err := kc.Load(context.Background(), old.Storage.R2CredentialRef)
 	if err != nil || secret.SecretAccessKey != "old-private-value" {
@@ -232,7 +232,7 @@ func TestSetupStorageReasksForAnUnreadableStoredCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No answer to "Keep stored R2 credentials?": the key is asked for next.
-	output := setupRun(t, env, "storage\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS2\nnew-private-value\ny\n", 0)
+	output := setupRun(t, env, "storage\nchange\nr2-existing\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS2\nnew-private-value\ny\n", 0)
 	if strings.Contains(output, "Keep stored R2 credentials?") || !strings.Contains(output, "can't be read from the Keychain") {
 		t.Fatalf("setup offered the unreadable credential:\n%s", output)
 	}
@@ -345,7 +345,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	input := "storage\ns3\nprofile\nother-bucket\ny\n"
+	input := "storage\nchange\ns3-existing\nprofile\nother-bucket\ny\n"
 	output := setupRun(t, env, input, 1)
 	if !strings.Contains(output, "pending") {
 		t.Fatal(output)
@@ -389,7 +389,7 @@ func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
 	setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
-	setupRun(t, env, "storage\ns3\nprofile\nother-bucket\ny\n", 0)
+	setupRun(t, env, "storage\nchange\ns3-existing\nprofile\nother-bucket\ny\n", 0)
 	cfg, _, _ := config.Load(home)
 	if cfg.Storage.Bucket != "other-bucket" || len(cfg.Archive.Projects) != 1 || len(cfg.Harnesses) != 1 {
 		t.Fatal("edit lost capture choices")
@@ -457,9 +457,15 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-			attempts := 0
+			attempts, publications := 0, 0
 			env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
-				attempts++
+				if _, committed, err := config.Load(home); err != nil {
+					t.Fatal(err)
+				} else if committed {
+					publications++
+				} else {
+					attempts++
+				}
 				fixed := cfg.Storage.Region == "eu-west-1"
 				if choice == "prefix" {
 					fixed = cfg.Storage.Prefix == "allowed/"
@@ -472,8 +478,8 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 			}
 			input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 			setupRun(t, env, input+"edit\n"+choice+"\n"+value+"\ny\n", 0)
-			if attempts != 2 {
-				t.Fatalf("attempts=%d", attempts)
+			if attempts != 2 || publications != 1 {
+				t.Fatalf("verification attempts=%d postcommit publications=%d", attempts, publications)
 			}
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {

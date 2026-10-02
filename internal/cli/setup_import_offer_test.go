@@ -18,7 +18,7 @@ import (
 // setupImportAnswers set Claude Code up in ~/src/web-app, storing in S3,
 // and answer the import offer with importAnswer.
 func setupImportAnswers(importAnswer string) string {
-	return strings.Join([]string{"", "2", "work", "2", "", importAnswer}, "\n") + "\n"
+	return strings.Join([]string{"", "s3-existing", "work", "2", "", importAnswer}, "\n") + "\n"
 }
 
 // newImportOfferFixture is a Mac with Claude Code, run from ~/src/web-app,
@@ -188,7 +188,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {
