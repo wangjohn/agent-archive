@@ -135,6 +135,9 @@ func readMetadata(path string, files transcriptio.Opener) (data []byte, resultEr
 	}
 	f, err := files.OpenRegular(p)
 	if err != nil {
+		if errors.Is(err, transcriptio.ErrCleanup) || agentapi.HasFailure(err, agentapi.Cleanup) {
+			return nil, sourceio.Classify(err)
+		}
 		return nil, nil
 	}
 	defer func() { resultErr = errors.Join(resultErr, agentapi.Wrap(agentapi.Cleanup, f.Close())) }()

@@ -26,11 +26,12 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 		if in.File.Length() > limit {
 			return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 		}
-		out, err = f.FilterText(sourceio.Reader(ctx, in.File, in.File.Length()), c.StartedAt)
+		input := sourceio.Reader(ctx, in.File, in.File.Length())
+		out, err = f.FilterText(input, c.StartedAt)
 		if err != nil {
-			return out, errors.Join(sourceio.Classify(err), sourceio.Classify(in.File.Check()), ctx.Err())
+			return out, errors.Join(sourceio.Classify(err), input.ReadError(), sourceio.Classify(in.File.Check()), ctx.Err())
 		}
-		return out, errors.Join(sourceio.Classify(in.File.Check()), ctx.Err())
+		return out, errors.Join(input.ReadError(), sourceio.Classify(in.File.Check()), ctx.Err())
 	}
 	if in.Records == nil {
 		return archive.FilteredTranscript{}, errors.New("cursor native input required")

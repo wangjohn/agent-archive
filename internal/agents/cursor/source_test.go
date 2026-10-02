@@ -7,8 +7,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
@@ -80,4 +83,38 @@ func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
 	if _, err = pass.Read(ctx, ref, agentapi.ReadLimits{}); !errors.Is(err, context.Canceled) || probes != 2 {
 		t.Fatalf("cancellation=%v probes=%d", err, probes)
 	}
+}
+
+func TestTextFallbackRetainsReadFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.txt")
+	if err := os.WriteFile(path, []byte("user: hello\nassistant: hi\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := transcriptio.Open(transcriptio.OS{}, path, transcriptio.OpenPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	fault := errors.New("synthetic text read fault")
+	input := &textFailedReadInput{FileInput: snapshot, fault: fault}
+	_, err = (Filter{}).Filter(t.Context(), agentapi.NativeInput{File: input}, agentapi.FilterContext{StartedAt: time.Unix(1, 0)})
+	if input.starts != 2 || !errors.Is(err, fault) || !agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.Deterministic(err) {
+		t.Fatalf("text refusal hid retryable read: starts=%d err=%v", input.starts, err)
+	}
+}
+
+type textFailedReadInput struct {
+	agentapi.FileInput
+	fault  error
+	starts int
+}
+
+func (f *textFailedReadInput) ReadAt(p []byte, off int64) (int, error) {
+	if off == 0 {
+		f.starts++
+		if f.starts == 2 {
+			return 0, f.fault
+		}
+	}
+	return f.FileInput.ReadAt(p, off)
 }
