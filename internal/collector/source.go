@@ -92,13 +92,9 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 	}
 	return p, f, nil
 }
-func (r providerReader) pass(ctx context.Context) (agentapi.SourcePass, func() error, error) {
-	p, _, err := r.binding()
-	if err != nil {
-		return nil, nil, err
-	}
+func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.opts.sourcePasses != nil {
-		pass, err := r.opts.sourcePasses.get(ctx, r.reg.Harness.Name, p)
+		pass, err := r.opts.sourcePasses.get(ctx, key, p)
 		return pass, func() error { return nil }, err
 	}
 	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Database: r.opts.cursorDatabase()})
@@ -108,7 +104,11 @@ func (r providerReader) pass(ctx context.Context) (agentapi.SourcePass, func() e
 	return pass, pass.Close, nil
 }
 func (r providerReader) Signature(ctx context.Context) (out sourceState, err error) {
-	p, closePass, err := r.pass(ctx)
+	provider, filter, err := r.binding()
+	if err != nil {
+		return out, err
+	}
+	p, closePass, err := r.pass(ctx, provider, filter.Name())
 	if err != nil {
 		return out, err
 	}
@@ -120,11 +120,11 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	return observe(r.reg.SourceKind, o), err
 }
 func (r providerReader) Filter(ctx context.Context, _ archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
-	_, f, err := r.binding()
+	provider, f, err := r.binding()
 	if err != nil {
 		return out, observed, err
 	}
-	p, closePass, err := r.pass(ctx)
+	p, closePass, err := r.pass(ctx, provider, f.Name())
 	if err != nil {
 		return out, observed, err
 	}

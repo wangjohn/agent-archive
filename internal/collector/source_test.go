@@ -443,3 +443,22 @@ func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
 func contains(list []string, s string) bool {
 	return slices.Contains(list, s)
 }
+
+// Stored native names retain case, while one resolved provider owns the pass.
+func TestCursorSourceNamesShareOneSerialPass(t *testing.T) {
+	local := newTestStore(t)
+	db := newCursorDB(t, true)
+	for i, name := range []string{"cursor", "CURSOR"} {
+		id := fmt.Sprintf("case-chat-%d", i)
+		db.chat(id, 1, "message")
+		reg := cursorRegistration("case-session-"+id, id)
+		reg.Harness.Name = name
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, copies := run(t, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}, countSnapshots(t))
+	if len(result.Errors) != 0 || len(result.Published) != 2 || copies != 1 {
+		t.Fatalf("case names split source pass: %+v copies=%d", result, copies)
+	}
+}

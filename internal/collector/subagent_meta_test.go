@@ -31,7 +31,8 @@ func newNamedSubagentFixture(t *testing.T) *resumedSubagentFixture {
 
 func (f *resumedSubagentFixture) writeMeta(content string) {
 	f.t.Helper()
-	path, ok := archive.SubagentMetaPath(f.childPath)
+	path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
+	ok := strings.HasSuffix(f.childPath, ".jsonl")
 	if !ok {
 		f.t.Fatalf("%s is not named like a subagent transcript", f.childPath)
 	}
@@ -111,13 +112,13 @@ func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
 			f.writeMeta(`{"description":"Too big","pad":"` + strings.Repeat("x", archive.MaxSubagentMetaBytes) + `"}`)
 		},
 		"a directory": func(f *resumedSubagentFixture) {
-			path, _ := archive.SubagentMetaPath(f.childPath)
+			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
 			if err := os.Mkdir(path, 0o700); err != nil {
 				f.t.Fatal(err)
 			}
 		},
 		"a pipe": func(f *resumedSubagentFixture) {
-			path, _ := archive.SubagentMetaPath(f.childPath)
+			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				f.t.Skipf("no named pipes here: %v", err)
 			}
