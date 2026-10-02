@@ -124,21 +124,26 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 // window observed before its lock wait, rather than whichever window is active
 // after that wait. A complete pause/resume cycle must not admit the old start.
 func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func()) (bool, error) {
+	path, err := persistEventBatchInGeneration(home, batch, now, generation, afterStage)
+	return path != "", err
+}
+
+func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func()) (string, error) {
 	intent, queued, err := eventAdmissionIntent(home, batch, now)
 	if err != nil || !queued {
-		return false, err
+		return "", err
 	}
 	if intent.PauseGeneration != generation {
-		return false, nil
+		return "", nil
 	}
 	id, err := local.ID()
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
 	staged, err := stageEventIntent(home, intent, path, local.StageInExistingDir)
 	if err != nil || staged == nil {
-		return false, err
+		return "", err
 	}
 	defer staged.Discard()
 	if afterStage != nil {
@@ -146,12 +151,12 @@ func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, n
 	}
 	committed, err := commitEventIntent(home, intent, staged)
 	if err != nil || committed == nil {
-		return false, err
+		return "", err
 	}
 	if err := committed.SyncDir(); err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return path, nil
 }
 
 // Create the first queue directory under its lock, but sync every intent

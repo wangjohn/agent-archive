@@ -1,9 +1,12 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"os"
 	"testing"
@@ -116,5 +119,231 @@ func TestFollowupStartBatchSurvivesEachPartialReplay(t *testing.T) {
 				t.Fatalf("ack %+v %v", entries, err)
 			}
 		})
+	}
+}
+
+func TestDirectAndContendedBatchPreserveNativeLocatorOrder(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	run := func(contended bool) string {
+		home, project := t.TempDir(), t.TempDir()
+		setUpTestConfig(t, home, project, at.Add(-time.Hour))
+		follow := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "same-native", project, "/earlier"), ObservedAt: at})
+		start := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "same-native", project, ""), ObservedAt: at})
+		later := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "same-native", project, "/later"), ObservedAt: at})
+		later[0].Reason, later[0].NativeEvent = "later", "later"
+		batch := append(append(follow, start...), later...)
+		if err := validateBatchStructure("synthetic", batch, at); err != nil {
+			t.Fatal(err)
+		}
+		release := func() {}
+		if contended {
+			var err error
+			release, err = local.NamedLock(home, "hooks.lock")
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := HandleBatch(home, "synthetic", batch, at)
+		release()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i <= 2; i++ {
+			if err := ReplayAdmissionIntents(home, at.Add(time.Duration(i)*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		regs, err := state.OpenReadOnly(home).LoadRegistrations()
+		if err != nil || len(regs) != 1 {
+			t.Fatalf("registrations %v %v", regs, err)
+		}
+		if !regs[0].AdmittedAt.Equal(at) || regs[0].NativeSessionID != "same-native" || regs[0].Origin != archive.SessionOriginHook {
+			t.Fatalf("provenance %v", regs[0])
+		}
+		entries, err := os.ReadDir(admissionIntentDir(home))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("ack %v %v", entries, err)
+		}
+		return regs[0].TranscriptPath
+	}
+	direct, contended := run(false), run(true)
+	t.Logf("production HandleBatch after two successful replay passes: direct locator=%q contended locator=%q", direct, contended)
+	if direct != "/earlier" || contended != "/earlier" {
+		t.Errorf("FV3B-ORDER-1: same valid ordered batch has contention-dependent permanent locator")
+	}
+}
+
+func TestOrderedDirectBatchSurvivesEachPartialEffect(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, boundary := range []effectName{effectRegistrationCreate, effectLocatorUpdate, effectEvidenceSave, effectRequestSave, effectIntentAck} {
+		t.Run(string(boundary), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			follow := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "ordered-direct", project, "/earlier"), ObservedAt: at})
+			start := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "ordered-direct", project, ""), ObservedAt: at})
+			later := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "ordered-direct", project, "/later"), ObservedAt: at})
+			later[0].Reason, later[0].NativeEvent = "later", "later"
+			follow[0].Evidence = []archive.SupplementalEvidence{minimalReplayEvidence(archive.EvidenceKindFinalResponse, follow[0], at)}
+			later[0].Evidence = []archive.SupplementalEvidence{minimalReplayEvidence(archive.EvidenceKindFinalResponse, later[0], at)}
+			batch := append(append(follow, start...), later...)
+			interrupted := false
+			err := handleBatch(home, "synthetic", batch, at, nil, nil, eventOptions{afterEffect: func(name effectName) error {
+				if name == boundary && !interrupted {
+					interrupted = true
+					return errors.New("partial ordered direct batch")
+				}
+				return nil
+			}})
+			if err == nil || !interrupted {
+				t.Fatalf("missing actual failure: %v", err)
+			}
+			entries, err := os.ReadDir(admissionIntentDir(home))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if boundary != effectIntentAck && len(entries) != 1 {
+				t.Fatalf("whole batch not retained: %v", entries)
+			}
+			for range 2 {
+				if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := HandleBatch(home, "synthetic", batch, at); err != nil {
+				t.Fatal(err)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil || len(regs) != 1 {
+				t.Fatalf("registration %v %v", regs, err)
+			}
+			reg := regs[0]
+			if reg.TranscriptPath != "/earlier" || !reg.AdmittedAt.Equal(at) || reg.NativeSessionID != "ordered-direct" || reg.Harness.Name != "synthetic" || reg.Origin != archive.SessionOriginHook {
+				t.Fatalf("order/provenance %v", reg)
+			}
+			requests, err := state.OpenReadOnly(home).LoadRequests()
+			if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) != 3 {
+				t.Fatalf("evidence %v %v", requests, err)
+			}
+			entries, err = os.ReadDir(admissionIntentDir(home))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("ack %v %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestFollowupBeforeUnsupportedStartNeverAdmits(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, fresh := range []agentapi.Freshness{agentapi.FreshUnknown, agentapi.FreshContinuation} {
+		for _, contended := range []bool{false, true} {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			follow := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "unsupported", project, "/earlier"), ObservedAt: at})
+			start := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "unsupported", project, ""), ObservedAt: at})
+			start[0].Start.Kind = fresh
+			release := func() {}
+			if contended {
+				var err error
+				release, err = local.NamedLock(home, "hooks.lock")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := HandleBatch(home, "synthetic", append(follow, start...), at)
+			release()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil || len(regs) != 0 {
+				t.Fatalf("unsupported %v contended %t admitted %v %v", fresh, contended, regs, err)
+			}
+		}
+	}
+}
+
+func TestOrderedBatchRequestsRecoveryAndHonorsRevokedGeneration(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, revoke := range []bool{false, true} {
+		home, project := t.TempDir(), t.TempDir()
+		setUpTestConfig(t, home, project, at.Add(-time.Hour))
+		follow := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "ordered-recovery", project, "/earlier"), ObservedAt: at})
+		start := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "ordered-recovery", project, ""), ObservedAt: at})
+		batch := append([]agentapi.LifecycleEvent(nil), follow...)
+		batch = append(batch, start...)
+		key, err := eventKey(follow[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := state.Open(home); err != nil {
+			t.Fatal(err)
+		}
+		corruptQualifiedIndex(t, home, key)
+		if err := HandleBatch(home, "synthetic", batch, at); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			t.Fatalf("missing recovery: %v", err)
+		}
+		entries, err := os.ReadDir(admissionIntentDir(home))
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("recovery batch not queued %v %v", entries, err)
+		}
+		if revoke {
+			if _, err := config.SetPaused(home, true); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.SetPaused(home, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		store, err := state.Open(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RecoverSessionIndex(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		regs, err := store.LoadRegistrations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if revoke {
+			if len(regs) != 0 {
+				t.Fatal("revoked generation admitted")
+			}
+		} else if len(regs) != 1 || regs[0].TranscriptPath != "/earlier" || !regs[0].AdmittedAt.Equal(at) {
+			t.Fatalf("recovered order/proof %v", regs)
+		}
+		entries, err = os.ReadDir(admissionIntentDir(home))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("ack %v %v", entries, err)
+		}
+	}
+}
+
+func TestOrderedBatchBeforeActivationKeepsDeclinedStartDiagnostic(t *testing.T) {
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, at.Add(time.Hour))
+	batch := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "preactivation", project, "/earlier"), ObservedAt: at})
+	batch = append(batch, syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "preactivation", project, ""), ObservedAt: at})...)
+	if err := HandleBatch(home, "synthetic", batch, at); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("preactivation admitted %v %v", regs, err)
+	}
+	diagnostics, err := ReadDiagnostics(home)
+	if err != nil || len(diagnostics) != 1 || diagnostics[0].Code != DiagnosticPreActivationStart {
+		t.Fatalf("lost declined-start diagnostic %v %v", diagnostics, err)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if !os.IsNotExist(err) && (err != nil || len(entries) != 0) {
+		t.Fatalf("preactivation intent %v %v", entries, err)
 	}
 }
