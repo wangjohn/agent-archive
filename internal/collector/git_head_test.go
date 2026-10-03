@@ -25,7 +25,7 @@ func TestPublicationCarriesTheCommitsTheHooksRecorded(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), Dirty: &dirty, ObservedAt: reg.RegisteredAt}
 	reg.LastHead = &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: reg.RegisteredAt.Add(time.Minute)}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	got := publishOnce(t, local, remote, reg, &opts).GitHead
 	if got == nil || got.Start == nil || got.Start.SHA != reg.StartHead.SHA || got.Start.Dirty == nil || !*got.Start.Dirty ||
 		got.Last == nil || got.Last.SHA != reg.LastHead.SHA {
@@ -37,7 +37,7 @@ func TestPublicationWithoutRecordedCommitsOmitsGitHead(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	publishOnce(t, local, remote, reg, &opts)
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	raw, err := remote.Get(context.Background(), key)
@@ -56,7 +56,7 @@ func TestStopCommitPublishesWithoutTranscriptGrowth(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
 	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
 	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
@@ -95,7 +95,7 @@ func TestStopCommitWithHookEvidencePublishesOnce(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
 	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
@@ -142,7 +142,7 @@ func TestStopCommitPublishesForLegacyPublication(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestStopCommitRepairsAMissingSource(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
 	if err := remote.Delete(context.Background(), before.SourceBundle.Key); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestStopCommitPublishesAfterTheTranscriptGoes(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestStopCommitPublishesWithoutARequest(t *testing.T) {
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
 	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
@@ -284,7 +284,7 @@ func TestStopCommitSeenAgainIsPublished(t *testing.T) {
 	now := reg.RegisteredAt.Add(time.Hour)
 	reg.LastHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: now.Add(-time.Minute)}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	again := &archive.GitHead{SHA: reg.LastHead.SHA, ObservedAt: now.Add(time.Minute)}
 	moveLastHead(t, local, reg.ArchiveSessionID, again)
@@ -306,7 +306,7 @@ func TestStopCommitPublishesPastAnUnderivableRefresh(t *testing.T) {
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
 	opts.ParserVersion = "two"
 	skip := state.RefreshSkip{ParserVersion: "two", SourceKey: before.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
@@ -346,7 +346,7 @@ func TestStopCommitWaitsForUnreadableLegacyMetadata(t *testing.T) {
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := &failingMetadataGets{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
@@ -375,7 +375,7 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	signature, found, err := local.LoadScanSignature(reg.ArchiveSessionID)
 	if err != nil || !found {
