@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -252,5 +254,147 @@ func TestStopCommitPublishesWithoutARequest(t *testing.T) {
 	}
 	if len(remote.keys) != 0 {
 		t.Errorf("a published commit was published again: %v", remote.keys)
+	}
+}
+
+// moveLastHead records last as the registration's last HEAD, as a stop
+// whose request has already been completed would leave it.
+func moveLastHead(t *testing.T, local *state.Store, id string, last *archive.GitHead) {
+	t.Helper()
+	if _, err := local.UpdateRegistration(id, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func publishedLast(t *testing.T, remote storage.ObjectStore, id string) *archive.GitHead {
+	t.Helper()
+	m := fetchMetadata(t, remote, "codex", id)
+	if m.GitHead == nil {
+		return nil
+	}
+	return m.GitHead.Last
+}
+
+// Commit A, then B, then A again: the registration's observation is A seen
+// anew, and that is published, though the commit matches what was.
+func TestStopCommitSeenAgainIsPublished(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	now := reg.RegisteredAt.Add(time.Hour)
+	reg.LastHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: now.Add(-time.Minute)}
+	remote := storagetest.NewMemoryStore()
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	again := &archive.GitHead{SHA: reg.LastHead.SHA, ObservedAt: now.Add(time.Minute)}
+	moveLastHead(t, local, reg.ArchiveSessionID, again)
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	if last := publishedLast(t, remote, reg.ArchiveSessionID); last == nil || !last.ObservedAt.Equal(again.ObservedAt) {
+		t.Fatalf("published last = %+v, want the commit seen again at %s", last, again.ObservedAt)
+	}
+}
+
+// A metadata refresh this parser cannot make (recorded as a refresh skip)
+// does not hold back a recorded commit: it is published over the retained
+// metadata.
+func TestStopCommitPublishesPastAnUnderivableRefresh(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	before := publishOnce(t, local, remote, reg, &opts)
+	opts.ParserVersion = "two"
+	skip := state.RefreshSkip{ParserVersion: "two", SourceKey: before.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
+	if err := local.SaveRefreshSkip(reg.ArchiveSessionID, skip); err != nil {
+		t.Fatal(err)
+	}
+	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
+	moveLastHead(t, local, reg.ArchiveSessionID, last)
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	if got := publishedLast(t, remote, reg.ArchiveSessionID); got == nil || got.SHA != last.SHA {
+		t.Fatalf("published last = %+v, want %s", got, last.SHA)
+	}
+}
+
+// failingMetadataGets fails reads of metadata sidecars while failing is set.
+type failingMetadataGets struct {
+	storage.ObjectStore
+	failing bool
+}
+
+func (s *failingMetadataGets) Get(ctx context.Context, key string) ([]byte, error) {
+	if s.failing && strings.HasSuffix(key, "/metadata.json") {
+		return nil, errors.New("storage unavailable")
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+// A publication without cached metadata whose sidecar cannot be read for a
+// pass does not count the registration's commit as published: once storage
+// answers again, the commit is.
+func TestStopCommitWaitsForUnreadableLegacyMetadata(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	remote := &failingMetadataGets{ObjectStore: storagetest.NewMemoryStore()}
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := stopAtNewCommit(t, local, reg, now.Add(time.Minute))
+	remote.failing = true
+	now = now.Add(time.Hour)
+	if _, err := Run(context.Background(), local, remote, opts); err != nil {
+		t.Fatal(err)
+	}
+	remote.failing = false
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	if got := publishedLast(t, remote.ObjectStore, reg.ArchiveSessionID); got == nil || got.SHA != last.SHA {
+		t.Fatalf("published last = %+v, want %s", got, last.SHA)
+	}
+}
+
+// A remembered read failure does not hide a moved commit: the session is
+// scanned again, since the HEAD-only publication reads no source.
+func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	signature, found, err := local.LoadScanSignature(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatalf("no signature: %v", err)
+	}
+	signature.Failed, signature.FailedError = true, "unsafe source format"
+	signature.FailedMaxBytes, signature.FailedRecordLimit = opts.maxTranscriptBytes(), recordLimit
+	if err := local.SaveScanSignature(reg.ArchiveSessionID, signature); err != nil {
+		t.Fatal(err)
+	}
+	stored, _, err := local.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged(t, local, stored, opts) {
+		t.Fatal("the remembered failure is not skipped before the commit moves")
+	}
+	stored.LastHead = &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
+	if unchanged(t, local, stored, opts) {
+		t.Error("a moved commit is hidden behind the remembered failure")
 	}
 }
