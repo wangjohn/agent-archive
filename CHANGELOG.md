@@ -104,6 +104,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- File handoff retrieval commands preserve transcript paths containing shell
+  metacharacters, quotes, backslashes, and newlines without expanding them.
+
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.
   Own-key migrations retire completed checkpoints and disclose shared access
