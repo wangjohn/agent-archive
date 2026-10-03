@@ -23,7 +23,7 @@ func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 	if err := os.WriteFile(registrationPath(local, "newer"), []byte(`{"archive_session_id":["not","a","string"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
 	if err != nil || result.Errors["newer"] == nil || errors.Is(result.Errors["newer"], state.ErrQuarantined) {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}
@@ -39,7 +39,7 @@ func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
 	local := newTestStore(t)
 	for range 2 {
 		corruptFile(t, requestPath(local, "orphan"))
-		if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"}); err != nil {
+		if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,7 +62,7 @@ func TestUnreadableRegistrationCountsAsPending(t *testing.T) {
 	if err := os.Chmod(registrationPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
 	if err != nil || result.Errors["session-1"] == nil {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}
@@ -118,7 +118,7 @@ func TestParserUpgradeRepublishesSourceThisBuildBuildsDifferently(t *testing.T) 
 				t.Fatal(err)
 			}
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-			opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 			if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 				t.Fatalf("%#v %v %v", result, err, result.Errors)
 			}
@@ -190,7 +190,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 				t.Fatal(err)
 			}
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-			opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 			if _, err := Run(context.Background(), local, memory, opts); err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +266,7 @@ func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	if _, err := Run(context.Background(), local, store, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestSessionCutOffByPassDeadlineIsNotAFailure(t *testing.T) {
 		<-store.started
 		cancel()
 	}()
-	result, err := Run(ctx, local, store, Options{Sources: testSources, MachineID: "m", Retry: storage.RetryPolicy{MaxAttempts: 1}})
+	result, err := Run(ctx, local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Retry: storage.RetryPolicy{MaxAttempts: 1}})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}

@@ -34,7 +34,7 @@ func TestUnusedHeaderReservationsPermitInitialPreviews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := &nativePreviewCatalog{sources: productionAgents, ctx: context.Background(), files: files, candidates: r.Candidates, reserved: r.Coverage.ReservedBytes, stderr: io.Discard, now: f.at}
+	catalog := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: files, candidates: r.Candidates, reserved: r.Coverage.ReservedBytes, stderr: io.Discard, now: f.at}
 	more, err := catalog.load()
 	read, _, _, _ := files.counts()
 	t.Logf("verified=%d reserved=%d actualRead=%d rows=%d more=%v error=%v", len(r.Candidates), r.Coverage.ReservedBytes, read, len(catalog.rows), more, err)
@@ -116,7 +116,7 @@ func TestFullHeaderBudgetKeepsVerifiedIDsWithoutPreviewReads(t *testing.T) {
 	}
 	before, opensBefore, _, _ := meter.counts()
 	var stderr bytes.Buffer
-	n := &nativePreviewCatalog{sources: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: r.Coverage.ReservedBytes, stderr: &stderr, now: f.at}
+	n := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: r.Coverage.ReservedBytes, stderr: &stderr, now: f.at}
 	more, err := n.load()
 	after, opensAfter, active, full := meter.counts()
 	if err != nil || more || len(n.rows) != 256 || n.next != 0 || !n.exhausted || before != nativeReadBudget || after != before || opensBefore != opensAfter || active != 0 || full != 0 || !strings.Contains(stderr.String(), "labels inspected for 0 of 256") {

@@ -48,6 +48,9 @@ Import history
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
 
+Evaluate agents
+  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
   agent-archive purge       Review and remove unreferenced source objects
@@ -942,6 +945,73 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 | `--source` | a value | `auto` |
 | `--to` | a value | — |
 | `--worktree` | no value | — |
+
+## agent-archive eval
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
+       | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+
+Export sessions for an evaluation tool, one JSON Lines record per session
+(schemas/eval-export.schema.json), from the archive or from transcripts on
+this machine. Read-only and never interactive.
+```
+
+No flags.
+
+## agent-archive eval export
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       agent-archive eval export --ids-from - [--detail metadata|full]
+       agent-archive eval export --scan [--harness NAME] [--project DIR]
+               [--since DATE] [--until DATE] [--detail metadata|full]
+       agent-archive eval export --file PATH --harness NAME [--detail ...]
+       Any of them also takes [--max-bytes N] [--workers N].
+
+Print one JSON line per session: its identity, commits, counts, tokens and
+tools, and with --detail full (the default) its filtered human prompts in
+order, final response, edited files and feedback. Archived sessions are
+named by full SESSION_ID. Transcripts on this machine (--file, --scan, or
+absolute paths with --ids-from) need no setup and are filtered as they
+would be before upload. With several workers each record is written as its
+session finishes. A session that cannot be exported is an error record on
+its own line; the others are still printed, and the exit code is 1.
+Nothing is uploaded or written.
+  --detail metadata|full     metadata prints no conversation text and, for
+                             the archive, reads only sidecars (default full)
+  --ids-from -               Read session IDs or transcript paths from stdin,
+                             one a line
+  --scan                     Export the transcripts backfill would find here
+  --project DIR              With --scan, only this project; repeatable
+  --since DATE|TIME|AGE      With --scan, sessions started on or after this
+                             local day (as backfill's --since)
+  --until DATE|TIME|AGE      With --scan, sessions started on or before it
+  --file PATH                Export one transcript; needs --harness
+  --harness NAME             The app: for --file, for a path outside the apps'
+                             folders, or a session under two apps
+  --workers N                Export N sessions at once (default 0: the number
+                             of CPUs, up to 8)
+  --max-bytes N              Cut each record's longest texts to fit N bytes
+                             (default 120000; 0 for no limit)
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--detail` | a value | `full` |
+| `--file` | a value | — |
+| `--harness` | a value | — |
+| `--ids-from` | a value | — |
+| `--max-bytes` | a value | `120000` |
+| `--project` | a value; repeatable | — |
+| `--scan` | no value | — |
+| `--since` | a value | — |
+| `--until` | a value | — |
+| `--workers` | a value | `0` |
 
 ## agent-archive uninstall
 

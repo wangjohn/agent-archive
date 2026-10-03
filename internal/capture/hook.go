@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"os"
 	"path/filepath"
@@ -164,6 +165,7 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 		return err
 	}
 	batch = resolveFreshness(batch, o.stat)
+	prepareCodexFacts(harness, batch, observedConfig, now)
 	lookupStarted := time.Now()
 	lookups := batchGitLookups(home, batch, now, o)
 	wait := lockWaitAfter(time.Since(lookupStarted))
@@ -236,7 +238,7 @@ func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Confi
 	}
 	recoveryErr := store.RequestSessionIndexRecovery(key)
 	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil, replay)
-	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	project, owned := hookProjectActivation(cfg, event, now)
 	var diagnosticErr error
 	if owned && project.Included {
 		diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now})
@@ -253,8 +255,8 @@ func needsOrderedAdmission(store *state.Store, cfg config.Config, batch []agenta
 			followup = true
 		}
 		if followup && event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit {
-			owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
-			if !owned || !owner.Included || !cfg.Archive.Eligible(owner.Root, now) {
+			owner, owned := hookProjectActivation(cfg, event, now)
+			if !owned || !owner.Included || (cfg.EffectiveCodexCaptureScope() != config.CodexAllProjects && !cfg.Archive.Eligible(owner.Root, now)) {
 				return false, nil
 			}
 			key, err := eventKey(event)
@@ -355,7 +357,7 @@ func recordHookBusyEvent(home string, event agentapi.LifecycleEvent, now time.Ti
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
 		return err
 	}
-	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	project, owned := hookProjectActivation(cfg, event, now)
 	if !owned || !project.Included {
 		return nil
 	}
@@ -384,7 +386,7 @@ func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Tim
 		if !found || !cfg.Archive.Enabled || cfg.Paused {
 			return nil
 		}
-		project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+		project, owned := hookProjectActivation(cfg, event, now)
 		if !owned || !project.Included {
 			return nil
 		}
@@ -394,6 +396,28 @@ func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Tim
 }
 
 func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && event.CodexProjectRoot == "" {
+		return RecordDiagnostic(home, Diagnostic{Code: DiagnosticProjectUnavailable, Harness: "codex", ObservedAt: now})
+	}
+	if string(event.Session.Agent) == "codex" && cfg.CodexCapture != nil && event.Kind != agentapi.EventStart {
+		key, err := eventKey(event)
+		if err != nil {
+			return err
+		}
+		id, found, err := store.ArchiveSessionID(key)
+		if err != nil {
+			return err
+		}
+		if found {
+			r, exists, err := store.LoadRegistration(id)
+			if err != nil {
+				return err
+			}
+			if exists && (r.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) && !codexContinuationAccepted(cfg, event, r) {
+				return nil
+			}
+		}
+	}
 	switch event.Kind {
 	case agentapi.EventStart:
 		return handleSessionStart(home, store, cfg, event, now, lookups, after, replay)
@@ -431,9 +455,17 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 	if err != nil {
 		return err
 	}
-	owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	blanket := string(key.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
+	var owner archive.ProjectActivation
+	var owned bool
+	if !blanket {
+		owner, owned = hookProjectActivation(cfg, event, now)
+	}
 	root := event.ProjectRoot
-	if owned {
+	if blanket {
+		root = event.CodexProjectRoot
+	}
+	if owned && !blanket {
 		root = owner.Root
 	}
 	existingID, found, err := store.ArchiveSessionID(key)
@@ -441,48 +473,28 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
 	if found {
-		if event.NewOnly {
-			return nil
-		}
-		updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
-			if !cfg.AcceptSession(*existing) {
-				return errContinuationDeclined
-			}
-			if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
-				return errSessionIdentityConflict
-			}
-			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
-				return errSessionIdentityConflict
-			}
-			applyLocator(existing, event)
-			existing.RegisteredAt = now
-			existing.HookObservedAt = now
-			applyObservation(&existing.Harness, event.Session)
-			return nil
-		})
-		if errors.Is(err, errContinuationDeclined) {
-			return nil
-		}
-		if err != nil {
+		handled, err := continueHookSession(store, cfg, event, now, root, blanket, existingID, after)
+		if handled || err != nil {
 			return err
 		}
-		if updated {
-			if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
-				return err
-			}
-			return saveLifecycleEvidence(store, existingID, event, now, after)
-		}
 	}
-	if !owned || !owner.Included {
+	var proof *archive.CodexAdmissionProof
+	if blanket {
+		token, allowed := cfg.CodexGeneration(root, event.CodexCwd, now, now)
+		if root == "" || !allowed || token != event.CodexPolicyToken || event.Start.Kind != agentapi.FreshExplicit {
+			return nil
+		}
+		proof = &archive.CodexAdmissionProof{Generation: token, Revision: cfg.CodexCapture.Revision, Cwd: event.CodexCwd}
+	} else if !owned || !owner.Included {
 		return nil
 	}
-	if code := declinedStart(cfg, root, now, event.Start); code != "" {
+	if code := declinedStart(cfg, root, now, event.Start); !blanket && code != "" {
 		return RecordDiagnostic(home, Diagnostic{Code: code, Harness: string(key.Agent), ProjectRoot: root, ObservedAt: now})
 	}
 	harness := archive.Harness{Name: string(key.Agent)}
 	applyObservation(&harness, event.Session)
 	reg, err := store.RegisterOrMerge(key, func(id string) archive.SessionRegistration {
-		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: lookups.repoKey, StartHead: lookups.startHead, Replay: replay, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, HookObservedAt: now, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
+		return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: event.CodexCwd, ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: lookups.repoKey, StartHead: lookups.startHead, Replay: replay, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, HookObservedAt: now, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
 	})
 	if err != nil {
 		return fmt.Errorf("register session: %w", err)
@@ -673,6 +685,86 @@ func resolvedPath(path string) string {
 	return path
 }
 
+// hookProjectActivation consumes facts resolved before hooks.lock for all mode.
+func hookProjectActivation(cfg config.Config, event agentapi.LifecycleEvent, now time.Time) (archive.ProjectActivation, bool) {
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		token, ok := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
+		return archive.ProjectActivation{Root: event.CodexProjectRoot, ProjectID: archive.ProjectID(event.CodexProjectRoot), Included: ok && token == event.CodexPolicyToken}, ok
+	}
+	return ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+}
+
+func codexContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent, r archive.SessionRegistration) bool {
+	if event.CodexProjectRoot == "" || event.CodexCwd == "" || !cfg.AcceptSession(r) {
+		return false
+	}
+	if r.CodexAdmission != nil {
+		return event.CodexProjectRoot == r.ProjectRoot && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
+	}
+	return (event.CodexProjectRoot == r.ProjectRoot || local.PathWithin(event.CodexCwd, r.ProjectRoot)) && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
+}
+
+func prepareCodexFacts(harness string, batch []agentapi.LifecycleEvent, cfg config.Config, now time.Time) {
+	if harness != "codex" || cfg.CodexCapture == nil {
+		return
+	}
+	resolver := sourcefacts.NewProjectResolver()
+	for i := range batch {
+		facts, ok := resolver.Resolve(batch[i].ProjectRoot)
+		if ok {
+			batch[i].CodexProjectRoot = facts.Root
+			batch[i].CodexCwd = facts.Cwd
+			batch[i].CodexPolicyToken, _ = cfg.CodexGeneration(facts.Root, facts.Cwd, now, now)
+		}
+	}
+}
+
+func continueHookSession(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, root string, blanket bool, existingID string, after func(effectName) error) (bool, error) {
+	key, err := eventKey(event)
+	if err != nil {
+		return true, err
+	}
+
+	if event.NewOnly {
+		return true, nil
+	}
+	updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
+		if !cfg.AcceptSession(*existing) || ((blanket || existing.CodexAdmission != nil) && !codexContinuationAccepted(cfg, event, *existing)) {
+			return errContinuationDeclined
+		}
+		if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
+			return errSessionIdentityConflict
+		}
+		if blanket && root != "" && root != existing.ProjectRoot && !local.PathWithin(event.CodexCwd, existing.ProjectRoot) {
+			return errSessionIdentityConflict
+		}
+		if !blanket && existing.CodexAdmission == nil {
+			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
+				return errSessionIdentityConflict
+			}
+		}
+		applyLocator(existing, event)
+		existing.RegisteredAt = now
+		existing.HookObservedAt = now
+		applyObservation(&existing.Harness, event.Session)
+		return nil
+	})
+	if errors.Is(err, errContinuationDeclined) {
+		return true, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if updated {
+		if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
+			return true, err
+		}
+		return true, saveLifecycleEvidence(store, existingID, event, now, after)
+	}
+
+	return false, nil
+}
+
 // boundedGitHead is gitHead's answer for dir as a GitHead observed at now,
 // or nil when gitHead is nil, panics, does not return within repoKeyBudget,
 // or does not return a full object name: the commit never fails or delays a
@@ -757,10 +849,7 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 		return gitLookups{}
 	}
 	event := batch[0]
-	owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
-	if !owned || !owner.Included {
-		return gitLookups{}
-	}
+	owner, owned := hookProjectActivation(cfg, event, now)
 	key, err := eventKey(event)
 	if err != nil {
 		return gitLookups{}
@@ -772,7 +861,7 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	hasStart, hasStop := false, false
 	for _, effect := range batch {
-		hasStart = hasStart || effect.Kind == agentapi.EventStart && declinedStart(cfg, owner.Root, now, effect.Start) == ""
+		hasStart = hasStart || effect.Kind == agentapi.EventStart && gitStartAllowed(cfg, effect, owner, owned, now)
 		hasStop = hasStop || effect.Kind == agentapi.EventStop
 	}
 	if !registered && hasStart {
@@ -790,9 +879,31 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	if registered && hasStop {
 		reg, found, err := store.LoadRegistration(id)
-		if err == nil && found && cfg.AcceptSession(reg) && reg.ParentSessionID == "" && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root) {
+		if err == nil && found && gitStopAllowed(cfg, event, reg, owner, owned) {
 			return gitLookups{lastHead: boundedGitHead(o.gitHead, event.ProjectRoot, false, now)}
 		}
 	}
 	return gitLookups{}
+}
+
+// gitStartAllowed shares the hook admission boundary without granting new scope.
+func gitStartAllowed(cfg config.Config, event agentapi.LifecycleEvent, owner archive.ProjectActivation, owned bool, now time.Time) bool {
+	if !owned || !owner.Included {
+		return false
+	}
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		return event.Start.Kind == agentapi.FreshExplicit
+	}
+	return declinedStart(cfg, owner.Root, now, event.Start) == ""
+}
+
+// gitStopAllowed preserves admitted physical ownership across permission edits.
+func gitStopAllowed(cfg config.Config, event agentapi.LifecycleEvent, reg archive.SessionRegistration, owner archive.ProjectActivation, owned bool) bool {
+	if !cfg.AcceptSession(reg) || reg.ParentSessionID != "" {
+		return false
+	}
+	if string(event.Session.Agent) == "codex" && (reg.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) {
+		return codexContinuationAccepted(cfg, event, reg)
+	}
+	return owned && owner.Included && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root)
 }

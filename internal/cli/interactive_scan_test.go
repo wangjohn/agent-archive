@@ -48,6 +48,9 @@ var rawTerminalChecks = classifiedCalls{
 	// an agent too, where a page on the pty would land in the agent's
 	// context, so it asks the terminal itself rather than Env.interactive.
 	"stats.go": {"isTerminal": 1},
+	// eval export --ids-from - refuses a terminal as its list of inputs:
+	// a refusal, not a prompt, which holds inside an agent too.
+	"eval_export.go": {"isTerminal": 1},
 }
 
 // injectedTerminalChecks are mentions of the Env.IsTerminal field itself,
@@ -142,6 +145,9 @@ var inputReads = classifiedCalls{
 	"purge.go": {"bufio.NewReader": 1},
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
+	// eval export --ids-from -: a list piped in, refused when standard input
+	// is a terminal, so it never waits for a person.
+	"eval_export.go": {"bufio.NewScanner": 1},
 	// copyRootFile: a file copied into the new worktree.
 	"handoff_worktree.go": {"io.Copy": 1},
 	"feedback.go":         {"io.ReadAll": 1},

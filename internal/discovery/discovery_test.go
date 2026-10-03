@@ -117,7 +117,7 @@ func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *te
 	validatePublishedDiscovery(t, metadataBytes, source)
 	before := regs[0]
 	payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": id, "cwd": before.ProjectRoot}
-	if err := handleCodexHook(store.Home(), "codex", payload, at.Add(4*time.Minute)); err != nil {
+	if err := handleCodexHook(store.Home(), payload, at.Add(4*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	after, _, _ := store.LoadRegistration(before.ArchiveSessionID)
@@ -444,7 +444,7 @@ func TestHookContinuationPreservesValidatedDiscoveryLocator(t *testing.T) {
 			}
 			payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": native, "cwd": project, "transcript_path": misleading}
 			hookAt := at.Add(3 * time.Minute)
-			if err := handleCodexHook(store.Home(), "codex", payload, hookAt); err != nil {
+			if err := handleCodexHook(store.Home(), payload, hookAt); err != nil {
 				t.Fatal(err)
 			}
 			after, found, err := store.LoadRegistration(before.ArchiveSessionID)
@@ -460,16 +460,16 @@ func TestHookContinuationPreservesValidatedDiscoveryLocator(t *testing.T) {
 }
 
 // Decode using the shipped integration before invoking shared typed admission.
-func handleCodexHook(home, harness string, payload map[string]any, now time.Time) error {
-	decoder, ok := builtin.NewBuiltins().LookupDecoder(harness)
+func handleCodexHook(home string, payload map[string]any, now time.Time) error {
+	decoder, ok := builtin.NewBuiltins().LookupDecoder("codex")
 	if !ok {
-		return fmt.Errorf("missing decoder for %s", harness)
+		return fmt.Errorf("missing decoder for %s", "codex")
 	}
 	batch, err := decoder.Decode(context.Background(), agentapi.HookInput{Payload: payload, ObservedAt: now})
 	if err != nil {
 		return err
 	}
-	return capture.HandleBatch(home, harness, batch, now)
+	return capture.HandleBatch(home, "codex", batch, now)
 }
 
 func TestCollectorRejectsChangedDiscoveryProducer(t *testing.T) {

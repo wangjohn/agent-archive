@@ -37,7 +37,7 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 	now := base.Add(time.Hour)
 	var order []string
 	stopAfter := 0
-	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now },
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now },
 		Progress: func(p Progress) {
 			order = append(order, fmt.Sprintf("%s:%t", p.ArchiveSessionID, p.Published))
 		},

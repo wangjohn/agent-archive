@@ -23,7 +23,7 @@ func TestScanReadsPublishedStateOnce(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	pass := func(name string, wantPublished int) {
 		t.Helper()
 		before := state.PublishedStateLoads()
