@@ -2,9 +2,30 @@ package archive
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestEvalExportParserRefreshPreservesAdmissionGaps(t *testing.T) {
+	t.Parallel()
+	for _, origin := range []SessionOrigin{SessionOriginImport, SessionOriginDiscovery} {
+		t.Run(string(origin), func(t *testing.T) {
+			bundle, metadata := evalExportFixture(t, "claude")
+			metadata.ApplyRegistrationProvenance(SessionRegistration{Origin: origin})
+			metadata.Parser.Version = "0.1.0"
+			record, err := BuildEvalExport(bundle, metadata, EvalExportSourceArchive, EvalExportDetailFull)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, gap := range metadata.CaptureGaps {
+				if (gap.Code == CaptureGapImportedWithoutHookEvidence || gap.Code == CaptureGapDiscoveredWithoutHookEvidence) && !slices.Contains(record.CaptureGaps, gap) {
+					t.Errorf("parser refresh dropped admission gap %+v; retained %+v", gap, record.CaptureGaps)
+				}
+			}
+		})
+	}
+}
 
 func TestFitEvalExportMeasuresDisplayedJSON(t *testing.T) {
 	prompts := []EvalPrompt{{Text: strings.Repeat("\u009b", 1000)}}

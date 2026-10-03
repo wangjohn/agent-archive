@@ -170,7 +170,8 @@ exactly what it means there. A session record:
   tools, skills, `git_activity`, `capture_gaps`, `state`, `turn_outcome`,
   `ended_at`) are re-derived from the same parse as `prompts` and
   `files_edited`, so the two halves agree. What the hooks recorded
-  (identity, project, `git_head`, `replay`) stays the sidecar's. A metadata
+  (identity, project, `git_head`, `replay`) and admission gaps for imported
+  or discovered sessions stay the sidecar's. A metadata
   record is the sidecar's alone, whatever parser wrote it.
 - Paths: an archived record carries no path from the metadata, but
   `files_edited`, like the prompts, is text from the filtered transcript,
