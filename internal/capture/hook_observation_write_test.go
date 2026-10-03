@@ -31,7 +31,7 @@ func TestSessionStartPersistsHookObservationOnce(t *testing.T) {
 		at := now.Add(time.Duration(i) * time.Minute)
 		var persisted os.FileInfo
 		var path string
-		if err := handleSessionStart(home, store, cfg, event, at, "", func(effect effectName) error {
+		if err := handleSessionStart(home, store, cfg, event, at, gitLookups{}, func(effect effectName) error {
 			if effect == effectRegistrationCreate || effect == effectRegistrationUpdate {
 				regs, err := store.LoadRegistrations()
 				if err != nil || len(regs) != 1 || !regs[0].HookObservedAt.Equal(at) || regs[0].Origin != archive.SessionOriginHook {
