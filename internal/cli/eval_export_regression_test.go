@@ -24,6 +24,7 @@ func (w *evalFailWriter) Write(p []byte) (int, error) {
 	}
 	return 0, io.ErrClosedPipe
 }
+
 func TestEvalExportStopsWhenOutputFails(t *testing.T) {
 	for _, short := range []bool{false, true} {
 		env, _, id := publishedFixture(t)
