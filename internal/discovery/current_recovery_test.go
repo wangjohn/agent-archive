@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,7 +88,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("recovery lost or duplicated registration: %#v %v", regs, err)
 	}
-	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
+	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
 	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("restored continuation did not publish: %#v %v", result, err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -46,30 +47,9 @@ type transcriptFileInfo struct {
 	Mtime int64
 }
 
-func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	var opener transcriptio.Opener = transcriptio.OS{}
-	policy := transcriptio.OpenPolicy{}
-	if reg.Origin == archive.SessionOriginDiscovery {
-		opener = sourcefacts.RootOpener{Root: reg.DiscoveryRoot}
-		policy = transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true}
-	}
-	snapshot, err := transcriptio.Open(opener, reg.TranscriptPath, policy)
-	if err != nil {
-		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
-	}
-	defer func() { _ = snapshot.Close() }()
-	return filterSnapshot(ctx, snapshot, adapter, reg, maxBytes)
-}
-
 func filterSnapshot(ctx context.Context, file agentapi.FileInput, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
 	if reg.Origin == archive.SessionOriginDiscovery {
-		header := sourcefacts.ReadCodexHeader(file.Reader(ctx), reg.TranscriptPath)
-		var producerSource string
-		_ = json.Unmarshal(header.Meta.Source, &producerSource)
-		if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) || header.Meta.Version != reg.Harness.Version || header.Meta.Originator != reg.DiscoveryProducerOriginator || producerSource != reg.DiscoveryProducerSource {
-			return archive.FilteredTranscript{}, transcriptFileInfo{}, errors.New("discovery source identity changed")
-		}
-		if err := file.Check(); err != nil {
+		if err := validateDiscoverySnapshot(ctx, file, reg); err != nil {
 			return archive.FilteredTranscript{}, transcriptFileInfo{}, err
 		}
 	}
@@ -87,4 +67,33 @@ func filterSnapshot(ctx context.Context, file agentapi.FileInput, adapter archiv
 		return out, stat, translateSourceError(err)
 	}
 	return out, stat, checkFilteredSize(out, maxBytes)
+}
+
+// discoveryReaderAt checks cancellation while validating admitted metadata.
+type discoveryReaderAt struct {
+	ctx  context.Context
+	file io.ReaderAt
+}
+
+func (r discoveryReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.file.ReadAt(p, off)
+}
+
+func validateDiscoverySnapshot(ctx context.Context, file agentapi.FileInput, reg archive.SessionRegistration) error {
+	if file == nil {
+		return errors.New("discovery source requires a confined file snapshot")
+	}
+	header := sourcefacts.ReadCodexHeader(io.NewSectionReader(discoveryReaderAt{ctx: ctx, file: file}, 0, file.Length()), reg.TranscriptPath)
+	var producerSource string
+	_ = json.Unmarshal(header.Meta.Source, &producerSource)
+	if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) || header.Meta.Version != reg.Harness.Version || header.Meta.Originator != reg.DiscoveryProducerOriginator || producerSource != reg.DiscoveryProducerSource {
+		return errors.New("discovery source identity changed")
+	}
+	if err := file.Check(); err != nil {
+		return err
+	}
+	return nil
 }

@@ -81,22 +81,31 @@ type sourceReader interface {
 }
 
 func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReader, bool) {
-	if reg.Origin == archive.SessionOriginDiscovery {
-		return discoveryFileReader{reg: reg}, true
-	}
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
+	var discovered *archive.SessionRegistration
+	if reg.Origin == archive.SessionOriginDiscovery {
+		discovered = &archive.SessionRegistration{
+			NativeSessionID: reg.NativeSessionID, SessionStartedAt: reg.SessionStartedAt,
+			TranscriptPath: reg.TranscriptPath, Harness: reg.Harness,
+			DiscoveryRoot: reg.DiscoveryRoot, DiscoveryCwd: reg.DiscoveryCwd,
+			DiscoveryProducerOriginator: reg.DiscoveryProducerOriginator,
+			DiscoveryProducerSource:     reg.DiscoveryProducerSource,
+		}
+	}
 	return providerReader{
-		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
+		discovery: discovered,
+		ref:       sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, database: opts.CursorDatabase,
 	}, true
 }
 
-// providerReader keeps only read dependencies; boxing whole registrations and
-// collector options would allocate their unrelated policy fields per source.
+// providerReader keeps ordinary hook read dependencies small. Discovery additionally
+// retains admitted identity fields for confined snapshot validation.
 type providerReader struct {
+	discovery        *archive.SessionRegistration
 	ref              agentapi.SourceRef
 	harness          string
 	startedAt        time.Time
@@ -121,6 +130,15 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
+	// Confined discovery passes must not share an unrestricted hook pass.
+	if r.discovery != nil {
+		root := r.discovery.DiscoveryRoot
+		pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+		if err != nil {
+			return nil, nil, err
+		}
+		return pass, pass.Close, nil
+	}
 	if r.passes != nil {
 		pass, err := r.passes.get(ctx, key, p)
 		return pass, func() error { return nil }, err
@@ -142,6 +160,23 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		return out, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
+	if r.discovery != nil {
+		// A stat-only provider signature would skip component symlink checks.
+		snap, readErr := p.Read(ctx, r.ref, agentapi.ReadLimits{})
+		if readErr != nil {
+			return out, translateSourceError(readErr)
+		}
+		defer func() { err = errors.Join(err, snap.Close()) }()
+		file := snap.Input().File
+		if file == nil {
+			return out, errors.New("discovery signature requires a confined file snapshot")
+		}
+		if err := file.Check(); err != nil {
+			return out, err
+		}
+		o := snap.Observation()
+		return observe(r.ref.Kind, o), r.validateObservation(provider, o)
+	}
 	o, err := p.Signature(ctx, r.ref)
 	if err == nil {
 		err = r.validateObservation(provider, o)
@@ -181,6 +216,11 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	}
 	if r.ref.Kind == archive.SourceKindFile {
 		transcriptFilters.Add(1)
+	}
+	if r.discovery != nil {
+		if err := validateDiscoverySnapshot(ctx, snap.Input().File, *r.discovery); err != nil {
+			return out, sourceState{}, err
+		}
 	}
 	out, err = f.Filter(ctx, snap.Input(), agentapi.FilterContext{StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
@@ -439,26 +479,4 @@ func sourceSemantics(sources agentapi.SourcesLookup, reg archive.SessionRegistra
 		return agentapi.SourceSemantics{}, errors.New("source integration unavailable")
 	}
 	return p.Describe(sourceRef(reg))
-}
-
-// discoveryFileReader preserves confined snapshots and admitted source identity.
-// Hook sources continue through the configured provider registry.
-type discoveryFileReader struct{ reg archive.SessionRegistration }
-
-func (r discoveryFileReader) Signature(context.Context) (sourceState, error) {
-	snapshot, err := transcriptio.Open(sourcefacts.RootOpener{Root: r.reg.DiscoveryRoot}, r.reg.TranscriptPath, transcriptio.OpenPolicy{Root: r.reg.DiscoveryRoot, RejectSymlinks: true})
-	if err != nil {
-		return sourceState{}, err
-	}
-	defer func() { _ = snapshot.Close() }()
-	if err := snapshot.Check(); err != nil {
-		return sourceState{}, err
-	}
-	stamp := snapshot.Stamp()
-	return sourceState{kind: r.reg.SourceKind, file: transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}}, nil
-}
-func (r discoveryFileReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
-	transcriptFilters.Add(1)
-	filtered, stat, err := filterTranscript(ctx, adapter, r.reg, maxBytes)
-	return filtered, sourceState{kind: r.reg.SourceKind, file: stat}, err
 }
