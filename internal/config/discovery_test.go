@@ -203,12 +203,14 @@ func TestDiscoveryPauseRejectsLostConsentFloor(t *testing.T) {
 				pauseAt = at
 			}
 			if mode == "prior_history" {
+				cfg.Discovery.Authorizations[0].NativeStartFloor = at.Add(-3 * time.Hour)
 				cfg.Discovery.Authorizations[0].Intervals = []DiscoveryInterval{{Start: at.Add(-3 * time.Hour), End: at.Add(-2 * time.Hour)}, {Start: at}}
 			}
 			if mode == "multiple_scopes" {
 				earlier := cfg.Discovery.Authorizations[0]
 				earlier.ProjectRoot = "/earlier"
 				earlier.Generation = "earlier-generation"
+				earlier.NativeStartFloor = at.Add(-2 * time.Hour)
 				earlier.Intervals = []DiscoveryInterval{{Start: at.Add(-2 * time.Hour)}}
 				cfg.Discovery.Authorizations = append([]DiscoveryAuthorization{earlier}, cfg.Discovery.Authorizations...)
 			}
@@ -258,6 +260,7 @@ func TestDiscoveryClockReversalDoesNotMutateSharedScopes(t *testing.T) {
 			earlier := cfg.Discovery.Authorizations[0]
 			earlier.ProjectRoot = "/earlier"
 			earlier.Generation = "earlier-generation"
+			earlier.NativeStartFloor = at.Add(-2 * time.Hour)
 			earlier.Intervals = []DiscoveryInterval{{Start: at.Add(-2 * time.Hour)}}
 			cfg.Discovery.Authorizations = append([]DiscoveryAuthorization{earlier}, cfg.Discovery.Authorizations...)
 			cfg.Paused = !paused

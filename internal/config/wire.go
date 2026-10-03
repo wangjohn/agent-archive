@@ -12,7 +12,10 @@ type configJSON Config
 
 type configWriter string
 
-const discoveryWriter configWriter = "discovery-v2"
+const (
+	legacyDiscoveryWriter configWriter = "discovery-v2"
+	discoveryWriter       configWriter = "discovery-floor-v2"
+)
 
 type writerVersion struct {
 	Version int          `json:"version"`
@@ -63,12 +66,22 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		if err := json.Unmarshal(raw, &version); err != nil {
 			return false, err
 		}
-		if version.Version != 2 || version.Writer != discoveryWriter {
+		if version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter) {
 			return false, errors.New("configuration requires a supported writer fence")
 		}
 		if plain.Discovery == nil || !strings.HasSuffix(string(plain.SkillEvidence), discoveryWriterMarker) {
 			return false, errors.New("writer fence requires protected discovery configuration")
 		}
+		if version.Writer == discoveryWriter {
+			for _, a := range plain.Discovery.Authorizations {
+				if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
+					return false, errors.New("discovery permission history requires its native start floor")
+				}
+			}
+		}
+		// Prior protected writers also need canonical migration before identity
+		// mutation: they do not understand immutable generation floors.
+		fenced = version.Writer == discoveryWriter
 		plain.SchemaVersion = version.Version
 	} else if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
