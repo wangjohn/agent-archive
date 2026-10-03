@@ -288,7 +288,7 @@ func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
 	e.Models, e.Counts, e.ModelTokens, e.ToolsUsed, e.MCPCalls = derived.Models, derived.Counts, derived.ModelTokens, derived.ToolsUsed, derived.MCPCalls
 	e.SkillsUsed, e.GitActivity, e.CaptureGaps = derived.SkillsUsed, derived.GitActivity, derived.CaptureGaps
 	for _, gap := range m.CaptureGaps {
-		if (gap.Code == CaptureGapImportedWithoutHookEvidence || gap.Code == CaptureGapDiscoveredWithoutHookEvidence) && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
+		if slices.Contains([]string{CaptureGapImportedWithoutHookEvidence, CaptureGapDiscoveredWithoutHookEvidence}, gap.Code) && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
 			e.CaptureGaps = append(e.CaptureGaps, gap)
 		}
 	}
