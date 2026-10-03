@@ -28,9 +28,13 @@ func TestCodexScopePauseSourceAndDestinationWindows(t *testing.T) {
 	if _, ok := c.CodexDiscoveryGeneration(root, root, start, start); !ok {
 		t.Fatal("new project rejected")
 	}
-	transitionDiscoveryPause(&c, true, at.Add(2*time.Minute))
+	if err := transitionDiscoveryPause(&c, true, at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	c.Paused = true
-	transitionDiscoveryPause(&c, false, at.Add(4*time.Minute))
+	if err := transitionDiscoveryPause(&c, false, at.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	c.Paused = false
 	for _, tc := range []struct {
 		at      time.Time

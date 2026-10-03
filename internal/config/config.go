@@ -332,7 +332,9 @@ func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
 			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
 		}
 	}
-	transitionDiscoveryPause(&cfg, paused, now.UTC())
+	if err := transitionDiscoveryPause(&cfg, paused, now.UTC()); err != nil {
+		return Config{}, err
+	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {
 		return Config{}, err

@@ -19,6 +19,7 @@
       "required": ["generation", "agent", "project_root", "destination_id", "intervals"],
       "properties": {
         "generation": {"type": "string", "minLength": 1},
+        "native_start_floor": {"type": "string", "format": "date-time"},
         "agent": {"const": "codex"},
         "project_root": {"const": ""},
         "destination_id": {"type": "string", "minLength": 1},

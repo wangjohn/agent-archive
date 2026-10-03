@@ -170,6 +170,23 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		return out, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
+	if r.discovery != nil {
+		// A stat-only provider signature would skip component symlink checks.
+		snap, readErr := p.Read(ctx, r.ref, agentapi.ReadLimits{})
+		if readErr != nil {
+			return out, translateSourceError(readErr)
+		}
+		defer func() { err = errors.Join(err, snap.Close()) }()
+		file := snap.Input().File
+		if file == nil {
+			return out, errors.New("discovery signature requires a confined file snapshot")
+		}
+		if err := file.Check(); err != nil {
+			return out, err
+		}
+		o := snap.Observation()
+		return observe(r.ref.Kind, o), r.validateObservation(provider, o)
+	}
 	o, err := p.Signature(ctx, r.ref)
 	if err == nil {
 		err = r.validateObservation(provider, o)
