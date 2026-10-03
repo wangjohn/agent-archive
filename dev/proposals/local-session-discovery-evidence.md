@@ -8,8 +8,13 @@ announce feature availability.
 ## Capture decision
 
 Capture consent applies to supported session records in approved local Codex
-homes, included projects, and the selected destination. Native start time must
-fall within the current authorization generation and an unpaused interval.
+homes, explicitly approved Codex-only capture scope, and the selected destination.
+Scope is included-projects by default or an explicit all-current-and-future-projects
+choice with configured exceptions; discovery ingress is separate. Unknown native
+IDs require original creation within effective scope/source permission and an
+unpaused interval, including applicable forward-only exclusion-lift barriers.
+Fresh hooks retain their own supported fresh-start evidence. Scope changes never
+rewrite known native-ID ownership, origin, start, admission or destination.
 Excluded projects, invalid metadata, identity conflicts, removal records, and
 identifiable unsupported imports or inherited histories remain ineligible.
 All publication uses the existing privacy filter and read-back verification.
