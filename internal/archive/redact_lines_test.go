@@ -248,7 +248,7 @@ func TestASCIILowerBorrowsAlreadyFoldedText(t *testing.T) {
 }
 
 func FuzzASCIILowerPreservesByteFolding(f *testing.F) {
-	for _, input := range []string{"", "already lowercase", "ASSISTANT: TOKEN=secret", "TOKEN=secret", "PAſſWORD=secret", "a\xffZ\x00"} {
+	for _, input := range []string{"", "already lowercase", "ASSISTANT: TOKEN=secret", "TOKEN=secret", "PAſſWORD=secret", "a\xffZ\x00", "世🌍aZKſ\xffTOKEN"} {
 		f.Add(input)
 	}
 	f.Fuzz(func(t *testing.T, input string) {

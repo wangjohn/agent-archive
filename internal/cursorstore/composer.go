@@ -591,7 +591,7 @@ func queryComposerLimited(ctx context.Context, db *sql.DB, id string, rawLimit, 
 	if err = check(observedSize.Int64); err != nil {
 		sig, sigErr := signatureOnly(ctx, db, id)
 		if sigErr != nil {
-			return Composer{}, Signature{}, err
+			return Composer{}, Signature{}, sigErr
 		}
 		return limitedFailure(sig, err)
 	}

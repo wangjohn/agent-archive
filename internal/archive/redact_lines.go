@@ -81,7 +81,7 @@ func newNeedleText(s string) needleText {
 // byte, including malformed UTF-8, intact for the credential pattern gates.
 func asciiLower(s string) string {
 	first := -1
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if 'A' <= s[i] && s[i] <= 'Z' {
 			first = i
 			break
