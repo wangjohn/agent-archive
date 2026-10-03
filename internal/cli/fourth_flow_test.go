@@ -310,7 +310,7 @@ func TestFourthSetupJournalSkillsAndRemoval(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(location), 0700))
 	foreign := []byte(`{"color":"ultraviolet","orbits":{"/other/owner":{"birth":"foreign"}}}`)
 	must(t, os.WriteFile(location, foreign, 0600))
-	next := config.Config{MachineID: "fourth", Harnesses: []string{string(orbifold.ID)}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "test-bucket", Region: "us-east-1", AWSProfile: "test"}, Archive: archive.Config{SchemaVersion: 1, MachineID: "fourth", Enabled: true}}
+	next := config.Config{MachineID: "fourth", Harnesses: []string{string(orbifold.ID)}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "test-bucket", Region: "us-east-1", AWSProfile: "test"}, Archive: archive.Config{SchemaVersion: 1, MachineID: "fourth", Enabled: true, Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 	must(t, applySetup(home, userHome, executable, config.Config{}, &next, nil, env))
 	if next.HookFiles[string(orbifold.ID)] != location {
 		t.Fatalf("native setup path: %v", next.HookFiles)
