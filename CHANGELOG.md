@@ -10,6 +10,16 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- **Replay sessions stay out of your history.** A tool that replays archived
+  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
+  agents it runs; the sessions its runs produce are captured as usual but
+  marked with `replay` in their metadata (with the run ID when it is a plain
+  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
+  them out; `list --replays include|only` and `stats --replays include|only`
+  show them, marked `[replay]` in the table. `show ID` opens one as usual,
+  and `status --json` counts them per app in `replay_sessions`. See
+  [JSON output](docs/reference/json-output.md#replay-sessions).
+
 - Disabled Codex discovery machinery performs bounded source scans before
   storage access and reopens admitted sources within approved roots. Identity
   misses require registration-census recovery before allocation. Startup

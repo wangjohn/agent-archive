@@ -42,7 +42,7 @@ func TestSessionStartPersistsHookObservationOnce(t *testing.T) {
 				return err
 			}
 			return nil
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 		finished, err := os.Stat(path)

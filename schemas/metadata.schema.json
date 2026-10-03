@@ -365,6 +365,18 @@
       ],
       "description": "Admission provenance. From parser 0.20.0 discovery has no imported_at and preserves a discovered_without_hook_evidence gap; later hooks do not establish earlier lifecycle coverage."
     },
+    "replay": {
+      "description": "Present only for a session a replay tool ran: the environment variable AGENT_ARCHIVE_REPLAY was set (non-empty) in the hook that registered it. list, stats, and handoff leave such sessions out unless asked (list --replays include|only). Fixed at registration, so a continuation never adds or removes it; a subagent carries its parent's. An object even without a run_id, so a reader tests for the key, not the value.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "description": "The variable's value when it is an identifier: 1 to 128 ASCII letters, digits, '.', '_', ':' or '-', starting with a letter or digit. Absent when the value was anything else, which is never recorded.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      }
+    },
     "imported_at": {
       "type": "string",
       "format": "date-time",

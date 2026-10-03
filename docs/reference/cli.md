@@ -479,6 +479,8 @@ paged through $PAGER unless --no-pager.
                                  capture gaps
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
   --project DIR|NAME             List this project's sessions: the
@@ -526,6 +528,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--no-pager` | no value | — |
 | `--project` | a value | — |
 | `--rebuild-index` | no value | — |
+| `--replays` | a value | `hide` |
 | `--since` | a value | — |
 | `--skill` | a value | — |
 | `--skill-sha256` | a value | — |
@@ -637,6 +640,8 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
                                  other models count too)
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --prices FILE                  Price tokens with the prices in this JSON file
                                  (the built-in table's format), applied on top
                                  of it; the output says so
@@ -686,6 +691,7 @@ Example: agent-archive stats --html --output stats.html
 | `--no-pager` | no value | — |
 | `--output` | a value | — |
 | `--prices` | a value | — |
+| `--replays` | a value | `hide` |
 | `--since` | a value | — |
 | `--view` | a value | — |
 

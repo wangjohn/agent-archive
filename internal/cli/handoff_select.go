@@ -127,7 +127,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	stop := startActivity(stdout, "Finding sessions…")
 	var archived []archive.Metadata
 	if err == nil {
-		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
+		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
 	}
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true, DimID: true, Children: childCounts(archived),
@@ -249,7 +249,7 @@ type handoffPicker struct {
 // left out.
 func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) (rows []handoffPickerRow, total int, truncated bool) {
 	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
-		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
+		return !topLevelRegistration(reg) || reg.Replay != nil || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
 	})
 	registered := make(map[string]*archive.SessionRegistration, len(regs))
 	for i := range regs {
@@ -261,6 +261,9 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	// session the archive has is not one it lacks.
 	uploaded := map[string]bool{}
 	for _, m := range topLevelSessions(archived) {
+		if m.IsReplay() {
+			continue
+		}
 		uploaded[m.SessionID] = true
 		if !p.scope.contains(m, registered[m.SessionID]) {
 			continue
