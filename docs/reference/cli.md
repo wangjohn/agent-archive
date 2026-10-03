@@ -48,6 +48,9 @@ Import history
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
 
+Evaluate agents
+  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
   agent-archive purge       Review and remove unreferenced source objects
@@ -939,6 +942,47 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 | `--source` | a value | `auto` |
 | `--to` | a value | — |
 | `--worktree` | no value | — |
+
+## agent-archive eval
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       [--harness codex|claude|cursor] [--max-bytes N]
+
+Export archived sessions for an evaluation tool, one JSON Lines record per
+session (schemas/eval-export.schema.json). Read-only and never interactive.
+```
+
+No flags.
+
+## agent-archive eval export
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       [--harness codex|claude|cursor] [--max-bytes N]
+
+Print one JSON line per session, in the order given: its identity, commits,
+counts, tokens and tools, and with --detail full (the default) its filtered
+human prompts in order, final response, edited files and feedback. Only
+full archive session IDs are accepted. A session that cannot be exported is
+an error record on its own line; the others are still printed, and the exit
+code is 1. Everything printed is already filtered; nothing is uploaded.
+  --detail metadata|full     metadata reads only metadata sidecars and prints
+                             no conversation text (default full)
+  --harness NAME             Only needed when a session exists under two apps
+  --max-bytes N              Cut each record's longest texts to fit N bytes
+                             (default 120000; 0 for no limit)
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--detail` | a value | `full` |
+| `--harness` | a value | — |
+| `--max-bytes` | a value | `120000` |
 
 ## agent-archive uninstall
 
