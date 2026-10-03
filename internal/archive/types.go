@@ -335,11 +335,14 @@ type SessionRegistration struct {
 	// LastHead is HEAD at the latest stop hook that could read it, replaced
 	// only when the commit changes (see GitHead.ObservedAt). Nil when no
 	// stop hook has.
-	LastHead              *GitHead  `json:"last_head,omitempty"`
-	ParentSessionID       string    `json:"parent_session_id,omitempty"`
-	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
-	SubagentID            string    `json:"subagent_id,omitempty"`
-	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
+	LastHead *GitHead `json:"last_head,omitempty"`
+	// LastHeadSeenAt fences delayed stop observations without changing the
+	// first-seen time published in LastHead. Local only; absent on older state.
+	LastHeadSeenAt        *time.Time `json:"last_head_seen_at,omitempty"`
+	ParentSessionID       string     `json:"parent_session_id,omitempty"`
+	ParentNativeSessionID string     `json:"parent_native_session_id,omitempty"`
+	SubagentID            string     `json:"subagent_id,omitempty"`
+	SubagentObservedAt    time.Time  `json:"subagent_observed_at,omitempty"`
 	// AdmittedAt is when this machine took ownership of the session: the
 	// boundary for project activation and storage destination. Hooks set it at
 	// registration and backfill sets it to the import time. Empty on older

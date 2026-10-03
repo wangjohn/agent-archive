@@ -94,9 +94,12 @@ func TestCanonicalDoesNotCopyDescriptors(t *testing.T) {
 func TestNativeLaunchRuntimeHaveNoHostDependencies(t *testing.T) {
 	t.Parallel()
 	prefix := "github.com/wangjohn/agent-archive/internal/"
-	for _, pkg := range []string{"agentapi", "agents/claude", "agents/codex", "agents/cursor"} {
-		direct, all := importgraph.Imports(t, prefix+pkg)
-		importgraph.Forbid(t, pkg, direct, "os")
-		importgraph.Forbid(t, pkg, all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
+	for _, pkg := range []string{"claude", "codex", "cursor"} {
+		direct, all := importgraph.FileImports(t, "../agents/"+pkg+"/launch.go", "../agents/"+pkg+"/runtime.go")
+		importgraph.Forbid(t, pkg+" launch/runtime", direct, "os")
+		importgraph.Forbid(t, pkg+" launch/runtime", all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
 	}
+	direct, all := importgraph.Imports(t, prefix+"agentapi")
+	importgraph.Forbid(t, "agentapi", direct, "os")
+	importgraph.Forbid(t, "agentapi", all, "os/exec", "net/http", prefix+"credentials", prefix+"terminal", prefix+"termlaunch")
 }

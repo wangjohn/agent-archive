@@ -23,6 +23,9 @@ type Operation string
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
 
+// Source means an integration provides bounded sources and native filtering.
+const Source Operation = "source"
+
 // Runtime means an integration implements native runtime observation.
 const Runtime Operation = "runtime"
 
@@ -69,7 +72,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks) || seen[op] {
+			if (op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks && op != Source) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

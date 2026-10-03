@@ -706,18 +706,28 @@ func boundedGitHead(gitHead GitHeadFunc, dir string, withDirty bool, now time.Ti
 }
 
 // recordLastHead saves head as the registration's LastHead when it names a
-// different commit from the one recorded, so a stop that finds HEAD where it
-// was writes nothing. The write goes through UpdateRegistration, like
-// adoptCursorTranscriptPath's, so a session retention forgot meanwhile is
+// different commit from the one recorded, preserving that commit's first-seen
+// time. Each successful observation advances a local watermark so an older
+// delayed stop cannot undo a newer stop at the same commit. The write goes
+// through UpdateRegistration, so a session retention forgot meanwhile is
 // reported as state.ErrSessionNotRegistered.
 func recordLastHead(store *state.Store, reg archive.SessionRegistration, head *archive.GitHead) error {
-	if !head.Valid() || (reg.LastHead != nil && reg.LastHead.SHA == head.SHA) {
+	if !head.Valid() {
 		return nil
 	}
 	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
-		if current.LastHead == nil || current.LastHead.SHA != head.SHA && !head.ObservedAt.Before(current.LastHead.ObservedAt) {
+		latest := current.LastHeadSeenAt
+		if latest == nil && current.LastHead != nil {
+			latest = &current.LastHead.ObservedAt
+		}
+		if latest != nil && head.ObservedAt.Before(*latest) {
+			return nil
+		}
+		if current.LastHead == nil || current.LastHead.SHA != head.SHA {
 			current.LastHead = head
 		}
+		observed := head.ObservedAt
+		current.LastHeadSeenAt = &observed
 		return nil
 	})
 	if err != nil {

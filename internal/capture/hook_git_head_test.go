@@ -375,3 +375,32 @@ func TestOlderStopCommitCannotReplaceANewerObservation(t *testing.T) {
 		t.Fatalf("newer observation replaced: %+v", got)
 	}
 }
+
+// A later stop at the same commit must still fence an older in-flight
+// observation at another commit, even after the registration is reloaded.
+func TestOlderStopCannotReplaceALaterRepeatedCommit(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	for _, observation := range []struct {
+		sha     string
+		minutes int
+	}{
+		{laterCommit, 1}, {laterCommit, 3}, {startCommit, 2},
+	} {
+		reg := onlyRegistration(t, home)
+		head := &archive.GitHead{SHA: observation.sha, ObservedAt: at.Add(time.Duration(observation.minutes) * time.Minute)}
+		if err := recordLastHead(store, reg, head); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := onlyRegistration(t, home).LastHead
+	if got == nil || got.SHA != laterCommit || !got.ObservedAt.Equal(at.Add(time.Minute)) {
+		t.Fatalf("older stop replaced latest repeated commit: %+v", got)
+	}
+}

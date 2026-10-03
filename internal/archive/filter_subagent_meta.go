@@ -2,7 +2,6 @@ package archive
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 )
 
@@ -39,23 +38,6 @@ const maxSubagentDescriptionBytes = 512
 // subagentMetaKeys are the keys a subagent-meta record may hold, which
 // subagentMetaRecord rebuilds from typed values: its type and its description.
 var subagentMetaKeys = map[string]bool{"type": true, subagentDescriptionKey: true}
-
-// SubagentMetaPath is the .meta.json beside a Claude Code subagent
-// transcript: agent-<id>.jsonl names agent-<id>.meta.json in the same
-// directory. ok is false for any other file name, which is not a subagent
-// transcript.
-func SubagentMetaPath(transcriptPath string) (path string, ok bool) {
-	dir, name := filepath.Split(transcriptPath)
-	id, found := strings.CutPrefix(name, "agent-")
-	if !found {
-		return "", false
-	}
-	id, found = strings.CutSuffix(id, ".jsonl")
-	if !found || id == "" {
-		return "", false
-	}
-	return filepath.Join(dir, "agent-"+id+".meta.json"), true
-}
 
 // subagentMetaLead is the raw record FilterSubagentJSONL feeds the filter for
 // the contents of a .meta.json: its description, as a subagent-meta record,
