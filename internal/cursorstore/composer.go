@@ -893,12 +893,17 @@ func signatureOnly(ctx context.Context, q querier, id string) (Signature, error)
 // The CASE never exports large wrong-type timestamps/identities. The path
 // predicate restricts identity rows to direct array objects, excluding unknown
 // nested fields and their unrestricted contents. No whole-value CTE is built.
+// jsonb reuses json_valid's parsed cache and avoids a second text translation
+// in json_tree. Equal text-character and blob-byte lengths prove there is no
+// raw NUL (which terminates SQLite text length); other inputs retain the scan.
 const signatureNodeQuery = `SELECT c.value IS NOT NULL, j.id, j.parent, j.key, j.type,
  CASE WHEN j.parent = 0 AND j.key = 'lastUpdatedAt' AND j.type IN ('integer','real') THEN j.atom
       WHEN j.parent != 0 AND lower(j.key) = 'bubbleid' AND j.type = 'text'
            AND j.path NOT IN ('$.fullConversationHeadersOnly','$.conversation') THEN j.atom END
  FROM cursorDiskKV AS c LEFT JOIN json_tree(
- CASE WHEN json_valid(c.value) AND instr(CAST(c.value AS BLOB),x'00') = 0 THEN c.value END) AS j
+ CASE WHEN json_valid(c.value)
+      AND (length(CAST(c.value AS TEXT)) = length(CAST(c.value AS BLOB))
+           OR instr(CAST(c.value AS BLOB),x'00') = 0) THEN jsonb(c.value) END) AS j
  WHERE c.key = ? AND (j.parent IS NULL
  OR j.parent = 0 AND j.key IN ('lastUpdatedAt','fullConversationHeadersOnly','conversation')
  OR j.path IN ('$.fullConversationHeadersOnly','$.conversation')
