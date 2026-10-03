@@ -3,6 +3,7 @@ package collector
 import (
 	"bytes"
 	"encoding/json"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -39,10 +40,16 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		return outcomeSkipped, false, nil
 	}
+	// A commit the hooks recorded since is published first, from the
+	// retained metadata: it needs no derivation, so neither a refresh this
+	// parser cannot make nor one it already skipped holds it back.
+	if outcome, handled, err := s.publishRecordedGitHead(last, key); handled || err != nil {
+		return outcome, handled, err
+	}
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.opts.parserVersion()
 	if sameParser && !last.legacy {
-		return s.publishRecordedGitHead(last, key)
+		return outcomeSkipped, false, nil
 	}
 	// The metadata must describe the source actually uploaded last, as
 	// recorded at upload. (For state older than that record,
@@ -74,9 +81,8 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	}
 	if sameParser {
 		// The same parser over the same retained source yields the same
-		// result, including a failed parse: nothing to rebuild. A commit the
-		// hooks recorded since is still published, as for cached metadata.
-		return s.publishRecordedGitHead(last, key)
+		// result, including a failed parse: nothing to rebuild.
+		return outcomeSkipped, false, nil
 	}
 	if s.liveTranscriptChanged(last.bundle) {
 		// Normal capture is about to publish current-parser metadata with
@@ -323,32 +329,44 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	// published commit on the one standing, so the next pass can skip.
 	if signature, found, err := s.local.LoadScanSignature(s.id()); err != nil || !found {
 		return outcome, true, err
-	} else if next.GitHead != nil && next.GitHead.Last != nil {
-		signature.PublishedLastHead = next.GitHead.Last.SHA
+	} else if next.GitHead != nil {
+		signature.PublishedLastHead = headFingerprint(next.GitHead.Last)
 		return outcome, true, s.local.SaveScanSignature(s.id(), signature)
 	}
 	return outcome, true, nil
 }
 
-// publishedLastHead is the commit the session's published metadata names as
-// its last HEAD, for the scan signature. With no metadata cached there is
-// nothing to compare against, and the registration's own commit is taken as
-// settled: the next publication carries it.
+// headFingerprint identifies a last-HEAD observation for the scan signature:
+// its commit and first-seen time, so the same commit seen again after
+// another is told apart. "" for none.
+func headFingerprint(h *archive.GitHead) string {
+	if !h.Valid() {
+		return ""
+	}
+	return h.SHA + "@" + h.ObservedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// publishedLastHead is the last-HEAD observation the session's published
+// metadata holds (headFingerprint), for the scan signature. With nothing
+// published yet there is nothing to update, and the registration's own is
+// taken as settled: the first publication carries it. With a publication
+// but no metadata cached (an older install's), it is unknown, "", so a
+// moved HEAD keeps the session scanned until its metadata is read.
 func (s *sessionScan) publishedLastHead() string {
 	encoded := s.published.Metadata()
 	if len(encoded) == 0 {
-		if s.reg.LastHead.Valid() {
-			return s.reg.LastHead.SHA
+		if _, _, published := s.published.LastPublished(); published {
+			return ""
 		}
-		return ""
+		return headFingerprint(s.reg.LastHead)
 	}
 	var published struct {
 		GitHead *archive.SessionGitHead `json:"git_head"`
 	}
-	if err := json.Unmarshal(encoded, &published); err != nil || published.GitHead == nil || published.GitHead.Last == nil {
+	if err := json.Unmarshal(encoded, &published); err != nil || published.GitHead == nil {
 		return ""
 	}
-	return published.GitHead.Last.SHA
+	return headFingerprint(published.GitHead.Last)
 }
 
 // requestAddsEvidence reports whether the request carries hook evidence the
