@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -145,6 +146,36 @@ func TestEvalExportLocalIdentityComesFromFilteredRecords(t *testing.T) {
 	records, stderr, code := f.evalLines(t, "", "--file", path, "--harness", "claude")
 	if code != 0 || len(records) != 1 || strings.Contains(records[0]["session_id"].(string), "sk-abcdefghijklmnopqrstuv") {
 		t.Fatalf("code %d records %v stderr %s", code, records, stderr)
+	}
+}
+
+// Backfill admission checks identity consistency, while exported scan identities
+// still need the retained records' privacy filtering, just as --file does.
+func TestEvalExportScanIdentityComesFromFilteredRecords(t *testing.T) {
+	t.Parallel()
+	f := localEvalFixture(t)
+	secret := "sk-abcdefghijklmnopqrstuv"
+	path := filepath.Join(f.userHome, ".claude", "projects", "slug-c-lev-1", secret+".jsonl")
+	raw := fmt.Sprintf(`{"type":"user","sessionId":%q,"cwd":%q,"timestamp":"2026-09-20T17:00:00Z","message":{"role":"user","content":"inspect"}}`+"\n", secret, filepath.Join(f.userHome, "levenshtein"))
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, detail := range []string{"full", "metadata"} {
+		t.Run(detail, func(t *testing.T) {
+			t.Parallel()
+			direct, stderr, code := f.evalLines(t, "", "--file", path, "--harness", "claude", "--detail", detail)
+			if code != 0 || len(direct) != 1 || direct[0]["session_id"] != "[REDACTED]" || direct[0]["native_session_id"] != "[REDACTED]" {
+				t.Fatalf("file code %d records %v stderr %s", code, direct, stderr)
+			}
+			scanned, stderr, code := f.evalLines(t, "", "--scan", "--harness", "claude", "--detail", detail)
+			if code != 0 {
+				t.Fatalf("scan code %d stderr %s", code, stderr)
+			}
+			record := recordsBy(scanned, "transcript_path")[path]
+			if record == nil || record["session_id"] != direct[0]["session_id"] || record["native_session_id"] != direct[0]["native_session_id"] {
+				t.Fatalf("admitted scan identity differs from filtered file identity: %v", record)
+			}
+		})
 	}
 }
 

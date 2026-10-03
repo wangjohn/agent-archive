@@ -469,7 +469,10 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 		return fail(path, archive.EvalErrorReadFailed, "the transcript could not be read safely or filtered; check its format and file permissions")
 	}
 	nativeID := input.nativeID
-	if nativeID == "" {
+	// Discovery admits a raw native identity; retained records supply the
+	// sanitized identity for output. Text-only transcripts retain discovery's
+	// identity because they have no structured records to sanitize.
+	if nativeID == "" || len(filtered.Records) > 0 {
 		nativeID = transcriptSessionID(harness, path, filtered)
 	}
 	sum := sha256.Sum256([]byte(path))
