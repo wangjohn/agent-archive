@@ -1,13 +1,12 @@
 package collector
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -39,7 +38,11 @@ func versionChanged(a, b archive.SourceBundle) bool {
 // detected here. Cursor database chats are never reported: a rewritten chat
 // is published as the chat now is (see guard).
 func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
-	if s.reg.SourceKind != archive.SourceKindFile {
+	semantics, err := sourceSemantics(s.opts.Sources, s.reg)
+	if err != nil {
+		return false, err
+	}
+	if semantics.Mutation != agentapi.AppendOnly {
 		return false, nil
 	}
 	if reason, blocked := s.published.Blocked(); blocked && reason == state.BlockedReasonTranscriptRewritten {
@@ -52,7 +55,7 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 	if !found || signature.Blocked != "" || signature.Failed || signature.SourceKind != read.observed.kind {
 		return false, nil
 	}
-	return read.observed.file.Size < signature.TranscriptSize, nil
+	return read.observed.size() < signature.TranscriptSize, nil
 }
 
 // refilterBundle filters a retained snapshot's records again with adapter
@@ -62,8 +65,8 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // (FuzzFilterJSONL, FuzzCursorText), so under newer rules only what they
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
-func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	filtered, err := refilterNative(reg, adapter, bundle)
+func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -77,26 +80,12 @@ func refilterBundle(reg archive.SessionRegistration, adapter archive.Adapter, bu
 
 // refilterNative runs a snapshot's native records, or its native text, back
 // through the filter.
-func refilterNative(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
-	if len(bundle.NativeText) > 0 {
-		cursor, ok := adapter.(archive.CursorAdapter)
-		if !ok || len(bundle.NativeText) != 1 || len(bundle.NativeRecords) > 0 {
-			return archive.FilteredTranscript{}, errors.New("snapshot text cannot be filtered again by this adapter")
-		}
-		return cursor.FilterText(strings.NewReader(bundle.NativeText[0].Content), reg.SessionStartedAt)
+func refilterNative(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return archive.FilteredTranscript{}, errors.New("native refilter port required")
 	}
-	var jsonl bytes.Buffer
-	for i, record := range bundle.NativeRecords {
-		encoded, err := json.Marshal(record)
-		if err != nil {
-			return archive.FilteredTranscript{}, fmt.Errorf("encode retained record %d: %w", i, err)
-		}
-		if i > 0 {
-			jsonl.WriteByte('\n')
-		}
-		jsonl.Write(encoded)
-	}
-	return adapter.FilterJSONL(&jsonl)
+	return f.Refilter(ctx, bundle, reg.SessionStartedAt)
 }
 
 // mergeCaptureGaps is first followed by each gap of second not already in
@@ -118,13 +107,16 @@ func mergeCaptureGaps(first, second []archive.CaptureGap) []archive.CaptureGap {
 // snapshot that cannot be filtered again leaves candidate to replace it, as
 // before this existed, with a warning: the new filter's output, though
 // poorer, is still safer to publish than the old filter's.
-func (s *sessionScan) refilterRewritten(read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
+func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
 	rewritten, err := s.rewrittenSinceCapture(read)
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(s.reg, read.adapter, snapshot)
+	refiltered, err := refilterBundle(ctx, s.reg, read.adapter, snapshot)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return candidate, false, err
+		}
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))
 		return candidate, false, nil
 	}

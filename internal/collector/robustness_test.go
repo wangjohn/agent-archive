@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ func writePublishedStateFile(t *testing.T, store *state.Store, id string, file p
 
 func runAt(t *testing.T, store *state.Store, remote storage.ObjectStore, at time.Time) Result {
 	t.Helper()
-	result, err := Run(context.Background(), store, remote, Options{MachineID: "m", Now: func() time.Time { return at }})
+	result, err := Run(context.Background(), store, remote, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,12 +226,12 @@ func TestPublishedCacheReadsTheOlderTwoCopyShape(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, "/unused")
-	filtered, err := archive.CodexAdapter{}.FilterJSONL(strings.NewReader(codexTranscript + "\n"))
+	filtered, err := codex.Filter{}.FilterJSONL(strings.NewReader(codexTranscript + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	bundle, err := archive.NewSourceBundle(reg, archive.CodexAdapter{}, filtered, at, nil)
+	bundle, err := archive.NewSourceBundle(reg, codex.Filter{}, filtered, at, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +261,7 @@ func settledSession(t *testing.T, local *state.Store, content string) archive.Se
 
 func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	t.Parallel()
-	opts := Options{MachineID: "m"}
+	opts := Options{Sources: testSources, MachineID: "m"}
 	check := func(t *testing.T, local *state.Store, reg archive.SessionRegistration, o Options) bool {
 		t.Helper()
 		unchanged, err := unchangedSinceLastScan(context.Background(), local, reg, o)
@@ -311,7 +312,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		if check(t, local, reg, Options{MachineID: "m", ParserVersion: "next"}) {
+		if check(t, local, reg, Options{Sources: testSources, MachineID: "m", ParserVersion: "next"}) {
 			t.Fatal("a parser upgrade skipped re-derivation")
 		}
 	})
