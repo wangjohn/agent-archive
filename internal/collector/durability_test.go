@@ -543,3 +543,37 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }
+
+func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
+	local := newTestStore(t)
+	store := storagetest.NewMemoryStore()
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+	if err := local.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest("session-1", "stop", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := local.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond)
+	if err != nil || complete {
+		t.Fatalf("bounded local stage: complete=%v err=%v", complete, err)
+	}
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("queued publication under pending recovery: %#v %v", result, err)
+	}
+	var marker struct {
+		Complete bool `json:"complete"`
+	}
+	data, err := os.ReadFile(filepath.Join(local.Home(), "session-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &marker); err != nil || marker.Complete {
+		t.Fatalf("publication certified incomplete recovery: %#v %v", marker, err)
+	}
+}

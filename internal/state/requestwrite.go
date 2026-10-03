@@ -63,6 +63,8 @@ func (s *Store) ForHook() *Store {
 
 // lockedWrite is one read-modify-write for writeUnderLock.
 type lockedWrite struct {
+	membership     *local.Staged
+	membershipHome string
 	// lock takes the lock guarding path.
 	lock func() (func(), error)
 	path string
@@ -72,9 +74,10 @@ type lockedWrite struct {
 	// change computes the new content from the file's current content;
 	// write false leaves the file as it is.
 	change func(current fileSnapshot) (value any, write bool, err error)
-	// blind marks a write whose value does not depend on the file's content:
-	// the file is neither read nor compared, and change gets an empty
-	// snapshot, so no other writer can overtake it.
+	// blind marks a replacement whose value does not depend on the file's
+	// content. change gets an empty snapshot and ordinary commit does not
+	// compare prior bytes. Registration fencing separately reads identity facts;
+	// the caller's request-lock check still guards replacement and provenance.
 	blind bool
 }
 
@@ -167,7 +170,14 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 			}
 			s.writeSynced()
 		}
+		membership, err := stageRegistrationRevision(s.home, w.path, before, value, write)
+		if err != nil {
+			staged.Discard()
+			return err
+		}
+		w.membership, w.membershipHome = membership, s.home
 		committed, err := commitUnderLock(w, before, staged)
+		membership.Discard()
 		staged.Discard()
 		if err != nil {
 			return err
@@ -179,7 +189,7 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 			return nil
 		}
 		s.writeSynced()
-		return staged.SyncDir()
+		return errors.Join(staged.SyncDir(), syncRegistrationRevision(membership))
 	}
 	if !s.hook {
 		return fmt.Errorf("write %s: %w", w.path, errWriteOvertaken)
@@ -192,6 +202,12 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 // other writer can overtake it. Only the directory sync waits until the lock
 // is released.
 func (s *Store) writeHoldingLock(w lockedWrite) error {
+	revision, err := stageRegistrationRevision(s.home, w.path, fileSnapshot{}, nil, true)
+	if err != nil {
+		return err
+	}
+	defer revision.Discard()
+	w.membership, w.membershipHome = revision, s.home
 	staged, err := func() (*local.Staged, error) {
 		unlock, err := w.lock()
 		if err != nil {
@@ -215,7 +231,7 @@ func (s *Store) writeHoldingLock(w lockedWrite) error {
 		if err != nil {
 			return nil, err
 		}
-		if err := staged.Commit(); err != nil {
+		if err := commitRegistrationRevision(w, staged); err != nil {
 			staged.Discard()
 			return nil, err
 		}
@@ -225,7 +241,7 @@ func (s *Store) writeHoldingLock(w lockedWrite) error {
 		return err
 	}
 	s.writeSynced()
-	return staged.SyncDir()
+	return errors.Join(staged.SyncDir(), syncRegistrationRevision(revision))
 }
 
 // commitUnderLock is writeUnderLock's step under the lock. committed is
@@ -250,7 +266,7 @@ func commitUnderLock(w lockedWrite, before fileSnapshot, staged *local.Staged) (
 	if staged == nil {
 		return true, nil
 	}
-	return true, staged.Commit()
+	return true, commitRegistrationRevision(w, staged)
 }
 
 // writeSynced runs the test seam, if any, where writeUnderLock syncs outside

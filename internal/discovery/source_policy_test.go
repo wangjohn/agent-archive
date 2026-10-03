@@ -1,6 +1,10 @@
 package discovery
 
 import (
+	"github.com/wangjohn/agent-archive/internal/state"
+
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
+
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -153,7 +157,7 @@ func TestPreviousCatalogCannotBypassRevisedNegativeClassifications(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	// Version1 did not include supplementary classification fields in cached

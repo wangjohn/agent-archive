@@ -32,8 +32,11 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
-	Sources      agentapi.SourcesLookup
-	sourcePasses *sourcePassSet
+	// SkipSessionIndexRecovery is set after the CLI has already attempted its
+	// bounded local recovery stage. Direct collector callers recover once.
+	SkipSessionIndexRecovery bool
+	Sources                  agentapi.SourcesLookup
+	sourcePasses             *sourcePassSet
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -195,8 +198,8 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
-	if ctx.Err() == nil {
-		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
+		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
 	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
 		recoveryErr = nil

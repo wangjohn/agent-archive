@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func fixture(tb testing.TB) (*state.Store, config.Config, time.Time, string) {
@@ -184,7 +185,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	reg, created, err := admit(store, candidateFromHeader(h, SourceDescriptor{Kind: archive.SourceKindFile, StableKey: h.Meta.ID, Root: root, Locator: filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")}), cfg.Archive.Projects[0].Root, generation, at.Add(2*time.Minute))

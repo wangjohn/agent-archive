@@ -150,9 +150,15 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	// Local identity recovery and admission must not depend on credentials or
 	// storage availability. Source observation retains its own short budget.
-	if recoveryErr := localStore.RecoverSessionIndexIfNeeded(ctx); recoveryErr != nil {
+	recoveryBudget := state.SessionIndexRecoverySlice
+	if remaining := collectSoftDeadline - time.Since(started); remaining/2 < recoveryBudget {
+		recoveryBudget = remaining / 2
+	}
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	if _, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4)); recoveryErr != nil && (!errors.Is(recoveryErr, context.DeadlineExceeded) || ctx.Err() != nil) {
 		recordPreflightError(localStore, recoveryErr)
 	}
+	recoveryCancel()
 	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, discoveryErr)
@@ -171,7 +177,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{Sources: registryFor(env), Decoders: env.agentRegistry(),
+	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{Sources: registryFor(env), Decoders: env.agentRegistry(), SkipSessionIndexRecovery: true,
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:        cfg.EffectiveSkillEvidence(),
