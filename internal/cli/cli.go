@@ -570,15 +570,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 // never panics on malformed input; every command reports a problem through
 // stderr and a nonzero exit code instead.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if stdout == nil {
-		stdout = io.Discard
-	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	if stdin == nil {
-		stdin = strings.NewReader("")
-	}
+	stdin, stdout, stderr = defaultStreams(stdin, stdout, stderr)
 	if len(args) == 0 {
 		if !nonInteractiveSettingUsable(args, stderr, env) {
 			return 2
@@ -661,4 +653,20 @@ func dispatchCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
+}
+
+// defaultStreams stands in for the streams a caller left nil: empty input
+// and discarded output.
+func defaultStreams(stdin io.Reader, stdout, stderr io.Writer) (in io.Reader, out, errOut io.Writer) {
+	in, out, errOut = stdin, stdout, stderr
+	if in == nil {
+		in = strings.NewReader("")
+	}
+	if out == nil {
+		out = io.Discard
+	}
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	return in, out, errOut
 }
