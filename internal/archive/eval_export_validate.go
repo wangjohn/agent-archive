@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"unicode/utf8"
 )
 
 // Shapes the eval export schema requires of fields copied from a sidecar.
@@ -43,17 +44,18 @@ func ValidateEvalExport(e EvalExport) error {
 	check(slices.Contains([]ParserStatus{ParserStatusPartial, ParserStatusFailed, ParserStatusComplete}, e.Parser.Status), "invalid parser status")
 	check(nonNegativeCounts(e.Counts), "negative count")
 	for _, m := range e.Models {
+		check(m.Attributes != nil, "missing model attributes")
 		check(slices.Contains([]ModelSummarySource{ModelSummarySourceNativeTranscript, ModelSummarySourceHook}, m.Source), "invalid model source")
 		check(slices.Contains([]ResponseModelStatus{ResponseModelStatusNotExposed, ResponseModelStatusObserved}, m.ResponseModelStatus), "invalid model response status")
 		check(m.TurnCount == nil || *m.TurnCount >= 0, "negative model turn count")
 	}
 	check(len(e.ModelTokens) <= 32, "too many model_tokens")
 	for _, m := range e.ModelTokens {
-		check(m.Model != "" && len(m.Model) <= 128 && nonNegativeCounts(m), "invalid model_tokens entry")
+		check(m.Model != "" && utf8.RuneCountInString(m.Model) <= maxModelNameRunes && nonNegativeCounts(m), "invalid model_tokens entry")
 	}
 	check(len(e.ToolsUsed) <= 10 && len(e.MCPCalls) <= 50, "too many tools")
 	for _, tool := range slices.Concat(e.ToolsUsed, e.MCPCalls) {
-		check(tool.Name != "" && len(tool.Name) <= 128 && tool.Count >= 1, "invalid tool usage")
+		check(tool.Name != "" && utf8.RuneCountInString(tool.Name) <= toolNameLimit && tool.Count >= 1, "invalid tool usage")
 	}
 	for _, s := range e.SkillsUsed {
 		check(s.Name != "" && (s.TurnCount == nil || *s.TurnCount >= 0) &&

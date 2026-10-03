@@ -22,7 +22,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   [guide](docs/guides/eval-export.md). Export failures omit private decoder
   details, reject mismatched session identities, and report failed output
   writes; size limits include escaped display controls and preserve whole
-  UTF-8 characters at the text floor.
+  UTF-8 characters at the text floor. Decoded sidecars with missing or null
+  model attributes are rejected; model, tool and MCP name limits count
+  Unicode characters, matching the published schema.
 - `eval export` also works without setup, on this machine's transcripts:
   `--file PATH --harness NAME` for one, and `--scan` for every transcript
   backfill would find (with its `--harness`, `--project`, `--since`, and
