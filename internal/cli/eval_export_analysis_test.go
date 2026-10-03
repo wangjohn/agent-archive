@@ -22,6 +22,7 @@ type evalAnalysisParser struct {
 }
 
 func (*evalAnalysisParser) Version() string { return "synthetic-7" }
+
 func (p *evalAnalysisParser) Parse(ctx context.Context, _ archive.SourceBundle) (archive.Analysis, error) {
 	p.calls.Add(1)
 	if p.failure != nil {

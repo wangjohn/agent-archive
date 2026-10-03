@@ -501,10 +501,11 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	}
 	parser, _ := x.env.agentRegistry().LookupParser(bundle.Capture.Harness.Name)
 	analysis, parseErr := agentapi.Analyze(x.ctx, parser, bundle)
-	parserInfo := archive.ParserInfo{}
+	var parserVersion string
 	if parser != nil {
-		parserInfo.Version = parser.Version()
+		parserVersion = parser.Version()
 	}
+	parserInfo := archive.ParserInfo{Version: parserVersion}
 	record, err := archive.BuildLocalEvalExportWithAnalysis(bundle, analysis, parseErr, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail, parserInfo)
 	if err != nil {
 		return fail(path, archive.EvalErrorParseFailed, "the filtered transcript could not be parsed")

@@ -699,4 +699,5 @@ func NewAdapter(name string) (Adapter, error) {
 }
 
 type GitHead = archive.GitHead
+
 type Replay = archive.Replay

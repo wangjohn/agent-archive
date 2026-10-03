@@ -276,22 +276,35 @@ func TestLocalEvalExportIgnoresArchiveEvidence(t *testing.T) {
 
 // Export fixtures exercise native decoding; the production builders receive typed analysis.
 type EvalExport = archive.EvalExport
+
 type EvalExportDetail = archive.EvalExportDetail
+
 type EvalExportSource = archive.EvalExportSource
+
 type EvalPrompt = archive.EvalPrompt
+
 type EvalFinalResponse = archive.EvalFinalResponse
+
 type EvalFeedback = archive.EvalFeedback
+
 type LocalTranscript = archive.LocalTranscript
 
 const EvalExportSchemaVersion = archive.EvalExportSchemaVersion
+
 const EvalExportDetailMetadata = archive.EvalExportDetailMetadata
+
 const EvalExportDetailFull = archive.EvalExportDetailFull
+
 const EvalExportSourceArchive = archive.EvalExportSourceArchive
+
 const EvalExportSourceLocal = archive.EvalExportSourceLocal
+
 const EvalErrorNotFound = archive.EvalErrorNotFound
 
 var EvalExportFromMetadata = archive.EvalExportFromMetadata
+
 var NewEvalExportError = archive.NewEvalExportError
+
 var FitEvalExport = archive.FitEvalExport
 
 func BuildEvalExport(b SourceBundle, m Metadata, source EvalExportSource, detail EvalExportDetail) (EvalExport, error) {
@@ -301,6 +314,7 @@ func BuildEvalExport(b SourceBundle, m Metadata, source EvalExportSource, detail
 	}
 	return archive.BuildEvalExportWithAnalysis(b, a, m, source, detail)
 }
+
 func BuildLocalEvalExport(b SourceBundle, local LocalTranscript, detail EvalExportDetail) (EvalExport, error) {
 	b.SupplementalEvidence = nil
 	a, err := Parse(context.Background(), b)
