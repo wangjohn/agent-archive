@@ -104,10 +104,21 @@ func (f *discoveryObservedFilter) Filter(ctx context.Context, in agentapi.Native
 	return f.TranscriptFilter.Filter(ctx, in, c)
 }
 
+type discoverySourceScenario string
+
+const (
+	discoverySourceIntact           discoverySourceScenario = "intact"
+	discoverySourceChangedID        discoverySourceScenario = "changed-id"
+	discoverySourceChangedStart     discoverySourceScenario = "changed-start"
+	discoverySourceChangedCWD       discoverySourceScenario = "changed-cwd"
+	discoverySourceSymlink          discoverySourceScenario = "symlink"
+	discoverySourceComponentSymlink discoverySourceScenario = "component-symlink"
+)
+
 func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"intact", "changed-id", "changed-start", "changed-cwd", "symlink", "component-symlink"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []discoverySourceScenario{discoverySourceIntact, discoverySourceChangedID, discoverySourceChangedStart, discoverySourceChangedCWD, discoverySourceSymlink, discoverySourceComponentSymlink} {
+		t.Run(string(scenario), func(t *testing.T) {
 			t.Parallel()
 			root, project := t.TempDir(), t.TempDir()
 			at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -115,11 +126,11 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 			path := filepath.Join(root, "rollout-"+native+".jsonl")
 			payload := map[string]any{"id": native, "timestamp": at.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "synthetic", "cli_version": "test"}
 			switch scenario {
-			case "changed-id":
+			case discoverySourceChangedID:
 				payload["id"] = "00000000-0000-0000-0000-000000000002"
-			case "changed-start":
+			case discoverySourceChangedStart:
 				payload["timestamp"] = at.Add(time.Minute).Format(time.RFC3339Nano)
-			case "changed-cwd":
+			case discoverySourceChangedCWD:
 				payload["cwd"] = t.TempDir()
 			}
 			raw, err := json.Marshal(map[string]any{"type": "session_meta", "timestamp": payload["timestamp"], "payload": payload})
@@ -127,7 +138,7 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			target := path
-			if scenario == "component-symlink" {
+			if scenario == discoverySourceComponentSymlink {
 				realDir := filepath.Join(root, "real")
 				if err := os.Mkdir(realDir, 0700); err != nil {
 					t.Fatal(err)
@@ -138,7 +149,7 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 				target = filepath.Join(realDir, "rollout-"+native+".jsonl")
 				path = filepath.Join(root, "alias", "rollout-"+native+".jsonl")
 			}
-			if scenario == "symlink" {
+			if scenario == discoverySourceSymlink {
 				target = filepath.Join(t.TempDir(), "outside.jsonl")
 			}
 			task, err := json.Marshal(map[string]any{"type": "event_msg", "timestamp": payload["timestamp"], "payload": map[string]any{"type": "task_started", "turn_id": payload["id"], "root_turn_id": payload["id"], "started_at": payload["timestamp"]}})
@@ -149,7 +160,7 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 			if err := os.WriteFile(target, content, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if scenario == "symlink" {
+			if scenario == discoverySourceSymlink {
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
@@ -173,7 +184,7 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 				t.Fatal("discovery reader missing")
 			}
 			_, signatureErr := source.Signature(context.Background())
-			if (scenario == "symlink" || scenario == "component-symlink") && signatureErr == nil {
+			if (scenario == discoverySourceSymlink || scenario == discoverySourceComponentSymlink) && signatureErr == nil {
 				t.Fatal("signature skipped strict snapshot validation")
 			}
 			adapter, err := testAdapter("codex")
@@ -181,7 +192,7 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, observed, err := source.Filter(context.Background(), adapter, DefaultMaxTranscriptBytes)
-			if scenario == "intact" {
+			if scenario == discoverySourceIntact {
 				if err != nil || !observed.observation.Present || observed.observation.Signature.Provider == "" {
 					t.Fatalf("intact source lost provider observation: %+v %v", observed, err)
 				}
