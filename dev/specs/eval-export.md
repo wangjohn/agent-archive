@@ -100,19 +100,21 @@ The four ways of naming sessions are mutually exclusive; `--project`,
   temporary folders (skipped). Sessions backfill would skip for a reason
   other than "already archived" are skipped here too. Cursor chats found only
   in Cursor's database are not exported by `--scan` in this version (no file
-  path to name them by); the record set says so on standard error.
+  path to name them by).
 - A local record's `session_id` is the app's own session ID (as discovery
   found it, or as the transcript's records carry it, or for a Codex rollout
   named directly the UUID its file name ends with); `transcript_path` is the
   file's absolute path and `project.root` the project folder backfill
   resolved, or for `--file` the first working directory the transcript
-  records. `started_at` is the earliest time a visible record carries, else
-  the start backfill's discovery found (a Cursor transcript's file time), and
-  otherwise absent: the export time is never used as a start. `git_head`, `replay`, and `feedback` are absent (see the table
-  above). A local session is filtered with the running build's filter, so its
+  records. `started_at` uses the original native start, including Codex
+  session metadata, or the start backfill's discovery found (a Cursor
+  transcript's creation time), and is otherwise absent: the export time is
+  never used as a start. `git_head`, `replay`, and `feedback` are absent (see
+  the table above). A local session is filtered with the running build's filter, so its
   `filter_version` is always the current one.
-- When a session exists in both sources, the tool prefers the archive record;
-  agent-archive does not merge them.
+- An archive ID selects the archive record; `--file`, `--scan`, and absolute
+  paths select the supplied local transcript, even if it is also archived.
+  The command never merges evidence between these sources.
 
 ### Bulk
 

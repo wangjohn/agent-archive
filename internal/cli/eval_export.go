@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -315,20 +316,39 @@ type evalExporter struct {
 // run exports every input and reports whether any became an error record,
 // or the first error writing the output.
 func (x *evalExporter) run(inputs []evalInput, stdout io.Writer) (failed bool, err error) {
+	ctx, cancel := context.WithCancel(x.ctx)
+	defer cancel()
+	x.ctx = ctx
 	jobs := make(chan evalInput)
 	var wg sync.WaitGroup
 	for range min(x.opts.workers, max(len(inputs), 1)) {
 		wg.Go(func() {
 			for input := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				x.write(stdout, x.export(input))
+				x.mu.Lock()
+				if x.err != nil {
+					cancel()
+				}
+				x.mu.Unlock()
 			}
 		})
 	}
+feed:
 	for _, input := range inputs {
-		jobs <- input
+		select {
+		case <-ctx.Done():
+			break feed
+		case jobs <- input:
+		}
 	}
 	close(jobs)
 	wg.Wait()
+	if x.err == nil {
+		x.err = ctx.Err()
+	}
 	return x.failed, x.err
 }
 
@@ -440,13 +460,17 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 			return fail(path, archive.EvalErrorUnknownHarness, "not in a folder Claude Code, Codex, or Cursor keeps transcripts in; pass --harness")
 		}
 	}
-	filtered, adapter, err := collector.FilterTranscriptFile(harness, path, info.ModTime(), x.env.agentRegistry())
+	freshStart := input.startedAt
+	if freshStart.IsZero() {
+		freshStart = info.ModTime()
+	}
+	filtered, adapter, err := x.filterLocal(harness, path, freshStart)
 	if err != nil {
-		return fail(path, archive.EvalErrorReadFailed, fmt.Sprintf("filter: %v", err))
+		return fail(path, archive.EvalErrorReadFailed, "the transcript could not be read safely or filtered; check its format and file permissions")
 	}
 	nativeID := input.nativeID
 	if nativeID == "" {
-		nativeID = transcriptSessionID(path, filtered)
+		nativeID = transcriptSessionID(harness, path, filtered)
 	}
 	sum := sha256.Sum256([]byte(path))
 	root := input.projectRoot
@@ -462,24 +486,79 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	now := x.env.now().UTC()
 	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, now, nil)
 	if err != nil {
-		return fail(path, archive.EvalErrorReadFailed, err.Error())
+		return fail(path, archive.EvalErrorReadFailed, "the filtered transcript could not form a source bundle")
 	}
-	record, err := archive.BuildLocalEvalExport(bundle, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: input.startedAt, Now: now}, x.opts.detail)
+	startedAt := input.startedAt
+	if !filtered.NativeStartAt.IsZero() {
+		startedAt = filtered.NativeStartAt
+	}
+	record, err := archive.BuildLocalEvalExport(bundle, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail)
 	if err != nil {
-		return fail(path, archive.EvalErrorParseFailed, fmt.Sprintf("the filtered transcript could not be parsed: %v", err))
+		return fail(path, archive.EvalErrorParseFailed, "the filtered transcript could not be parsed")
 	}
 	return archive.FitEvalExport(record, x.opts.maxBytes)
+}
+
+// filterLocal owns a provider pass and snapshot for this worker and closes
+// both on every outcome. Filtering sees the pool's cancellation context.
+func (x *evalExporter) filterLocal(harness, path string, startedAt time.Time) (out archive.FilteredTranscript, adapter archive.Adapter, resultErr error) {
+	provider, _, ok := x.env.agentRegistry().LookupSources(harness)
+	if !ok {
+		return out, nil, errors.New("native source integration unavailable")
+	}
+	pass, err := provider.OpenPass(x.ctx, agentapi.SourceEnvironment{})
+	if err != nil {
+		return out, nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, pass.Close()) }()
+	snapshot, err := pass.Read(x.ctx, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+	if err != nil {
+		return out, nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, snapshot.Close()) }()
+	file := snapshot.Input().File
+	if file == nil {
+		return out, nil, errors.New("native file input required")
+	}
+	return collector.FilterTranscriptSnapshot(x.ctx, file, harness, startedAt, collector.DefaultMaxTranscriptBytes, x.env.agentRegistry())
 }
 
 // transcriptSessionID is the app's session ID for a transcript named
 // directly: the one its records carry, else, for a Codex rollout
 // (rollout-<time>-<uuid>.jsonl), the UUID its name ends with, else the file's
 // name without its extension, as handoff --file names it.
-func transcriptSessionID(path string, filtered archive.FilteredTranscript) string {
-	if len(filtered.SessionIDs) > 0 {
-		return filtered.SessionIDs[0]
-	}
+func transcriptSessionID(harness, path string, filtered archive.FilteredTranscript) string {
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	var safeIDs []string
+	for _, raw := range filtered.Records {
+		var record struct {
+			Type            string `json:"type"`
+			SessionID       string `json:"session_id"`
+			ClaudeSessionID string `json:"sessionId"`
+			Payload         struct {
+				ID string `json:"id"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(raw, &record) != nil {
+			continue
+		}
+		if harness == "codex" && record.Type == "session_meta" && record.Payload.ID != "" {
+			return record.Payload.ID
+		}
+		for _, id := range []string{record.SessionID, record.ClaudeSessionID} {
+			if id != "" {
+				safeIDs = append(safeIDs, id)
+			}
+		}
+	}
+	for _, id := range safeIDs {
+		if id == stem {
+			return id
+		}
+	}
+	if len(safeIDs) > 0 {
+		return safeIDs[0]
+	}
 	const uuidLength = 36
 	if strings.HasPrefix(stem, "rollout-") && len(stem) > len("rollout-")+uuidLength {
 		return stem[len(stem)-uuidLength:]
@@ -494,7 +573,11 @@ func transcriptSessionID(path string, filtered archive.FilteredTranscript) strin
 func (x *evalExporter) transcriptHarness(path string) string {
 	if userHome, err := x.env.userHomeDir(); err == nil {
 		claude, codex := x.env.appSessionDirs(userHome, config.Config{})
-		for harness, dirs := range map[string][]string{"claude": claude, "codex": codex} {
+		for _, store := range []struct {
+			harness string
+			dirs    []string
+		}{{"claude", claude}, {"codex", codex}} {
+			harness, dirs := store.harness, store.dirs
 			for _, dir := range dirs {
 				if local.PathWithin(path, dir) {
 					return harness

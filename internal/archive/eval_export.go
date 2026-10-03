@@ -465,9 +465,15 @@ const localMachineID = "local"
 // no git_head, replay, feedback, machine ID, or capture time, and no start
 // time unless a record or local.StartedAt gives one.
 func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail EvalExportDetail) (EvalExport, error) {
-	startedAt := earliestTurnTime(bundle)
+	bundle.SupplementalEvidence = nil
+	startedAt := local.StartedAt
+	if bundle.Capture.Harness.Name == HarnessCodex {
+		if native := codexSessionStart(bundle); !native.IsZero() {
+			startedAt = native
+		}
+	}
 	if startedAt.IsZero() {
-		startedAt = local.StartedAt
+		startedAt = earliestNativeRecordTime(bundle)
 	}
 	// BuildMetadata needs a start and a reference to the bundle it
 	// summarizes. The reference is the bundle's own content address; it is
@@ -507,18 +513,40 @@ func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail Eva
 	return record, nil
 }
 
-// earliestTurnTime is the earliest timestamp a visible record of the bundle
-// carries, or zero.
-func earliestTurnTime(bundle SourceBundle) time.Time {
-	view, err := ParseNormalized(bundle)
-	if err != nil {
-		return time.Time{}
-	}
+// earliestNativeRecordTime includes native bookkeeping such as session_meta;
+// synthetic text-section timestamps never establish a session's original start.
+func earliestNativeRecordTime(bundle SourceBundle) time.Time {
 	var earliest time.Time
-	for _, turn := range view.Turns {
-		if t, err := time.Parse(time.RFC3339Nano, turn.Timestamp); err == nil && (earliest.IsZero() || t.Before(earliest)) {
-			earliest = t
+	for _, record := range bundle.NativeRecords {
+		if at := parseNativeTimestamp(record); !at.IsZero() && (earliest.IsZero() || at.Before(earliest)) {
+			earliest = at
+		}
+		if record["type"] == "session_meta" {
+			if payload, ok := record["payload"].(map[string]any); ok {
+				if at := parseNativeTimestamp(payload); !at.IsZero() && (earliest.IsZero() || at.Before(earliest)) {
+					earliest = at
+				}
+			}
 		}
 	}
 	return earliest
+}
+
+// codexSessionStart uses the original session timestamp in Codex metadata,
+// whose envelope timestamp may describe a later rollout observation.
+func codexSessionStart(bundle SourceBundle) time.Time {
+	for _, record := range bundle.NativeRecords {
+		if record["type"] != "session_meta" {
+			continue
+		}
+		if payload, ok := record["payload"].(map[string]any); ok {
+			if at := parseNativeTimestamp(payload); !at.IsZero() {
+				return at
+			}
+		}
+		if at := parseNativeTimestamp(record); !at.IsZero() {
+			return at
+		}
+	}
+	return time.Time{}
 }

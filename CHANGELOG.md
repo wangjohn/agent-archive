@@ -30,7 +30,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   reads session IDs and transcript paths from standard input, and
   `--workers N` exports several sessions at once, writing each record as it
   finishes. Local records carry the transcript's path and project folder,
-  and no commit, replay marker, or feedback.
+  and no commit, replay marker, or feedback. Original native start times
+  are preserved, native identities come from filtered records, local decoder
+  errors omit private details, and failed
+  output cancels further source reads.
 - **Replay sessions stay out of your history.** A tool that replays archived
   tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
   agents it runs; the sessions its runs produce are captured as usual but

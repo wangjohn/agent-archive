@@ -301,3 +301,18 @@ func TestLocalEvalExportNeverInventsAStartTime(t *testing.T) {
 		t.Errorf("started_at = %v (%v), want discovery's %v", record.StartedAt, err, created)
 	}
 }
+
+// Hook evidence belongs to the archive even when a caller supplies an archived bundle.
+func TestLocalEvalExportIgnoresArchiveEvidence(t *testing.T) {
+	t.Parallel()
+	bundle, _ := evalExportFixture(t, "codex")
+	for _, detail := range []EvalExportDetail{EvalExportDetailMetadata, EvalExportDetailFull} {
+		record, err := BuildLocalEvalExport(bundle, LocalTranscript{Path: "/native.jsonl", Now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}, detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (record.Counts.ExplicitFeedback != nil && *record.Counts.ExplicitFeedback != 0) || len(record.Feedback) != 0 || record.Replay != nil || record.GitHead != nil {
+			t.Fatalf("%s carries archive evidence: %+v", detail, record)
+		}
+	}
+}
