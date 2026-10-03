@@ -291,7 +291,7 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	}
 	// Normal capture will carry these observations when content grew. Avoid an
 	// extra publication and preserve the request's new lifecycle evidence.
-	if s.liveTranscriptChanged(last.bundle) {
+	if s.liveTranscriptChanged(last.bundle) || s.requestAddsEvidence(last.bundle) {
 		return outcomeSkipped, false, nil
 	}
 	next.MetadataDerivedAt = s.now
@@ -310,4 +310,17 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	}
 	outcome, err := s.publishPending(pending)
 	return outcome, true, err
+}
+
+// requestAddsEvidence reports whether the request carries hook evidence the
+// published bundle lacks. Normal capture folds that evidence and the HEAD
+// observation into one publication and completes the request; a
+// metadata-only update would leave the request for a second upload.
+func (s *sessionScan) requestAddsEvidence(published archive.SourceBundle) bool {
+	if len(s.req.HookEvidence) == 0 {
+		return false
+	}
+	base := limitSkillEvidence(published.SupplementalEvidence, s.opts.skillEvidence())
+	merged := limitSkillEvidence(mergeSupplementalEvidence(base, s.req.HookEvidence), s.opts.skillEvidence())
+	return len(merged) != len(base)
 }
