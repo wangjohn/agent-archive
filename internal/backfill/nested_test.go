@@ -190,7 +190,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	t.Parallel()
 	f := newUndoFixture(t)
-	env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{Sources: testSources, Home: f.home, Now: func() time.Time { return fixedNow }}
 	code := "/work/code"
 	codeID := f.include(code)
 	secretID := archive.ProjectID(code + "/secret")

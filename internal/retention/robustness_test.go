@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -85,7 +86,7 @@ func (r *recordingStore) Put(ctx context.Context, key string, data []byte) error
 
 func collect(t *testing.T, local *state.Store, store storage.ObjectStore, at time.Time) collector.Result {
 	t.Helper()
-	result, err := collector.Run(context.Background(), local, store, collector.Options{
+	result, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(),
 		MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1},
 	})
 	if err != nil {
