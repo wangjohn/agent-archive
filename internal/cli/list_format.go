@@ -144,7 +144,7 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			HarnessKey: m.Harness.Name,
 			ProjectID:  m.ProjectID,
 			Title:      title,
-			When:       relativeAge(opts.Now, m.CapturedAt),
+			When:       relativeAge(opts.Now, lastActivity(m)),
 			CapturedAt: formatTimeOrNever(m.CapturedAt),
 			Harness:    archive.DisplayLine(m.Harness.Name),
 			Project:    archive.DisplayLine(project),
@@ -157,6 +157,26 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 		}
 	}
 	return rows
+}
+
+// lastActivity is when a session was last active, which WHEN shows and the
+// tables and browsers sort by: its latest record (ended_at). Without one, a
+// hook capture's time is as late as its activity can be, but an import's is
+// when backfill ran, so an import falls back to when the session started.
+func lastActivity(m archive.Metadata) time.Time {
+	switch {
+	case m.EndedAt != nil:
+		return *m.EndedAt
+	case m.Origin == archive.SessionOriginImport && !m.StartedAt.IsZero(), m.CapturedAt.IsZero():
+		return m.StartedAt
+	}
+	return m.CapturedAt
+}
+
+// sortByActivity orders sessions by lastActivity, newest first. A listing
+// comes newest capture first, which dates every import to when it ran.
+func sortByActivity(sessions []archive.Metadata) {
+	slices.SortStableFunc(sessions, func(a, b archive.Metadata) int { return lastActivity(b).Compare(lastActivity(a)) })
 }
 
 // childKey names a parent session in listFormatOptions.Children. The same ID

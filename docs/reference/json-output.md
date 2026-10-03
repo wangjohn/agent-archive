@@ -153,6 +153,10 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
+From parser `0.19.0` a Cursor session's `title` leaves out the
+`<timestamp>` line and `<user_query>` tags Cursor wraps a prompt in, as
+handoff already did.
+
 From parser `0.17.0` a sidecar may also carry three optional fields that
 say what to call the session:
 

@@ -53,7 +53,7 @@ func SessionLabels(bundle SourceBundle) (Labels, bool) {
 func deriveLabels(bundle SourceBundle, view NormalizedView) Labels {
 	return Labels{
 		Name:         deriveSessionName(bundle),
-		Title:        deriveSessionTitle(view, bundle.NativeText),
+		Title:        deriveSessionTitle(view, bundle.NativeText, bundle.harness() == "cursor"),
 		Branch:       deriveBranch(bundle),
 		PullRequests: derivePullRequests(bundle),
 	}
