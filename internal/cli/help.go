@@ -226,6 +226,9 @@ An interrupted setup is recovered on the next run.
   --project DIR         Capture this project, besides any saved (repeatable)
   --project-repo KEY    Capture a unique local repo by key (repeatable)
                        Skip ambiguous, excluded, or incomplete matches
+  --project-scope JSON  Transfer include/exclude rules together; repository
+                        subtrees follow the unique local checkout
+  --project-scope-file PATH  Read those rules from a file, or - for stdin
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
