@@ -72,9 +72,12 @@ working directory at the moment a session starts is the hook.
   a metadata-only update over the retained source (re-uploading that source
   if it has gone from storage), preserving capture time and parser output.
   This does not depend on the stop's request: the scan signature records
-  which `last` commit the published metadata names, and a session whose
-  registration names another is scanned again however unchanged its
-  transcript is. A stop the hook records after a pass has listed
+  which `last` observation (commit and first-seen time) the published
+  metadata holds, and a session whose registration holds another is scanned
+  again however unchanged its transcript is, even past a remembered read
+  failure, since the update reads no source. It is published before any
+  parser refresh, which it does not need. A publication whose metadata is
+  not cached locally counts as unknown until its sidecar has been read. A stop the hook records after a pass has listed
   registrations, or one whose transcript has since been deleted, is
   therefore published by a later pass instead of being lost.
 - **No parser bump.** `git_head` comes from the registration, not from the
@@ -197,5 +200,7 @@ never in `start`.
 - `internal/collector/git_head_test.go`, `internal/cli/hook_git_head_test.go`,
   and `TestSummaryCommit`: the sidecar (including a stop-only commit change on
   a publication without cached metadata, with new hook evidence, with its
-  source missing from storage, after its transcript was deleted, and with no
-  request left to carry it), the command wiring, and `show`'s row.
+  source missing from storage, after its transcript was deleted, with no
+  request left to carry it, seen again after another commit, past an
+  underivable refresh, behind an unreadable legacy sidecar, and behind a
+  remembered read failure), the command wiring, and `show`'s row.
