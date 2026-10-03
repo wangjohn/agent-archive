@@ -90,6 +90,39 @@ func TestEvalExportMetadataDetailReadsOnlyTheSidecar(t *testing.T) {
 	}
 }
 
+// A sidecar that decodes but breaks the schema (here a negative count, as a
+// hand-edited one might carry) is an error record at both details, never a
+// session line that breaks the published contract.
+func TestEvalExportRefusesAnInvalidSidecar(t *testing.T) {
+	t.Parallel()
+	env, mem, id := publishedFixture(t)
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mem.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sidecar map[string]any
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		t.Fatal(err)
+	}
+	sidecar["counts"].(map[string]any)["turns"] = -1
+	if raw, err = json.Marshal(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(context.Background(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, detail := range []string{"metadata", "full"} {
+		records, _, code := evalLines(t, env, "--detail", detail, id)
+		if code != 1 || len(records) != 1 || records[0]["record"] != "error" || records[0]["error"].(map[string]any)["code"] != "read_failed" {
+			t.Errorf("--detail %s: exit %d, %v", detail, code, records)
+		}
+	}
+}
+
 // Each input gets its own line, in the order given; one that is not found is
 // an error record and does not stop the rest.
 func TestEvalExportReportsEachMissingSessionAndGoesOn(t *testing.T) {

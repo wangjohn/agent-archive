@@ -158,7 +158,11 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 		if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
 			return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 		}
-		return archive.FitEvalExport(archive.EvalExportFromMetadata(metadata, archive.EvalExportSourceArchive), opts.maxBytes)
+		record := archive.EvalExportFromMetadata(metadata, archive.EvalExportSourceArchive)
+		if err := archive.ValidateEvalExport(record); err != nil {
+			return fail(archive.EvalErrorReadFailed, "the session metadata is not valid: "+err.Error())
+		}
+		return archive.FitEvalExport(record, opts.maxBytes)
 	}
 	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	if errors.Is(err, storage.ErrNotFound) {
@@ -173,6 +177,9 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 	record, err := archive.BuildEvalExport(bundle, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	if err := archive.ValidateEvalExport(record); err != nil {
+		return fail(archive.EvalErrorReadFailed, "the session metadata is not valid: "+err.Error())
 	}
 	return archive.FitEvalExport(record, opts.maxBytes)
 }

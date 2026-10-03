@@ -74,7 +74,9 @@ eval export --scan [--harness NAME] [--project DIR]
   record, not to the whole output: a bulk export's size is the tool's to
   manage.
 - **Errors are records.** A session that cannot be exported (not found, its
-  source missing or failing verification, a parse failure) becomes
+  source missing or failing verification, a sidecar that decodes but breaks
+  the schema's invariants, such as a negative count or an unknown enum, a
+  parse failure) becomes
   `{"record": "error", "input": …, "error": {"code", "message"}}` on its own
   line, and the export goes on. The exit code is 0 when every input produced a
   session record, 1 when any produced an error record (or the archive could
@@ -151,16 +153,25 @@ exactly what it means there. A session record:
   derives a rubric from.
 - `final_response` is the last assistant text in the transcript, or, when
   the transcript has none, the last final message a stop hook reported
-  (`source: "hook"`). It is the last reply, not necessarily the answer to
-  the last prompt.
+  (`source: "hook"`), leaving out a subagent's (one carrying `agent_id` in a
+  parent's bundle). It is the last reply, not necessarily the answer to the
+  last prompt.
 - `files_edited` lists the files the editing calls named (Edit, Write,
   apply_patch, …), in the order first edited, relative to the session's first
   working directory when inside it; `counts.files_touched` counts the same
   set. It is empty for a Cursor text transcript, which records no calls.
 - `branch` is the first branch the transcript records (Claude Code's
   `gitBranch`), the branch the session started on; Codex and Cursor record
-  none. An archived session's metadata record has none either: the sidecar
+  none. It is absent when that first branch is `HEAD` (a detached checkout)
+  or not a valid branch name, as the metadata's branch is. An archived session's metadata record has none either: the sidecar
   does not hold it, and the metadata pass reads nothing else.
+- One parser: at full detail, when the sidecar was written by another parser
+  version, the parser-derived fields (`parser`, `counts`, `models`, tokens,
+  tools, skills, `git_activity`, `capture_gaps`, `state`, `turn_outcome`,
+  `ended_at`) are re-derived from the same parse as `prompts` and
+  `files_edited`, so the two halves agree. What the hooks recorded
+  (identity, project, `git_head`, `replay`) stays the sidecar's. A metadata
+  record is the sidecar's alone, whatever parser wrote it.
 - Paths: an archived record carries no path from the metadata, but
   `files_edited`, like the prompts, is text from the filtered transcript,
   which holds the working directories (see [privacy](../../docs/security/privacy.md#what-is-uploaded)).
@@ -208,9 +219,12 @@ belong to the external tool.
 - `internal/archive/eval_export_test.go`: goldens per app at both details,
   each line validated against the schema; every prompt in order and whole; no
   conversation text at metadata detail; the hook's final message as a
-  fallback; a Cursor text transcript; `FitEvalExport`'s cuts, its floor, and
+  fallback, never a subagent's; a validated starting branch; one parser for
+  both halves of a full record; `ValidateEvalExport` rejecting what the schema
+  rejects; a Cursor text transcript; `FitEvalExport`'s cuts, its floor, and
   that it never drops a prompt or changes its argument; the error record.
 - `internal/cli/eval_export_test.go`: end to end from a session the hooks
   captured and `sync` published; the metadata pass working without the source
   bundle while the full pass reports it; one error record per missing input
-  without stopping the rest; the bound; usage errors; not set up.
+  without stopping the rest; an invalid sidecar as an error record at both
+  details; the bound; usage errors; not set up.
