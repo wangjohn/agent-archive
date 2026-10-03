@@ -517,7 +517,7 @@ func TestFourthAliasOrdinaryBackfill(t *testing.T) {
 	env.Now = func() time.Time { return at }
 	for _, spelling := range []string{"orbifold", "orbit", " ORBIT "} {
 		var out, stderr bytes.Buffer
-		code := Run([]string{"backfill", "--dry-run", "--json", "--harness", spelling}, &out, &stderr, env)
+		code := Run([]string{"backfill", "--dry-run", "--json", "--harness", spelling}, strings.NewReader(""), &out, &stderr, env)
 		var summary struct {
 			Filters struct {
 				Harnesses []string `json:"harnesses"`
