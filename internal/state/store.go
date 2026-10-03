@@ -1001,6 +1001,11 @@ type ScanSignature struct {
 	// BlockedReasonTranscriptMissing the state is the source's absence: the
 	// signature holds while the source is still missing.
 	Blocked BlockedReason `json:"blocked,omitempty"`
+	// PublishedLastHead is the commit the published metadata named as the
+	// session's last HEAD when this signature was recorded. A registration
+	// whose last HEAD has moved since owes a metadata update, so the session
+	// is scanned again however unchanged its source is.
+	PublishedLastHead string `json:"published_last_head,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.

@@ -67,6 +67,16 @@ working directory at the moment a session starts is the hook.
   Sessions registered before this change or imported by `backfill` have no
   starting observation. Later live stops can record `last`. Subagents have
   neither observation.
+- **A moved HEAD is published even when nothing else moved.** A stop whose
+  transcript did not grow still changes `last`. The collector publishes it as
+  a metadata-only update over the retained source (re-uploading that source
+  if it has gone from storage), preserving capture time and parser output.
+  This does not depend on the stop's request: the scan signature records
+  which `last` commit the published metadata names, and a session whose
+  registration names another is scanned again however unchanged its
+  transcript is. A stop the hook records after a pass has listed
+  registrations, or one whose transcript has since been deleted, is
+  therefore published by a later pass instead of being lost.
 - **No parser bump.** `git_head` comes from the registration, not from the
   source bundle, and nothing can derive it for a session that was published
   before the hooks recorded it. Bumping `DefaultParserVersion` would make every
@@ -186,5 +196,6 @@ never in `start`.
   commit names and no other keys.
 - `internal/collector/git_head_test.go`, `internal/cli/hook_git_head_test.go`,
   and `TestSummaryCommit`: the sidecar (including a stop-only commit change on
-  a publication without cached metadata, with new hook evidence, and with its
-  source missing from storage), the command wiring, and `show`'s row.
+  a publication without cached metadata, with new hook evidence, with its
+  source missing from storage, after its transcript was deleted, and with no
+  request left to carry it), the command wiring, and `show`'s row.
