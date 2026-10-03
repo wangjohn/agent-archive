@@ -11,9 +11,18 @@ import (
 
 const nativeTempNamespace = "agent-archive-local-handoffs"
 
+// nativeTempPath isolates launch files by effective user, including shared /tmp.
+func nativeTempPath(temp string, uid int) string {
+	return filepath.Join(temp, fmt.Sprintf("%s-%d", nativeTempNamespace, uid))
+}
+
 // nativeTempRoot checks the dedicated private namespace without following links.
 func nativeTempRoot(temp string) (string, error) {
-	root := filepath.Join(temp, nativeTempNamespace)
+	return nativeTempRootForUID(temp, os.Geteuid())
+}
+
+func nativeTempRootForUID(temp string, uid int) (string, error) {
+	root := nativeTempPath(temp, uid)
 	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}
@@ -21,17 +30,21 @@ func nativeTempRoot(temp string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return "", errors.New("local handoff temporary namespace is not a private directory")
+	if !privateNativeTempDirectory(info, uid) {
+		return "", errors.New("local handoff temporary namespace must be a private directory owned by the current user; remove the conflicting entry or choose another temporary directory")
 	}
 	return root, nil
 }
 
 // pruneNativeHandoffs never scans unrelated temporary entries or follows links.
 func pruneNativeHandoffs(temp string, now time.Time) {
-	root := filepath.Join(temp, nativeTempNamespace)
+	pruneNativeHandoffsForUID(temp, now, os.Geteuid())
+}
+
+func pruneNativeHandoffsForUID(temp string, now time.Time, uid int) {
+	root := nativeTempPath(temp, uid)
 	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+	if err != nil || !privateNativeTempDirectory(info, uid) {
 		return
 	}
 	entries, err := os.ReadDir(root)
@@ -43,7 +56,7 @@ func pruneNativeHandoffs(temp string, now time.Time) {
 			continue
 		}
 		info, err := entry.Info()
-		if err != nil || info.Mode().Perm()&0o077 != 0 || !info.ModTime().Before(now.Add(-handoffMaxAge)) {
+		if err != nil || !privateNativeTempDirectory(info, uid) || !info.ModTime().Before(now.Add(-handoffMaxAge)) {
 			continue
 		}
 		_ = os.RemoveAll(filepath.Join(root, entry.Name()))
