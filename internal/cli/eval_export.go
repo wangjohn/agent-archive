@@ -109,7 +109,7 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	if *maxBytes < 0 {
 		return evalExportOptions{}, fs.usageError("--max-bytes must be 0 or more")
 	}
-	canonical, ok := harnessFlag(*harness)
+	canonical, ok := harnessFlagWithCatalog(fs.catalog, *harness)
 	if !ok {
 		return evalExportOptions{}, fs.usageError("%s", harnessFlagError(*harness))
 	}
@@ -145,7 +145,7 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 		if strings.Contains(err.Error(), "no archived session") {
 			return fail(archive.EvalErrorNotFound, "no archived session with this ID")
 		}
-		return fail(archive.EvalErrorReadFailed, err.Error())
+		return fail(archive.EvalErrorReadFailed, "the session metadata could not be read or verified")
 	}
 	if opts.detail == archive.EvalExportDetailMetadata {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
@@ -153,7 +153,10 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 			return fail(archive.EvalErrorNotFound, "no archived session with this ID")
 		}
 		if err != nil {
-			return fail(archive.EvalErrorReadFailed, err.Error())
+			return fail(archive.EvalErrorReadFailed, "the session metadata could not be read or verified")
+		}
+		if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
+			return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 		}
 		return archive.FitEvalExport(archive.EvalExportFromMetadata(metadata, archive.EvalExportSourceArchive), opts.maxBytes)
 	}
@@ -162,11 +165,14 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 		return fail(archive.EvalErrorNotFound, "no archived session with this ID")
 	}
 	if err != nil {
-		return fail(archive.EvalErrorReadFailed, describeBundleError(err, id, "--detail full"))
+		return fail(archive.EvalErrorReadFailed, "the session metadata or filtered source could not be read or verified")
+	}
+	if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
+		return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 	}
 	record, err := archive.BuildEvalExport(bundle, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
 	if err != nil {
-		return fail(archive.EvalErrorParseFailed, fmt.Sprintf("the filtered source could not be parsed: %v", err))
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}
 	return archive.FitEvalExport(record, opts.maxBytes)
 }
@@ -179,6 +185,13 @@ func writeEvalRecord(w io.Writer, record any) error {
 	if err != nil {
 		return fmt.Errorf("encode record: %w", err)
 	}
-	terminal.Print(w, string(archive.DisplayJSON(data))+"\n")
+	data = append(archive.DisplayJSON(data), '\n')
+	n, err := w.Write(data)
+	if err != nil {
+		return fmt.Errorf("write record: %w", err)
+	}
+	if n != len(data) {
+		return fmt.Errorf("write record: %w", io.ErrShortWrite)
+	}
 	return nil
 }

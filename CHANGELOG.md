@@ -19,7 +19,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   response, the edited files, and feedback. A session that cannot be
   exported is an error record on its own line and the rest still print.
   `--max-bytes` bounds each record. Read-only and never interactive. See the
-  [guide](docs/guides/eval-export.md).
+  [guide](docs/guides/eval-export.md). Export failures omit private decoder
+  details, reject mismatched session identities, and report failed output
+  writes; size limits include escaped display controls and preserve whole
+  UTF-8 characters at the text floor.
 - **Replay sessions stay out of your history.** A tool that replays archived
   tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
   agents it runs; the sessions its runs produce are captured as usual but

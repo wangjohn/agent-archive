@@ -610,6 +610,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	startTrace(args[0], stderr, env)
 	defer finishTraceNow()
 
+	return dispatchCommand(args, stdin, stdout, stderr, env)
+}
+
+// dispatchCommand routes arguments after Run has completed preflight checks.
+func dispatchCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	switch args[0] {
 	case "-h", "--help", "help":
 		terminal.Print(stdout, usage)
