@@ -12,7 +12,9 @@ import (
 
 const discoveryWriterMarker = "+discovery-v2"
 
-const codexWriterMarker = "+codex-scope-v3"
+const codexWriterMarker = "+codex-scope-floor-v3"
+
+const legacyCodexWriterMarker = "+codex-scope-v3"
 
 // DiscoveryConfig records consent, roots and current per-project generations.
 // Retain it even after disablement: old writers must never flatten the history.
@@ -42,7 +44,7 @@ type DiscoveryInterval struct {
 
 func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 	for {
-		clean := strings.TrimSuffix(strings.TrimSuffix(string(mode), codexWriterMarker), discoveryWriterMarker)
+		clean := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(string(mode), codexWriterMarker), legacyCodexWriterMarker), discoveryWriterMarker)
 		if clean == string(mode) {
 			return mode
 		}
@@ -101,7 +103,7 @@ func validateDiscoveryConfig(c Config) error {
 }
 
 func validateCodexConfig(c Config) error {
-	if c.SchemaVersion != 3 || !strings.HasSuffix(string(c.SkillEvidence), codexWriterMarker) {
+	if c.SchemaVersion != 3 || (!strings.HasSuffix(string(c.SkillEvidence), codexWriterMarker) && !strings.HasSuffix(string(c.SkillEvidence), legacyCodexWriterMarker)) {
 		return errors.New("codex scope requires protected schema 3")
 	}
 	if c.CodexCapture.Scope != CodexIncludedProjects && c.CodexCapture.Scope != CodexAllProjects {

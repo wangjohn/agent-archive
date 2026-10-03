@@ -20,6 +20,7 @@
       "properties": {
         "native_start_floor": {"type": "string", "format": "date-time"},
         "generation": {"type": "string", "minLength": 1},
+        "native_start_floor": {"type": "string", "format": "date-time"},
         "agent": {"const": "codex"},
         "project_root": {"const": ""},
         "destination_id": {"type": "string", "minLength": 1},

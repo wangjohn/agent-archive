@@ -600,3 +600,79 @@ func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExclu
 		})
 	}
 }
+
+func TestBlanketPausedConsentFloorFlowsThroughHookDiscoveryAndPublication(t *testing.T) {
+	for _, ingress := range []string{"hook", "discovery"} {
+		t.Run(ingress, func(t *testing.T) {
+			store, cfg, at, codex := fixture(t)
+			cfg.Paused = true
+			setTestCodexScope(&cfg, config.CodexAllProjects)
+			floor := at.Add(time.Hour)
+			if err := config.ReconcileDiscovery(&cfg, config.Config{}, floor); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.SetPaused(store.Home(), false, floor.Add(-time.Nanosecond)); err == nil {
+				t.Fatal("pre-consent resume succeeded")
+			}
+			var err error
+			cfg, err = config.SetPaused(store.Home(), false, floor.Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			project := t.TempDir()
+			if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for i, started := range []time.Time{floor.Add(-time.Minute), floor.Add(30 * time.Second), floor.Add(2 * time.Minute)} {
+				native := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
+				if ingress == "hook" {
+					path := filepath.Join(codex, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+					if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := handleCodexHook(store.Home(), map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": project, "transcript_path": path}, started); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writeRollout(t, codex, project, started, i+1, "sessions")
+			}
+			if ingress == "discovery" {
+				h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return floor.Add(3 * time.Minute) }}, syntheticSupport)
+				if err != nil || h.Registered != 1 {
+					t.Fatalf("floor discovery %#v %v", h, err)
+				}
+			}
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 1 {
+				t.Fatalf("admitted paused/old starts: %#v %v", regs, err)
+			}
+			if !regs[0].SessionStartedAt.Equal(floor.Add(2*time.Minute)) || regs[0].CodexAdmission == nil {
+				t.Fatal("lost original admission")
+			}
+			objects := storagetest.NewMemoryStore()
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return floor.Add(4 * time.Minute) }})
+			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+				t.Fatalf("floor publication %#v %v", result, err)
+			}
+			raw, err := store.PublishedMetadata(regs[0].ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var meta archive.Metadata
+			if err := json.Unmarshal(raw, &meta); err != nil {
+				t.Fatal(err)
+			}
+			source, err := objects.Get(context.Background(), meta.SourceBundle.Key)
+			if err != nil || len(source) == 0 {
+				t.Fatal("readback failed", err)
+			}
+			validatePublishedDiscovery(t, raw, source)
+		})
+	}
+}

@@ -14,7 +14,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   across current and future physical projects, independently of discovery.
   Fresh hook/discovery starts keep immutable local proof and current exclusion/
   destination checks; new projects never grow configuration. Scope-capable
-  configuration uses an incompatible v3 writer fence, including disabled history.
+  configuration uses the incompatible `codex-scope-floor-v3` writer fence,
+  including disabled history. Scope and source generations retain immutable
+  start floors; invalid clock transitions refuse atomically.
   Public selection remains in the activation change.
 
 - Disabled Codex discovery machinery performs bounded source scans before

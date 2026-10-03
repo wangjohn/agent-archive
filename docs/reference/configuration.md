@@ -194,8 +194,9 @@ selected app and destination. Legacy/import registrations never gain proof
 on continuation. An already admitted proof stops while excluded and resumes
 when the current exception permits it again; a forward barrier does not revoke
 that immutable admission. Its physical identity remains eligible inside a
-remaining included parent when scope is reduced. The proof remains local; filtered source and metadata schemas
-are unchanged.
+remaining included parent when scope is reduced. The proof remains local. Filtered source and metadata derivation versions
+are unchanged; native provenance already supported by the upstream filtered
+source contract remains available to child materialization.
 
 Blanket, source and included-project generations retain an immutable
 `native_start_floor`, including when created while paused. The floor is the
@@ -207,5 +208,5 @@ Earlier `codex-scope-v3` documents migrate nonempty histories conservatively
 from their earliest retained interval; empty unknown histories cannot resume
 or authorize starts until explicit local setup renews them. Every protected
 save, nested draft and rollback emits `codex-scope-floor-v3`, retaining schema
-version 3 and the existing skill marker. Prior policy writers refuse this new
+version 3 and the stronger `+codex-scope-floor-v3` skill marker. Prior policy writers refuse this new
 identity before they can drop floors; schema 4 remains reserved for future UX.
