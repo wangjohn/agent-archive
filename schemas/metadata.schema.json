@@ -348,7 +348,7 @@
         "import",
         "discovery"
       ],
-      "description": "Admission provenance. Discovery has no imported_at and preserves a discovered_without_hook_evidence gap; later hooks do not establish earlier lifecycle coverage."
+      "description": "Admission provenance. From parser 0.20.0 discovery has no imported_at and preserves a discovered_without_hook_evidence gap; later hooks do not establish earlier lifecycle coverage."
     },
     "imported_at": {
       "type": "string",

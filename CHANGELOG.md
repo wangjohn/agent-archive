@@ -12,7 +12,8 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 - Shared local discovery foundations: shared project/worktree facts, durable
   authorization intervals, immutable admission, and actual hook observation.
-  Automatic Codex discovery remains disabled pending scanner and onboarding
+  Parser 0.20.0 records discovery provenance alongside the existing Cursor
+  title derivation. Automatic Codex discovery remains disabled pending scanner and onboarding
   integration. Protected discovery configuration makes published older writers
   refuse rather than discard authorization; existing hook-only configs retain
   their numeric schema and behavior.
