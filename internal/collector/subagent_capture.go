@@ -202,7 +202,7 @@ func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidat
 
 func assembleSubagentRegistration(parent archive.SessionRegistration, candidate state.SubagentCandidate) archive.SessionRegistration {
 	var startedAtSource archive.StartedAtSource
-	if parent.Imported() {
+	if parent.Imported() || parent.Origin == archive.SessionOriginDiscovery {
 		// Its start is set below from the earliest native record.
 		startedAtSource = archive.StartedAtSourceTranscript
 	}

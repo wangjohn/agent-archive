@@ -151,11 +151,11 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 	if err != nil || reg.ArchiveSessionID != entry.ArchiveSessionID {
 		return "", false, ErrSessionIndexRecoveryRequired
 	}
-	if actual.Agent != key.Agent {
-		return "", false, nil
-	}
 	if actual.NativeID != key.NativeID {
 		return "", false, ErrSessionIdentityConflict
+	}
+	if actual.Agent != key.Agent {
+		return "", false, nil
 	}
 	return entry.ArchiveSessionID, true, nil
 }
@@ -172,11 +172,11 @@ func (s *Store) legacyCandidateRecovery(key agentmeta.SessionKey, id string) err
 	if err != nil || candidate.ArchiveSessionID != id {
 		return ErrSessionIndexRecoveryRequired
 	}
-	if actual.Agent != key.Agent {
-		return nil
-	}
 	if actual.NativeID != key.NativeID {
 		return ErrSessionIdentityConflict
+	}
+	if actual.Agent != key.Agent {
+		return nil
 	}
 	return ErrSessionIndexRecoveryRequired
 }
