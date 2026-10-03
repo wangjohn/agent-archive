@@ -632,4 +632,6 @@ When your capture scope contains exclusions, the second-machine command uses
 Repository-relative exclusions and reincluded subtrees follow a relocated
 checkout. Missing excluded folders stay excluded if created later; a failed
 repository match or unsafe subtree mapping refuses the transfer before
-changing capture settings. Review non-home absolute paths for the new machine.
+changing capture settings. Saved destination exclusions stay in force; conflicting
+saved reinclusions refuse the transfer until you review the destination scope.
+Review non-home absolute paths for the new machine.

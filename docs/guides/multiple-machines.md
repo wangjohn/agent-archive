@@ -191,6 +191,11 @@ Paths outside a configured repository use the destination home for `~/`.
 Missing excluded folders remain excluded if created later. Setup refuses the
 whole transfer when a repository is missing, ambiguous, blocked by saved
 scope, or incompletely discovered, or a subtree resolves outside its checkout.
+Saved destination exclusions stay in force. If a saved reinclusion would
+defeat a transferred exclusion, or a transferred inclusion would override a
+saved exclusion, setup refuses before changing any rule. Review the destination
+capture scope before retrying; explicit transferred reinclusions remain intact.
+Symlink aliases share the same capture decision and repository anchor.
 No inclusion is applied without its associated exclusions. Inspect these
 rules before running the command; update non-home absolute paths for the
 new machine if necessary.

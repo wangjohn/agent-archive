@@ -175,3 +175,172 @@ func TestScopeKeepsNestedCheckoutAttachedToPathBasedAncestor(t *testing.T) {
 		}
 	}
 }
+
+func TestScopeTransferRefusesSavedReinclusionUnderTransferredExclusion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	private := filepath.Join(root, "private")
+	saved := filepath.Join(private, "saved")
+	must(t, os.MkdirAll(saved, 0700))
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: saved, Included: true}}}}
+	before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: private, Included: false}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) == 0 {
+		activation, _ := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(saved, "chat"))
+		t.Fatalf("accepted saved reinclusion defeating transferred exclusion: %+v", activation)
+	}
+	if !reflect.DeepEqual(before, cfg.Archive.Projects) {
+		t.Fatal("refusal changed saved capture decisions")
+	}
+	// An explicit source reinclusion authorizes the saved subtree.
+	encoded, err = json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: private, Included: false}, {Path: saved, Included: true}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	activation, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(saved, "chat"))
+	if !found || !activation.Included {
+		t.Fatal("explicit reinclusion lost")
+	}
+}
+
+func TestScopeTransferUpdatesSavedCanonicalAlias(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(private, 0700))
+	alias := filepath.Join(home, "alias")
+	must(t, os.Symlink(private, alias))
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: alias, Included: true}}}}
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: private, Included: false}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	for _, candidate := range []string{private, alias} {
+		activation, found := capture.ConfiguredProjectActivationFor(cfg, candidate)
+		if !found || activation.Included {
+			t.Fatalf("saved alias defeated exclusion at %s: %+v", candidate, activation)
+		}
+	}
+	if len(cfg.Archive.Projects) != 2 {
+		t.Fatalf("duplicate saved identity: %+v", cfg.Archive.Projects)
+	}
+}
+
+func TestPortableScopeKeepsCanonicalAliasSubtreeAttached(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(filepath.Join(root, ".git"), 0700))
+	must(t, os.MkdirAll(private, 0700))
+	alias := filepath.Join(home, "alias")
+	must(t, os.Symlink(root, alias))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	env := Env{repoKeyContext: func(context.Context, string) string { return key }}
+	encoded := portableProjectScope([]archive.ProjectActivation{{Root: alias, Included: true}, {Root: private, Included: false}}, home, env, context.Background())
+	var rules []portableProjectRule
+	must(t, json.Unmarshal([]byte(encoded), &rules))
+	if len(rules) != 2 || rules[0].RepoKey != key || rules[1].RepoKey != key || rules[1].Path != "private" {
+		t.Fatalf("alias detached exclusion: %s", encoded)
+	}
+}
+
+func TestScopeTransferPreservesSavedExclusionsAndOriginalConfig(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(private, 0700))
+	existing := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: true}, {Root: private, Included: false}}}}
+	cfg := existing
+	before := append([]archive.ProjectActivation(nil), existing.Archive.Projects...)
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	activation, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(private, "chat"))
+	if !found || activation.Included {
+		t.Fatal("saved descendant exclusion lost")
+	}
+	encoded, err = json.Marshal([]portableProjectRule{{Path: private, Included: true}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) == 0 {
+		t.Fatal("silently overrode destination exclusion")
+	}
+	if !reflect.DeepEqual(before, cfg.Archive.Projects) {
+		t.Fatal("refusal changed scope")
+	}
+	// A successful explicit exclusion changes the candidate, not the saved
+	// config that setup subsequently uses to review consent changes.
+	encoded, err = json.Marshal([]portableProjectRule{{Path: root, Included: false}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	if !reflect.DeepEqual(before, existing.Archive.Projects) {
+		t.Fatal("candidate mutated original saved scope")
+	}
+	activation, found = capture.ConfiguredProjectActivationFor(cfg, root)
+	if !found || activation.Included {
+		t.Fatal("explicit exclusion was not applied")
+	}
+}
+
+func TestScopeTransferRejectsInvalidOrDuplicateRulesAtomically(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.Mkdir(root, 0700))
+	alias := filepath.Join(home, "alias")
+	must(t, os.Symlink(root, alias))
+	good, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}})
+	must(t, err)
+	duplicate, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: alias, Included: false}})
+	must(t, err)
+	for _, encoded := range []string{"null", "[]", "{}", `[{"path":"~"}]`, `[{"path":"~","included":null}]`, `[{"path":"relative","included":false}]`, `[{"path":"~","included":true,"unexpected":1}]`, string(good) + " []", string(duplicate)} {
+		cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: false}}}}
+		before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
+		if problems := setupProjectScope(&cfg, encoded, home, Env{}); len(problems) == 0 {
+			t.Fatalf("accepted invalid scope %s", encoded)
+		}
+		if !reflect.DeepEqual(before, cfg.Archive.Projects) {
+			t.Fatal("invalid input partially changed capture scope")
+		}
+	}
+}
+
+func TestScopeTransferRefusesIncompleteAndSavedBlockedRepositories(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.Mkdir(root, 0700))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	encoded, err := json.Marshal([]portableProjectRule{{RepoKey: key, Path: ".", Included: true}, {RepoKey: key, Path: "private", Included: false}})
+	must(t, err)
+	for _, incomplete := range []bool{false, true} {
+		cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: false}}}}
+		before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
+		env := Env{LookupEnv: func(string) (string, bool) { return "", false }, WorkingDir: func() (string, error) { return root, nil }, repoKeyContext: func(context.Context, string) string {
+			if incomplete {
+				return "unknown-origin"
+			}
+			return key
+		}}
+		problems := setupProjectScope(&cfg, string(encoded), home, env)
+		if len(problems) == 0 {
+			t.Fatal("accepted incomplete or saved-excluded repository")
+		}
+		if incomplete && !strings.Contains(problems[0].Error(), "incomplete") {
+			t.Fatalf("not classified as incomplete: %v", problems)
+		}
+		if !reflect.DeepEqual(before, cfg.Archive.Projects) {
+			t.Fatal("failed matching changed saved capture decisions")
+		}
+	}
+}
