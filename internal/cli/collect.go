@@ -151,12 +151,13 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	// Local identity recovery and admission must not depend on credentials or
 	// storage availability. Source observation retains its own short budget.
-	recoveryBudget := state.SessionIndexRecoverySlice
-	if remaining := collectSoftDeadline - time.Since(started); remaining/2 < recoveryBudget {
-		recoveryBudget = remaining / 2
-	}
+	// The complete authority census precedes the application allowance. Give it
+	// part of the remaining pass budget so a census slower than four seconds
+	// does not consume every future slice before any owner can be applied.
+	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
+	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
-	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4))
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
 	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
 		recoveryErr = nil
 	}
@@ -183,10 +184,10 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		previousScanAt = previous.LastScanAt
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+		SkipSessionIndexRecovery: true,
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),
-		SkipSessionIndexRecovery: true,
 		MachineID:                cfg.MachineID,
 		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),

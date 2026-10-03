@@ -351,3 +351,77 @@ func TestBlanketInterruptedReplayCompletesPhysicalProjectEffects(t *testing.T) {
 		})
 	}
 }
+
+func TestBlanketHookRetainsWorkingDirectoryCommitObservations(t *testing.T) {
+	home, root, _, at := blanketHookFixture(t)
+	git := &headLookup{sha: startCommit, dirty: new(true)}
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": root}
+	options := []Option{WithDecoders(testDecoders), WithGitHead(git.lookup)}
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute), options...); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyRegistration(t, home)
+	if reg.CodexAdmission == nil || reg.StartHead == nil || reg.StartHead.SHA != startCommit || reg.StartHead.Dirty == nil || !*reg.StartHead.Dirty {
+		t.Fatalf("missing blanket start observation: %#v", reg)
+	}
+	git.sha = laterCommit
+	if err := HandleEvent(home, "codex", stopPayload(root), at.Add(2*time.Minute), options...); err != nil {
+		t.Fatal(err)
+	}
+	reg = onlyRegistration(t, home)
+	if reg.LastHead == nil || reg.LastHead.SHA != laterCommit || reg.LastHeadSeenAt == nil || !reg.LastHeadSeenAt.Equal(at.Add(2*time.Minute)) {
+		t.Fatalf("missing blanket last observation: %#v", reg)
+	}
+	if got := git.questions(); len(got) != 2 || got[0] != (headQuestion{root, true}) || got[1] != (headQuestion{root, false}) {
+		t.Fatalf("wrong working-directory queries: %#v", got)
+	}
+}
+
+func TestBlanketCommitObservationsRespectExclusionAndSurviveScopeReduction(t *testing.T) {
+	home, root, cfg, at := blanketHookFixture(t)
+	git := &headLookup{sha: startCommit}
+	options := []Option{WithDecoders(testDecoders), WithGitHead(git.lookup)}
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": root}
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute), options...); err != nil {
+		t.Fatal(err)
+	}
+	before := onlyRegistration(t, home)
+	previous := cfg
+	cfg.Archive.Projects = []archive.ProjectActivation{{Root: root, Included: false}}
+	if err := config.ReconcileDiscovery(&cfg, previous, at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleEvent(home, "codex", stopPayload(root), at.Add(3*time.Minute), options...); err != nil {
+		t.Fatal(err)
+	}
+	after := onlyRegistration(t, home)
+	if len(git.questions()) != 1 || after.LastHead != nil || after.LastHeadSeenAt != nil || !after.HookObservedAt.Equal(before.HookObservedAt) {
+		t.Fatalf("excluded stop observed git or changed registration: %#v", after)
+	}
+	previous = cfg
+	cfg.Archive.Projects = []archive.ProjectActivation{{Root: filepath.Dir(root), Included: true, ActivatedAt: at.Add(4 * time.Minute)}}
+	setTestCodexScope(&cfg, config.CodexIncludedProjects)
+	if err := config.ReconcileDiscovery(&cfg, previous, at.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	git.mu.Lock()
+	git.sha = laterCommit
+	git.mu.Unlock()
+	stopAt := at.Add(5 * time.Minute)
+	if err := HandleEvent(home, "codex", stopPayload(root), stopAt, options...); err != nil {
+		t.Fatal(err)
+	}
+	after = onlyRegistration(t, home)
+	if after.LastHead == nil || after.LastHead.SHA != laterCommit || !after.LastHead.ObservedAt.Equal(stopAt) || after.CodexAdmission.Generation != before.CodexAdmission.Generation || after.StartHead.SHA != before.StartHead.SHA {
+		t.Fatalf("scope reduction lost observation or changed immutable start/proof: %#v", after)
+	}
+	if len(git.questions()) != 2 {
+		t.Fatalf("continuation was skipped: %#v", git.questions())
+	}
+}

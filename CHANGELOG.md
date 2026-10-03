@@ -33,7 +33,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   writes; size limits include escaped display controls and preserve whole
   UTF-8 characters at the text floor. Decoded sidecars with missing or null
   model attributes are rejected; model, tool and MCP name limits count
-  Unicode characters, matching the published schema.
+  Unicode characters, matching the published schema. Malformed HTTPS URLs
+  in Git activity produce a `read_failed` error at either detail without
+  exposing the invalid URL.
 - `eval export` also works without setup, on this machine's transcripts:
   `--file PATH --harness NAME` for one, and `--scan` for every transcript
   backfill would find (with its `--harness`, `--project`, `--since`, and

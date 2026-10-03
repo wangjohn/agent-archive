@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestDatabaseLimitCannotHideCleanupFailure(t *testing.T) {
@@ -58,3 +60,68 @@ func (p cleanupPass) Read(context.Context, agentapi.SourceRef, agentapi.ReadLimi
 }
 
 func (cleanupPass) Close() error { return nil }
+
+func TestRegistrationSourceObservationCannotHideCleanupFailure(t *testing.T) {
+	t.Parallel()
+	for name, signatureErr := range map[string]error{"observed": nil, "missing": os.ErrNotExist} {
+		t.Run(name, func(t *testing.T) {
+			fault := errors.New("synthetic observation owner cleanup fault")
+			sources := observationCleanupSources{fault: fault, signatureErr: signatureErr}
+			candidate := Candidate{Harness: "cursor", NativeSessionID: "synthetic", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "synthetic"}
+			r := Registration{Sources: sources, Home: t.TempDir(), CursorDatabase: "/synthetic/state.vscdb"}
+			result, err := r.Run([]Candidate{candidate})
+			if !errors.Is(err, fault) || result.Gone != 0 || len(result.Sessions) != 0 {
+				t.Fatalf("registration hid observation cleanup: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestUndoSourceObservationCannotHideCleanupFailure(t *testing.T) {
+	t.Parallel()
+	store, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, signatureErr := range map[string]error{"observed": nil, "missing": os.ErrNotExist} {
+		t.Run(name, func(t *testing.T) {
+			fault := errors.New("synthetic observation owner cleanup fault")
+			sources := observationCleanupSources{fault: fault, signatureErr: signatureErr}
+			reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", Harness: archive.Harness{Name: "cursor"}, NativeSessionID: "synthetic", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "synthetic", AdmittedAt: fixedNow}
+			resumed, unknown, err := resumedSinceImport(Environment{Sources: sources}, store, reg, state.Request{})
+			if !errors.Is(err, fault) || resumed || unknown {
+				t.Fatalf("undo hid observation cleanup: resumed=%v unknown=%v err=%v", resumed, unknown, err)
+			}
+		})
+	}
+}
+
+type observationCleanupSources struct {
+	fault        error
+	signatureErr error
+}
+
+func (s observationCleanupSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	p, f, ok := testSources.LookupSources(name)
+	return observationCleanupProvider{SourceProvider: p, observationCleanupSources: s}, f, ok
+}
+
+type observationCleanupProvider struct {
+	agentapi.SourceProvider
+	observationCleanupSources
+}
+
+func (p observationCleanupProvider) OpenPass(context.Context, agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	return observationCleanupPass{observationCleanupSources: p.observationCleanupSources}, nil
+}
+
+type observationCleanupPass struct {
+	agentapi.SourcePass
+	observationCleanupSources
+}
+
+func (p observationCleanupPass) Signature(context.Context, agentapi.SourceRef) (agentapi.SourceObservation, error) {
+	return agentapi.SourceObservation{}, p.signatureErr
+}
+
+func (p observationCleanupPass) Close() error { return agentapi.Wrap(agentapi.Cleanup, p.fault) }

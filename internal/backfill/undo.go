@@ -552,6 +552,9 @@ func (b *Batch) RecordKept(kept []KeptProject) {
 func resumedSinceImport(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (resumed, unknown bool, err error) {
 	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
 		observed, err := observeSource(context.Background(), env.Sources, agentapi.SourceEnvironment{Database: env.cursorStateDatabase()}, reg.Harness.Name, agentapi.SourceRef{Kind: reg.SourceKind, Key: reg.SourceKey})
+		if fatalSourceFailure(err) {
+			return false, false, err
+		}
 		if err == nil && observed.Activity.After(reg.AdmittedAt) {
 			return true, false, nil
 		}
