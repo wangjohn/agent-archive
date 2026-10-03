@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 // Every entry a Store owns has a decided answer to "what if this file no
@@ -104,7 +105,7 @@ func TestCorruptSessionIndexIsRecoveredFromTheRegistration(t *testing.T) {
 	if err := store.RequestSessionIndexRecovery(key); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	id, found, err := store.ArchiveSessionID(key)
@@ -122,7 +123,7 @@ func TestCorruptSessionIndexIsRecoveredFromTheRegistration(t *testing.T) {
 	if err := store.RequestSessionIndexRecovery(absent); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if id, created, err := store.EnsureArchiveSessionID(absent); err != nil || !created || id == "" {

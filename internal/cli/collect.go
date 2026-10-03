@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -148,6 +149,25 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
+	// Local identity recovery and admission must not depend on credentials or
+	// storage availability. Source observation retains its own short budget.
+	recoveryBudget := state.SessionIndexRecoverySlice
+	if remaining := collectSoftDeadline - time.Since(started); remaining/2 < recoveryBudget {
+		recoveryBudget = remaining / 2
+	}
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
+	if recoveryErr != nil {
+		recordPreflightError(localStore, recoveryErr)
+	}
+	recoveryCancel()
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
+	if discoveryErr != nil {
+		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
+	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
 		return collector.Result{}, err
@@ -163,20 +183,28 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		previousScanAt = previous.LastScanAt
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
-		Parsers:              parsersFor(env),
-		Sources:              registryFor(env),
-		Decoders:             env.agentRegistry(),
-		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
-		SkillEvidence:        cfg.EffectiveSkillEvidence(),
-		AcceptSession:        cfg.AcceptSession,
-		Now:                  env.Now,
-		RequireSkillUse:      cfg.RequireSkillUse,
-		Progress:             pass.progress,
-		Stop:                 stop,
-		CursorDatabase:       env.cursorDatabase(),
-		RepoKey:              env.repoKey,
+		Parsers:                  parsersFor(env),
+		Sources:                  registryFor(env),
+		Decoders:                 env.agentRegistry(),
+		SkipSessionIndexRecovery: true,
+		MachineID:                cfg.MachineID,
+		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:            cfg.EffectiveSkillEvidence(),
+		AcceptSession:            cfg.AcceptSession,
+		Now:                      env.Now,
+		RequireSkillUse:          cfg.RequireSkillUse,
+		Progress:                 pass.progress,
+		Stop:                     stop,
+		CursorDatabase:           env.cursorDatabase(),
+		RepoKey:                  env.repoKey,
 	})
+	// Collector status replaces its previous LastErrors. Preserve every local
+	// preflight failure, even if recovery later succeeds or collection errors.
+	for _, preflightErr := range []error{recoveryErr, discoveryErr} {
+		if preflightErr != nil {
+			addStatusProblem(localStore, preflightErr.Error())
+		}
+	}
 	if err != nil {
 		return result, err
 	}
