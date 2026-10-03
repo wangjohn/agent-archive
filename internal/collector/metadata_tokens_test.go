@@ -70,8 +70,8 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 }
 
 // Metadata from the previous parser must refresh from retained evidence even
-// when the native transcript is gone; discovery provenance stays attached.
-func TestParserUpgradeFrom019RefreshesRetainedDiscoveryMetadata(t *testing.T) {
+// when the native transcript is gone; import provenance stays attached.
+func TestParserUpgradeFrom019RefreshesRetainedImportMetadata(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "archive", "testdata", "codex-model-switch.jsonl"))
 	if err != nil {
@@ -80,7 +80,7 @@ func TestParserUpgradeFrom019RefreshesRetainedDiscoveryMetadata(t *testing.T) {
 	local := newTestStore(t)
 	path := writeTranscript(t, t.TempDir(), "session.jsonl", string(raw))
 	reg := registration(t, path)
-	reg.Origin = archive.SessionOriginDiscovery
+	reg.Origin = archive.SessionOriginImport
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestParserUpgradeFrom019RefreshesRetainedDiscoveryMetadata(t *testing.T) {
 		t.Fatalf("%#v %v", result, err)
 	}
 	next := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-	if next.Parser.Version == old.Parser.Version || next.SourceBundle != old.SourceBundle || next.Origin != archive.SessionOriginDiscovery {
+	if next.Parser.Version == old.Parser.Version || next.SourceBundle != old.SourceBundle || next.Origin != archive.SessionOriginImport {
 		t.Fatalf("retained metadata did not refresh with provenance: %#v", next)
 	}
 	if len(remote.keys) != 3 || slices.Contains(remote.keys, old.SourceBundle.Key) {
