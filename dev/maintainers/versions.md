@@ -49,8 +49,21 @@ is re-uploaded unless it changed.
 - Update the version line in this file.
 
 Discovery authorization uses an incompatible schema-version object
-`{version: 2, writer: discovery-v2}`. Hook-only configuration retains numeric
-version 1; the current decoder understands both and refuses unknown fences.
+`{version: 2, writer: discovery-floor-v2}`. It retains an immutable
+`native_start_floor` for each permission generation, including generations
+created while paused. The earlier `discovery-v2` writer cannot preserve this
+boundary and must refuse the new fence. Hook-only configuration retains numeric
+version 1; the current decoder reads both protected writer identities and
+refuses unknown fences. Every save and nested setup snapshot writes the current
+fence; identity writing upgrades an earlier protected fence first.
+
+An older nonempty history migrates conservatively from its earliest retained
+interval. An older empty history has no recoverable consent boundary: it may
+be preserved and fenced, but cannot resume or authorize starts. Setup
+reconciliation renews it as a fresh generation at the latest of reconciliation,
+project activation, and destination activation. It does not reconstruct old
+consent from activation alone. Future scope-policy schemas must preserve these
+floors and the stronger writer fence through all saves and rollback snapshots.
 
 Codex capture scope and local admission proof use the stronger incompatible
 `{version: 3, writer: codex-scope-v3}` configuration fence. It remains installed
@@ -60,3 +73,4 @@ opening blanket windows. This changes session consent and physical project
 attribution, not adapter filtering, native parsing or derived-field algorithms;
 filter, adapter, parser and published source/metadata schema versions remain
 unchanged. The private policy/proof contract is documented in configuration.
+

@@ -24,11 +24,14 @@ type DiscoveryConfig struct {
 
 // DiscoveryAuthorization is a current permission generation for one scope.
 type DiscoveryAuthorization struct {
-	Generation    string              `json:"generation"`
-	Agent         string              `json:"agent"`
-	ProjectRoot   string              `json:"project_root"`
-	DestinationID string              `json:"destination_id"`
-	Intervals     []DiscoveryInterval `json:"intervals"`
+	Generation string `json:"generation"`
+	// NativeStartFloor is immutable within a generation, including while paused.
+	// Zero identifies an older empty history whose consent boundary is unknown.
+	NativeStartFloor time.Time           `json:"native_start_floor,omitzero"`
+	Agent            string              `json:"agent"`
+	ProjectRoot      string              `json:"project_root"`
+	DestinationID    string              `json:"destination_id"`
+	Intervals        []DiscoveryInterval `json:"intervals"`
 }
 
 // DiscoveryInterval is a half-open unpaused interval; zero end is open.
@@ -46,6 +49,17 @@ func prepareDiscoveryConfig(c *Config) error {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
+		// Migrate only provable retained permission, on a private value copy.
+		// Empty old histories have no recoverable floor and remain fail closed.
+		d := *c.Discovery
+		d.Authorizations = slices.Clone(d.Authorizations)
+		for i := range d.Authorizations {
+			a := &d.Authorizations[i]
+			if a.NativeStartFloor.IsZero() && len(a.Intervals) > 0 {
+				a.NativeStartFloor = a.Intervals[0].Start
+			}
+		}
+		c.Discovery = &d
 		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + discoveryWriterMarker)
 		c.SchemaVersion = 2
 	}
@@ -128,7 +142,7 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 			var kept *DiscoveryAuthorization
 			if previous.Discovery != nil && previous.Discovery.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.Archive.Enabled && sameDiscoveryProjectScope(p.Root, previous, *next) && slices.Equal(previous.Discovery.CodexHomes, d.CodexHomes) {
 				for _, a := range previous.Discovery.Authorizations {
-					if a.ProjectRoot == p.Root && a.DestinationID == next.DestinationID() {
+					if a.ProjectRoot == p.Root && a.DestinationID == next.DestinationID() && (!a.NativeStartFloor.IsZero() || len(a.Intervals) > 0) {
 						a.Intervals = slices.Clone(a.Intervals)
 						kept = &a
 						break
@@ -151,7 +165,7 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 				if !next.Paused {
 					intervals = []DiscoveryInterval{{Start: start}}
 				}
-				a := DiscoveryAuthorization{Generation: id, Agent: "codex", ProjectRoot: p.Root, DestinationID: next.DestinationID(), Intervals: intervals}
+				a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", ProjectRoot: p.Root, DestinationID: next.DestinationID(), Intervals: intervals}
 				kept = &a
 			}
 			d.Authorizations = append(d.Authorizations, *kept)
@@ -161,23 +175,42 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 	return prepareDiscoveryConfig(next)
 }
 
-func transitionDiscoveryPause(c *Config, paused bool, now time.Time) {
+func transitionDiscoveryPause(c *Config, paused bool, now time.Time) error {
 	if c.CodexCapture != nil && c.Paused != paused {
 		for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
-			if a == nil {
-				continue
+			if a != nil {
+				a.Intervals = slices.Clone(a.Intervals)
+				transitionIntervals(a, paused, now)
 			}
-			a.Intervals = slices.Clone(a.Intervals)
-			transitionIntervals(a, paused, now)
 		}
 	}
 
 	if c.Discovery == nil || c.Paused == paused {
-		return
+		return nil
+	}
+	// Check every scope before mutating shared slices. Closing at or before
+	// an open interval's start would erase its durable consent boundary.
+	for _, a := range c.Discovery.Authorizations {
+		if !paused {
+			floor := discoveryNativeStartFloor(a)
+			if floor.IsZero() {
+				return errors.New("discovery consent boundary is unavailable; run setup to renew authorization before resuming")
+			}
+			if now.Before(floor) {
+				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+			}
+		}
+		if n := len(a.Intervals); n > 0 {
+			last := a.Intervals[n-1]
+			if (paused && last.End.IsZero() && !now.After(last.Start)) || (!paused && (last.End.IsZero() || now.Before(last.End))) {
+				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+			}
+		}
 	}
 	for i := range c.Discovery.Authorizations {
 		transitionIntervals(&c.Discovery.Authorizations[i], paused, now)
 	}
+	return nil
 }
 
 func transitionIntervals(a *DiscoveryAuthorization, paused bool, now time.Time) {
@@ -211,6 +244,10 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 		if a.Agent != agent || a.ProjectRoot != root || a.DestinationID != c.DestinationID() {
 			continue
 		}
+		floor := discoveryNativeStartFloor(a)
+		if floor.IsZero() || started.Before(floor) {
+			continue
+		}
 		for _, v := range a.Intervals {
 			if !started.Before(v.Start) && (v.End.IsZero() || started.Before(v.End)) {
 				return a.Generation, true
@@ -218,6 +255,18 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 		}
 	}
 	return "", false
+}
+
+// Legacy retained history can only narrow permission to its earliest surviving
+// interval. Activation or observation times cannot recover an empty history.
+func discoveryNativeStartFloor(a DiscoveryAuthorization) time.Time {
+	if !a.NativeStartFloor.IsZero() {
+		return a.NativeStartFloor
+	}
+	if len(a.Intervals) > 0 {
+		return a.Intervals[0].Start
+	}
+	return time.Time{}
 }
 
 func sameDiscoveryProjectScope(root string, previous, next Config) bool {
