@@ -190,3 +190,44 @@ func TestStatusObservesReplayHooksWithoutPromotingImports(t *testing.T) {
 		t.Fatalf("replay hook/import status lost provenance: %+v", app)
 	}
 }
+
+// Explicit whole and displayed short IDs can hand off a replay; title search
+// and the ordinary picker still leave it out.
+func TestHandoffReplayIDsRemainExplicitSelections(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{"local", "archive"} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			f := newPickerFixture(t)
+			id := f.notUploaded
+			store, err := state.Open(f.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error {
+				reg.Replay = &archive.Replay{RunID: "explicit-replay"}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if source == "archive" {
+				f.sync(t)
+				f.unregister(t, id)
+			} else {
+				takeArchiveOffline(&f.env)
+			}
+			for _, query := range []string{id, shortSessionID(id)} {
+				out, errOut, code := runHandoff(t, f.env, query, "--source", source)
+				if code != 0 || !strings.Contains(out, "session "+id+" · source: "+source) {
+					t.Errorf("explicit %q: code=%d stderr=%s\n%s", query, code, errOut, out)
+				}
+			}
+			if out, errOut, code := runHandoff(t, f.env, "not uploaded", "--source", source); code != 1 || !strings.Contains(errOut, "no session matches") || out != "" {
+				t.Errorf("title exposed replay: code=%d stderr=%s stdout=%s", code, errOut, out)
+			}
+			if out, errOut, code := runPicker(t, f.env, "q\n", "--source", source); code != 0 || strings.Contains(out, shortSessionID(id)) {
+				t.Errorf("picker exposed replay: code=%d stderr=%s stdout=%s", code, errOut, out)
+			}
+		})
+	}
+}
