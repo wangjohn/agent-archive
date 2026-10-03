@@ -347,7 +347,7 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = snap.Close()
-	passes := &sourcePassSet{passes: map[string]agentapi.SourcePass{"cursor": pass}}
+	passes := &sourcePassSet{passes: map[sourcePassKey]agentapi.SourcePass{{name: "cursor"}: pass}}
 
 	db.chat("new", 1, "m")
 	reg := cursorRegistration("session", "new")

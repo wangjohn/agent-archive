@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -147,6 +148,16 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
+	// Local identity recovery and admission must not depend on credentials or
+	// storage availability. Source observation retains its own short budget.
+	recoveryErr := localStore.RecoverSessionIndexIfNeeded(ctx)
+	if recoveryErr != nil {
+		recordPreflightError(localStore, recoveryErr)
+	}
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
+	if discoveryErr != nil {
+		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
+	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
 		return collector.Result{}, err
@@ -173,6 +184,13 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		CursorDatabase:       env.cursorDatabase(),
 		RepoKey:              env.repoKey,
 	})
+	// Collector status replaces its previous LastErrors. Preserve every local
+	// preflight failure, even if recovery later succeeds or collection errors.
+	for _, preflightErr := range []error{recoveryErr, discoveryErr} {
+		if preflightErr != nil {
+			addStatusProblem(localStore, preflightErr.Error())
+		}
+	}
 	if err != nil {
 		return result, err
 	}

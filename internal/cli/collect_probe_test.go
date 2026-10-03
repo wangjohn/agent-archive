@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +151,58 @@ func TestBackgroundPassRecordsACredentialProcessFailure(t *testing.T) {
 	}
 	if view.State != "Needs attention" || !strings.Contains(view.Next, "couldn't get credentials from your AWS profile's credential_process") {
 		t.Fatalf("state %q, next %q", view.State, view.Next)
+	}
+}
+
+type privacyUpdateStore struct {
+	*storagetest.MemoryStore
+	inspect func() storage.PrivacyReport
+}
+
+func (s privacyUpdateStore) InspectPrivacy(context.Context) storage.PrivacyReport {
+	return s.inspect()
+}
+
+func TestScheduledPrivacyInspectionSerializesConfigurationWriters(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, SkillEvidence: config.SkillEvidenceNone, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{t.TempDir()}}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}, {Root: filepath.Join(project, "excluded"), Included: false}}}}
+	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, at))
+	must(t, config.Save(home, cfg))
+	expected := mustLoadConfig(t, home)
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	inspected := false
+	remote := privacyUpdateStore{MemoryStore: storagetest.NewMemoryStore(), inspect: func() storage.PrivacyReport {
+		inspected = true
+		// The production pause writer cannot interleave with the scheduled pass.
+		var out, errOut strings.Builder
+		if code := runPauseCommand(&out, &errOut, env, true); code == 0 || !strings.Contains(errOut.String(), "collector lock") {
+			t.Fatalf("pause escaped collector lock: %d %s", code, errOut.String())
+		}
+		// The network inspection does not hold the hooks lock.
+		unlock, err := local.NamedLock(home, "hooks.lock")
+		must(t, err)
+		unlock()
+		return storage.UnknownPrivacy(cfg.Storage.Provider)
+	}}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+	_, err := runOnePass(env, true)
+	must(t, err)
+	current := mustLoadConfig(t, home)
+	if !inspected || current.BucketPrivacy == nil {
+		t.Fatal("scheduled inspection did not commit evidence")
+	}
+	expected.BucketPrivacy = current.BucketPrivacy
+	if !reflect.DeepEqual(current, expected) {
+		t.Fatal("scheduled privacy refresh changed protected consent, scope or skill policy")
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "config.json"))
+	must(t, err)
+	var published struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if json.Unmarshal(raw, &published) == nil {
+		t.Fatal("privacy refresh removed the protected writer fence")
 	}
 }
