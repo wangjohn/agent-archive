@@ -28,8 +28,7 @@ func TestFileHandoffRetrievalCommandPreservesLiteralPath(t *testing.T) {
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			h := archive.Handoff{}
-			h.Session.Harness = "claude"
+			h := archive.Handoff{Session: archive.HandoffSession{Harness: "claude"}}
 			prompt := launchHandoffPrompt("Synthetic historical record.", h, handoffTarget{filePath: path}, "/opt/agent-archive")
 			const prefix = "For the complete filtered local record, run "
 			_, rest, ok := strings.Cut(prompt, prefix)
