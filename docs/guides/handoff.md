@@ -65,8 +65,10 @@ platforms remain unverified; synthetic home/launcher tests cover the command
 flow. Setup installs agent skills only when explicitly requested later.
 
 Rendering creates no archive. Launch files are private (directory 0700, file
-0600) under `agent-archive-local-handoffs` in the temporary directory and survive
-asynchronous launch. Subsequent local handoffs remove owned directories older
+0600) under `agent-archive-local-handoffs-<uid>` in the temporary directory and survive
+asynchronous launch. Each user has a separate namespace; reuse and cleanup refuse
+directories owned by another user, public directories, and symlinks. Subsequent
+local handoffs remove owned directories older
 than seven days, best effort; files can remain until another invocation or OS
 cleanup. Trimmed output has no automatic saved full copy before setup: use
 `--max-bytes 0` or explicit `--output`. `--source archive` requires setup.

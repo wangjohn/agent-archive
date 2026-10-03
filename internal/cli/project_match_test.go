@@ -48,7 +48,7 @@ func TestProjectMatcherDeduplicatesAndDoesNotExpandExclusions(t *testing.T) {
 		t.Fatalf("exclusion broadened: %+v", got)
 	}
 	command := anotherMachineCommand(cfg, home, env)
-	if !strings.Contains(command, "--project-repo "+key) || strings.Contains(command, "synthetic-secret") || strings.Contains(command, "https://") {
+	if !strings.Contains(command, "--project-scope") || !strings.Contains(command, key) || strings.Contains(command, "synthetic-secret") || strings.Contains(command, "https://") {
 		t.Fatalf("command %q", command)
 	}
 }
