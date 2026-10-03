@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,10 +12,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
@@ -54,22 +57,20 @@ func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
 			command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, sourceHome, env)
 			// Execute only shell argument parsing, so this also verifies the
 			// printed JSON survives quotes and reaches the receiving flag intact.
-			output, err := exec.CommandContext(t.Context(), "sh", "-c", "set -- "+command+"; printf '%s\\000' \"$@\"").Output()
+			output, err := exec.CommandContext(t.Context(), "sh", "-c", "archive_mock() { printf '%s\\000' agent-archive \"$@\"; cat; };\narchive_mock"+strings.TrimPrefix(command, "agent-archive")).Output()
 			must(t, err)
-			args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
-			encoded := ""
-			for i, arg := range args {
-				if arg == "--project-scope" {
-					encoded = args[i+1]
-				}
-			}
+			args := strings.Split(string(output), "\x00")
+			encoded := strings.TrimSpace(args[len(args)-1])
+			args = args[:len(args)-1]
 			if encoded == "" {
 				t.Fatalf("no transferred scope: %s", command)
 			}
 			opts, ok := setupFlags(env.newCommandFlags("setup", io.Discard), args[2:])
-			if !ok || opts.projectScope != encoded || !opts.given() {
+			if !ok || opts.projectScopeFile != "-" || !opts.given() {
 				t.Fatalf("receiving flags dropped scope: %+v", opts)
 			}
+			opts, err = readProjectScopeInput(opts, strings.NewReader(encoded), env)
+			must(t, err)
 			cfg := config.Config{}
 			if problems := setupProjectScope(&cfg, opts.projectScope, destinationHome, env); len(problems) > 0 {
 				t.Fatal(problems)
@@ -449,5 +450,232 @@ func TestPrintedScopeKeepsDistinctClonesWithDifferentExclusions(t *testing.T) {
 				t.Fatalf("lost %s clone scope for %s: %+v", name, sample.path, activation)
 			}
 		}
+	}
+}
+
+func TestKeyedScopeCanReapplyCompatibleSavedExclusion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(private, 0700))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	env := Env{LookupEnv: noEnv, WorkingDir: func() (string, error) { return root, nil }, projectGitRunner: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[2] == "rev-parse" {
+			return []byte(root + "\n"), nil
+		}
+		return []byte("https://example.test/team/repo.git\n"), nil
+	}}
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: true}, {Root: private, Included: false}}}}
+	encoded, err := json.Marshal([]portableProjectRule{{RepoKey: key, Path: ".", Included: true}, {RepoKey: key, Path: "private", Included: false}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, env); len(problems) != 0 {
+		t.Fatalf("compatible saved scope could not be reapplied: %v", problems)
+	}
+	if len(cfg.Archive.Projects) != 2 || cfg.Archive.Projects[1].Included {
+		t.Fatalf("saved exclusion changed: %+v", cfg.Archive.Projects)
+	}
+	before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
+	encoded, err = json.Marshal([]portableProjectRule{{RepoKey: key, Path: "private", Included: true}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, env); len(problems) == 0 || !reflect.DeepEqual(before, cfg.Archive.Projects) {
+		t.Fatalf("actual conflict was not refused atomically: %v, %+v", problems, cfg.Archive.Projects)
+	}
+}
+
+func TestPrintedScopeCoalescesEqualAliasesAndRefusesConflicts(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.Mkdir(root, 0700))
+	alias := filepath.Join(home, "alias")
+	must(t, os.Symlink(root, alias))
+	for _, decisions := range [][2]bool{{true, true}, {false, false}, {true, false}, {false, true}} {
+		projects := []archive.ProjectActivation{{Root: root, Included: decisions[0]}, {Root: alias, Included: decisions[1]}}
+		encoded := portableProjectScope(projects, home, Env{}, t.Context())
+		cfg := config.Config{}
+		problems := setupProjectScope(&cfg, encoded, home, Env{})
+		if decisions[0] == decisions[1] {
+			if len(problems) != 0 || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Included != decisions[0] {
+				t.Fatalf("equal aliases did not coalesce: %s, %v", encoded, problems)
+			}
+		} else if len(problems) == 0 || len(cfg.Archive.Projects) != 0 {
+			t.Fatalf("conflicting aliases widened/applied scope: %s, %+v", encoded, cfg.Archive.Projects)
+		}
+	}
+}
+
+func TestPrintedScopeTransportsAll4096RulesOutsideExecArguments(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var projects []archive.ProjectActivation
+	long := strings.Repeat(strings.Repeat("x", 240)+"/", 4)
+	for i := range 4096 {
+		projects = append(projects, archive.ProjectActivation{Root: filepath.Join(dir, long, fmt.Sprintf("rule-%04d", i)), Included: i == 0})
+	}
+	cfg := config.Config{Archive: archive.Config{Projects: projects}}
+	command := anotherMachineCommand(cfg, dir)
+	argsPath, dataPath := filepath.Join(dir, "argv"), filepath.Join(dir, "payload")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellWord(argsPath) + "\ncat > " + shellWord(dataPath) + "\n"
+	must(t, os.WriteFile(filepath.Join(dir, "agent-archive"), []byte(stub), 0700))
+	script := filepath.Join(dir, "transfer.sh")
+	must(t, os.WriteFile(script, []byte(command+"\n"), 0600))
+	cmd := exec.CommandContext(t.Context(), "sh", script)
+	cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "HOME=" + dir}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("scope command exceeded exec argument limits: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(dataPath)
+	must(t, err)
+	var rules []portableProjectRule
+	must(t, json.Unmarshal(data, &rules))
+	if len(data) < 2<<20 || len(rules) != 4096 {
+		t.Fatalf("large transfer lost scope: %d bytes, %d rules", len(data), len(rules))
+	}
+	args, err := os.ReadFile(argsPath)
+	must(t, err)
+	if len(args) > 4096 || !strings.Contains(string(args), "--project-scope-file\n-\n") {
+		t.Fatalf("scope remained on argv: %d bytes", len(args))
+	}
+}
+
+func TestScopeInputOwnsStdinAndSupportsSeparateR2Secret(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"missing secret", "environment secret", "file scope"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			kc := newFakeKeychain()
+			env := setupTestEnv(t, home, userHome, kc, time.Now())
+			encoded, err := json.Marshal([]portableProjectRule{{Path: project, Included: true}})
+			must(t, err)
+			stdin, scopeFile := string(encoded), "-"
+			if mode == "environment secret" {
+				env = withEnvironment(env, map[string]string{envR2SecretAccessKey: "synthetic-secret"})
+			}
+			if mode == "file scope" {
+				scopeFile = filepath.Join(t.TempDir(), "scope.json")
+				must(t, os.WriteFile(scopeFile, encoded, 0600))
+				stdin = "synthetic-secret\n"
+			}
+			want := 0
+			if mode == "missing secret" {
+				want = 1
+			}
+			output := setupYes(t, env, stdin, want, "--yes", "--provider", "r2", "--bucket", "synthetic", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--apps", "codex", "--project-scope-file", scopeFile)
+			if mode == "missing secret" {
+				if !strings.Contains(output, "owns stdin") {
+					t.Fatalf("unclear stdin ownership: %s", output)
+				}
+				if _, found, err := config.Load(home); err != nil || found {
+					t.Fatalf("refusal wrote config: %t %v", found, err)
+				}
+			} else {
+				cfg, found, err := config.Load(home)
+				must(t, err)
+				if !found || len(cfg.Archive.Projects) != 1 {
+					t.Fatalf("scope input lost: %+v", cfg)
+				}
+				secret, err := kc.Load(t.Context(), cfg.Storage.R2CredentialRef)
+				must(t, err)
+				if secret.SecretAccessKey != "synthetic-secret" {
+					t.Fatal("R2 secret did not use its separate input")
+				}
+			}
+		})
+	}
+}
+
+func TestScopeInputRefusesInvalidInputAndCompanionsBeforeChanges(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"", "[]", "{", `[{"path":"~","included":true,"unknown":1}]`} {
+		home, userHome := t.TempDir(), t.TempDir()
+		env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+		env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+			t.Fatal("invalid scope reached storage")
+			return nil, nil
+		}
+		setupYes(t, env, input, 1, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--apps", "codex", "--project-scope-file", "-")
+		if _, found, err := config.Load(home); err != nil || found {
+			t.Fatalf("invalid input changed saved config: %t %v", found, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"setup", "--pair-file", "-", "--yes", "--project-scope-file", "-"},
+		{"setup", "--refresh", "--project-scope-file", "-"},
+		{"setup", "--project-scope-file", "-"},
+	} {
+		var out bytes.Buffer
+		env := Env{LookupEnv: noEnv, Home: func() (string, error) { t.Fatal("companion refusal read home"); return "", nil }}
+		if code := Run(args, strings.NewReader("unused"), &out, &out, env); code != 2 {
+			t.Fatalf("invalid companions accepted: %v: %d %s", args, code, &out)
+		}
+	}
+}
+
+func TestScopeTransferRefusesConflictingSavedAliasesAtomically(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.Mkdir(root, 0700))
+	alias := filepath.Join(home, "alias")
+	must(t, os.Symlink(root, alias))
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}})
+	must(t, err)
+	for _, firstIncluded := range []bool{true, false} {
+		cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: firstIncluded}, {Root: alias, Included: !firstIncluded}}}}
+		before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
+		if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) == 0 || !reflect.DeepEqual(before, cfg.Archive.Projects) {
+			t.Fatalf("conflicting saved aliases were overridden: %v %+v", problems, cfg.Archive.Projects)
+		}
+	}
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: true}, {Root: alias, Included: true}}}}
+	exclusion, err := json.Marshal([]portableProjectRule{{Path: root, Included: false}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(exclusion), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	if cfg.Archive.Projects[0].Included || cfg.Archive.Projects[1].Included {
+		t.Fatal("equal saved aliases failed to update together")
+	}
+}
+
+func TestPrintedLargeIncludedScopeAvoidsAggregateArgumentLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var projects []archive.ProjectActivation
+	long := strings.Repeat(strings.Repeat("x", 240)+"/", 15)
+	for i := range 600 {
+		projects = append(projects, archive.ProjectActivation{Root: filepath.Join(dir, long, fmt.Sprintf("rule-%04d", i)), Included: true})
+	}
+	command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, dir)
+	argsPath, dataPath := filepath.Join(dir, "argv"), filepath.Join(dir, "payload")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellWord(argsPath) + "\ncat > " + shellWord(dataPath) + "\n"
+	must(t, os.WriteFile(filepath.Join(dir, "agent-archive"), []byte(stub), 0700))
+	script := filepath.Join(dir, "transfer.sh")
+	must(t, os.WriteFile(script, []byte(command+"\n"), 0600))
+	cmd := exec.CommandContext(t.Context(), "sh", script)
+	cmd.Env = []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "HOME=" + dir}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("included-only scope exceeded aggregate argv limit: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(dataPath)
+	must(t, err)
+	var rules []portableProjectRule
+	must(t, json.Unmarshal(data, &rules))
+	if len(data) < 2<<20 || len(rules) != len(projects) {
+		t.Fatalf("included-only transfer lost rules: %d bytes, %d rules", len(data), len(rules))
+	}
+	for i, rule := range rules {
+		if !rule.Included || rule.Path != homeRelative(projects[i].Root, dir) {
+			t.Fatalf("included-only scope changed rule %d: %+v", i, rule)
+		}
+	}
+	args, err := os.ReadFile(argsPath)
+	must(t, err)
+	if len(args) > 4096 || !strings.Contains(string(args), "--project-scope-file\n-\n") {
+		t.Fatal("large included scope remained on argv")
 	}
 }
