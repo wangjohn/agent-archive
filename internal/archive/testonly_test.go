@@ -1,6 +1,9 @@
 package archive
 
-import "errors"
+import (
+	"errors"
+	"strconv"
+)
 
 // Helpers only tests use, kept out of the production files so deadcode
 // (golang.org/x/tools/cmd/deadcode) reports only code that is really dead.
@@ -11,3 +14,5 @@ func IsFilterError(err error) bool {
 	var target *FilterError
 	return errors.As(err, &target)
 }
+
+func itoa(i int) string { return strconv.Itoa(i) }

@@ -34,6 +34,7 @@ If your app still has no captured session, use its specific steps: [Claude Code]
 | [Agent skills](guides/agent-skills.md) | Asking Claude Code, Codex, or Cursor to pull in a past session; what setup installs and what the agent may run. |
 | [List, show, and feedback](guides/list-and-show.md) | Inspecting the archive; skill evidence; subagent sessions. |
 | [Stats](guides/stats.md) | Usage over time: tokens, estimated cost, agents, models, projects. |
+| [Eval export](guides/eval-export.md) | Sessions as JSON Lines for an evaluation tool: commits, counts, prompts in order. |
 | [Multiple machines](guides/multiple-machines.md) | Several machines, macOS and Linux, sharing one bucket; Migration Assistant, Time Machine, and cloned Linux machines. |
 | [Troubleshooting](guides/troubleshooting.md) | Reading `status`, systemd and Linux problems, recovering an interrupted setup, changing storage, upgrading. |
 | [FAQ](guides/faq.md) | Short answers: cost, deleting everything, which versions and platforms work, transcript format changes. |

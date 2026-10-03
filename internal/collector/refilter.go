@@ -120,7 +120,7 @@ func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, sn
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))
 		return candidate, false, nil
 	}
-	if nativeEvidenceExtends(refiltered, candidate) {
+	if nativeEvidenceExtends(read.adapter, refiltered, candidate) {
 		// Filtered the same way now, the two compare record for record, and
 		// the transcript holds everything the snapshot did after all (a
 		// file restored since its rewrite gap was recorded).

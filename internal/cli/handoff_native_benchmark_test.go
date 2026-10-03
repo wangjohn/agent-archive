@@ -43,7 +43,7 @@ func BenchmarkNativeFirstPreview(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				catalog := &nativePreviewCatalog{sources: productionAgents, ctx: context.Background(), files: files, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Unix(0, 0)}
+				catalog := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: files, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Unix(0, 0)}
 				if _, err := catalog.load(); err != nil {
 					b.Fatal(err)
 				}
