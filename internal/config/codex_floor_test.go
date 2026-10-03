@@ -222,3 +222,57 @@ func TestCodexSubtreeBarrierNeverMovesBackward(t *testing.T) {
 		t.Fatal("backward lift admitted excluded-period history")
 	}
 }
+
+func TestNativeConsentStartKeepsDestinationAndProjectMaximum(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		for _, scope := range []CodexCaptureScope{CodexIncludedProjects, CodexAllProjects} {
+			t.Run(string(scope)+map[bool]string{false: "/active", true: "/paused"}[paused], func(t *testing.T) {
+				c, at := blanketConfig(t)
+				setTestCodexScope(&c, scope)
+				c.Paused = paused
+				c.DestinationSince = at.Add(time.Hour)
+				c.Archive.Projects = []archive.ProjectActivation{{Root: "/later", Included: true, ActivatedAt: at.Add(2 * time.Hour)}, {Root: "/earlier", Included: true, ActivatedAt: at.Add(-time.Hour)}}
+				if err := ReconcileDiscovery(&c, Config{}, at); err != nil {
+					t.Fatal(err)
+				}
+				for _, a := range c.Discovery.Authorizations {
+					want := c.DestinationSince
+					if a.ProjectRoot == "/later" {
+						want = at.Add(2 * time.Hour)
+					}
+					if !a.NativeStartFloor.Equal(want) {
+						t.Fatalf("project floor %s != %s", a.NativeStartFloor, want)
+					}
+					if paused && len(a.Intervals) != 0 {
+						t.Fatal("paused project opened interval")
+					}
+				}
+				if scope == CodexAllProjects {
+					for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+						if !a.NativeStartFloor.Equal(c.DestinationSince) {
+							t.Fatal("blanket/source floor lost future destination")
+						}
+						if paused && len(a.Intervals) != 0 {
+							t.Fatal("paused blanket/source opened interval")
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNativeConsentMaximumDoesNotReplacePauseClock(t *testing.T) {
+	c, at := blanketConfig(t)
+	previous := c
+	c.Paused = true
+	c.DestinationSince = at.Add(time.Hour)
+	before, _ := json.Marshal(c)
+	if err := ReconcileDiscovery(&c, previous, at); err == nil {
+		t.Fatal("future destination masked invalid pause equality")
+	}
+	after, _ := json.Marshal(c)
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed pause changed caller")
+	}
+}
