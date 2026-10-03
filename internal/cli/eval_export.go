@@ -440,7 +440,7 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 			return fail(path, archive.EvalErrorUnknownHarness, "not in a folder Claude Code, Codex, or Cursor keeps transcripts in; pass --harness")
 		}
 	}
-	filtered, adapter, err := collector.FilterTranscriptFile(harness, path, info.ModTime())
+	filtered, adapter, err := collector.FilterTranscriptFile(harness, path, info.ModTime(), x.env.agentRegistry())
 	if err != nil {
 		return fail(path, archive.EvalErrorReadFailed, fmt.Sprintf("filter: %v", err))
 	}
