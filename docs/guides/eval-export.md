@@ -22,6 +22,42 @@ Session IDs come from `agent-archive list --json` (`sessions[].session_id`);
 only full archive session IDs are accepted, never a title or a prefix, so an
 export is always of exactly the sessions named.
 
+## Without setup: transcripts on this machine
+
+The same records can be made from the transcripts Claude Code, Codex, and
+Cursor keep on this machine, with only the binary: no setup, no bucket, and
+no data directory is created.
+
+```sh
+# Every transcript backfill would find here (the same filters as backfill).
+agent-archive eval export --scan --detail metadata --since 30d
+
+# One transcript file.
+agent-archive eval export --file ~/.claude/projects/widget/1f0c.jsonl --harness claude
+```
+
+A local record has the transcript's path and its project folder, which never
+leave this machine. It has no `git_head` (a transcript records no commit,
+and none is guessed), no `replay` marker, and no feedback.
+
+## Many sessions at once
+
+```sh
+# First pass: cheap metadata for everything; keep the IDs worth a closer look.
+agent-archive eval export --scan --detail metadata > candidates.jsonl
+
+# Second pass: full records for exactly those, in one process (kept.jsonl
+# is the lines of candidates.jsonl the tool kept).
+jq -r 'select(.record == "session") | .transcript_path // .session_id' kept.jsonl \
+  | agent-archive eval export --ids-from - --detail full
+```
+
+`--ids-from -` reads archive session IDs and transcript paths from standard
+input, one a line. Sessions are exported several at a time (`--workers`,
+default the number of CPUs up to 8), and each record is written as its
+session finishes, so match records on `session_id` or `transcript_path`
+rather than by position.
+
 ## What a record holds
 
 Every line is one JSON object with `"record": "session"` or

@@ -643,7 +643,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "purge":
 		return runPurgeCommand(args[1:], stdin, stdout, stderr, env)
 	case "eval":
-		return runEvalCommand(args[1:], stdout, stderr, env)
+		return runEvalCommand(args[1:], stdin, stdout, stderr, env)
 	default:
 		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2
