@@ -24,7 +24,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   misses require registration-census recovery before allocation. Startup
   restores surviving owners after both derived indexes are lost, including
   admitted continuations outside a later consent window. Producer activation
-  and setup remain a separate implementation phase.
+  and setup remain a separate implementation phase. Failed directories retry
+  without waiting for backlog completion, local recovery failures survive final
+  collector status, and existing hook/import origins keep their own locators.
 
 - Shared local discovery foundations: shared project/worktree facts, durable
   authorization intervals, immutable admission, and actual hook observation.

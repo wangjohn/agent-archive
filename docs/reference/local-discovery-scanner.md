@@ -10,7 +10,9 @@ probes, with durable enumeration cursors and a bounded 8,192-entry metadata cach
 Up to 256 admission retries are retained separately from enumeration, with at
 most 64 revisited per pass and half the probe budget reserved for forward
 coverage. A conflicting source cannot pin a directory cursor; retry overflow
-is reported and revisited by filesystem reconciliation.
+is reported and revisited by filesystem reconciliation. Unavailable directories
+remain pending and retry before the backlog on a later pass; a failed directory
+is attempted at most once per pass while other directories continue.
 Native date directories and compatible settled SQLite indexes prioritize work;
 those hints never establish native creation time or authorize capture. Live WAL
 indexes fall back to filesystem enumeration without creating native side files.
@@ -42,7 +44,9 @@ Collector publication reopens discovery files within their approved root and
 checks native identity, original creation, working directory, and admitted
 producer version, originator, and execution source against the
 registration before filtering. Existing origins, destination attribution,
-admission time, and removal records are preserved. Synthetic tests inject adapter
+admission time, and removal records are preserved. Discovery never supplies
+a source locator to an existing hook or import registration; their existing
+capture paths establish those locators. Synthetic tests inject adapter
 support within the scanner package; there is no production support override.
 
 ## Measured operating envelope

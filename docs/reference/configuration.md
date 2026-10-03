@@ -173,7 +173,8 @@ In all mode, legacy registrations also obey current exceptions at their stored
 working directory; retaining an included parent does not override an excluded
 child. Historical hooks without a stored cwd keep their recorded project root.
 
-Removing or lifting an exclusion records a forward subtree barrier. Unknown starts
+Removing or lifting an exclusion records a forward subtree barrier. Retargeting
+an excluded path records the same barrier at its previous physical root. Unknown starts
 from its excluded period remain ineligible, while unrelated projects retain
 their consent window. The policy stores canonical rule roots and at most 4,096
 user-edited barriers/rules. Exhausting history fails closed; discovered
@@ -198,4 +199,15 @@ remaining included parent when scope is reduced. The proof remains local. Filter
 are unchanged; native provenance already supported by the upstream filtered
 source contract remains available to child materialization.
 
-Each Codex scope and source generation retains an immutable `native_start_floor`, including when created while paused. Pause at or before an open interval start and resume before the floor or retained close boundary fail before any authority changes. Legacy retained intervals supply only their earliest surviving boundary; an empty legacy history remains unauthorized until setup renews it. The previous `codex-scope-v3` writer is readable for conservative migration but refuses the new protected writer tag. Saves and rollback snapshots preserve the new fence.
+Blanket, source and included-project generations retain an immutable
+`native_start_floor`, including when created while paused. The floor is the
+latest local reconciliation and destination boundary (and project activation
+for included-project scopes). Resume below any floor or the last closed
+interval, and pause at or before an open interval's start, refuse the complete
+transition without changing configuration. Compaction never resets the floor.
+Earlier `codex-scope-v3` documents migrate nonempty histories conservatively
+from their earliest retained interval; empty unknown histories cannot resume
+or authorize starts until explicit local setup renews them. Every protected
+save, nested draft and rollback emits `codex-scope-floor-v3`, retaining schema
+version 3 and the stronger `+codex-scope-floor-v3` skill marker. Prior policy writers refuse this new
+identity before they can drop floors; schema 4 remains reserved for future UX.

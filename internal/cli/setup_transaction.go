@@ -635,7 +635,7 @@ func protectSetupWriter(home string, current config.Config) error {
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if current.Discovery == nil {
+	if current.Discovery == nil && current.CodexCapture == nil {
 		return nil
 	}
 	return config.ProtectIdentityWriter(home)
