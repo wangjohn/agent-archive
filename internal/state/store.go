@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
@@ -963,9 +964,10 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
-	SkillEvidence   string `json:"skill_evidence,omitempty"`
-	TranscriptSize  int64  `json:"transcript_size"`
-	TranscriptMtime int64  `json:"transcript_mtime_unix_nano"`
+	SourceSignature *agentapi.SourceSignature `json:"source_signature,omitempty"`
+	SkillEvidence   string                    `json:"skill_evidence,omitempty"`
+	TranscriptSize  int64                     `json:"transcript_size"`
+	TranscriptMtime int64                     `json:"transcript_mtime_unix_nano"`
 	// The derivation versions are part of the signature: a parser, filter, or
 	// adapter upgrade changes what an unchanged transcript would produce, so
 	// it must re-scan rather than skip.
@@ -1021,7 +1023,7 @@ func (s *Store) SaveScanSignature(id string, signature ScanSignature) error {
 	}
 	if existing, found, err := s.LoadScanSignature(id); err != nil {
 		return err
-	} else if found && existing == signature {
+	} else if found && sameScanSignature(existing, signature) {
 		return nil
 	}
 	return local.Write(s.scanSignaturePath(id), signature)
@@ -1060,4 +1062,16 @@ func (s *Store) RemoveScanSignature(id string) error {
 		return fmt.Errorf("remove scan signature %q: %w", id, err)
 	}
 	return nil
+}
+
+func sameScanSignature(a, b ScanSignature) bool {
+	at, bt := a.SourceSignature, b.SourceSignature
+	a.SourceSignature, b.SourceSignature = nil, nil
+	if a != b {
+		return false
+	}
+	if at == nil || bt == nil {
+		return at == bt
+	}
+	return *at == *bt
 }

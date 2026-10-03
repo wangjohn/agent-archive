@@ -24,7 +24,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,6 +32,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	Sources      agentapi.SourcesLookup
+	sourcePasses *sourcePassSet
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -86,8 +87,6 @@ type Options struct {
 
 	// repoKeys is the pass's memory of RepoKey's answers, set by Run.
 	repoKeys *repoKeyCache
-	// cursorPass is the pass's Reader of Cursor's database, set by Run.
-	cursorPass *cursorstore.Reader
 	// afterCursorPass, set by a test, runs as a pass ends with how many
 	// snapshots of Cursor's database the pass took.
 	afterCursorPass func(snapshots int)
@@ -209,7 +208,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	local.RemoveStaleTemps()
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
-	cursorstore.RemoveStaleSnapshots()
+	if sweeper, ok := opts.Sources.(agentapi.SourceSweeper); ok {
+		sweeper.SweepSources()
+	}
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
@@ -554,8 +555,8 @@ const cursorTextSourceFormat = "cursor-text"
 
 // harnessAdapterVersion returns the version of the adapter that reads
 // harness, or known=false when no adapter does.
-func harnessAdapterVersion(harness string) (string, bool) {
-	adapter, err := archive.NewAdapter(harness)
+func harnessAdapterVersion(sources agentapi.SourcesLookup, harness string) (string, bool) {
+	adapter, err := sourceAdapter(sources, harness)
 	if err != nil {
 		return "", false
 	}
