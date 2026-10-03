@@ -53,7 +53,9 @@ edited files are dropped from the end, and `trimmed` says what was cut. A
 session that cannot be exported (not found, its source missing or failing
 verification, a parse failure) is an `error` record on its own line with a
 `code` and a message; the other sessions are still printed, and the exit
-code is 1. A usage mistake exits 2 with nothing on standard output.
+code is 1. Invalid Git activity URLs in a sidecar produce `read_failed`
+errors at both detail levels; the malformed URL is never copied into the
+error message. A usage mistake exits 2 with nothing on standard output.
 
 ## Privacy
 

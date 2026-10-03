@@ -121,3 +121,38 @@ func TestValidateEvalExportNameBoundsMatchSchema(t *testing.T) {
 		})
 	}
 }
+
+// Invalid sidecar URLs must fail before the exporter emits a session record.
+// Validation follows the actual format assertion, without echoing untrusted URL text.
+func TestValidateEvalExportGitURLMatchesSchema(t *testing.T) {
+	t.Parallel()
+	for _, rawURL := range []string{"https://github.com/acme/widget/pull/1", "https://github.com/acme/widget/tree/fix%2Fissue", "https://[::1]/acme/widget", "https://example.test/acme/widget?x=a%20b#review", "https://example.test/a%20b", "https://example.test/a b", "https://example.test/a界", "https://example.test", "https://", "http://example.test/private", "git://example.test/private", "https://[::1%25zone]/private", "https://[1:2:3]/private", "https://bad host/private", "https://example.test/%zz", "https://example.test/\nprivate", "https://[not-ip]/private", "https://[::1/private"} {
+		t.Run(rawURL, func(t *testing.T) {
+			t.Parallel()
+			bundle, metadata := evalExportFixture(t, "claude")
+			metadata.GitActivity = []GitEvent{{Kind: GitEventPush, Source: GitEventSourceShell, URL: rawURL}}
+			for _, detail := range []EvalExportDetail{EvalExportDetailMetadata, EvalExportDetailFull} {
+				record, err := BuildEvalExport(bundle, metadata, EvalExportSourceArchive, detail)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				schemaErr := evalExportSchema(t).Validate(instance)
+				validationErr := ValidateEvalExport(record)
+				if (validationErr == nil) != (schemaErr == nil) {
+					t.Errorf("%s: validator = %v, schema = %v", detail, validationErr, schemaErr)
+				}
+				if validationErr != nil && strings.Contains(validationErr.Error(), rawURL) {
+					t.Errorf("%s: invalid URL leaked in validation error", detail)
+				}
+			}
+		})
+	}
+}

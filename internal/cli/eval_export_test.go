@@ -204,3 +204,43 @@ func TestEvalExportReportsNotSetUp(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q, records %v", code, errOut, records)
 	}
 }
+
+// A malformed HTTPS URL must produce a safe per-input error at either detail.
+func TestEvalExportRefusesMalformedGitURL(t *testing.T) {
+	t.Parallel()
+	env, mem, id := publishedFixture(t)
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mem.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sidecar map[string]any
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		t.Fatal(err)
+	}
+	const badURL = "https://bad host/private-token"
+	sidecar["git_activity"] = []any{map[string]any{"kind": "push", "source": "shell", "url": badURL}}
+	raw, err = json.Marshal(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Put(context.Background(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, detail := range []string{"metadata", "full"} {
+		records, errOut, code := evalLines(t, env, "--detail", detail, id)
+		if code != 1 || len(records) != 1 || records[0]["record"] != "error" || records[0]["error"].(map[string]any)["code"] != "read_failed" {
+			t.Errorf("--detail %s: exit %d, %v", detail, code, records)
+		}
+		encoded, err := json.Marshal(records)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded)+errOut, "private-token") || strings.Contains(string(encoded)+errOut, "bad host") {
+			t.Errorf("--detail %s: malformed URL leaked", detail)
+		}
+	}
+}

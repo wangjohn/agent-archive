@@ -3,9 +3,12 @@ package archive
 import (
 	"errors"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -15,7 +18,6 @@ var (
 	evalShortSHAShape   = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	evalBranchShape     = regexp.MustCompile(`^[A-Za-z0-9._/+-]+$`)
 	evalRepositoryShape = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	evalURLShape        = regexp.MustCompile(`^https://`)
 )
 
 // ValidateEvalExport reports whether a session record keeps the invariants
@@ -78,7 +80,7 @@ func validEvalGitEvent(g GitEvent) bool {
 		(g.Branch == "" || (len(g.Branch) <= 255 && evalBranchShape.MatchString(g.Branch))) &&
 		(g.Repository == "" || evalRepositoryShape.MatchString(g.Repository)) &&
 		g.PRNumber >= 0 && g.PRNumber <= 1<<30 &&
-		(g.URL == "" || evalURLShape.MatchString(g.URL))
+		(g.URL == "" || validEvalGitURL(g.URL))
 }
 
 // nonNegativeCounts reports whether every *int field of a counts struct is
@@ -90,6 +92,28 @@ func nonNegativeCounts(counts any) bool {
 		if f.Kind() == reflect.Pointer && !f.IsNil() && f.Elem().Kind() == reflect.Int && f.Elem().Int() < 0 {
 			return false
 		}
+	}
+	return true
+}
+
+// validEvalGitURL enforces the schema's HTTPS pattern and URI format. Do not
+// normalize a corrupt sidecar URL or return parser errors containing its text:
+// the caller emits the established safe read_failed record instead.
+func validEvalGitURL(raw string) bool {
+	if !strings.HasPrefix(raw, "https://") {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.Contains(host, ":") {
+		if !strings.Contains(parsed.Host, "[") || !strings.Contains(parsed.Host, "]") {
+			return false
+		}
+		address, err := netip.ParseAddr(host)
+		return err == nil && address.Zone() == ""
 	}
 	return true
 }
