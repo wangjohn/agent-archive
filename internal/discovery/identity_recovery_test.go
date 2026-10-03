@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -108,7 +109,7 @@ func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 		t.Fatalf("lost derived indexes unexpectedly retained lookup: %v %v", found, err)
 	}
 	// Publication enumerates authoritative registrations, not identity indexes.
-	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("lost indexes blocked registered publication: %#v %v", result, err)
 	}

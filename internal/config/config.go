@@ -388,6 +388,15 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 		}
 		return c.CodexContinuationAllowed(r.ProjectRoot, r.CodexAdmission.Cwd)
 	}
+	if r.Harness.Name == "codex" && c.EffectiveCodexCaptureScope() == CodexAllProjects {
+		cwd := r.DiscoveryCwd
+		if cwd == "" {
+			cwd = r.ProjectRoot
+		}
+		if !c.CodexContinuationAllowed(r.ProjectRoot, cwd) {
+			return false
+		}
+	}
 	for _, p := range c.Archive.Projects {
 		if p.Included && p.Root == r.ProjectRoot {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -78,7 +79,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				delete(want, r.ProjectRoot)
 			}
 			objects := storagetest.NewMemoryStore()
-			result, e := collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+			result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 			if e != nil || len(result.Published) != 4 || len(result.Errors) != 0 {
 				t.Fatalf("publication %#v %v", result, e)
 			}
@@ -183,7 +184,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	_ = config.ReconcileDiscovery(&cfg, old, at.Add(3*time.Minute))
 	_ = config.Save(store.Home(), cfg)
 	writeRollout(t, codex, project, at.Add(4*time.Minute), 2, "sessions")
-	result, e := collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+	result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 	if e != nil || len(result.Published) != 0 {
 		t.Fatalf("excluded publication %#v %v", result, e)
 	}
@@ -195,7 +196,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("lift admission %#v %v", h, e)
 	}
-	result, e = collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(7 * time.Minute) }})
+	result, e = collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(7 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("existing proof failed to resume %#v %v", result, e)
 	}
@@ -228,7 +229,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	if after.ProjectRoot != original.ProjectRoot || after.CodexAdmission.Generation != original.CodexAdmission.Generation || !after.AdmittedAt.Equal(original.AdmittedAt) {
 		t.Fatalf("scope reduction rewrote ownership %#v", after)
 	}
-	result, e = collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(12 * time.Minute) }})
+	result, e = collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(12 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("selected publication %#v %v", result, e)
 	}
@@ -254,6 +255,101 @@ func setTestCodexScope(c *config.Config, scope config.CodexCaptureScope) {
 	}
 	p.Scope = scope
 	c.CodexCapture = &p
+}
+
+func TestBlanketLegacyOwnerPublicationHonorsStoredCwdExceptions(t *testing.T) {
+	for _, childGrant := range []bool{false, true} {
+		t.Run(fmt.Sprintf("child-grant-%t", childGrant), func(t *testing.T) {
+			store, cfg, at, codex := fixture(t)
+			owner := cfg.Archive.Projects[0].Root
+			private := filepath.Join(owner, "private")
+			cwd := filepath.Join(private, "allowed")
+			if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			writeRollout(t, codex, cwd, at.Add(time.Minute), 1, "sessions")
+			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			if err != nil || h.Registered != 1 {
+				t.Fatalf("legacy admission %#v %v", h, err)
+			}
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 1 || regs[0].ProjectRoot != owner || regs[0].DiscoveryCwd != cwd || regs[0].CodexAdmission != nil {
+				t.Fatalf("legacy owner/cwd %#v %v", regs, err)
+			}
+			original := regs[0]
+			objects := storagetest.NewMemoryStore()
+			collect := func(now time.Time) collector.Result {
+				t.Helper()
+				result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }})
+				if err != nil || len(result.Errors) != 0 {
+					t.Fatalf("publication %#v %v", result, err)
+				}
+				return result
+			}
+			if result := collect(at.Add(3 * time.Minute)); len(result.Published) != 1 {
+				t.Fatalf("selected-mode positive publication %#v", result)
+			}
+			old := cfg
+			setTestCodexScope(&cfg, config.CodexAllProjects)
+			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: private, Included: false})
+			if childGrant {
+				cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: cwd, Included: true, ActivatedAt: at.Add(4 * time.Minute)})
+			}
+			if err := config.ReconcileDiscovery(&cfg, old, at.Add(4*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.OpenFile(original.TranscriptPath, os.O_WRONLY|os.O_APPEND, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.WriteString("{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"SYNTHETIC_LEGACY_CONTINUATION\"}]}}\n")
+			_ = f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A changed transcript first enters the collector's stable-source
+			// wait. Advance that actual scheduled stage before judging permission.
+			collect(at.Add(5 * time.Minute))
+			result := collect(at.Add(7 * time.Minute))
+			want := 0
+			if childGrant {
+				want = 1
+			}
+			if len(result.Published) != want {
+				t.Fatalf("current stored-cwd exception publication %#v, want %d", result, want)
+			}
+			after, found, err := store.LoadRegistration(original.ArchiveSessionID)
+			if err != nil || !found || after.ProjectRoot != original.ProjectRoot || after.CodexAdmission != nil || after.DiscoveryCwd != original.DiscoveryCwd || !after.AdmittedAt.Equal(original.AdmittedAt) {
+				t.Fatalf("legacy admission/owner mutated %#v %v", after, err)
+			}
+			if childGrant {
+				raw, err := store.PublishedMetadata(original.ArchiveSessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var metadata archive.Metadata
+				if err := json.Unmarshal(raw, &metadata); err != nil {
+					t.Fatal(err)
+				}
+				source, err := objects.Get(context.Background(), metadata.SourceBundle.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				bundle, err := archive.ReadSourceBundle(bytes.NewReader(source), archive.DecodeOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded, err := json.Marshal(bundle)
+				if err != nil || !bytes.Contains(decoded, []byte("SYNTHETIC_LEGACY_CONTINUATION")) {
+					t.Fatalf("actual continuation readback missing: %v", err)
+				}
+				validatePublishedDiscovery(t, raw, source)
+			}
+		})
+	}
 }
 
 func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testing.T) {
@@ -314,7 +410,7 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 		t.Fatalf("physical child identity %#v", regs)
 	}
 	objects := storagetest.NewMemoryStore()
-	result, e := collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+	result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("permitted child publication %#v %v", result, e)
 	}
@@ -391,7 +487,7 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 				t.Fatalf("locator grant for %s: %q", tc.name, after.TranscriptPath)
 			}
 			objects := storagetest.NewMemoryStore()
-			result, err := collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 			expected := 0
 			if allowed {
 				expected = 1
@@ -403,6 +499,104 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 			if err != nil || len(regs) != 1 {
 				t.Fatalf("duplicate identity %#v %v", regs, err)
 			}
+		})
+	}
+}
+
+func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExcludedHistory(t *testing.T) {
+	for _, hook := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hook-%t", hook), func(t *testing.T) {
+			store, cfg, at, codex := fixture(t)
+			owner := cfg.Archive.Projects[0].Root
+			cwd := filepath.Join(owner, "repository")
+			if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			start := at.Add(time.Minute)
+			native := writeRollout(t, codex, cwd, start, 1, "sessions")
+			scanAt := func(now time.Time) {
+				t.Helper()
+				if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return now }}, syntheticSupport); err != nil {
+					t.Fatal(err)
+				}
+			}
+			scanAt(at.Add(2 * time.Minute))
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 1 || regs[0].CodexAdmission != nil || regs[0].ProjectRoot != owner {
+				t.Fatalf("selected admission %#v %v", regs, err)
+			}
+			before := regs[0]
+			old := cfg
+			setTestCodexScope(&cfg, config.CodexAllProjects)
+			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: cwd, Included: false})
+			if err := config.ReconcileDiscovery(&cfg, old, at.Add(3*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": native, "cwd": cwd}
+			if err := handleCodexHook(store.Home(), payload, at.Add(4*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			excluded, _, err := store.LoadRegistration(before.ArchiveSessionID)
+			if err != nil || !excluded.HookObservedAt.Equal(before.HookObservedAt) || cfg.AcceptSession(excluded) {
+				t.Fatalf("excluded continuation changed %#v %v", excluded, err)
+			}
+			writeRollout(t, codex, cwd, at.Add(4*time.Minute), 2, "sessions")
+			old = cfg
+			cfg.Archive.Projects = cfg.Archive.Projects[:1]
+			if err := config.ReconcileDiscovery(&cfg, old, at.Add(5*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			if hook {
+				observed := at.Add(6 * time.Minute)
+				if err := handleCodexHook(store.Home(), payload, observed); err != nil {
+					t.Fatal(err)
+				}
+				after, _, err := store.LoadRegistration(before.ArchiveSessionID)
+				if err != nil || !after.HookObservedAt.Equal(observed) {
+					t.Fatalf("permitted legacy hook did not resume %#v %v", after, err)
+				}
+			} else {
+				if err := os.Remove(before.TranscriptPath); err != nil {
+					t.Fatal(err)
+				}
+				writeRollout(t, codex, cwd, start, 1, "archived_sessions")
+			}
+			scanAt(at.Add(7 * time.Minute))
+			regs, err = store.LoadRegistrations()
+			if err != nil || len(regs) != 1 {
+				t.Fatalf("excluded-period unknown history admitted %#v %v", regs, err)
+			}
+			after := regs[0]
+			if after.ArchiveSessionID != before.ArchiveSessionID || after.ProjectRoot != before.ProjectRoot || after.ProjectID != before.ProjectID || after.Origin != before.Origin || after.DestinationID != before.DestinationID || after.CodexAdmission != nil || !after.AdmittedAt.Equal(before.AdmittedAt) || !after.SessionStartedAt.Equal(before.SessionStartedAt) || after.DiscoveryGeneration != before.DiscoveryGeneration {
+				t.Fatalf("legacy admission changed %#v", after)
+			}
+			if !hook && after.TranscriptPath == before.TranscriptPath {
+				t.Fatal("permitted legacy discovery did not replace missing locator")
+			}
+			objects := storagetest.NewMemoryStore()
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(8 * time.Minute) }})
+			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+				t.Fatalf("resumed publication %#v %v", result, err)
+			}
+			raw, err := store.PublishedMetadata(before.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var metadata archive.Metadata
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			source, err := objects.Get(context.Background(), metadata.SourceBundle.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			validatePublishedDiscovery(t, raw, source)
 		})
 	}
 }

@@ -169,6 +169,9 @@ inclusion beneath the same excluded ancestor keeps its nearest-rule grant.
 New Git projects use their physical repository root, validated worktrees use
 the main repository, and nonGit projects use their canonical working directory.
 Existing native IDs retain their previous configured-owner attribution.
+In all mode, legacy registrations also obey current exceptions at their stored
+working directory; retaining an included parent does not override an excluded
+child. Historical hooks without a stored cwd keep their recorded project root.
 
 Removing or lifting an exclusion records a forward subtree barrier. Unknown starts
 from its excluded period remain ineligible, while unrelated projects retain

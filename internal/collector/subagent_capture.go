@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -225,20 +226,27 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 }
 
 func validateCandidateTranscript(ctx context.Context, local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options, now time.Time) (archive.SessionRegistration, error) {
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
+	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
-	filtered, _, err := filterTranscript(ctx, adapter, reg, opts.maxTranscriptBytes())
+	source, _ := newSourceReader(reg, opts)
+	filtered, _, err := source.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if ctx.Err() != nil {
-		return reg, ctx.Err()
+		return reg, errors.Join(ctx.Err(), err)
+	}
+	// Missing and incomplete native records may wait for the writer. Retryable
+	// failures, including cleanup joined with missing or a stable refusal,
+	// retain the candidate and report the original cause.
+	if err != nil && (agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Cleanup) || (!errors.Is(err, os.ErrNotExist) && !agentapi.Deterministic(err))) {
+		return reg, err
 	}
 	// A transcript with lines but no recognized record yet is treated like an
 	// empty one: its first record may still be on its way.
 	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, archive.ErrUnsafeSourceFormat) {
 		// It exists but cannot be read: too large, a record too large, not a
-		// regular file, or an I/O failure.
-		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unreadable")
+		// regular file, or another deterministic refusal.
+		return reg, errors.Join(rejectSubagentCandidate(local, candidate, "subagent_transcript_unreadable"), err)
 	}
 	if err != nil || subagentTranscriptEmpty(filtered) {
 		return reg, awaitSubagentTranscript(local, candidate, now)

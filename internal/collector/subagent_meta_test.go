@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,7 +31,8 @@ func newNamedSubagentFixture(t *testing.T) *resumedSubagentFixture {
 
 func (f *resumedSubagentFixture) writeMeta(content string) {
 	f.t.Helper()
-	path, ok := archive.SubagentMetaPath(f.childPath)
+	path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
+	ok := strings.HasSuffix(f.childPath, ".jsonl")
 	if !ok {
 		f.t.Fatalf("%s is not named like a subagent transcript", f.childPath)
 	}
@@ -109,13 +112,13 @@ func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
 			f.writeMeta(`{"description":"Too big","pad":"` + strings.Repeat("x", archive.MaxSubagentMetaBytes) + `"}`)
 		},
 		"a directory": func(f *resumedSubagentFixture) {
-			path, _ := archive.SubagentMetaPath(f.childPath)
+			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
 			if err := os.Mkdir(path, 0o700); err != nil {
 				f.t.Fatal(err)
 			}
 		},
 		"a pipe": func(f *resumedSubagentFixture) {
-			path, _ := archive.SubagentMetaPath(f.childPath)
+			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				f.t.Skipf("no named pipes here: %v", err)
 			}
@@ -308,7 +311,7 @@ func TestOnlyASubagentTranscriptReadsAMetaFile(t *testing.T) {
 	} {
 		reg.Harness = archive.Harness{Name: "claude"}
 		before := subagentMetaReads.Load()
-		filtered, _, err := filterTranscript(context.Background(), archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+		filtered, _, err := filterTranscript(context.Background(), claude.Filter{}, reg, DefaultMaxTranscriptBytes)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -322,13 +325,13 @@ func TestOnlyASubagentTranscriptReadsAMetaFile(t *testing.T) {
 	// A subagent does read it, and no other adapter does.
 	reg := archive.SessionRegistration{TranscriptPath: agentPath, ParentSessionID: "parent", SubagentID: "agent-1", Harness: archive.Harness{Name: "claude"}}
 	before := subagentMetaReads.Load()
-	filtered, _, err := filterTranscript(context.Background(), archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+	filtered, _, err := filterTranscript(context.Background(), claude.Filter{}, reg, DefaultMaxTranscriptBytes)
 	if err != nil || subagentMetaReads.Load()-before != 1 || len(filtered.Records) != 2 {
 		t.Fatalf("subagent: reads %d, records %q, err %v", subagentMetaReads.Load()-before, filtered.Records, err)
 	}
 	reg.Harness = archive.Harness{Name: "codex"}
 	before = subagentMetaReads.Load()
-	if _, _, err := filterTranscript(context.Background(), archive.CodexAdapter{}, reg, DefaultMaxTranscriptBytes); err == nil || subagentMetaReads.Load() != before {
+	if _, _, err := filterTranscript(context.Background(), codex.Filter{}, reg, DefaultMaxTranscriptBytes); err == nil || subagentMetaReads.Load() != before {
 		t.Fatalf("a Codex transcript read a meta file (reads %d, err %v)", subagentMetaReads.Load()-before, err)
 	}
 }
@@ -340,13 +343,13 @@ func TestUnusableMetaFileLeavesTheFilteredTranscriptUnchanged(t *testing.T) {
 	line := `{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"child"}}` + "\n"
 	path := writeTranscript(t, dir, "agent-1.jsonl", line)
 	reg := archive.SessionRegistration{TranscriptPath: path, ParentSessionID: "parent", SubagentID: "agent-1", Harness: archive.Harness{Name: "claude"}}
-	want, _, err := filterTranscript(context.Background(), archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+	want, _, err := filterTranscript(context.Background(), claude.Filter{}, reg, DefaultMaxTranscriptBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{"malformed": "{", "empty": "", "no description": `{"agentType":"x"}`, "blank": `{"description":" "}`} {
 		writeTranscript(t, dir, "agent-1.meta.json", content)
-		got, _, err := filterTranscript(context.Background(), archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+		got, _, err := filterTranscript(context.Background(), claude.Filter{}, reg, DefaultMaxTranscriptBytes)
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: filtered differently (err %v): %+v vs %+v", name, err, got, want)
 		}
@@ -361,7 +364,7 @@ func TestUnusableMetaFileLeavesTheFilteredTranscriptUnchanged(t *testing.T) {
 	if err := os.Symlink(elsewhere, metaPath); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := filterTranscript(context.Background(), archive.ClaudeAdapter{}, reg, DefaultMaxTranscriptBytes)
+	got, _, err := filterTranscript(context.Background(), claude.Filter{}, reg, DefaultMaxTranscriptBytes)
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("symbolic link: filtered differently (err %v): %+v vs %+v", err, got, want)
 	}

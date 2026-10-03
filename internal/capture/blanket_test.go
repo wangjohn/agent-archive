@@ -2,6 +2,7 @@ package capture
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,108 @@ func blanketHookFixture(t *testing.T) (string, string, config.Config, time.Time)
 		t.Fatal(e)
 	}
 	return home, root, c, at
+}
+
+func TestBlanketReplayRotatesProjectBudgetPastPersistentlyInterruptedIntents(t *testing.T) {
+	home, root, _, at := blanketHookFixture(t)
+	for range 20 {
+		root = filepath.Join(root, "deep")
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
+	for i := range maxAdmissionIntents {
+		cwd := filepath.Join(root, fmt.Sprintf("project-%03d", i))
+		if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("native-%03d", i), "cwd": cwd}
+		if err := handleEvent(home, "codex", payload, at.Add(time.Minute+time.Duration(i)), busy, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(queueFiles(t, home)); got != maxAdmissionIntents {
+		t.Fatalf("queued %d intents", got)
+	}
+	if err := os.WriteFile(filepath.Join(home, "admission-replay-cursor.json"), []byte("{\"after\":\"../untrusted\"}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	interrupted := errors.New("synthetic persistent evidence interruption")
+	for range 8 {
+		err := replayAdmissionIntents(home, at.Add(2*time.Minute), testDecoders, func(effect effectName) error {
+			if effect == effectEvidenceSave {
+				return interrupted
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, interrupted) {
+			t.Fatal(err)
+		}
+	}
+	store := state.OpenReadOnly(home)
+	regs, err := store.LoadRegistrations()
+	if err != nil || len(regs) != maxAdmissionIntents {
+		t.Fatalf("persistent leaders starved registrations: got %d, error %v", len(regs), err)
+	}
+	if got := len(queueFiles(t, home)); got != maxAdmissionIntents {
+		t.Fatalf("interrupted original intents were lost: %d", got)
+	}
+	for _, reg := range regs {
+		if reg.CodexAdmission == nil || reg.CodexAdmission.Cwd != reg.ProjectRoot || !reg.AdmittedAt.Equal(reg.SessionStartedAt) || !reg.AdmittedAt.Before(at.Add(2*time.Minute)) {
+			t.Fatalf("replay changed original proof/time: %#v", reg)
+		}
+	}
+	for range 8 {
+		if err := ReplayAdmissionIntents(home, at.Add(3*time.Minute), testDecoders); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(queueFiles(t, home)); got != 0 {
+		t.Fatalf("completed intents remain: %d", got)
+	}
+	final, err := store.LoadRegistrations()
+	if err != nil || len(final) != len(regs) {
+		t.Fatalf("duplicate/lost registration: %d, %v", len(final), err)
+	}
+}
+
+func TestBlanketReplayPrunesIneligibleIntentsEvenWhenCwdDisappears(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("revoked-%t", revoked), func(t *testing.T) {
+			home, root, cfg, at := blanketHookFixture(t)
+			busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
+			payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": root}
+			if err := handleEvent(home, "codex", payload, at.Add(time.Minute), busy, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(root); err != nil {
+				t.Fatal(err)
+			}
+			now := at.Add(25 * time.Hour)
+			if revoked {
+				old := cfg
+				cfg.Archive.Projects = []archive.ProjectActivation{{Root: root, Included: false}}
+				if err := config.ReconcileDiscovery(&cfg, old, at.Add(2*time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				if err := config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+				now = at.Add(3 * time.Minute)
+			}
+			if err := ReplayAdmissionIntents(home, now, testDecoders); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(queueFiles(t, home)); got != 0 {
+				t.Fatalf("ineligible unavailable-cwd intent remains: %d", got)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil || len(regs) != 0 {
+				t.Fatalf("ineligible intent registered: %#v %v", regs, err)
+			}
+		})
+	}
 }
 
 func TestBlanketDeferredFreshHookReplaysOriginalProofAndObservation(t *testing.T) {

@@ -312,26 +312,56 @@ func ReplayAdmissionIntents(home string, now time.Time, lookups ...agentapi.Deco
 	return replayAdmissionIntents(home, now, lookup, nil)
 }
 
-func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
-	if setupjournal.TransactionPending(home) {
-		return nil
-	}
+type admissionReplayCursor struct {
+	After string `json:"after"`
+}
+
+func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.ProjectFacts, admissionReplayCursor) {
 	preflight := map[string]sourcefacts.ProjectFacts{}
 	entriesBefore, _ := os.ReadDir(admissionIntentDir(home))
+	cursorPath := filepath.Join(home, "admission-replay-cursor.json")
+	var cursor admissionReplayCursor
+	_ = local.Read(cursorPath, &cursor)
+	if len(cursor.After) > 128 || filepath.Base(cursor.After) != cursor.After {
+		cursor.After = ""
+	}
+	// The cursor schedules metadata work only; eligibility and identity are
+	// always checked from the original intent and current policy under the lock.
+	start := sort.Search(len(entriesBefore), func(i int) bool { return entriesBefore[i].Name() > cursor.After })
 	resolver := sourcefacts.NewProjectResolver()
-	for _, entry := range entriesBefore {
+	lastAttempt := ""
+	for i := range entriesBefore {
+		entry := entriesBefore[(start+i)%len(entriesBefore)]
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		if local.Read(path, &intent) == nil && intent.CodexPolicyToken != "" && len(intent.Effects) > 0 {
+			if now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute)) {
+				continue
+			}
 			facts, ok := resolver.Resolve(intent.ProjectRoot)
+			if resolver.Exhausted {
+				if lastAttempt == "" {
+					lastAttempt = entry.Name()
+				}
+				break
+			}
+			lastAttempt = entry.Name()
 			if ok {
 				preflight[path] = facts
 			}
 		}
 	}
+	return preflight, admissionReplayCursor{After: lastAttempt}
+}
+
+func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
+	if setupjournal.TransactionPending(home) {
+		return nil
+	}
+	preflight, cursor := replayProjectPreflight(home, now)
 	unlock, err := local.NamedLockWait(home, "hooks.lock", 2*time.Second)
 	if err != nil {
 		return err
@@ -351,6 +381,11 @@ func replayAdmissionIntents(home string, now time.Time, lookup agentapi.Decoders
 	}
 	if !found || !cfg.Archive.Enabled || cfg.Paused {
 		return nil
+	}
+	if cursor.After != "" {
+		if err := local.Write(filepath.Join(home, "admission-replay-cursor.json"), cursor); err != nil {
+			return fmt.Errorf("save admission replay progress: %w", err)
+		}
 	}
 	store, err := state.Open(home)
 	if err != nil {
@@ -384,6 +419,9 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
 	}
+	if !replayIntentEligible(cfg, intent, now) {
+		return nil, removeAdmissionIntent(path)
+	}
 	if intent.CodexPolicyToken != "" {
 		if len(preflights) == 0 || len(intent.Effects) == 0 {
 			return nil, nil
@@ -393,9 +431,6 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 		if !ok || facts.Root != event.CodexProjectRoot || facts.Cwd != event.CodexCwd {
 			return nil, nil
 		}
-	}
-	if !replayIntentEligible(cfg, intent, now) {
-		return nil, removeAdmissionIntent(path)
 	}
 	events, err := intentEvents(intent, lookup)
 	if err != nil {

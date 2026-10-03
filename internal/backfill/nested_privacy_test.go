@@ -23,7 +23,7 @@ import (
 // and other apps' containers as locations of their own inside Library.
 func TestProtectedOutside(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
+	protected := privacyProtectedFolders(Environment{Sources: testSources, Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
 		path string
 		root string
@@ -59,7 +59,7 @@ func TestProtectedOutside(t *testing.T) {
 // target is still kept out of Documents.
 func TestProtectedFoldersCoverTheResolvedHome(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) {
+	protected := privacyProtectedFolders(Environment{Sources: testSources, Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) {
 		if p == "/Users/me" {
 			return "/Volumes/Data/Users/me", nil
 		}

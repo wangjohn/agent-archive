@@ -714,7 +714,7 @@ func codexContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent,
 	if r.CodexAdmission != nil {
 		return event.CodexProjectRoot == r.ProjectRoot && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
 	}
-	return (event.CodexProjectRoot == r.ProjectRoot || local.PathWithin(event.CodexCwd, r.ProjectRoot)) && cfg.CodexProjectAllowed(event.CodexProjectRoot, event.CodexCwd, r.Admitted())
+	return (event.CodexProjectRoot == r.ProjectRoot || local.PathWithin(event.CodexCwd, r.ProjectRoot)) && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
 }
 
 func prepareCodexFacts(harness string, batch []agentapi.LifecycleEvent, cfg config.Config, now time.Time) {

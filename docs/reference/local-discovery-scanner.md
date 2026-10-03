@@ -99,6 +99,12 @@ aggregate budget. Metadata-operation counts cover explicit lstat/readlink,
 open/fstat and bounded metadata-file read calls, rather than hidden
 canonicalization stats or transcript/index I/O. Source probe, directory cursor and rotating retry budgets
 remain unchanged, and complete identity census still governs unknown IDs.
+Deferred hook replay shares the same aggregate project metadata allowance.
+A small atomic scheduling cursor rotates that work across retained intents so
+interrupted leading starts cannot indefinitely starve later starts. It conveys
+no permission or identity authority; every replay checks the original evidence
+and current policy, and expired or revoked intents are removed even when their
+working directory is no longer available.
 
 `discovery-health.json` is an atomically written, versioned summary capped at
 16 KiB. It contains aggregate counts, stable diagnostic codes and attempt/

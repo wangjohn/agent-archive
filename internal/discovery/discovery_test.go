@@ -97,7 +97,7 @@ func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *te
 		t.Fatal(regs)
 	}
 	objectStore := storagetest.NewMemoryStore()
-	result, err := collector.Run(context.Background(), store, objectStore, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+	result, err := collector.Run(context.Background(), store, objectStore, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
@@ -198,7 +198,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("unrequested registration lost: %#v %v", result, err)
 	}
@@ -451,7 +451,7 @@ func TestHookContinuationPreservesValidatedDiscoveryLocator(t *testing.T) {
 			if err != nil || !found || after.TranscriptPath != before.TranscriptPath || after.DiscoveryRoot != before.DiscoveryRoot || after.DiscoveryCwd != before.DiscoveryCwd || after.DiscoveryGeneration != before.DiscoveryGeneration || after.Origin != before.Origin || after.DestinationID != before.DestinationID || !after.SessionStartedAt.Equal(before.SessionStartedAt) || !after.AdmittedAt.Equal(before.AdmittedAt) || !after.HookObservedAt.Equal(hookAt) {
 				t.Fatalf("hook replaced discovery facts: %#v %v", after, err)
 			}
-			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(4 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(4 * time.Minute) }})
 			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 				t.Fatalf("hook broke filtered publication: %#v %v", result, err)
 			}
@@ -505,7 +505,7 @@ func TestCollectorRejectsChangedDiscoveryProducer(t *testing.T) {
 			if err := os.WriteFile(regs[0].TranscriptPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
 				t.Fatal(err)
 			}
-			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 			if err != nil || len(result.Published) != 0 || len(result.Errors) != 1 {
 				t.Fatalf("changed producer published: %#v %v", result, err)
 			}

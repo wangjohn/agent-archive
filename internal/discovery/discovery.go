@@ -436,7 +436,7 @@ func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidat
 	if reg.CodexAdmission != nil {
 		permission = hint.CanonicalCwd != "" && cfg.CodexContinuationAllowed(project, hint.CanonicalCwd)
 	} else if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		permission = cfg.CodexProjectAllowed(project, hint.CanonicalCwd, reg.Admitted())
+		permission = cfg.CodexContinuationAllowed(project, hint.CanonicalCwd)
 	}
 	if !compatible || !cfg.AcceptSession(reg) || !permission {
 		return reg, true, errors.New("identity conflict")
