@@ -450,20 +450,17 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		kind, _ := raw["type"].(string)
 		if format == "claude-jsonl" && isCompactBoundary(raw) {
 			recognized++
-			encoded, err := json.Marshal(compactBoundaryRecord(raw, omittedKeys.add))
-			if err != nil {
-				return archive.FilteredTranscript{}, &archive.FilterError{Reason: "safe record cannot be encoded"}
+			if err := retainSafeIdentityRecord(&result, compactBoundaryRecord(raw, omittedKeys.add)); err != nil {
+				return archive.FilteredTranscript{}, err
 			}
-			retain(&result, encoded)
 			continue
 		}
 		if format == "claude-jsonl" && isClaudeLabelType(kind) {
 			recognized++
-			encoded, err := filterClaudeLabel(raw, lineNo, addGap, omittedKeys.add)
-			if err != nil {
+			safe := filterClaudeLabel(raw, lineNo, addGap, omittedKeys.add)
+			if err := retainSafeIdentityRecord(&result, safe); err != nil {
 				return archive.FilteredTranscript{}, err
 			}
-			retain(&result, encoded)
 			continue
 		}
 		if format == "claude-jsonl" && kind == subagentMetaType {
@@ -490,6 +487,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 			continue
 		}
 		observeHarness(&result, safe)
+		noteSafeIdentity(&result, safe)
 		encoded, err := json.Marshal(safe)
 		if err != nil {
 			return archive.FilteredTranscript{}, &archive.FilterError{Reason: "safe record cannot be encoded"}
@@ -710,4 +708,29 @@ func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) 
 	noteRecordTime(result, raw)
 	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
 	result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
+}
+
+// noteSafeIdentity observes only records that survived the privacy filter.
+func noteSafeIdentity(result *archive.FilteredTranscript, safe map[string]any) {
+	if result.Format == "codex-jsonl" && result.LocalIdentity.ID == "" && firstString(safe, "type") == "session_meta" {
+		if payload, ok := safe["payload"].(map[string]any); ok {
+			result.LocalIdentity.ID = firstString(payload, "id")
+		}
+	}
+	for _, key := range []string{"session_id", "sessionId"} {
+		result.LocalIdentity.Candidates = appendUniqueString(result.LocalIdentity.Candidates, firstString(safe, key))
+	}
+}
+
+func retainSafeIdentityRecord(result *archive.FilteredTranscript, safe map[string]any) error {
+	if safe == nil {
+		return nil
+	}
+	noteSafeIdentity(result, safe)
+	encoded, err := json.Marshal(safe)
+	if err != nil {
+		return &archive.FilterError{Reason: "safe record cannot be encoded"}
+	}
+	retain(result, encoded)
+	return nil
 }

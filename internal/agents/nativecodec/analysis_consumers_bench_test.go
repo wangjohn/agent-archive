@@ -56,7 +56,7 @@ const analysisPrompt = `{"type":"user","uuid":"p1","sessionId":"native-claude","
 func analysisRegistration() archive.SessionRegistration {
 	return archive.SessionRegistration{
 		ArchiveSessionID: "archive-123", NativeSessionID: "native-456", ProjectID: "project-789", ProjectRoot: "/work/widget",
-		Harness: archive.Harness{Name: "codex", Version: "observed-build", Mode: "desktop"}, TranscriptPath: "/private/log.jsonl",
+		Harness: archive.Harness{Name: "claude", Version: "observed-build", Mode: "desktop"}, TranscriptPath: "/private/log.jsonl",
 		SessionStartedAt: time.Date(2026, 9, 17, 18, 0, 0, 0, time.UTC), RegisteredAt: time.Date(2026, 9, 17, 18, 1, 0, 0, time.UTC),
 	}
 }

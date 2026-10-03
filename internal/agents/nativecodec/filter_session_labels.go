@@ -1,7 +1,6 @@
 package nativecodec
 
 import (
-	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"math"
 	"strconv"
@@ -159,23 +158,19 @@ func claudeLabelSurvived(label, safe map[string]any, omit func(string)) bool {
 }
 
 // filterClaudeLabel filters one custom-title or pr-link record and returns
-// its encoding, or nil when the record is dropped. A dropped record is
+// its sanitized map, or nil when the record is dropped. A dropped record is
 // reported in an unsupported_value_omitted gap, which carries no content.
-func filterClaudeLabel(raw map[string]any, lineNo int, addGap func(string, int, string), omit func(string)) ([]byte, error) {
+func filterClaudeLabel(raw map[string]any, lineNo int, addGap func(string, int, string), omit func(string)) map[string]any {
 	label, ok := claudeLabelRecord(raw, omit)
 	if !ok {
 		addGap("unsupported_value_omitted", lineNo, "record omitted")
-		return nil, nil
+		return nil
 	}
 	state := archive.PrivacyState{Record: lineNo, AddGap: addGap, ExtraAllowed: claudeLabelKeys, OmittedKey: omit}
 	safe, keep := sanitizeObject(label, &state)
 	if !keep || !claudeLabelSurvived(label, safe, omit) {
 		addGap("unsupported_value_omitted", lineNo, "record omitted")
-		return nil, nil
+		return nil
 	}
-	encoded, err := json.Marshal(safe)
-	if err != nil {
-		return nil, &archive.FilterError{Reason: "safe record cannot be encoded"}
-	}
-	return encoded, nil
+	return safe
 }
