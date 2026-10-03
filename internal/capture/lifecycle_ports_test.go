@@ -316,7 +316,7 @@ func TestQueuedReplayInterruptionCompletesEveryDurableEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil, nil)
 			if err != nil || !queued {
 				t.Fatalf("queue %v %v", queued, err)
 			}
