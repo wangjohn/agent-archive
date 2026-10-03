@@ -33,7 +33,8 @@ This phase does not
 claim universal two-pass latency or release-machine resource acceptance.
 
 Collector publication reopens discovery files within their approved root and
-checks native identity, original creation, and working directory against the
+checks native identity, original creation, working directory, and admitted
+producer version, originator, and execution source against the
 registration before filtering. Existing origins, destination attribution,
 admission time, and removal records are preserved. Synthetic tests inject adapter
 support within the scanner package; there is no production support override.

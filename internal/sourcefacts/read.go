@@ -104,17 +104,11 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 			return h
 		}
 		if i == 0 {
-			meta, _, found, e := ParseCodexMeta(line)
+			meta, start, found, e := ParseCodexMeta(line)
 			if !found || e != nil {
 				h.Outcome = "invalid_metadata"
 				return h
 			}
-			nativeStart, e := time.Parse(time.RFC3339Nano, meta.Timestamp)
-			if e != nil {
-				h.Outcome = "invalid_metadata"
-				return h
-			}
-			start := nativeStart.UTC()
 			meta.Timestamp = start.Format(time.RFC3339Nano)
 			h.Meta, h.Started = safeMeta(meta), start
 			if len(meta.ID) > 128 || len(meta.Originator) > 256 || len(meta.Version) > 128 {

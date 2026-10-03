@@ -190,3 +190,45 @@ func TestApprovedAncestorAliasOpensCanonicalSnapshotWithoutEscapes(t *testing.T)
 		t.Fatal("alias weakened source confinement", h.Outcome)
 	}
 }
+
+func TestNativeStartOptionalRootTurnID(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"task_started", "turn_started"} {
+		for _, root := range []any{nil, testID, "00000000-0000-0000-0000-000000000002", "invalid", 42} {
+			task := map[string]any{"type": kind, "turn_id": testID, "started_at": "2026-10-01T12:00:00Z"}
+			if root != nil {
+				task["root_turn_id"] = root
+			}
+			h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, task)), "rollout-"+testID+".jsonl")
+			want := "inherited_history"
+			if root == nil || root == testID {
+				want = "native_format"
+			}
+			if h.Outcome != want {
+				t.Errorf("kind=%s root=%v: got %s want %s", kind, root, h.Outcome, want)
+			}
+		}
+	}
+}
+
+func TestCodexHeaderUsesOuterMetadataTimestamp(t *testing.T) {
+	t.Parallel()
+	data := testRecords(t, nil, nil)
+	var meta map[string]any
+	lines := strings.Split(data, "\n")
+	if err := json.Unmarshal([]byte(lines[0]), &meta); err != nil {
+		t.Fatal(err)
+	}
+	payload := meta["payload"].(map[string]any)
+	meta["timestamp"] = payload["timestamp"]
+	delete(payload, "timestamp")
+	first, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines[0] = string(first)
+	h := ReadCodexHeader(strings.NewReader(strings.Join(lines, "\n")), "rollout-"+testID+".jsonl")
+	if h.Outcome != "native_format" || h.Started.Format(time.RFC3339Nano) != "2026-10-01T12:00:00Z" {
+		t.Fatalf("outer timestamp lost: %#v", h)
+	}
+}

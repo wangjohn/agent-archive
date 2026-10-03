@@ -346,7 +346,7 @@ func admit(store *state.Store, candidate Candidate, project, generation string, 
 		return archive.SessionRegistration{}, false, err
 	}
 	if exists {
-		reg, found, err := mergeContinuation(store, cfg, candidate, project, continuationHint{ArchiveID: id, Previous: previous, Replace: replace})
+		reg, found, err := mergeContinuation(store, cfg, candidate, project, continuationHint{ArchiveID: id, Previous: previous, Replace: replace}, now)
 		if found || err != nil {
 			return reg, false, err
 		}
@@ -368,7 +368,7 @@ func admit(store *state.Store, candidate Candidate, project, generation string, 
 	reg, err := store.RegisterOrMerge(sessionKey(candidate.Agent, candidate.NativeSessionID), func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
-			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
+			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
 		}
 	})
@@ -388,7 +388,7 @@ type continuationHint struct {
 
 // mergeContinuation runs under hooks.lock. Only the source locator can change;
 // original origin, admission, start and destination attribution stay immutable.
-func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidate, project string, hint continuationHint) (archive.SessionRegistration, bool, error) {
+func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidate, project string, hint continuationHint, now time.Time) (archive.SessionRegistration, bool, error) {
 	reg, found, err := store.LoadRegistration(hint.ArchiveID)
 	if err != nil || !found {
 		return reg, found, err
@@ -400,6 +400,14 @@ func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidat
 		return reg, true, errors.New("continuation identity conflict")
 	}
 	if reg.TranscriptPath == "" || (hint.Replace && reg.TranscriptPath == hint.Previous && reg.Origin == archive.SessionOriginDiscovery) {
+		// Invalidate before moving the locator: a crash must never leave the
+		// replacement trusted through the old file's same size/mtime signature.
+		if err := store.RemoveScanSignature(hint.ArchiveID); err != nil {
+			return reg, true, err
+		}
+		if err := store.SaveRequest(hint.ArchiveID, "discovery", now); err != nil {
+			return reg, true, err
+		}
 		_, err = store.UpdateRegistration(hint.ArchiveID, func(r *archive.SessionRegistration) error {
 			if r.TranscriptPath == reg.TranscriptPath {
 				r.TranscriptPath = candidate.Source.Locator

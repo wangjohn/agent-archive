@@ -3,6 +3,7 @@ package collector
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -69,7 +70,9 @@ func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.
 func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
 	if reg.Origin == archive.SessionOriginDiscovery {
 		header := sourcefacts.ReadCodexHeader(file.Reader(ctx), reg.TranscriptPath)
-		if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) {
+		var producerSource string
+		_ = json.Unmarshal(header.Meta.Source, &producerSource)
+		if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) || header.Meta.Version != reg.Harness.Version || header.Meta.Originator != reg.DiscoveryProducerOriginator || producerSource != reg.DiscoveryProducerSource {
 			return archive.FilteredTranscript{}, transcriptFileInfo{}, errors.New("discovery source identity changed")
 		}
 		if err := file.Check(); err != nil {

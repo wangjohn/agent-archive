@@ -336,6 +336,16 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	}
 	regs, _ := store.LoadRegistrations()
 	before := regs[0]
+	if err := store.SaveScanSignature(before.ArchiveSessionID, state.ScanSignature{TranscriptSize: 123, TranscriptMtime: 456}); err != nil {
+		t.Fatal(err)
+	}
+	req, _, err := store.LoadRequest(before.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteRequest(before.ArchiveSessionID, req.Token); err != nil {
+		t.Fatal(err)
+	}
 	archived := filepath.Join(root, "archived_sessions", filepath.Base(before.TranscriptPath))
 	if err := os.MkdirAll(filepath.Dir(archived), 0700); err != nil {
 		t.Fatal(err)
@@ -365,6 +375,12 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	after, _, _ := store.LoadRegistration(archiveID)
 	if after.TranscriptPath != archived || after.ArchiveSessionID != before.ArchiveSessionID || !after.AdmittedAt.Equal(before.AdmittedAt) || after.DiscoveryGeneration != before.DiscoveryGeneration {
 		t.Fatal("continuation lost original facts")
+	}
+	if _, found, err := store.LoadScanSignature(archiveID); err != nil || found {
+		t.Fatalf("relocated scan signature retained: %v %v", found, err)
+	}
+	if _, found, err := store.LoadRequest(archiveID); err != nil || !found {
+		t.Fatalf("relocation not requested: %v %v", found, err)
 	}
 	// A validated active copy is preferred when both locations exist.
 	writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
@@ -454,4 +470,48 @@ func handleCodexHook(home, harness string, payload map[string]any, now time.Time
 		return err
 	}
 	return capture.HandleBatch(home, harness, batch, now)
+}
+
+func TestCollectorRejectsChangedDiscoveryProducer(t *testing.T) {
+	t.Parallel()
+	for field, replacement := range map[string]string{"cli_version": "unsupported", "originator": "other", "source": "exec"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			store, cfg, at, root := fixture(t)
+			writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			if err != nil || h.Registered != 1 {
+				t.Fatalf("admission: %#v %v", h, err)
+			}
+			regs, err := store.LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(regs[0].TranscriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(string(raw), "\n")
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(lines[0]), &meta); err != nil {
+				t.Fatal(err)
+			}
+			meta["payload"].(map[string]any)[field] = replacement
+			first, err := json.Marshal(meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines[0] = string(first)
+			if err := os.WriteFile(regs[0].TranscriptPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+			if err != nil || len(result.Published) != 0 || len(result.Errors) != 1 {
+				t.Fatalf("changed producer published: %#v %v", result, err)
+			}
+			if _, _, _, found, err := store.LoadPublished(regs[0].ArchiveSessionID); err != nil || found {
+				t.Fatalf("changed producer saved: %v %v", found, err)
+			}
+		})
+	}
 }

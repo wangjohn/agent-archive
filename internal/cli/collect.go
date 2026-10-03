@@ -153,7 +153,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if recoveryErr := localStore.RecoverSessionIndexIfNeeded(ctx); recoveryErr != nil {
 		recordPreflightError(localStore, recoveryErr)
 	}
-	if _, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop}); discoveryErr != nil {
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
+	if discoveryErr != nil {
 		recordPreflightError(localStore, discoveryErr)
 	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
@@ -182,6 +183,11 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		CursorDatabase:       env.cursorDatabase(),
 		RepoKey:              env.repoKey,
 	})
+	// Collector status replaces its previous LastErrors. Restore discovery's
+	// preflight failure even when collection itself returns an error.
+	if discoveryErr != nil {
+		addStatusProblem(localStore, discoveryErr.Error())
+	}
 	if err != nil {
 		return result, err
 	}

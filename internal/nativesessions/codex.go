@@ -155,13 +155,13 @@ func NativeFirstTask(line []byte) (seen, native bool) {
 	// types. A later native-looking resume must never repair inherited history.
 	var task struct {
 		TurnID     string          `json:"turn_id"`
-		RootTurnID string          `json:"root_turn_id"`
+		RootTurnID *string         `json:"root_turn_id"`
 		StartedAt  json.RawMessage `json:"started_at"`
 	}
 	if json.Unmarshal(envelope.Payload, &task) != nil {
 		return true, false
 	}
-	return true, uuid.MatchString(task.TurnID) && uuid.MatchString(task.RootTurnID) && !taskStartedAt(task.StartedAt).IsZero()
+	return true, uuid.MatchString(task.TurnID) && (task.RootTurnID == nil || (uuid.MatchString(*task.RootTurnID) && strings.EqualFold(*task.RootTurnID, task.TurnID))) && !taskStartedAt(task.StartedAt).IsZero()
 }
 
 func taskStartedAt(raw json.RawMessage) time.Time {
