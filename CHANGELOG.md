@@ -49,6 +49,15 @@ Planned for v0.2.0. This release has not been tagged or published.
   and `status --json` counts them per app in `replay_sessions`. See
   [JSON output](docs/reference/json-output.md#replay-sessions).
 
+- Codex-only blanket policy and admission consumers retain one explicit scope
+  across current and future physical projects, independently of discovery.
+  Fresh hook/discovery starts keep immutable local proof and current exclusion/
+  destination checks; new projects never grow configuration. Scope-capable
+  configuration uses the incompatible `codex-scope-floor-v3` writer fence,
+  including disabled history. Scope and source generations retain immutable
+  start floors; invalid clock transitions refuse atomically.
+  Public selection remains in the activation change.
+
 - Disabled Codex discovery machinery performs bounded source scans before
   storage access and reopens admitted sources within approved roots. Identity
   misses require registration-census recovery before allocation. Startup

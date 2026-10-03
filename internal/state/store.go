@@ -206,6 +206,11 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		var originalProof *archive.CodexAdmissionProof
+		if reg.CodexAdmission != nil {
+			proof := *reg.CodexAdmission
+			originalProof = &proof
+		}
 		originalKey, err := registrationKey(reg)
 		if err != nil {
 			return nil, false, err
@@ -216,6 +221,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
+			return nil, false, errors.New("a registration update cannot change Codex admission proof")
 		}
 		if reg.ArchiveSessionID != archiveSessionID {
 			return nil, false, errors.New("a registration update cannot change its archive session ID")
@@ -299,8 +307,8 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
-	// Controlled replacement writes are blind. Admission revalidates the
-	// staged registration snapshot before preserving or filling its owner.
+	// Replacement staging remains blind; the locked check protects immutable
+	// admission proof before committing the staged registration.
 	err := s.writeUnderLock(lockedWrite{
 		lock: func() (func(), error) { return s.lockRequest(id) },
 		path: s.registrationPath(id),
@@ -319,10 +327,20 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 			if !registered && current.Reservation == "" {
 				return errIndexMoved
 			}
+			if !merge {
+				prior, found, err := s.LoadRegistration(id)
+				if err != nil {
+					return err
+				}
+				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
+					return errors.New("a registration replacement cannot change Codex admission proof")
+				}
+			}
 			return nil
 		},
 		change: func(current fileSnapshot) (any, bool, error) {
 			if !merge {
+
 				return reg, true, nil
 			}
 			var err error
@@ -1127,6 +1145,13 @@ func (s *Store) RemoveScanSignature(id string) error {
 		return fmt.Errorf("remove scan signature %q: %w", id, err)
 	}
 	return nil
+}
+
+func sameCodexAdmission(a, b *archive.CodexAdmissionProof) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameScanSignature(a, b ScanSignature) bool {

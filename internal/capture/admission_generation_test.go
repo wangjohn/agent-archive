@@ -126,7 +126,7 @@ func TestHookAdmissionWaitDoesNotCrossPauseResume(t *testing.T) {
 				}
 				return func() {}, nil
 			}
-			err := handleEvent(home, "claude", claudeStart(project, "old-native", "startup", ""), at, lock, nil, nil)
+			err := handleEvent(home, "claude", claudeStart(project, "old-native", "startup", ""), at, lock, nil)
 			if err != nil && !errors.Is(err, local.ErrBusy) {
 				t.Fatal(err)
 			}

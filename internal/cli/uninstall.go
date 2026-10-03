@@ -732,10 +732,10 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"discovery-catalog.json",
+	"discovery-catalog.json", "discovery-health.json",
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
-	"admission-intents", "admission-intents.lock",
+	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
