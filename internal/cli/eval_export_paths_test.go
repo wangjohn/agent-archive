@@ -8,20 +8,30 @@ import (
 	"github.com/wangjohn/agent-archive/internal/testutil/orbifold"
 )
 
+type nativeFolderEnvironment string
+
+const (
+	nativeFolderClaudeConfig nativeFolderEnvironment = "CLAUDE_CONFIG_DIR"
+	nativeFolderCodexHome    nativeFolderEnvironment = "CODEX_HOME"
+)
+
 func TestEvalExportNativeFolderOwnership(t *testing.T) {
 	t.Parallel()
 	home, external := t.TempDir(), t.TempDir()
 	env := Env{UserHomeDir: func() (string, error) { return home, nil }, LookupEnv: func(key string) (string, bool) {
-		switch key {
-		case "CLAUDE_CONFIG_DIR":
+		switch nativeFolderEnvironment(key) {
+		case nativeFolderClaudeConfig:
 			return filepath.Join(external, "claude-root"), true
-		case "CODEX_HOME":
+		case nativeFolderCodexHome:
 			return filepath.Join(external, "codex-root"), true
 		}
 		return "", false
 	}, Agents: fourthRegistry(t, &orbifold.Ports{})}
 	x := evalExporter{env: env}
-	for _, tc := range []struct{ path, want string }{
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
 		{filepath.Join(home, ".claude", "projects", "p", "s.jsonl"), "claude"},
 		{filepath.Join(home, ".codex", "sessions", "s.jsonl"), "codex"},
 		{filepath.Join(external, "claude-root", "projects", "s.jsonl"), "claude"},
@@ -51,7 +61,8 @@ func TestEvalExportAmbiguousNativeFolderRequiresHarness(t *testing.T) {
 	t.Parallel()
 	home, root := t.TempDir(), t.TempDir()
 	x := evalExporter{env: Env{UserHomeDir: func() (string, error) { return home, nil }, LookupEnv: func(key string) (string, bool) {
-		if key == "CLAUDE_CONFIG_DIR" || key == "CODEX_HOME" {
+		nativeKey := nativeFolderEnvironment(key)
+		if nativeKey == nativeFolderClaudeConfig || nativeKey == nativeFolderCodexHome {
 			return root, true
 		}
 		return "", false
