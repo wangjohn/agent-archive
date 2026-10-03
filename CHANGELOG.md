@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 Planned for v0.2.0. This release has not been tagged or published.
 
+### Fixed
+
+- Before-setup handoff launch files use a private temporary namespace per user,
+  so users sharing a temporary directory do not block one another. Reuse and
+  seven-day cleanup check ownership as well as permissions and reject symlinks.
+
 ### Added
 
 - **Replay sessions stay out of your history.** A tool that replays archived
