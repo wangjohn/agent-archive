@@ -133,8 +133,8 @@ func TestShowWithoutIDInteractiveBrowses(t *testing.T) {
 	}
 }
 
-// show --json on a terminal keeps the one-shot picker and prints the
-// chosen sidecar.
+// show --json on a terminal opens the browser to pick one session (Show ·),
+// and prints the chosen sidecar once it has left the screen.
 func TestShowJSONWithoutIDPicksOnce(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
@@ -150,7 +150,9 @@ func TestShowJSONWithoutIDPicksOnce(t *testing.T) {
 	if err := json.Unmarshal([]byte(extractJSONObject(out.String())), &meta); err != nil {
 		t.Fatalf("json: %v\n%s", err, out.String())
 	}
-	if meta.SessionID != id || strings.Count(out.String(), "Enter number") != 1 || strings.Contains(out.String(), enterAltScreenSequence) {
+	jsonAt := strings.Index(out.String(), "{")
+	left := strings.LastIndex(out.String(), leaveAltScreenSequence)
+	if meta.SessionID != id || strings.Count(out.String(), "Enter number") != 1 || !strings.Contains(out.String(), "Show · 1 session") || left < 0 || left > jsonAt {
 		t.Fatalf("got %q want %q:\n%s", meta.SessionID, id, out.String())
 	}
 }
@@ -243,7 +245,7 @@ func runSessionPicker(t *testing.T, picker *sessionPicker, sessions []archive.Me
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
 	format.Now = pickerNow
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(input), &out), &out, sessions, len(sessions), false, format, "show")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(input), &out), &out, sessions, format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,8 +352,8 @@ func TestPickerAcceptsAnyRowFromAnyPage(t *testing.T) {
 func TestPickerStopsAtTheFirstAndLastPage(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(12, oneProject)
-	_, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nzz\nq\n")
-	if ok || len(screens) != 6 {
+	_, ok, screens := runSessionPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nq\n")
+	if ok || len(screens) != 5 {
 		t.Fatalf("ok=%v, %d screens:\n%s", ok, len(screens), strings.Join(screens, "\n----\n"))
 	}
 	checkScreensFit(t, screens, 120, 10)
@@ -365,7 +367,6 @@ func TestPickerStopsAtTheFirstAndLastPage(t *testing.T) {
 		{"6-10", "Page 2 of 3 · 12 sessions · [n] next  [p] previous\n\nEnter number"},
 		{"11-12", "Page 3 of 3 · 12 sessions · [p] previous\n\nEnter number"},
 		{"11-12", "[p] previous\nThis is the last page; p goes back.\nEnter number"},
-		{"11-12", "[p] previous\nEnter a listed number or short ID, n or p for another page, or q to quit.\nEnter number"},
 	} {
 		if rowSpan(screens[i]) != want.span || !strings.Contains(screens[i], want.line) {
 			t.Fatalf("screen %d, want rows %s and %q:\n%s", i, want.span, want.line, screens[i])
@@ -379,12 +380,12 @@ func TestPickerOnTheNormalScreenPrintsMessagesBelow(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	format := listFormatOptions{Now: pickerNow}
-	_, _, err := pickBrowseSession(fixedTerminal{120, 10}, newPrompter(strings.NewReader("p\nzz\nq\n"), &out), &out, pickerSessions(12, oneProject), 12, false, format, "show")
+	_, _, err := (&sessionPicker{env: fixedTerminal{120, 10}}).pick(newPrompter(strings.NewReader("p\nn\nn\nn\nq\n"), &out), &out, pickerSessions(12, oneProject), format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	if strings.Count(text, "Page 1 of 3") != 1 || !strings.Contains(text, "to quit: This is the first page; n goes on.\n\nEnter number") || !strings.Contains(text, "to quit: Enter a listed number or short ID") {
+	if strings.Count(text, "Page 1 of 3") != 1 || !strings.Contains(text, "to quit: This is the first page; n goes on.\n\nEnter number") || !strings.Contains(text, "to quit: This is the last page; p goes back.\n\nEnter number") {
 		t.Fatalf("output:\n%s", text)
 	}
 }
@@ -420,8 +421,8 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 	if err := printSessionTable(&want, formatSessionRows(sessions, format), format); err != nil {
 		t.Fatal(err)
 	}
-	printListFooter(&want, len(sessions), len(sessions), false, "")
-	want.WriteString("\nEnter number (or unique short SESSION_ID) to show, or q to quit: ")
+	printListFooter(&want, len(sessions), len(sessions), false, listFormatOptions{})
+	want.WriteString("\nEnter number (or unique short SESSION_ID) to show, words to filter, or q to quit: ")
 	for _, size := range []fixedTerminal{{}, {120, 40}, {200, 1000}} {
 		_, _, screens := runSessionPicker(t, &sessionPicker{env: size}, sessions, listFormatOptions{GroupByProject: true}, "q\n")
 		if len(screens) != 1 || screens[0] != want.String() {
@@ -454,7 +455,9 @@ func TestPickerCountsWrappedAndColoredLines(t *testing.T) {
 	if !strings.Contains(wide[0], "\x1b[2m") || rowSpan(wide[0]) != "1-15" {
 		t.Fatalf("wide page:\n%s", wide[0])
 	}
-	if rowSpan(narrow[0]) != "1-6" {
+	// The prompt takes three rows at 40 columns, one more than before it
+	// asked for words to filter by.
+	if rowSpan(narrow[0]) != "1-5" {
 		t.Fatalf("narrow page:\n%s", narrow[0])
 	}
 }

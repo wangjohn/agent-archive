@@ -249,6 +249,17 @@ func promptRegion(p *prompter, label, def string) (string, error) {
 // one line and asks instead. A region the last storage check failed for
 // (failedRegion) is asked for again rather than kept.
 func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegion string) error {
+	profileRegion, noCredentials, err := chooseS3Profile(p, cfg, env)
+	if err != nil {
+		return err
+	}
+	return promptS3ExistingBucket(p, cfg, env, failedRegion, profileRegion, noCredentials)
+}
+
+// chooseS3Profile asks for the AWS profile and records it in cfg. It returns
+// the profile's own region, when discovery found a valid one, and whether
+// the profile names no credential source.
+func chooseS3Profile(p *prompter, cfg *credentials.Config, env Env) (profileRegion string, noCredentials bool, err error) {
 	profiles, err := env.awsProfiles()
 	if err != nil {
 		terminal.Println(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
@@ -261,7 +272,7 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegio
 		profile, err = p.required("AWS profile", def)
 	}
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if profile != cfg.AWSProfile {
 		cfg.Region = ""
@@ -272,8 +283,6 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegio
 	if !validRegion(cfg.Region) {
 		cfg.Region = ""
 	}
-	var profileRegion string
-	noCredentials := false
 	for _, candidate := range profiles {
 		if candidate.Name == profile {
 			profileRegion, noCredentials = candidate.Region, candidate.NoCredentials
@@ -283,7 +292,15 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegio
 	if !validRegion(profileRegion) {
 		profileRegion = ""
 	}
+	return profileRegion, noCredentials, nil
+}
 
+// promptS3ExistingBucket asks which existing bucket to use, for the profile
+// chooseS3Profile recorded in cfg, then settles the region as
+// promptS3Location describes.
+func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, failedRegion, profileRegion string, noCredentials bool) error {
+	profile := cfg.AWSProfile
+	var err error
 	var finder BucketFinder
 	if noCredentials {
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so type the bucket name.\n", profile)
@@ -347,7 +364,7 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
-		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name.\n", profile)
+		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name; to create one instead, choose Amazon S3 at the storage question and continue with creation.\n", profile)
 		bucket, err = p.required("Bucket name", saved)
 		return bucket, nil, err
 	}

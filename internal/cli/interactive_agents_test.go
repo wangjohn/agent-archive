@@ -140,6 +140,7 @@ func TestSetupYesStillReadsTheR2SecretWhereItMay(t *testing.T) {
 // purge apply reads a typed digest from standard input, terminal or not, so
 // with interaction off it refuses instead of waiting for one.
 func TestPurgeApplyDoesNotWaitForADigestInAnAgent(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, t.TempDir(), time.Now())
 	env := testEnv(t, home, time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC))

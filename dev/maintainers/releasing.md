@@ -41,7 +41,7 @@ release asset, change `scripts/write-checksums.sh`, those three lists, and
 that test together.
 
 The workflow runs only on a tag and has no manual trigger, so it is not
-exercised by pull requests. The Test workflow's `cross-build` job runs the
+exercised by pull requests. The [Test workflow](../../.github/workflows/test.yml)'s `cross-build` job runs the
 Linux half of it (`scripts/build-release.sh linux` and
 `scripts/verify-linux-release.sh` on a placeholder version) on every pull
 request. To rehearse the rest, push a `vX.Y.Z` tag on a commit in `main` to
@@ -66,7 +66,8 @@ the corresponding settings or labels are active.
 | Check | Live evidence to record |
 | --- | --- |
 | `release` environment | Settings → Environments shows required reviewers, deployment tag restriction `v*.*.*`, `APPLE_SIGNING_ENABLED=true`, and the six Apple secrets scoped to this environment (names and scope only; never record values). |
-| `main` protection | Settings → Rules → Rulesets or Branches shows protection enabled and the exact required CI checks for `main`; compare their names with the current [test workflow](../../.github/workflows/test.yml). |
+| `main` protection | Settings → Rules → Rulesets or Branches shows protection enabled and the exact required pull-request CI checks for `main`; compare their names with [Test](../../.github/workflows/test.yml) and [Levenshtein](../../.github/workflows/levenshtein.yml). Require `linux-race`, `macos-smoke`, `cross-build`, `lint`, and `verify` after confirming their exact displayed check names. Coordinate the switch with the CI workflow merge: retire `test (ubuntu-latest)`, `test (macos-14)`, `fuzz`, and `real-systemd`, then refresh other open PR branches so they emit the new checks. |
+| Post-merge validation | Record a passing [Extended workflow](../../.github/workflows/extended.yml) on the release commit, plus fuzz and real-systemd runs on that SHA (dispatch them manually when the latest nightly ran on an earlier commit). Triage a red Extended run before tagging. |
 | Private vulnerability reporting | Settings → Security → Code security and analysis shows private vulnerability reporting enabled; test the private reporting route described in [SECURITY.md](../../SECURITY.md) without submitting a real report. |
 | Issue labels | Confirm `bug`, `capture-gap`, and `enhancement` exist in live repository labels and match the [issue templates](../../.github/ISSUE_TEMPLATE/). |
 | Published tag | Confirm the release tag points to the tested `main` commit, the publish job completed signing and accepted notarization for both macOS architectures, and the release has `agent-archive-darwin-arm64`, `agent-archive-darwin-amd64`, `agent-archive-linux-arm64`, `agent-archive-linux-amd64`, and `SHA256SUMS`. Download all five; verify the macOS signatures and every checksum (`shasum -a 256 -c SHA256SUMS` on macOS, `sha256sum -c SHA256SUMS` on Linux). The Linux binaries have no signature to verify. |

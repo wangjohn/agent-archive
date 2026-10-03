@@ -16,13 +16,14 @@ const moreTranscript = `
 // lookup fails (git briefly unavailable, the checkout moved), and a lookup
 // that succeeds with another answer (the remote really changed) replaces it.
 func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	path := writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript)
 	reg := registration(t, path)
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
-	opts := Options{MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Fatalf("first publication repo_key = %q, want %q", got.RepoKey, widgetKey)
 	}
@@ -57,12 +58,13 @@ func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
 }
 
 func TestDerivedRepoKeyIsStickyAcrossAParserRefresh(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
-	opts := Options{MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Fatalf("setup: repo_key = %q", got.RepoKey)
 	}
@@ -96,13 +98,14 @@ func TestDerivedRepoKeyIsStickyAcrossAParserRefresh(t *testing.T) {
 // A key on the registration is what the hook saw at the start of the session:
 // it is used as recorded, not re-derived, whatever git says later.
 func TestRegisteredRepoKeyIsNotReDerived(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = widgetKey
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": gadgetKey}}
-	opts := Options{MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	now = now.Add(time.Hour)
 	opts.ParserVersion = "two"

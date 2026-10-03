@@ -1,0 +1,9 @@
+=== RUN   TestLargeRecordMemoryCeiling
+    record_limit_test.go:129: 32 MiB record (bulk in a dropped field): peak heap in use 144.1 MiB above baseline (sampled), 160.1 MiB allocated in total, 358 bytes retained
+--- PASS: TestLargeRecordMemoryCeiling (0.65s)
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/archive	0.684s
+=== RUN   TestOneChangedFileAmidSettledSessionsFiltersOnce
+--- PASS: TestOneChangedFileAmidSettledSessionsFiltersOnce (0.08s)
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/collector	0.110s

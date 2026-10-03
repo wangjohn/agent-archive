@@ -1,5 +1,5 @@
 // Package backfill finds the Claude Code, Codex, and Cursor sessions already
-// on this Mac and plans importing them into the archive (see
+// on this machine and plans importing them into the archive (see
 // dev/specs/backfill.md). Planning is read-only: it lists the
 // apps' native stores, runs each app's adapter over every transcript it may
 // import, and keeps only counts, times, and sizes. File system access, the
@@ -19,6 +19,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
@@ -236,6 +237,7 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	Sources agentapi.SourcesLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep

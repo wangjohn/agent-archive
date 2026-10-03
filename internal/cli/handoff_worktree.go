@@ -31,7 +31,7 @@ type worktreeDependencies interface {
 	readHome() (string, error)
 	now() time.Time
 	interactive(any) bool
-	lookupEnv(string) (string, bool)
+	currentSessionDependencies
 	runGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 }
 
@@ -62,14 +62,23 @@ func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target hand
 // agent, it warns and continues.
 func checkActiveSource(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (useWorktree bool, err error) {
 	// Only this machine's own sessions have a checkout here to share.
-	if target.source != "local" || target.lastActivityAt.IsZero() {
+	if target.source != "local" {
 		return false, nil
 	}
 	now := env.now()
-	if now.Sub(target.lastActivityAt).Abs() > activeSourceWindow {
+	// The same test that puts the live dot on the picker's row.
+	if !activeNow(now, target.lastActivityAt) {
 		return false, nil
 	}
-	reg, ok := sourceRegistration(env, target.bundle.ArchiveSessionID)
+	var reg archive.SessionRegistration
+	var ok bool
+	if target.native != nil {
+		c := target.native
+		reg = archive.SessionRegistration{NativeSessionID: c.NativeID, ProjectRoot: c.Directory, Harness: archive.Harness{Name: c.Ref.Harness}}
+		ok = true
+	} else {
+		reg, ok = sourceRegistration(env, target.bundle.ArchiveSessionID)
+	}
 	if !ok || !sameProject(reg.ProjectRoot, dir) {
 		return false, nil
 	}
@@ -121,12 +130,12 @@ func sourceRegistration(env worktreeDependencies, id string) (archive.SessionReg
 // Cursor session.
 func isCallingAgent(env currentSessionDependencies, reg archive.SessionRegistration) bool {
 	harness := archive.CanonicalHarness(reg.Harness.Name)
-	for _, v := range currentSessionEnv {
-		if value, ok := env.lookupEnv(v.key); ok && v.harness == harness && strings.TrimSpace(value) == reg.NativeSessionID {
+	for _, observation := range runtimeObservations(env) {
+		if observation.NativeID != "" && string(observation.Agent) == harness && observation.NativeID == reg.NativeSessionID {
 			return true
 		}
 	}
-	return harness == archive.HarnessCursor && inCursorAgent(env)
+	return projectRuntime(env, harness) != ""
 }
 
 // createHandoffWorktree adds a worktree on a new branch at HEAD beside dir's
@@ -327,6 +336,9 @@ func operationInProgress(ctx context.Context, env worktreeDependencies, top stri
 // characters of its archive ID, limited to characters safe in both.
 func handoffShortID(target handoffTarget) string {
 	name := handoffFileName(target.bundle)
+	if target.native != nil {
+		name = target.native.NativeID
+	}
 	if len(name) > 8 {
 		name = name[:8]
 	}

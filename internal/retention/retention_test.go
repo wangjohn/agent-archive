@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -60,14 +61,14 @@ func publishTwice(t *testing.T, local *state.Store, store storage.ObjectStore, i
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	firstMeta := fetchMetadata(t, store, id)
 
 	writeTranscript(t, dir, id+".jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	t1 := t0.Add(10 * time.Minute)
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
 		t.Fatal(err)
 	}
 	return firstMeta.SourceBundle.Key
@@ -91,6 +92,7 @@ func fetchMetadata(t *testing.T, store storage.ObjectStore, sessionID string) ar
 }
 
 func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -137,6 +139,7 @@ func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 }
 
 func TestSweepNeverDeletesTheCurrentSource(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -154,6 +157,7 @@ func TestSweepNeverDeletesTheCurrentSource(t *testing.T) {
 }
 
 func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -162,7 +166,7 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	meta := fetchMetadata(t, store, "s1")
@@ -189,6 +193,7 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 }
 
 func TestSweepWithinRetentionWindowLeavesSessionAlone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -197,7 +202,7 @@ func TestSweepWithinRetentionWindowLeavesSessionAlone(t *testing.T) {
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -230,6 +235,7 @@ func (f failingDeleteStore) Delete(ctx context.Context, key string) error {
 }
 
 func TestSweepIsolatesOneSessionsFailure(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	memStore := storagetest.NewMemoryStore()
@@ -263,13 +269,14 @@ func publishThird(t *testing.T, local *state.Store, store storage.ObjectStore, i
 	if err := os.WriteFile(path, append(data, []byte("\n"+`{"type":"response_item","id":"m3","payload":{"type":"message","role":"user","content":"third"}}`)...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collector.Run(context.Background(), local, store, collector.Options{MachineID: "m", Now: func() time.Time { return at }})
+	result, err := collector.Run(context.Background(), local, store, collector.Options{Sources: builtin.NewBuiltins(), MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
 }
 
 func TestSweepFailsClosedWithUnreadableCurrentMetadata(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	at := time.Now()
@@ -295,8 +302,10 @@ func TestSweepFailsClosedWithUnreadableCurrentMetadata(t *testing.T) {
 }
 
 func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
+	t.Parallel()
 	for _, failMetadata := range []bool{true, false} {
 		t.Run(strconv.FormatBool(failMetadata), func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			mem := storagetest.NewMemoryStore()
 			at := time.Now()
@@ -333,6 +342,7 @@ func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
 }
 
 func TestRetentionProtectsNewerRemoteCaptureAndClockRollbackPredecessor(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	at := time.Now().UTC()
@@ -414,6 +424,7 @@ func pointCurrentAt(t *testing.T, store storage.ObjectStore, id, key string) {
 // A -> B -> A -> C: A is superseded twice. The immediate predecessor of C is
 // A, so the sweep must retain A and expire B, not the reverse.
 func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -453,6 +464,7 @@ func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
 }
 
 func TestSweepRemovesVerifiedPrivacyPredecessorAfterGrace(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -486,6 +498,7 @@ func TestSweepRemovesVerifiedPrivacyPredecessorAfterGrace(t *testing.T) {
 }
 
 func TestSweepPrivacyPredecessorDeletionFailureRetries(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -529,6 +542,7 @@ func (s *replaceMetadataOnSecondRead) Get(ctx context.Context, key string) ([]by
 }
 
 func TestSweepPrivacyPredecessorRechecksChangedMetadata(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -566,6 +580,7 @@ func (c *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	mem := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)

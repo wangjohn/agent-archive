@@ -157,6 +157,46 @@ func TestWriteStatsHTMLFileWithoutForceNeverReplaces(t *testing.T) {
 	}
 }
 
+// A destination created after the last existence check must survive both
+// an ordinary collision and a filesystem that cannot make hard links.
+func TestStatsHTMLAtomicCreateFailureNeverFallsBackToReplacement(t *testing.T) {
+	t.Parallel()
+	unsupported := errors.New("hard links are not supported")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"collision", os.ErrExist},
+		{"unsupported filesystem", unsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "stats.html")
+			link := func(_, destination string) error {
+				if err := os.WriteFile(destination, []byte("keep the concurrent report"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return tc.err
+			}
+			err := writeStatsHTMLFileWithLink(path, []byte("new report"), false, link)
+			if err == nil {
+				t.Fatal("failed atomic create reported success")
+			}
+			if errors.Is(tc.err, unsupported) && !errors.Is(err, unsupported) {
+				t.Fatalf("link failure was lost: %v", err)
+			}
+			kept, readErr := os.ReadFile(path)
+			if readErr != nil || string(kept) != "keep the concurrent report" {
+				t.Fatalf("existing report=%q err=%v", kept, readErr)
+			}
+			if names := listNames(t, dir); len(names) != 1 || names[0] != "stats.html" {
+				t.Fatalf("failed create left temporary files: %v", names)
+			}
+		})
+	}
+}
+
 // writeStatsHTMLFile itself refuses a symbolic link at the path,
 // even with force: something may have replaced the file since the flags were
 // checked, and a link is never replaced by a page.

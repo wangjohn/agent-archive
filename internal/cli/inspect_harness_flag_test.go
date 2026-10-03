@@ -42,7 +42,7 @@ func TestHarnessFlagAcceptsCanonicalAliases(t *testing.T) {
 		{value: "cursor", want: "cursor"},
 	}
 	for _, tc := range cases {
-		if got, ok := harnessFlag(tc.value); !ok || got != tc.want {
+		if got, ok := harnessFlagWithCatalog(productionAgents.Catalog(), tc.value); !ok || got != tc.want {
 			t.Errorf("harnessFlag(%q) = %q, %v; want %q", tc.value, got, ok, tc.want)
 		}
 	}

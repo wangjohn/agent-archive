@@ -29,20 +29,12 @@ Project path:
 
 Step 2 of 3 · Connect storage
 
-Where should sessions be stored?
-  1) Cloudflare R2
-  2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [2]: 
+Current storage: s3 / team-archive
+Keep your current storage?
+[Enter] Keep current storage
+[c] Change storage
+Choose: 
 
-AWS profile [work]: 
-
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name [2]: 
-
-Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 ✓ Connected to your storage.
@@ -66,7 +58,7 @@ Step 3 of 3 · Review your changes
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
@@ -110,7 +102,7 @@ Step 3 of 3 · Review your changes
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
@@ -133,6 +125,6 @@ Check progress with agent-archive status.
 
 Looking for past sessions in these projects… none to import.
 
-To set up another Mac with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app --project ~/src/api
+To set up another machine with this storage, run there:
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --prefix agent-archive/ --retention-days 30 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app --project ~/src/api
 [exit 0]

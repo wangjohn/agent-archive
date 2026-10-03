@@ -25,30 +25,44 @@ import (
 // -wal and -shm files exist and every chat read needs a snapshot; closed,
 // each write opens and closes the database, leaving no side file.
 type cursorDB struct {
-	t    *testing.T
+	t    testing.TB
 	path string
 	held *sql.DB
 }
 
-func newCursorDB(t *testing.T, running bool) *cursorDB {
-	t.Helper()
-	// Snapshots go to the system temporary directory; give the test its own.
-	previous := cursorstore.SnapshotTempDirForTesting
-	cursorstore.SnapshotTempDirForTesting = t.TempDir()
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
-	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
+// newCursorDB makes a Cursor database, running (holding its connection) or
+// not, and gives the test a snapshot folder of its own (ownSnapshotFolder),
+// so a test that uses it is not parallel. The folder cannot be shared with
+// parallel tests: every pass sweeps it, and a sweep's probe of a copy's lock
+// file, landing between a new read creating that file and locking it, fails
+// the read ("lock a Cursor database snapshot directory").
+func newCursorDB(tb testing.TB, running bool) *cursorDB {
+	tb.Helper()
+	ownSnapshotFolder(tb)
+	d := &cursorDB{t: tb, path: filepath.Join(tb.TempDir(), "state.vscdb")}
 	if running {
 		d.held = d.open()
 		if _, err := d.held.ExecContext(context.Background(), `PRAGMA wal_autocheckpoint=0`); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
-		t.Cleanup(func() {
+		tb.Cleanup(func() {
 			if err := d.held.Close(); err != nil {
-				t.Error(err)
+				tb.Error(err)
 			}
 		})
 	}
 	return d
+}
+
+// ownSnapshotFolder gives the test a snapshot folder of its own, for a test
+// that reads Cursor's database, checks what is in the folder, or checks what
+// a sweep of it did. It assigns cursorstore.SnapshotTempDirForTesting, so the
+// test must not be parallel.
+func ownSnapshotFolder(tb testing.TB) {
+	tb.Helper()
+	previous := cursorstore.SnapshotTempDirForTesting
+	cursorstore.SnapshotTempDirForTesting = tb.TempDir()
+	tb.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
 }
 
 func (d *cursorDB) open() *sql.DB {
@@ -92,13 +106,23 @@ func (d *cursorDB) chat(id string, lastUpdatedAt int64, bubbles ...string) {
 // chatSaying is chat with every message's text.
 func (d *cursorDB) chatSaying(id string, lastUpdatedAt int64, text string, bubbles ...string) {
 	d.t.Helper()
+	d.namedChatSaying(id, "", lastUpdatedAt, text, bubbles...)
+}
+
+// namedChatSaying is chatSaying for a chat Cursor has named, or not ("").
+func (d *cursorDB) namedChatSaying(id, name string, lastUpdatedAt int64, text string, bubbles ...string) {
+	d.t.Helper()
 	headers := []map[string]any{}
 	for _, b := range bubbles {
 		headers = append(headers, map[string]any{"bubbleId": b, "type": 1})
 		row, _ := json.Marshal(map[string]any{"_v": 3, "bubbleId": b, "type": 1, "text": text, "createdAt": 1767225600000})
 		d.put("bubbleId:"+id+":"+b, string(row))
 	}
-	value, _ := json.Marshal(map[string]any{"_v": 18, "composerId": id, "createdAt": 1767225600000, "lastUpdatedAt": lastUpdatedAt, "status": "completed", "fullConversationHeadersOnly": headers})
+	composer := map[string]any{"_v": 18, "composerId": id, "createdAt": 1767225600000, "lastUpdatedAt": lastUpdatedAt, "status": "completed", "fullConversationHeadersOnly": headers}
+	if name != "" {
+		composer["name"] = name
+	}
+	value, _ := json.Marshal(composer)
 	d.put("composerData:"+id, string(value))
 }
 
@@ -143,7 +167,7 @@ func settleCursorSession(t *testing.T, local *state.Store, reg archive.SessionRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
+	adapter, err := testAdapter(reg.Harness.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +211,7 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	db.chat("chat-1", 1000, "b1", "b2")
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 
 	reg := cursorRegistration("cursor-session", "chat-1")
 	if err := local.SaveRegistration(reg); err != nil {
@@ -285,12 +309,13 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 }
 
 // TestCursorSQLiteOneSnapshotPerPass: however many chats changed, a pass
-// copies the database once, and removes the copy when it ends.
+// copies the database once, and removes the copy when it ends. Not parallel:
+// it checks the snapshot folder is empty after the pass.
 func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path}
 	for i := range 4 {
 		id := fmt.Sprintf("chat-%d", i)
 		db.chat(id, 1, "m")
@@ -350,7 +375,7 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 			if err := local.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
-			opts := Options{MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
+			opts := Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
 			for pass := range 3 {
 				result, copies := run(t, local, storagetest.NewMemoryStore(), opts, passes)
 				want := 0
@@ -367,7 +392,8 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 }
 
 // TestCursorSQLitePassSweepsStaleSnapshots: a pass with a Cursor session
-// removes snapshots a killed pass left, even when it reads no chat.
+// removes snapshots a killed pass left, even when it reads no chat. Not
+// parallel: it checks what a sweep of the snapshot folder did.
 func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, false)
@@ -376,7 +402,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{MachineID: "m", CursorDatabase: db.path}
+	opts := Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path}
 	settleCursorSession(t, local, reg, opts)
 	root, err := cursorstore.SnapshotRoot()
 	if err != nil {
@@ -400,6 +426,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 }
 
 func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
+	t.Parallel()
 	file := sourceState{file: transcriptFileInfo{Size: 3, Mtime: 4}}
 	if !file.matches(state.ScanSignature{TranscriptSize: 3, TranscriptMtime: 4}) {
 		t.Fatal("a file signature did not match its own state")
@@ -415,4 +442,23 @@ func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
 
 func contains(list []string, s string) bool {
 	return slices.Contains(list, s)
+}
+
+// Stored native names retain case, while one resolved provider owns the pass.
+func TestCursorSourceNamesShareOneSerialPass(t *testing.T) {
+	local := newTestStore(t)
+	db := newCursorDB(t, true)
+	for i, name := range []string{"cursor", "CURSOR"} {
+		id := fmt.Sprintf("case-chat-%d", i)
+		db.chat(id, 1, "message")
+		reg := cursorRegistration("case-session-"+id, id)
+		reg.Harness.Name = name
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, copies := run(t, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}, countSnapshots(t))
+	if len(result.Errors) != 0 || len(result.Published) != 2 || copies != 1 {
+		t.Fatalf("case names split source pass: %+v copies=%d", result, copies)
+	}
 }

@@ -54,7 +54,8 @@ func spendOf(c stats.Cost) (float64, bool) {
 // daily is the spend-by-day chart, or a sentence saying why there is none.
 func (b *builder) daily() (*dailyChart, string) {
 	s := b.s
-	if len(s.Daily) == 0 {
+	days := s.ChartDays()
+	if len(days) == 0 {
 		return nil, ""
 	}
 	if s.Coverage.SessionsWithTokens == 0 {
@@ -63,10 +64,10 @@ func (b *builder) daily() (*dailyChart, string) {
 	if s.PeakSpend == nil || !finite(s.PeakSpend.USD) || s.PeakSpend.USD <= 0 {
 		return nil, "No day in this window has an estimated cost above zero, so there is no spend chart."
 	}
-	per := (len(s.Daily) + maxBars - 1) / maxBars
+	per := (len(days) + maxBars - 1) / maxBars
 	var buckets []bucket
-	for i := 0; i < len(s.Daily); i += per {
-		run := s.Daily[i:min(i+per, len(s.Daily))]
+	for i := 0; i < len(days); i += per {
+		run := days[i:min(i+per, len(days))]
 		bk := bucket{first: run[0].Date, last: run[len(run)-1].Date}
 		best := -1.0
 		for _, d := range run {
@@ -123,7 +124,7 @@ func (b *builder) daily() (*dailyChart, string) {
 		}
 		c.Rows = append(c.Rows, b.dayRow(bk))
 	}
-	c.Summary = fmt.Sprintf("Spend by day, %s to %s. Peak %s on %s.", dayLabel(s.Window.FirstDay, s.Window.Days),
+	c.Summary = fmt.Sprintf("Spend by day, %s to %s. Peak %s on %s.", dayLabel(days[0].Date, s.Window.Days),
 		dayLabel(s.Window.LastDay, s.Window.Days), peak, dayLabel(s.PeakSpend.Date, s.Window.Days))
 	c.XLabels = xLabels(buckets, slot, s.Window.Days)
 	c.Caption = "Each bar is one day."

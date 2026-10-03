@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -109,17 +111,19 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty    bool
-	unsafe   bool
-	tooLarge bool
+	empty     bool
+	unsafe    bool
+	tooLarge  bool
+	sourceErr error
 }
 
 // subagentWork is one subagent transcript of an imported parent.
 type subagentWork struct {
-	parent   *work
-	sub      Subagent
-	skipped  bool
-	vanished bool
+	parent    *work
+	sub       Subagent
+	skipped   bool
+	vanished  bool
+	sourceErr error
 }
 
 // importable reports whether nothing about the file itself stops it being
@@ -171,7 +175,7 @@ func markDuplicates(env Environment, group []*work) {
 	}
 }
 
-// BuildPlan finds every session on this Mac and decides, for each, whether it
+// BuildPlan finds every session on this machine and decides, for each, whether it
 // is imported or why not. It writes nothing.
 func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg config.Config, filters Filters) (Plan, error) {
 	if err := filters.Validate(); err != nil {
@@ -251,7 +255,10 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 // preparePlanWork performs local discovery, reads transcript heads, and maps
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
-	found, unread := discover(env)
+	found, unread, err := discover(ctx, env)
+	if err != nil {
+		return nil, nil, unread, 0, err
+	}
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
@@ -313,12 +320,17 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 // classifyPlanWork asks the archive about native IDs, then reads full
 // transcripts only where the decision requires their contents or start time.
 func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, filters Filters, items []*work, projectFilter []string, since, until time.Time, workers int) error {
-	sessions := map[string][]*work{}
+	sessions := map[agentmeta.SessionKey][]*work{}
 	for _, w := range items {
 		if w.vanished {
 			continue
 		}
 		if strings.TrimSpace(w.c.NativeSessionID) != "" {
+			key, keyErr := agentmeta.NewSessionKey(string(w.t.harness), w.c.NativeSessionID)
+			if keyErr != nil {
+				w.unsafe = true
+				continue
+			}
 			reason, err := state.Classify(string(w.t.harness), w.c.NativeSessionID)
 			if err != nil {
 				return fmt.Errorf("check the archive: %w", err)
@@ -327,7 +339,6 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 				reason = ""
 			}
 			w.state = reason
-			key := string(w.t.harness) + "\x00" + w.c.NativeSessionID
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
@@ -353,6 +364,11 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 		runAdapter(env, w)
 	}); err != nil {
 		return err
+	}
+	for _, w := range toFilter {
+		if w.sourceErr != nil {
+			return w.sourceErr
+		}
 	}
 	for _, group := range sessions {
 		markDuplicates(env, group)
@@ -404,8 +420,12 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{}, env.Sources)
 		if err != nil {
+			if fatalSourceFailure(err) {
+				s.sourceErr = err
+				return
+			}
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
 			return
@@ -417,6 +437,9 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		return err
 	}
 	for _, s := range subagents {
+		if s.sourceErr != nil {
+			return s.sourceErr
+		}
 		switch {
 		case s.vanished:
 		case s.skipped:
@@ -501,8 +524,12 @@ func runAdapter(env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart)
+	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart, env.Sources)
 	if err != nil {
+		if fatalSourceFailure(err) {
+			w.sourceErr = err
+			return
+		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
@@ -543,6 +570,10 @@ func runAdapter(env Environment, w *work) {
 	case harnessCursor:
 		// Its start is the file's creation, set above.
 	}
+}
+
+func fatalSourceFailure(err error) bool {
+	return agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // conversationTypes are the retained record types that hold a turn of the

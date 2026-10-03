@@ -42,11 +42,10 @@ Skills  proj[31mRED]0;title 10 · 日本語のとても長いプロジ 4 · docs
 MCP     [2J[Hgone 41 · linear 12 calls (abcdefghi)
 Skills count the sessions that used each one; MCP counts calls.
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long context, 38
   subagents
-● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, abcdefghi 2)
 
 NOTES
 Scope: this archive only.

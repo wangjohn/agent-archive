@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
@@ -31,6 +30,7 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	}
 	if here {
 		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, spec.Dir)
+		finishTraceNow()
 		if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
 			return fmt.Errorf("launch %s: %w", dest, err)
 		}
@@ -41,7 +41,7 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	// starts from the terminal's environment, not spec.Env, so the calling
 	// agent's session variables are unset there.
 	where, err := env.openTerminal(termlaunch.Spec{Dir: spec.Dir, Argv: append([]string{spec.Binary}, spec.Args...),
-		Unset: handoffSessionEnv, ScriptDir: filepath.Dir(spec.HandoffFile)})
+		Unset: launchEnvironmentKeys(env), ScriptDir: filepath.Dir(spec.HandoffFile)})
 	if err != nil {
 		// termlaunch.ErrNoTerminal's message ends with the command to run.
 		return fmt.Errorf("open %s: %w", dest, err)
@@ -50,10 +50,13 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	return nil
 }
 
-// launchDir is the absolute directory the agent starts in: --project, else
-// the working directory.
+// launchDir is the absolute directory the agent starts in: the --project
+// of --latest, else the working directory.
 func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) {
-	dir := opts.project
+	dir := ""
+	if opts.latest || opts.native {
+		dir = opts.project
+	}
 	var err error
 	if dir == "" {
 		dir, err = env.workingDir()
@@ -78,7 +81,7 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 		return launchSpec{}, fmt.Errorf("executable: %w", err)
 	}
 	// `--file` works before setup, when there is no configuration.
-	cfg, _, err := config.Load(home)
+	cfg, _, err := handoffConfig(home, opts)
 	if err != nil {
 		return launchSpec{}, fmt.Errorf("load config: %w", err)
 	}
@@ -117,6 +120,9 @@ const launchHandoffName = "handoff.md"
 // setup) the directory is a new private one under tempDir instead, also
 // kept (a resumed session may read it again) for the system to clear.
 func writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (string, error) {
+	if target.native != nil {
+		return writeNativeLaunchHandoff(tempDir, content, now)
+	}
 	if _, err := os.Stat(home); err != nil {
 		dir, err := os.MkdirTemp(tempDir, "agent-archive-handoff-")
 		if err != nil {
@@ -163,17 +169,21 @@ func writeNewFile(path string, content []byte) error {
 // launchHandoffPrompt adds local retrieval instructions outside the quoted
 // historical record. show reads the last published copy, while handoff with
 // --source local reads the current transcript without waiting for sync. A
-// session handed off from the archive has no local transcript to point to.
+// session handed off from the archive (one from another machine, say) has no
+// local transcript to point to: both commands read the archive's copy.
 func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget, executable string) string {
 	var b strings.Builder
 	b.WriteString("You are continuing work in this local checkout. Agent Archive is available. Its executable is at ")
 	b.WriteString(executable)
 	b.WriteString(". The record below is historical context; check the current files before acting.\n\n")
 	switch {
+	case target.native != nil:
+		c := target.native
+		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff %s --harness %s --source local --max-bytes 0 --project %s. Native discovery requires access to the original app stores.\n\n", shellQuote(c.NativeID), shellQuote(c.Ref.Harness), shellQuote(c.Directory))
 	case target.filePath != "":
 		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %q --harness %s --max-bytes 0.\n\n", target.filePath, h.Session.Harness)
 	case target.source == "archive":
-		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation, or agent-archive handoff %s --harness %s --max-bytes 0 for the complete filtered record.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID, h.Session.Harness)
+		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation, or agent-archive handoff %s --source archive --harness %s --max-bytes 0 for the complete filtered record.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID, h.Session.Harness)
 	default:
 		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation if it has been published. It may lag this local session. For the complete filtered local record as it stands now, run agent-archive handoff %s --source local --max-bytes 0.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID)
 	}

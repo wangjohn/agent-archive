@@ -1,4 +1,4 @@
-Fix flaky OAuth callback tests
+Stabilize the OAuth tests
 Claude Code 2.4.1 · claude-opus-5-5 (high reasoning) · Sep 29, 10:14 → 10:58 (44m)
 
 ── You · Sep 22, 10:00 ─────────────────────

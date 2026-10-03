@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -42,11 +43,12 @@ func statsWindowCycle(start int) (windows []int, index int) {
 // statsInputs is what the interactive screen recomputes the numbers from
 // when the window changes: the sessions read once, and how to count them.
 type statsInputs struct {
-	sessions []archive.Metadata
-	now      time.Time
-	location *time.Location
-	prices   stats.PriceTable
-	filters  statsFilters
+	mcpServerNames map[string]string
+	sessions       []archive.Metadata
+	now            time.Time
+	location       *time.Location
+	prices         stats.PriceTable
+	filters        statsFilters
 }
 
 // compute is the numbers for a window of days ending today. A screen lists
@@ -54,7 +56,7 @@ type statsInputs struct {
 // lists, as --html does.
 func (in statsInputs) compute(days int, allRows bool) stats.Stats {
 	return stats.Compute(in.sessions, stats.Options{
-		Now: in.now, Days: days, Location: in.location, PriceTable: in.prices, AllRows: allRows,
+		Now: in.now, Days: days, Location: in.location, PriceTable: in.prices, AllRows: allRows, MCPServerNames: in.mcpServerNames,
 	})
 }
 
@@ -107,8 +109,12 @@ type statsBrowser struct {
 	// typed is the file name typed so far at the save prompt.
 	typed string
 	// saved are the files h wrote, printed once the screen is left so their
-	// paths stay in the scrollback.
-	saved []string
+	// paths stay in the scrollback, whether it ends by a quit or by a signal
+	// (which runs on another goroutine, so the list has its own lock).
+	savedMu sync.Mutex
+	saved   []string
+	// wrote makes the paths print once, whichever way out gets there first.
+	wrote sync.Once
 	// drawn is the lines of the last content laid out, and what they were
 	// laid out for.
 	drawn    []string
@@ -172,16 +178,35 @@ func runStatsBrowser(env statsBrowserDependencies, stdin io.Reader, stdout, stde
 		windows: start.windows, window: start.window, page: pageOverview,
 		shown: map[int]stats.Stats{start.windows[start.window]: start.first},
 	}
+	screen.printAfterSignal(b.printSaved)
 	err := b.run()
 	screen.leave()
-	for _, path := range b.saved {
-		terminal.Printf(stdout, "Wrote %s\n", path)
-	}
+	b.printSaved()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return 1, true
 	}
 	return 0, true
+}
+
+// addSaved records a file h wrote.
+func (b *statsBrowser) addSaved(path string) {
+	b.savedMu.Lock()
+	defer b.savedMu.Unlock()
+	b.saved = append(b.saved, path)
+}
+
+// printSaved says where the pages h saved went, once, after the screen is
+// left: on the normal screen, so the paths stay in the scrollback.
+func (b *statsBrowser) printSaved() {
+	b.wrote.Do(func() {
+		b.savedMu.Lock()
+		paths := slices.Clone(b.saved)
+		b.savedMu.Unlock()
+		for _, path := range paths {
+			terminal.Printf(b.stdout, "Wrote %s\n", path)
+		}
+	})
 }
 
 // run draws the screen and applies keys until one quits. A burst of keys

@@ -347,12 +347,12 @@ func TestFilterV3DropsMessagesThatAreOnlyInjectedInstructions(t *testing.T) {
 
 // The filter and adapter versions are part of the published provenance: a
 // bundle written by this build must declare the build's own filter and adapter
-// versions so a reader can tell which policy produced it. (Filter 12 and
-// adapter 0.12.0 superseded the filter-3 to filter-11 values this test pinned
-// before.)
+// versions so a reader can tell which policy produced it. (Filter 13 and
+// adapter 0.13.0 superseded the filter-3 to filter-12 values this test pinned
+// before; filter 15 and adapter 0.15.0 superseded filter 14.)
 func TestFilterVersionIsDeclaredInCaptureProvenance(t *testing.T) {
 	t.Parallel()
-	if FilterVersion != "12" || adapterVersion != "0.12.0" {
+	if FilterVersion != "15" || adapterVersion != "0.15.0" {
 		t.Fatalf("FilterVersion=%q adapterVersion=%q", FilterVersion, adapterVersion)
 	}
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-tool-evidence.jsonl")))

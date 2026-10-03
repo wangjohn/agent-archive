@@ -1,6 +1,7 @@
-[1mFix flaky OAuth callback tests[0m
+[1mStabilize the OAuth tests[0m
 [2mclaude · agent-archive · 2h ago[0m                                      [32m✓[0m completed
 
+  [2mPrompt   [0m Fix flaky OAuth callback tests
   [2mWhen     [0m Sep 29, 10:14 → 10:58 (44m)
   [2mAgent    [0m Claude Code 2.4.1
   [2mModel    [0m claude-opus-5-5 (high reasoning) · 31 responses
@@ -9,7 +10,9 @@
             1 compaction · 14 files edited
   [2mTools    [0m Bash 42 · Edit 18 · Read 12 · Grep 9 ·
             mcp__github__create_pull_request 1
+  [2mBranch   [0m fix-oauth
   [2mGit      [0m 2 commits · 1 push · PR #155 opened · PR #155 merged
+  [2mPRs      [0m wangjohn/agent-archive#155 · wangjohn/agent-archive#160
   [2mSkills   [0m code-review, simplify
   [2mSubagents[0m 2 linked (1 available, 1 expired)
   [2mImported [0m Sep 29, 12:30 by backfill

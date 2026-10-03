@@ -54,6 +54,8 @@ const reinstall = "install agent-archive in a directory whose path has no such c
 // renderService is the collector's service unit: a oneshot that runs the
 // executable with `_collect`, with AGENT_ARCHIVE_HOME and environment, and
 // logs appended to the data directory's collector.log and collector-error.log.
+// It runs from /, as launchd does and credential helper diagnostics expect,
+// rather than the user's home (systemd's default for a user service).
 // There is no PrivateTmp or other sandboxing: the collector reads the
 // user's own agent files.
 func renderService(executable, dataHome string, environment map[string]string) ([]byte, error) {
@@ -87,6 +89,7 @@ Description=agent-archive background collector
 
 [Service]
 Type=oneshot
+WorkingDirectory=/
 ExecStart=` + word(executable, true) + ` _collect
 ` + env.String() + `StandardOutput=append:` + percent(filepath.Join(dataHome, "collector.log")) + `
 StandardError=append:` + percent(filepath.Join(dataHome, "collector-error.log")) + "\n"), nil

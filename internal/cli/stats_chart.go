@@ -44,7 +44,11 @@ func (p *statsPrinter) dailySpend() []string {
 	if len(s.Daily) < 2 || s.PeakSpend == nil {
 		return nil
 	}
-	perDay, run := p.chartScale(len(s.Daily))
+	days := s.ChartDays()
+	if len(days) == 0 {
+		return nil
+	}
+	perDay, run := p.chartScale(len(days))
 	cells := p.spendCells(run)
 	span := chartSpan(len(cells), perDay)
 	// The peak's amount is bold rather than colored: yellow text is hard to
@@ -55,7 +59,7 @@ func (p *statsPrinter) dailySpend() []string {
 	edge := max(span, visibleWidth(title)+2+visibleWidth(note))
 	lines := []string{p.heading(title, note, edge)}
 	lines = append(lines, p.chartRows(cells, perDay)...)
-	first, last := p.dayLabel(s.Daily[0].Date), p.dayLabel(s.Daily[len(s.Daily)-1].Date)
+	first, last := p.dayLabel(days[0].Date), p.dayLabel(days[len(days)-1].Date)
 	// A chart too narrow to put the two dates apart names them side by side
 	// rather than leaving the last day unlabeled.
 	gap := span - visibleWidth(first) - visibleWidth(last)
@@ -64,7 +68,7 @@ func (p *statsPrinter) dailySpend() []string {
 	}
 	lines = append(lines, p.dim(first+strings.Repeat(" ", gap)+last))
 	if caption := p.chartCaption(cells, run); caption != "" {
-		lines = append(lines, p.dim(caption))
+		lines = append(lines, p.dimAll(p.wrap(caption))...)
 	}
 	return lines
 }
@@ -82,6 +86,9 @@ func (p *statsPrinter) chartCaption(cells []spendCell, run int) string {
 			parts = append(parts, p.g.sparkUnknown+" spend unknown")
 			break
 		}
+	}
+	if note := p.s.ChartCoverageNote(); note != "" {
+		parts = append(parts, "Earlier days omitted; empty days mean no archived sessions.")
 	}
 	return strings.Join(parts, " "+p.g.sep+" ")
 }
@@ -114,7 +121,7 @@ func chartSpan(n, perDay int) int {
 // spendCells is the chart's cells: each day's spend against the peak, or, in
 // runs of several days, the costliest day of the run.
 func (p *statsPrinter) spendCells(run int) []spendCell {
-	days := p.s.Daily
+	days := p.s.ChartDays()
 	peak := p.s.PeakSpend.USD
 	var cells []spendCell
 	for i := 0; i < len(days); i += run {

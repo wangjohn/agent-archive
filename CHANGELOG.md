@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Planned for v0.2.0. This release has not been tagged or published.
+
 ### Added
 
 - **`agent-archive eval export`** prints archived sessions for an evaluation
@@ -18,6 +20,16 @@ follow [Semantic Versioning](https://semver.org/).
   exported is an error record on its own line and the rest still print.
   `--max-bytes` bounds each record. Read-only and never interactive. See the
   [guide](docs/guides/eval-export.md).
+- **Replay sessions stay out of your history.** A tool that replays archived
+  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
+  agents it runs; the sessions its runs produce are captured as usual but
+  marked with `replay` in their metadata (with the run ID when it is a plain
+  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
+  them out; `list --replays include|only` and `stats --replays include|only`
+  show them, marked `[replay]` in the table. `show ID` opens one as usual,
+  and `status --json` counts them per app in `replay_sessions`. See
+  [JSON output](docs/reference/json-output.md#replay-sessions).
+
 - **The commit a session started on.** When a session starts in a git
   repository, the hook records the commit checked out in its working
   directory and whether the working tree had uncommitted changes, and each
@@ -29,19 +41,279 @@ follow [Semantic Versioning](https://semver.org/).
   `git rev-parse` and `git status` with the same short timeout as the
   repository key, before it takes its lock, and records nothing when git is
   missing, slow, or the directory is not a repository. Sessions registered
-  before this release, imported sessions, and subagents have no `git_head`,
-  and nothing infers one later. See
+  before this release and imported sessions have no starting commit; later
+  live stops can still record `last`. Subagents have neither, and nothing
+  infers a commit later. See
   [JSON output](docs/reference/json-output.md#show) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
-- **Replay sessions stay out of your history.** A tool that replays archived
-  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
-  agents it runs; the sessions its runs produce are captured as usual but
-  marked with `replay` in their metadata (with the run ID when it is a plain
-  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
-  them out; `list --replays include|only` and `stats --replays include|only`
-  show them, marked `[replay]` in the table. `show ID` opens one as usual,
-  and `status --json` counts them per app in `replay_sessions`. See
-  [JSON output](docs/reference/json-output.md#replay-sessions).
+- Draft experimental revocation with verified immutable selection, per-key
+  recovery journals, serialized issuance selection and independent publication,
+  plus transaction-based
+  `machines own-key` migration. General availability and first-run pairing
+  remain disabled pending combined and live provider acceptance.
+
+- Draft experimental dedicated R2 issuance for `machines add` and guided bucket
+  creation: exact immutable provider identities, verified fresh keys, default
+  two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
+  Creation, reservation, delivery, and uncertain cleanup are tracked durably;
+  management tokens are never persisted. This phase remains gated and unmerged
+  pending live provider acceptance and integrated revocation/recovery review.
+
+- Handoff before setup discovers Claude Code and Codex native conversations in
+  the current checkout, with filtered batches of 50 previews, explicit older
+  loading, native ID selection and modification-time latest selection. It writes
+  no archive or configuration; private launch files have seven-day best-effort
+  cleanup on later local handoffs. Disposable real-app acceptance is still
+  unverified on macOS and Linux.
+- Experimental read-only `machines --verify` provider observations, gated by
+  `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1`, and an interactive argv-based
+  `cloudflare_token_command` source shared with guided setup. Provider inventory
+  visibility and machine ownership remain explicitly unknown.
+- Encrypted machine pairing shared-key beta: explicit R2 key sharing or S3
+  profile/settings transfer, destination consent, portable subtree scope,
+  staged credential retries, and a secret-free delivery ledger. Shared R2
+  recipients cannot be revoked independently; pairing refuses inside agents.
+
+- Linux support with user systemd scheduling and private file credentials,
+  alongside macOS support. Release builds cover amd64 and arm64 on both systems.
+- Interactive session browsing and search, project-aware listings, richer
+  session metadata, and bounded JSON listings.
+- Terminal and worktree handoff, installed agent skills, and anonymized HTML
+  statistics with estimated costs.
+- Guided storage setup and archive indexing. Guided R2 bucket creation remains
+  experimental behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`.
+- Informational `machines` records, bounded listing, optional first-setup naming
+  and local rename. The list shows pairing dates and shared-key claims. Setup
+  publishes after commit; the collector independently retries registration and
+  refreshes heartbeats at most daily. Records are untrusted bucket claims.
+
+### Fixed
+
+- Draft machine revocation rejects forged self labels, leaves registry commands
+  usable after progress publication, and preserves unverified request targets.
+  Own-key migrations retire completed checkpoints and disclose shared access
+  retained through retired local credential aliases. Staged migration retries
+  refuse a shared credential reference replaced by later setup, retaining the
+  stage for safe cancellation. Pre-slot interruptions can be safely retired
+  locally after setup changes, while uncertain issuance and secret cleanup
+  remain recorded. Confirmed-deleted own-key stages retry exact local secret
+  removal after credential-store recovery without deleting the provider again.
+  Own-key commit requires a persisted staged credential even when the shell
+  supplies a matching key.
+
+- Native handoff keeps verified IDs selectable when its cumulative label-read
+  budget is exhausted, and reuses unused header reservations after inspection.
+  Incomplete local `--latest` offers an explicit picker or known-ID recipes
+  rather than selecting automatically. Cancellation during canonical checkout
+  scoping stops further path resolution.
+
+### Changed
+
+- Interactive storage setup has two provider choices, R2 and S3. Creating a
+  bucket is the main flow, with a summary before creation and secondary
+  Customize, Use an existing bucket, and Back actions. R2 creation retains
+  its experimental flag. Installed storage can be kept without re-entering
+  settings. Interactive `r2` and `s3` follow the provider flow;
+  `r2-existing` and `s3-existing` jump to existing storage. `setup --yes`
+  keeps its existing flags and behavior.
+
+- Bucket cleanup recipes retain private manifests and support reviewed, single-use recovery after partial deletion, including metadata-first session cleanup.
+- Move the first admission-intent file synchronization outside the short queue lock and persist a pause generation, preventing delayed hook admission across a pause/resume boundary.
+- The README quickstart now covers per-app hook approval and publication/read-back verification. FAQ archive sizing uses an unlimited count across all projects in the configured bucket and prefix, rather than the default 50-row listing.
+- Privacy filter 15 (adapters 0.15.0) redacts `aa-pair1:` machine pairing
+  bundles from retained transcript text, including truncated payloads, nested
+  JSON, tool arguments, and displayed files. Existing sessions are re-filtered
+  on the next collector scan.
+
+- Listings default to the current project when available and return at most 50
+  sessions. Use `--all-projects` to search the whole archive and `--limit 0` to
+  return all matches.
+- Scripts written against earlier builds must consume `list --json` schema 4,
+  replacing schema 1 and the old `unavailable` field. Check
+  `total_matched_known` before treating `total_matched` as exact. For a complete
+  whole-archive result, use `agent-archive list --json --all-projects --limit 0`.
+- Indexed listing requires every writer to publish index hints before metadata.
+  Stop metadata-only development collectors before rebuilding an index. There
+  is no legacy collector migration protocol in this launch release.
+- Refresh setup and installed `/handoff` skills when adopting this build. Handoff
+  offers the current terminal, a new window, or a worktree where supported.
+
+### Fixed
+
+- Guided R2 setup validates pasted replacement management tokens before
+  creating a client, matching its environment, command and initial prompt sources.
+- Experimental provider verification identifies existing permissions without
+  requiring permission to create a new token with them.
+- `list`, `show` and `handoff` line up their columns when color is on: a
+  dimmed hint such as `· 18 subagents` no longer pushes the rest of its row
+  out of line.
+- `list` and `show` date a session by when it was last active, as `handoff`
+  does, and list the most recently active first: a session `backfill`
+  imported shows when it ran, not when it was imported. `list --json` keeps
+  its order and fields.
+- The `handoff` picker's footer names the subagent sessions it leaves out,
+  as `list` and `show` do.
+- The Tools row of `show`'s summary wraps between tools and no longer cuts a
+  line short with `…`.
+- A Cursor session's title (parser 0.19.0) leaves out the `<timestamp>` line
+  and `<user_query>` tags Cursor wraps a prompt in.
+- Guided R2 setup checks the token before asking for bucket settings, offers
+  token replacement or retry on failure, and summarizes the bucket and
+  automatic or customized location before creation.
+- Guided R2 setup checks the archive-key permission before confirmation and
+  bucket creation, so a failed lookup leaves no empty bucket behind.
+- R2 setup instructions distinguish custom account tokens from the R2 token
+  form, show the dashboard's Edit permission labels, and explain how to use
+  a bucket-scoped Object Read & Write key instead.
+- HTML statistics exports preserve concurrently created destination files when
+  `--force` is absent, including when the filesystem cannot create hard links.
+- Clipboard handoff uses `pbcopy` on macOS and installed `wl-copy`, `xclip`, or
+  `xsel` providers on Linux. Headless Linux sessions omit copy and offer writing
+  the handoff to a file.
+
+<details>
+<summary>Detailed development history since v0.1.1</summary>
+
+The entries below record development in sequence; later entries may supersede
+intermediate parser versions and interaction details. The summary above describes
+the release behavior.
+
+#### Changed
+
+- Scripted setup accepts `--prefix`, `--retention-days`, and explicit skill-use
+  capture choices. The command printed for another machine now carries these
+  settings, skill evidence, and the agent skill installation policy.
+
+- The handoff picker, `show --json` with no ID, and the pickers for an
+  ambiguous `show` or `handoff` query open the browser's alternate screen on a
+  terminal, so their list is gone once you choose, as `list`'s is.
+  `show "<words>"` with several matches on a terminal browses them (and shows
+  the details itself) unless `--json` or `--transcript` asks for one session
+  to print. The picker lists every match of an ambiguous query, not the first
+  20 (a pipe or an agent still gets 20 and a count). The line-mode prompt says
+  words filter, and an answer that is not a row number, an ID, or a command (`q`,
+  `n`, `p`, `a`) no longer reports a bad answer but filters.
+- `list`, `show`, and handoff keep up to 128 characters of a session's saved
+  name or first-prompt preview, instead of 72. Parser `0.17.1` refreshes
+  existing metadata from retained source bundles on the next collector scan;
+  sessions whose source is unavailable keep their existing preview.
+
+#### Added
+
+- Setup accepts `--project-repo` to match repositories at different paths,
+  with bounded header-only history discovery and local exclusions preserved.
+  Printed transfer commands use repository keys when available.
+
+- **One session browser, with a filter you type into.** The handoff picker,
+  `show --json` with no ID, and a `show` or `handoff` query that matches
+  several sessions now open the same browser as `list` and bare `show`
+  (`agent-archive list`, `show`, `handoff`), instead of a numbered list you
+  answer with a line. Press `/` to narrow the rows as you type, with the words
+  `list "<words>"` takes (a topic, a PR number, a branch, a project name):
+  the first match is marked `▸`, ↑ and ↓ move the mark, Enter acts on it (shows
+  it in `list` and `show`, hands it off in `handoff`), and Esc clears the
+  filter. Rows keep their numbers while filtered, and a subagent session that
+  matches is shown under its parent. `list "<words>"` and an ambiguous query
+  open the browser with the words already in the filter. Where keys cannot be
+  read, an answer that is not a row number, an ID, or a command is words to filter
+  by, and an empty answer clears them. A handoff picked with the keys still
+  reads an answer typed ahead for the `Continue in:` question.
+- **Linux is supported for persistent capture** (x86-64 and arm64), on a
+  machine with systemd 240 or newer and a user manager (RHEL 8 and its
+  rebuilds from 8.3). macOS behavior, its plist, Keychain items and
+  `config.json` are unchanged. What you can see on Linux:
+  - **Install.** Releases after v0.1.1 carry unsigned static
+    `agent-archive-linux-amd64` and `-arm64` binaries, in `SHA256SUMS` and
+    attested; `install.sh` installs them, requires the checksum to match, and
+    prints the `gh attestation verify` command. v0.1.1 has no Linux binary.
+  - **Background collector.** `setup` installs a systemd user timer and
+    service (`agent-archive-collector`, every 60 seconds, logs in the data
+    directory) in `~/.config/systemd/user`, and records `"background_backend":
+    "systemd"` in `config.json`. With no user bus (SSH without
+    `pam_systemd`, a container) setup stops before changing anything and says
+    to log in properly or run `loginctl enable-linger`; there is no cron
+    fallback. `status` and `status --json` (`background_warnings`) note when
+    lingering is off or a drop-in overrides the unit; systemd older than 240
+    is refused. `setup --refresh` and `uninstall` handle the units and the
+    link that enables the timer.
+  - **`uninstall --skip-scheduler`** goes on when the scheduler cannot say
+    whether the job is loaded: it removes the definition, hooks and skills,
+    prints the command that stops the job by hand, and says the collector
+    was not verified stopped. Without it, uninstall refuses in that case on
+    either system.
+  - **Credentials.** There is no Keychain: an R2 key is kept in a 0600 file
+    in a 0700 folder of the data directory (not encrypted; an S3 profile is
+    recommended on Linux), with the `AGENT_ARCHIVE_R2_*` variables as a
+    read-only fallback for containers.
+  - **Environment.** `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are recorded in
+    the job when set to an absolute path, `status` warns when your shell's
+    differ, and Cursor database copies live under
+    `~/.cache/agent-archive/cursor-snapshots` (or `$XDG_CACHE_HOME`), never
+    `/tmp`. A user manager can have its own values from outside your shell,
+    which `status` cannot see (see [setup on Linux](docs/getting-started/setup.md#setup-on-linux)).
+  - **Cloned machines.** `config.json` records `host_id`, a digest of the
+    machine ID, on Linux; `status` and `setup` warn when the data directory
+    was set up on a different machine (a cloned VM or image). It is best
+    effort; see [multiple machines](docs/guides/multiple-machines.md#cloned-machines-on-linux).
+  - **Network homes.** `setup` and `setup --refresh` refuse, before any
+    question and changing nothing, when the data directory or the systemd unit
+    directory is on a network filesystem (NFS, SMB/CIFS, Ceph, sshfs and the
+    like; read from `/proc/self/mountinfo`), since machines that share a home
+    share one machine ID, cannot rely on file locks and each run the
+    collector. Set `AGENT_ARCHIVE_HOME` to local disk, or for a home only one
+    machine mounts run `setup --allow-network-home`, which is recorded as
+    `allow_network_home` in `config.json`; `status` warns either way. See
+    [multiple machines](docs/guides/multiple-machines.md#a-home-directory-shared-across-machines).
+  - **Not verified on Linux:** the real Cursor app and `cursor-agent` hooks
+    (a Cursor forum report says they may fail silently, so Cursor capture is
+    best effort and its version is not detected), the real Claude Code and
+    Codex apps, distributions and systemd versions other than Ubuntu 24.04
+    with systemd 255 (exercised live on arm64), an amd64 live run, real R2
+    and S3 from Linux (the live run used MinIO), a real logout with lingering
+    off, a desktop login, and WSL. See [platforms](docs/getting-started/install.md#platforms).
+  - **Handoff** opens the new agent in a tmux window on Linux; outside tmux
+    it prints the command to run instead.
+- The multiple-Macs guide is now [multiple machines](docs/guides/multiple-machines.md)
+  (`docs/guides/multiple-macs.md` is gone; update any link to it), with a
+  section on cloning Linux machines next to the Migration Assistant and Time
+  Machine guidance.
+- `agent-archive stats --json --all` lists every project, skill and MCP
+  server instead of the top five of each (`--all` is an error without
+  `--json`: the web page keeps its top lists). The document is otherwise the
+  same, in the same order, and `schema_version` stays 1. The hints under the
+  skills and MCP servers now say `+ N more (all in --json --all)`, and the
+  one under the projects screen `--json --all` too. See
+  [JSON output](docs/reference/json-output.md#stats---json).
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3", then Continue at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
+- **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to enable creation after choosing
+  **Cloudflare R2**, then **Continue** at the storage question, then paste one
+  Cloudflare API token
+  (Workers R2 Storage Write and Account API Tokens Write, or set
+  `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
+  no public access by default) and a key that can read and write only that
+  bucket, checks it, and keeps the key in the Keychain. The token you pasted
+  is used during setup and then dropped, never saved, and setup revokes the
+  new key's token if it fails its check or can't be stored. It also reads
+  whether the bucket's public `r2.dev` URL or a custom domain is on, and if so
+  stops and asks: check again, choose other storage (the default, which
+  revokes the new key), or continue anyway. Not available with
+  `setup --yes`. It has not yet been run against every kind of Cloudflare
+  account, which is why it is behind the switch. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
@@ -89,13 +361,13 @@ follow [Semantic Versioning](https://semver.org/).
   upgrade, `status` warns about a skill file an earlier release wrote and lists
   it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
 - `agent-archive setup --refresh` brings the app hooks, the background
-  collector's plist, and the skill files up to date for the saved settings and
+  job's definition, and the skill files up to date for the saved settings and
   the binary you run it from, and changes nothing else. It asks nothing and
   needs no terminal, prints `nothing to refresh` or what it refreshed, and
   refuses (exit 1) before setup has finished, while a setup needs recovery,
   after uninstall, or when another installation's hooks are in the way. It
   also repairs hooks left pointing at a binary that moved. `install.sh` runs it
-  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  when it finds a set-up machine, so upgrading the binary upgrades the hooks and
   skills; if it fails, or the installer runs as root (which would leave
   root-owned files in your home directory), the install still succeeds and
   says how to run it. It waits up to ten seconds for a running collection
@@ -114,7 +386,7 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/agent-archive/SKILL.md`), so you can ask an agent to
   "pull in the auth session from Codex". The agent runs
   `agent-archive handoff "auth" --harness codex` (a bounded, filtered handoff
-  prompt, found by title on this Mac first, then in the archive), asks you
+  prompt, found by title on this machine first, then in the archive), asks you
   which when several sessions match, and can browse with `list`, `show`,
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
@@ -140,9 +412,8 @@ follow [Semantic Versioning](https://semver.org/).
   [privacy page](docs/security/privacy.md) explains what a hash of a known
   address does and does not hide. Parser version is now `0.16.0`, so existing
   sessions gain the field on the next metadata refresh, on the Mac that
-  captured them and only while the repository is still there. Nothing uses it
-  yet: a later release matches `handoff` to a session by repository rather
-  than checkout path.
+  captured them and only while the repository is still there. `handoff
+  --latest` uses it (see Changed).
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -300,16 +571,130 @@ follow [Semantic Versioning](https://semver.org/).
   stages the new binary with `mktemp` and removes it on failure; it prints
   `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
   reports a missing `curl` ("curl is required") and a failed temporary
-  file or directory creation with their own messages. Linux is not yet a
-  supported platform.
+  file or directory creation with their own messages.
 
 - `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
   terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
   `show`'s `--no-pager` now covers the summary too. Piped output is
   unchanged.
 
-### Changed
+- **`agent-archive list "<words>"` searches.** One or two words find a
+  session: every word must appear, in any case, in some field of it (its name,
+  title, branch, project name, harness, or the first 4 or more characters of its
+  ID), and words may match different fields, so `list "linux 212"` finds the
+  session named for Linux that opened PR 212. `#212`, or a bare number of 1 to 6
+  digits, also matches a pull request number, any the session linked or created.
+  On a terminal it opens the browser over the matches; piped it prints the
+  table; `list "<words>" --json` prints the same document, narrowed, with the
+  same `scope` object. `handoff "<words>"` and `show "<words>"` use the same
+  matcher and the same order, so a person and an agent get the same answer: this
+  repository's top-level sessions first, then every project's, then subagent
+  sessions (in the repository, then everywhere); the first that has a match
+  answers, and a note says how many more match in other projects.
+- When several sessions match and nothing can ask (`handoff` or `show` piped,
+  or inside a coding agent), the table of candidates gains a PR column, labels
+  a subagent `subagent of <parent ID>`, and ends with the exact command to run
+  next (`Next: agent-archive handoff d7a77938 --harness claude`, or
+  `agent-archive show d7a77938`) and the `list "<words>" --json` that shows
+  them as data. The agent skill says so, and that the words may be a topic, a
+  PR number, a branch, or a project name.
 
+#### Changed
+
+- **Privacy filter 14: a subagent's task description is now archived.**
+  When Claude Code starts a subagent, its parent gives the task a short
+  description ("find the retention tests"), which Claude Code keeps in an
+  `agent-<id>.meta.json` file beside the subagent's transcript. That
+  description is now kept, with the subagent's session, and is its name in
+  `list` and `show`. It passes the same redaction as your
+  prompts and is cut to 512 bytes. Nothing else in that file is kept (the
+  path of a worktree, for one), and a subagent with no such file, or one that
+  cannot be read, is archived as before. The next sync re-reads and
+  republishes each subagent whose transcript is still on the machine, so it can
+  carry its description; a file that appears later is picked up when the
+  subagent's transcript next changes. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
+- **"Mac" became "machine" wherever the text is not about macOS**, now that
+  Linux is supported: in `agent-archive help` and the [CLI
+  reference](docs/reference/cli.md) ("sessions already on this machine"), in
+  `setup`'s review ("What leaves your machine:") and its next-steps line
+  ("To set up another machine with this storage"), in `backfill`, `purge`,
+  `uninstall`, `status` and `handoff` messages and in retention's clock
+  messages. What is specific to macOS (the Keychain, Time Machine, Migration
+  Assistant, macOS's privacy prompts, launchd) keeps its wording, and scripts
+  that match these messages should match the new words.
+- **Privacy filter 13: a session's name and linked pull request are now
+  archived.** Claude Code's session name (the one in its sidebar, set from
+  your prompt or by `/rename`) and the pull request a session linked (its
+  `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
+  only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
+  that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
+  `last-prompt` records are still dropped. The next sync re-reads and
+  republishes each session whose transcript is still on the Mac, so it can
+  carry them; `list`, `show`, and the handoff picker show them as described
+  below. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
+- **`list` and the browser show top-level sessions only.** A session's
+  subagents are no longer rows of their own: they are left out before
+  `--limit` counts (so `--limit 50` is 50 sessions), the footer says how many
+  were hidden (`42 sessions (318 subagent sessions hidden; search to find
+  one)`), and a session that has some carries a dim `· 45 subagents` hint, as
+  the handoff picker does. A subagent is found by searching. `list --json`
+  keeps every row, subagents included, so scripts see what they did. The
+  table and the browser now read every session's metadata (the cache keeps it
+  quick) instead of the index's newest page, so that subagents can be left out
+  before the limit; `list --json` without words keeps the index's page outside
+  a project or with `--all-projects`.
+- `handoff "<words>"` and `show "<words>"` match words across a session's
+  fields (above) where they matched the whole text as a substring of the title
+  or the start of an ID. Words that matched a title before still match it,
+  except a `#N` that was only the start of a longer number (`#21` no longer
+  finds `PR #213`). The start of an ID now needs 4 characters or more, and a PR
+  number such as `212` or `#212` never matches one, so it does not also find
+  every session whose random ID happens to start with those digits.
+  `show "<words>"` now offers a subagent session only when no top-level session
+  matches, where it listed both. The table printed for several matches is the
+  one described above.
+- **`list`, `show`, and `handoff` start from the repository you are in.**
+  Run inside a project, `agent-archive list` and `list --json` now return
+  that repository's sessions (every checkout and worktree of it, and its
+  sessions from other Macs) where they returned all of them. Scripts that
+  read every session pass `--all-projects`. The text listing and the
+  handoff picker carry a heading that names what is shown, and on a terminal
+  `a`, typed alone, switches between the repository and all projects. When
+  the repository has no sessions they open on all projects and say so.
+  `--project DIR|NAME` (new for `list`, and now for every `handoff`
+  selection, not only `--latest`) picks another project by directory or by
+  name. `handoff "<title>"` looks in the repository first and says how many
+  more match in other projects. Outside any project nothing changes.
+  `list --json` gains an optional `scope` object
+  (`{"label", "all_projects", "fell_back", "outside_matches"}`) and keeps
+  `schema_version` 4.
+- The session table and the handoff picker leave out a HARNESS or PROJECT
+  column every row shares and name the value in the heading, add a PR column
+  (the last pull request the session linked or created) when a row has one, dim the ID
+  in the picker, and mark a session active in the last 2 minutes with a dot.
+- **Rows and `show` now show the name you gave the session in your agent, its
+  branch, and its linked pull requests.** A row in `list`, the handoff picker,
+  and the browser shows the session's name (the one in Claude Code's sidebar,
+  set from your prompt or by `/rename`, or a Cursor chat's name) where it
+  showed a preview of your first prompt, and still shows the preview for a
+  session with no name. `show`'s summary uses the name as its heading, with
+  the first prompt as a `Prompt` row, and gains `Branch` and `PRs` rows (the
+  last git branch the session recorded, and the pull requests it was linked
+  to). Metadata from parser `0.17.0` carries them as the optional `name`,
+  `branch`, and `pull_requests` fields (see
+  [JSON output](docs/reference/json-output.md#show)), so the collector
+  refreshes every published session's metadata once, from what is already
+  archived; a session gets its name only if it was published by filter 13, which
+  the next sync does for sessions whose transcript is still on the Mac. The
+  handoff picker's rows for sessions not yet uploaded are cut to 72
+  characters like published ones, not by display width.
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
@@ -320,9 +705,10 @@ follow [Semantic Versioning](https://semver.org/).
   pipes are plain; bars have no shaded track). The rest moved behind
   `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
   the tool error rate, the token breakdown, the agents table and the notes on
-  what the numbers rest on. `--view projects`, `models` and `agents` list every
-  project, model family and agent. `--by project` is now `--view projects`, and
-  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  what the numbers rest on. `--view projects`, `models` and `agents` list the
+  projects and model families (up to 500 each, then `+ N more`) and every
+  agent. `--by project` is now `--view projects`, and `--by day`, `week` and
+  `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
 - **`stats --json` and `--html` rank projects by spend, not tokens.** The
@@ -352,6 +738,26 @@ follow [Semantic Versioning](https://semver.org/).
   matches that session itself (as `--latest` skips it).
   `handoff` no longer rejects an argument that is not shaped like a session
   ID up front; one that matches nothing says so and points to `list`.
+- `handoff --latest` now finds sessions from your other computers even when
+  the repository is at a different path. A session matches the current
+  directory by path or by repository (the `origin` remote, so SSH and HTTPS
+  clones agree), from a subdirectory of the repository too; a directory
+  without an `origin` matches by path only, as before, and a fork's `origin`
+  is the fork's. A session that ran at the same path always comes first. A
+  repository chooses its own `origin`, so when `--latest` can only find a
+  session by repository it says so before downloading any of it (machine, project,
+  start time, first prompt) and, on a terminal, asks before going on (default
+  no); where nothing can be asked (a pipe, or inside a coding agent) it
+  refuses, printing only the machine and start time and the `handoff
+  SESSION_ID` command for you to run (`agent-archive list` when the ID is not
+  a normal one). That refusal slows a steered agent; it does not stop one
+  that runs the command. Path matches, explicit session IDs, and the picker
+  behave as before. `--to` launches an archived session from another
+  computer the same way, and the handoff tells the agent the session was on
+  another branch or in another directory when it was. When nothing matches,
+  the message says what was tried and how to make a match possible. See the
+  [handoff guide](docs/guides/handoff.md#finding-a-session-by-repository) and
+  the [threat model](docs/security/privacy.md#threat-model).
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
@@ -370,7 +776,6 @@ follow [Semantic Versioning](https://semver.org/).
   `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
   backfill inputs (Claude and Codex desktop app folders, the privacy-protected
   folders, the `/Applications` probes) are skipped. On macOS nothing changes.
-  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or
@@ -412,8 +817,32 @@ follow [Semantic Versioning](https://semver.org/).
   once with the usual explanation. The full write, read, and delete check
   still decides that storage works.
 
-### Fixed
+#### Fixed
 
+- Pager startup failure preserves the complete direct-output fallback, even
+  when the pager consumed its input; regression coverage checks partial and
+  complete reads and reports output write failures.
+
+- `setup`'s hidden prompt for a secret access key no longer spins at full
+  CPU forever on macOS when its terminal goes away without a hangup signal
+  (a closed pseudo-terminal, for example). It now ends as every other prompt
+  does at the end of input, with "no more input", and so does Ctrl-D on an
+  empty answer, which the prompt used to ignore.
+- On a busy Mac, setup no longer warns "Could not prune capture diagnostics
+  for excluded projects", leaving a project it had just excluded named in the
+  local diagnostics file, when a hook recorded a diagnostic at the same time.
+  Hooks that fire together are also far less likely to drop each other's
+  diagnostics.
+  Each writer held the diagnostics lock through its write's disk syncs, which
+  could outlast setup's two-second wait for that lock and a hook's 50 ms one.
+  Writers now sync before taking the lock and hold it only to reread, check
+  and rename the file, and setup waits up to ten seconds for it, since a
+  rename alone can stall for over a second while other programs sync.
+- The `handoff` picker no longer offers archived subagent sessions. They
+  filled the first screen under their orchestrator (one had 45 of them) and
+  were counted in "Showing 50 of 659", though only top-level sessions can be
+  handed off. The picker now lists top-level sessions only and counts only
+  those; `list` and `show` are unchanged.
 - A hook that fires while a retention sweep is expiring its session no
   longer fails with "another collector or setup is running" on a busy Mac,
   leaving the session to expire without that turn. Retention wrote the
@@ -423,15 +852,38 @@ follow [Semantic Versioning](https://semver.org/).
 - **`agent-archive stats` no longer says `--json` has every row of a list it
   cut.** Under a cut list the screens said `(--json has them all)`, but plain
   `--json` keeps only the top five projects. The projects screen now says `+ N
-  more (all in --json --by project)` (the by-project rows are never cut),
-  the models screen `(all in --json)` (`models` is never cut), and the
-  detail screen's day, week and month tables `N earlier rows not shown (all in
-  --json --by day)`; the interactive screen, which takes no command, says to
-  quit first and names the window on show (`+ N more (quit, then run
-  agent-archive stats --days 90 --json --by project)`). The skills and MCP
-  servers were never claimed to be in `--json`, which keeps only the top five
-  of each; `stats --help` and the guide now say the detail screen lists up to
-  40 of them.
+  more (all in --json --all)` (plain `--json` keeps the top five; `--all`
+  lists every project), the models screen `(all in --json)` (`models` is never
+  cut), and the detail screen's day, week and month tables `N earlier rows not
+  shown (all in --json --by day)`; the interactive screen, which takes no
+  command, says to quit first and names the window on show (`+ N more (quit,
+  then run agent-archive stats --days 90 --json --all)`). The skills and MCP
+  servers say `+ N more (all in --json --all)` too; `stats --help` and the
+  guide say the detail screen lists up to 40 of them and the projects and
+  models screens up to 500 rows, not "every one".
+- **A `kill -QUIT` no longer leaves the terminal raw.** The interactive
+  screens (`list`, `show` and `stats`) turn Ctrl-\ off while they read keys,
+  but a SIGQUIT sent from outside dumped goroutines and left the terminal on
+  the alternate screen without echo. SIGQUIT is now handled like SIGTERM and
+  SIGHUP by every command that stops on a signal (those screens, the pager,
+  `backfill`, the storage check in `setup`, `stats` while it reads, and
+  `setup --refresh`, which absorbs it while it changes files): the terminal is
+  restored and the exit status is 131. The collector and the hooks are
+  unchanged.
+- **`stats` keeps a command and a name with its count together.** A hint such
+  as `(all in --json --by project)` was broken after `--by` on a 40-column
+  terminal, and a skill or MCP server could be separated from its count; each
+  now stays on one line whenever it fits. And the path of a page saved with
+  `h` is printed after a signal ends the interactive screen too, as it is
+  after a quit.
+- A hook no longer fails with "another collector or setup is running", and
+  loses that turn's evidence, when the collector, an import, or
+  `agent-archive feedback` writes to the same session at the same moment on a
+  busy Mac. Those writers held the session's lock, which a hook waits only a
+  second for, through the write's disk syncs, which can take longer; they now
+  sync first and hold the lock only to check and rename the file. Subagent
+  records are written the same way. Forgetting a session also no longer
+  waits, under that lock, for a subagent record another process is writing.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to
@@ -491,8 +943,22 @@ follow [Semantic Versioning](https://semver.org/).
   prototype's upload job, or a collector under an earlier label) whose label
   another installation now runs: recovery used to stop there, leaving the
   jobs after it stopped, and now puts its plist back and finishes.
+- A Cursor read no longer fails now and then with "lock a Cursor database
+  snapshot directory" when a sweep of leftover snapshots (at the start of
+  every collector pass and every backfill command) runs at the moment the
+  read starts. The sweep checks whether each snapshot is in use by taking
+  its lock for an instant; it could take a new snapshot's lock just before
+  the read did. A read's lock file now appears already locked, so the
+  sweep sees it in use and leaves it alone.
+- The `handoff` picker, its filter, and `handoff "<words>"` no longer offer
+  an archived session with no prompt, which has nothing to hand off: one
+  uploaded before its first prompt showed as an untitled row and was counted
+  in the footer. They already passed over such a session on this machine;
+  one archived before its first prompt is offered again once its transcript
+  here has one. Its session ID still names it, and `list` and `show` are
+  unchanged.
 
-### Changed
+#### Changed
 
 - `status` is shorter, and stays the same length however many projects you
   include. Each app has one line with its sessions (subagents counted
@@ -531,13 +997,13 @@ follow [Semantic Versioning](https://semver.org/).
   credential, storage availability, retention failures, and subagents that
   could not be captured (`subagent_not_captured`).
 
-## [0.2.0] - 2026-09-29
+#### Earlier development changes (previously labeled v0.2.0)
 
 The archive browser now has bounded, readable listings and terminal pickers for
 `list`, `show`, and `handoff`. Scripts should update consumers of `list --json`
 to schema version 4, which reports whether the total match count is known.
 
-### Added
+#### Added
 - `list --limit N` caps how many sessions are shown (default 50, newest
   first; `0` for all). A truncated text listing reports
   `Showing N or more session(s)` when the count is unknown, or
@@ -570,14 +1036,14 @@ to schema version 4, which reports whether the total match count is known.
   recorded, one per entry. `collector.last_error` is unchanged (the same
   problems joined with `; `).
 
-### Changed
+#### Changed
 
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output
   stay plain.
 
-### Fixed
+#### Fixed
 
 - `status` shows each problem the last pass recorded on its own ✗ row, and
   a storage provider's error message containing `; ` is no longer split in
@@ -588,6 +1054,8 @@ to schema version 4, which reports whether the total match count is known.
   held by the clock) instead of replacing them.
 - `status --verbose` prints each of the last pass's problems on its own
   `Last error:` line.
+
+</details>
 
 ## [0.1.1] - 2026-09-28
 
@@ -725,7 +1193,6 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0

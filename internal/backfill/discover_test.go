@@ -2,6 +2,8 @@ package backfill
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -222,5 +224,32 @@ func TestUnreadableStoreIsNamed(t *testing.T) {
 				t.Fatalf("a filtered-out store is reported: %v", p.UnreadableStores)
 			}
 		})
+	}
+}
+
+// Cancellation while listing the root must stop descent into project folders.
+func TestDiscoveryCancellationStopsDirectoryReads(t *testing.T) {
+	t.Parallel()
+	for _, known := range []bool{false, true} {
+		tr := newTree(t)
+		tr.write(filepath.Join("home", claudeFile("s", "a")), claudeTranscript("a", tr.home, fixedNow))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		env := tr.env()
+		reads := 0
+		env.ReadDir = func(dir string) ([]fs.DirEntry, error) {
+			reads++
+			cancel()
+			return os.ReadDir(dir)
+		}
+		var err error
+		if known {
+			_, err = KnownProjects(ctx, env, config.Config{})
+		} else {
+			_, err = BuildPlan(ctx, env, states{}, config.Config{}, Filters{})
+		}
+		if !errors.Is(err, context.Canceled) || reads != 1 {
+			t.Fatalf("known=%v reads=%d err=%v", known, reads, err)
+		}
 	}
 }

@@ -30,6 +30,52 @@ linters:
   settings:
     depguard:
       rules:
+        integration-composition-only-at-cli:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/cli/*.go"
+            - "!**/internal/agents/builtin/*.go"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/builtin
+              desc: CLI owns operational composition; core consumers receive narrow ports
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/claude
+              desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/codex
+              desc: only builtin composes concrete integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
+              desc: only builtin composes concrete integrations
+        identity-is-standard-library-only:
+          files:
+            - "**/internal/agentmeta/*.go"
+            - "!$test"
+          list-mode: strict
+          allow:
+            - $gostd
+        native-reads-are-isolated:
+          files:
+            - "**/internal/nativesessions/*.go"
+            - "**/internal/transcriptio/*.go"
+            - "!$test"
+          deny:
+            - pkg: os/exec
+              desc: native reads never run programs
+            - pkg: net/http
+              desc: native reads never use the network
+            - pkg: github.com/wangjohn/agent-archive/internal/config
+              desc: native reads have no configured archive dependencies
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: native reads never register or persist sessions
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: native reads never access archive storage
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: native reads never access credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: discovery does not filter full conversations
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: native reads have no CLI dependency
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: native reads have no terminal dependency
         # statetest's whole-file saves bypass the single in-memory copy a
         # collector scan keeps (see its package doc), so only tests use it.
         statetest-only-in-tests:
@@ -46,6 +92,14 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/storage/storagetest
               desc: test helpers only; production code stores through storage's S3 client
+        # The fake Cloudflare API stands in for the real one in tests; nothing
+        # in production may talk to it.
+        cloudflaretest-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest
+              desc: test helpers only; production code uses the cloudflare client
         # The golden-file helper registers the -update test flag; a
         # production package importing it would grow that flag.
         golden-only-in-tests:

@@ -14,7 +14,7 @@ import (
 )
 
 // Characterization of the macOS scheduler (PR 5a-0 of
-// dev/proposals/platform-abstraction.md): the collector's LaunchAgent plist is
+// dev/proposals/implemented/platform-abstraction.md): the collector's LaunchAgent plist is
 // on disk in every existing installation and launchd loads it, so its bytes,
 // its label and its location may not change when the code that writes it moves.
 // Setup runs through its own commands, so this pins what a user's disk holds,
