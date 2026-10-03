@@ -335,7 +335,10 @@ func TestStopCommitLookupRequiresTheRegisteredAgentAndProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	git := &headLookup{sha: laterCommit}
-	for _, tc := range []struct{ agent, root string }{{"codex", "/work/widget"}, {"claude", "/work/other"}} {
+	for _, tc := range []struct {
+		agent string
+		root  string
+	}{{"codex", "/work/widget"}, {"claude", "/work/other"}} {
 		if err := HandleEvent(home, tc.agent, stopPayload(tc.root), at.Add(time.Minute), WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 			t.Fatal(err)
 		}
