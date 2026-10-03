@@ -81,6 +81,7 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 			}
 			return nil
 		})
+		d.result.Capped = d.result.Capped || host.truncated
 		d.result.Unreadable += report.UnreadableFolders
 		if report.StoreUnreadable {
 			d.result.Unreadable++
@@ -187,8 +188,9 @@ var errProjectLimit = errors.New("bounded project discovery stopped")
 
 // projectFiles bounds entry conversion and traversal before native enumeration.
 type projectFiles struct {
-	d     *projectDiscovery
-	bases []string
+	d         *projectDiscovery
+	bases     []string
+	truncated bool
 }
 
 func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
@@ -197,7 +199,7 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 		return nil, errProjectLimit
 	}
 	for _, base := range p.bases {
-		if rel, err := filepath.Rel(base, path); err == nil && len(strings.Split(rel, string(filepath.Separator))) > 34 {
+		if rel, err := filepath.Rel(base, path); err == nil && len(strings.Split(rel, string(filepath.Separator))) > 33 {
 			p.d.result.Capped = true
 			return nil, errProjectLimit
 		}
@@ -215,7 +217,7 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 			return nil, p.d.ctx.Err()
 		}
 		if p.d.entries >= 8192 {
-			p.d.result.Capped = true
+			p.truncated = true
 			break
 		}
 		p.d.entries++

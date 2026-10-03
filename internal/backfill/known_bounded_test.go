@@ -224,3 +224,26 @@ func TestBoundedProjectsKeepsSameNamedNativeCopiesAcrossStores(t *testing.T) {
 		t.Fatalf("native copies hid repository roots: %+v", got)
 	}
 }
+
+func TestBoundedProjectsEntryCapKeepsEarlierRoot(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	root := tr.repo("home/repo")
+	raw, _ := json.Marshal(map[string]string{"cwd": root})
+	tr.write("home/.claude/projects/0.jsonl", string(raw)+"\n")
+	env := tr.env()
+	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
+		entries, err := os.ReadDir(path)
+		if err != nil || filepath.Base(path) != "projects" {
+			return entries, err
+		}
+		for range 8193 {
+			entries = append(entries, projectNonTranscriptEntry{name: "z-ignored"})
+		}
+		return entries, nil
+	}
+	got := KnownProjectsBounded(t.Context(), env, config.Config{}, 128)
+	if !got.Capped || len(got.Projects) != 1 || got.Projects[0].Root != root {
+		t.Fatalf("entry cap discarded usable prefix: %+v", got)
+	}
+}
