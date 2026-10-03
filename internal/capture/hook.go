@@ -328,28 +328,6 @@ func HasRegistration(store *state.Store, key agentmeta.SessionKey) (bool, error)
 	return found, err
 }
 
-func newSessionRepoKey(home string, event agentapi.LifecycleEvent, now time.Time, repoKey RepoKeyFunc) string {
-	if repoKey == nil {
-		return ""
-	}
-	cfg, found, err := config.Load(home)
-	if err != nil || !found || cfg.Paused {
-		return ""
-	}
-	owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
-	if !owned || declinedStart(cfg, owner.Root, now, event.Start) != "" {
-		return ""
-	}
-	key, err := eventKey(event)
-	if err != nil {
-		return ""
-	}
-	if registered, err := HasRegistration(state.OpenReadOnly(home), key); err != nil || registered {
-		return ""
-	}
-	return boundedRepoKey(repoKey, owner.Root)
-}
-
 func resolveFreshness(batch []agentapi.LifecycleEvent, stat func(string) (os.FileInfo, error)) []agentapi.LifecycleEvent {
 	if stat == nil {
 		stat = os.Stat
