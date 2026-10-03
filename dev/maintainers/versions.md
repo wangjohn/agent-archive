@@ -73,4 +73,3 @@ opening blanket windows. This changes session consent and physical project
 attribution, not adapter filtering, native parsing or derived-field algorithms;
 filter, adapter, parser and published source/metadata schema versions remain
 unchanged. The private policy/proof contract is documented in configuration.
-
