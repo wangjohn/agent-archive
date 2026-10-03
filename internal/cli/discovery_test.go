@@ -83,3 +83,42 @@ func TestDiscoveryFailureSurvivesSuccessfulCollector(t *testing.T) {
 		t.Fatalf("discovery failure lost: %#v", status.LastErrors)
 	}
 }
+
+func TestRecoveryPreflightFailureSurvivesLaterSuccessfulCollector(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	env := testEnv(t, home, at)
+	setUpTestConfig(t, home, t.TempDir(), at.Add(-time.Hour))
+	// Discovery is disabled. A transient hook writer blocks the first census,
+	// then releases its lock before the collector's later recovery succeeds.
+	unlock, err := local.NamedLock(home, "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			unlock()
+		}
+	}()
+	opened := false
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		opened = true
+		status, err := state.OpenReadOnly(home).LoadStatus()
+		if err != nil || !strings.Contains(strings.Join(status.LastErrors, "\n"), local.ErrBusy.Error()) {
+			t.Fatalf("initial census failure not recorded: %#v %v", status, err)
+		}
+		unlock()
+		released = true
+		return storagetest.NewMemoryStore(), nil
+	}
+	result, err := runOnePass(env, false)
+	if err != nil || !opened || len(result.Errors) != 0 {
+		t.Fatalf("later collector failed: %#v %v", result, err)
+	}
+	status, err := state.OpenReadOnly(home).LoadStatus()
+	if err != nil || !strings.Contains(strings.Join(status.LastErrors, "\n"), local.ErrBusy.Error()) {
+		t.Fatalf("preflight recovery failure erased: %#v %v", status.LastErrors, err)
+	}
+}

@@ -201,3 +201,52 @@ func TestPausedContinuationCannotReplaceRegisteredLocator(t *testing.T) {
 		t.Fatalf("paused locator mutation: %v %v", after, err)
 	}
 }
+
+func TestDiscoveryCannotSupplyUnconfinedLocatorToPathlessHook(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	project := cfg.Archive.Projects[0].Root
+	native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
+	// Actual shipped decoding and capture create the pathless hook owner.
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": project}
+	if err := handleCodexHook(store.Home(), payload, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := store.LoadRegistrations()
+	if err != nil || len(regs) != 1 || regs[0].Origin != archive.SessionOriginHook || regs[0].TranscriptPath != "" {
+		t.Fatalf("pathless hook fixture: %#v %v", regs, err)
+	}
+	before := regs[0]
+	h, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
+	if err != nil || h.Registered != 0 {
+		t.Fatalf("continuation scan: %#v %v", h, err)
+	}
+	// A swapped leaf would be accepted by the legacy hook provider if discovery
+	// supplied its path without retained confinement. No such path may be adopted.
+	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+	outside := filepath.Join(t.TempDir(), filepath.Base(path))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+	after, found, err := store.LoadRegistration(before.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal("lost hook owner", err)
+	}
+	_, err = collector.ReadLocalBundle(context.Background(), store.Home(), after, at.Add(3*time.Minute), "", builtin.NewBuiltins())
+	if !errors.Is(err, collector.ErrNoTranscript) {
+		t.Fatalf("discovery supplied unconfined hook source: path=%q bundle error=%v", after.TranscriptPath, err)
+	}
+	if after.TranscriptPath != "" || after.Origin != before.Origin || !after.AdmittedAt.Equal(before.AdmittedAt) || after.DestinationID != before.DestinationID {
+		t.Fatalf("hook attribution changed: %#v", after)
+	}
+}

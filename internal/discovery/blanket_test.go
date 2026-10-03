@@ -475,6 +475,15 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 				t.Fatal(err)
 			}
 			writeRollout(t, codex, child, at.Add(3*time.Minute), 1, "sessions")
+			// A discovery observation cannot establish the source authority of a
+			// pathless hook owner. The permitted control obtains its locator from
+			// an actual hook before discovery evaluates the same continuation.
+			if tc.allowed {
+				path := filepath.Join(codex, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+				if err := handleCodexHook(store.Home(), map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": native, "cwd": child, "transcript_path": path}, at.Add(3*time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport); err != nil {
 				t.Fatal(err)
 			}
