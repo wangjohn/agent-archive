@@ -1108,27 +1108,31 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		args = append(args, "--skills")
 	}
 
-	for _, project := range cfg.Archive.Projects {
-		if !project.Included {
-			continue
-		}
-		key, checked := keys[project.Root]
-		if !checked {
-			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
-			// A key describes the whole repository. A configured subdirectory
-			// must keep its path to avoid widening capture on another machine.
-			if child.Err() == nil {
-				if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-					key = env.projectRepoKey(child, project.Root)
-				}
+	if hasProjectExclusions(cfg.Archive.Projects) {
+		args = append(args, "--project-scope", portableProjectScope(cfg.Archive.Projects, userHome, env, ctx))
+	} else {
+		for _, project := range cfg.Archive.Projects {
+			if !project.Included {
+				continue
 			}
-			done()
-			keys[project.Root] = key
-		}
-		if key != "" {
-			args = append(args, "--project-repo", key)
-		} else {
-			args = append(args, "--project", homeRelative(project.Root, userHome))
+			key, checked := keys[project.Root]
+			if !checked {
+				child, done := context.WithTimeout(ctx, 250*time.Millisecond)
+				// A key describes the whole repository. A configured subdirectory
+				// must keep its path to avoid widening capture on another machine.
+				if child.Err() == nil {
+					if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+						key = env.projectRepoKey(child, project.Root)
+					}
+				}
+				done()
+				keys[project.Root] = key
+			}
+			if key != "" {
+				args = append(args, "--project-repo", key)
+			} else {
+				args = append(args, "--project", homeRelative(project.Root, userHome))
+			}
 		}
 	}
 	for i, arg := range args {
