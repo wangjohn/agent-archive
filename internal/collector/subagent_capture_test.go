@@ -751,7 +751,7 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 
 // This pins the shared assembler contract with a synthetic discovery parent;
 // automatic Codex discovery cannot currently produce a child candidate.
-func TestMaterializeDiscoveryChildKeepsNativeStartProvenance(t *testing.T) {
+func TestAssembleDiscoveryChildKeepsNativeStartProvenance(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
@@ -771,28 +771,39 @@ func TestMaterializeDiscoveryChildKeepsNativeStartProvenance(t *testing.T) {
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Sources: testSources}, candidate.ObservedAt); err != nil {
+	// This unsupported synthetic discovery child lacks admitted Codex facts.
+	// Strict materialization must refuse it without persisting a registration.
+	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Sources: testSources}, candidate.ObservedAt); !errors.Is(err, errSubagentWaiting) {
+		t.Fatalf("unsupported discovery child: %v", err)
+	}
+	if _, found, err := local.LoadRegistration("child"); err != nil || found {
+		t.Fatalf("unsupported discovery child persisted: found=%t err=%v", found, err)
+	}
+	reader, _ := newSourceReader(assembleSubagentRegistration(parent, candidate), Options{Sources: testSources})
+	if _, err := reader.Signature(context.Background()); err == nil {
+		t.Fatal("unsupported discovery child bypassed confined signature")
+	}
+	// Native filtering proves creation time independently of admission. The
+	// shared assembler is exercised without enabling discovery child capture.
+	filtered, _, err := FilterTranscriptFile("claude", path, start, testSources)
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, found, err := local.LoadRegistration("child")
-	if err != nil || !found || got.StartedAtSource != archive.StartedAtSourceTranscript || got.Origin != parent.Origin || got.DestinationID != parent.DestinationID || !got.AdmittedAt.Equal(parent.AdmittedAt) || !got.SessionStartedAt.Equal(start.Add(2*time.Minute)) {
-		t.Fatalf("child provenance=%+v found=%t err=%v", got, found, err)
+	got := assembleSubagentRegistration(parent, candidate)
+	got.SessionStartedAt = filtered.NativeStartAt
+	if got.StartedAtSource != archive.StartedAtSourceTranscript || got.Origin != parent.Origin || got.DestinationID != parent.DestinationID || !got.AdmittedAt.Equal(parent.AdmittedAt) || !got.SessionStartedAt.Equal(start.Add(2*time.Minute)) {
+		t.Fatalf("child provenance=%+v", got)
 	}
 	var metadata archive.Metadata
 	metadata.ApplyRegistrationProvenance(got)
 	if metadata.StartedAtSource != archive.StartedAtSourceTranscript || metadata.Origin != archive.SessionOriginDiscovery {
 		t.Fatalf("metadata provenance=%+v", metadata)
 	}
-	// A repeated stop must not rewrite the established admission or start.
+	// Reassembling after a later stop retains native start and parent admission.
 	candidate.ObservedAt = candidate.ObservedAt.Add(time.Minute)
-	if err := local.SaveSubagentCandidate(candidate); err != nil {
-		t.Fatal(err)
-	}
-	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Sources: testSources}, candidate.ObservedAt); err != nil {
-		t.Fatal(err)
-	}
-	again, _, err := local.LoadRegistration("child")
-	if err != nil || again.StartedAtSource != got.StartedAtSource || !again.SessionStartedAt.Equal(got.SessionStartedAt) || !again.AdmittedAt.Equal(got.AdmittedAt) {
-		t.Fatalf("repeat changed provenance=%+v err=%v", again, err)
+	again := assembleSubagentRegistration(parent, candidate)
+	again.SessionStartedAt = filtered.NativeStartAt
+	if again.StartedAtSource != got.StartedAtSource || !again.SessionStartedAt.Equal(got.SessionStartedAt) || !again.AdmittedAt.Equal(got.AdmittedAt) {
+		t.Fatalf("repeat changed provenance=%+v", again)
 	}
 }
