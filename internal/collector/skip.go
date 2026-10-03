@@ -114,6 +114,11 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
 		return false, signature, nil
 	}
+	// Even past a remembered read failure: the HEAD-only publication needs
+	// no read of the source.
+	if headFingerprint(reg.LastHead) != "" && headFingerprint(reg.LastHead) != signature.PublishedLastHead {
+		return false, signature, nil
+	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
 	if !known {
 		return false, signature, nil
@@ -237,6 +242,7 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
+		PublishedLastHead: s.publishedLastHead(),
 	})
 }
 
@@ -258,7 +264,7 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
-		Blocked: reason,
+		Blocked: reason, PublishedLastHead: s.publishedLastHead(),
 	})
 }
 

@@ -177,6 +177,20 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   convenience, not proof of identity: see the
   [threat model](#threat-model) for what a repository that lies about its
   `origin` can do and what `handoff` does about it.
+- **Commit** (`git_head`, in the metadata): for a session whose working
+  directory is in a git repository, the full name of the commit checked out
+  when the session started, whether the working tree then had uncommitted
+  changes (a yes or no; which files, and what changed, are never read into
+  the archive), and the commit checked out at the latest stop hook, each
+  with the time a hook saw it. agent-archive's hooks run `git rev-parse` and
+  `git status` in that directory to find them, with a short timeout. No
+  branch, remote address, or path is taken from git. Anyone who can read
+  your bucket and the repository can match a session to the commit it
+  started from. A session that was not in a repository, whose hooks could
+  not run git in time, has no observation. Sessions that started before this
+  was recorded, or that
+  `backfill` imported, have no starting commit; later live stops can record
+  the last commit. Nothing infers a commit later.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

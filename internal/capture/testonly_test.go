@@ -133,7 +133,7 @@ func queueAdmissionIntentWithGeneration(home, harness string, _ hookEventKind, p
 	if generation != nil {
 		gen = *generation
 	}
-	return queueEventBatchInGeneration(home, resolveFreshness(batch, nil), now, gen, after)
+	return queueEventBatchInGeneration(home, resolveFreshness(batch, nil), now, gen, nil, after)
 }
 
 // credentialsTestConfig is a syntactically valid storage destination for

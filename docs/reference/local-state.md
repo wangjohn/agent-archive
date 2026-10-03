@@ -48,12 +48,12 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, repository key (a hash of its git origin, when it had one), app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination. |
+| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, repository key (a hash of its git origin, when it had one), the commit its working directory started on (with whether the tree was dirty) and the last commit a stop hook saw, app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination. |
 | `requests/<id>.json`, `request-locks/` | Hook evidence waiting for the next collector pass, and the per-session locks around it. |
 | `sessions/<hash>.json` | Index from a native session ID (hashed, since it is app-controlled input) to its archive session ID. |
 | `sessions/<id>/` | Per-session evidence, such as `verification.json` (the last read-back check). |
 | `subagent-candidates/` | Subagent transcripts a hook reported, waiting for the collector to validate them. |
-| `pending-scans/`, `scan-signatures/` | Transcript reads in progress, and what each transcript looked like at its last read, so an unchanged one isn't read again. |
+| `pending-scans/`, `scan-signatures/` | Transcript reads in progress, and what each transcript looked like at its last read (and which last commit its published metadata names), so an unchanged one isn't read again. |
 | `pending/<id>.json` | A publication frozen before its first upload: the exact source and metadata bytes, so retries are byte-identical. |
 | `published/<id>.json` | The last bundle built and the last one published, with the uploaded source's key, SHA-256, and size, and its metadata. |
 | `superseded/<id>.json` | Earlier source objects of the session, oldest first. Filter-version predecessors carry a privacy-sensitive marker; retention removes them after verified republish and a 24-hour reader grace interval, retrying failures. |
