@@ -72,21 +72,14 @@ func TestGlobalPolicyQueuedHeadReplayIntegration(t *testing.T) {
 	if reg.CodexAdmission == nil || reg.Replay == nil || reg.Replay.RunID != "queued-run" || reg.StartHead != nil || !reg.SessionStartedAt.Equal(observed) {
 		t.Fatalf("queued original proof/replay: %#v", reg)
 	}
-	// A queued stop retains its live HEAD observation, while replay performs no git lookup.
+	// A live continuation retains the replayed admission's original proof and marker.
 	stopAt := observed.Add(2 * time.Minute)
-	stop := map[string]any{"hook_event_name": "Stop", "session_id": "global-queued", "cwd": root, "transcript_path": filepath.Join(root, "queued.jsonl")}
-	batch, err = testBatch("codex", stop, stopAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := handleBatch(home, "codex", batch, stopAt, busy, nil, eventOptions{gitHead: git.lookup, replay: archive.ParseReplay("different-run")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ReplayAdmissionIntents(home, stopAt.Add(time.Minute), testDecoders); err != nil {
+	stop := map[string]any{"hook_event_name": "Stop", "session_id": "global-queued", "cwd": root}
+	if err := HandleEvent(home, "codex", stop, stopAt, WithDecoders(testDecoders), WithGitHead(git.lookup), WithReplay("different-run")); err != nil {
 		t.Fatal(err)
 	}
 	after := onlyRegistration(t, home)
 	if after.ArchiveSessionID != reg.ArchiveSessionID || !after.LastHead.Valid() || after.LastHead.SHA != startCommit || !after.LastHead.ObservedAt.Equal(stopAt) || after.StartHead != nil || after.Replay.RunID != "queued-run" || after.CodexAdmission.Generation != reg.CodexAdmission.Generation || len(git.questions()) != 2 {
-		t.Fatalf("queued stop changed ownership/proof/HEAD: %#v; questions=%#v", after, git.questions())
+		t.Fatalf("live continuation changed replayed ownership/proof/HEAD: %#v; questions=%#v", after, git.questions())
 	}
 }

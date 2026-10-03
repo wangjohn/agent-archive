@@ -784,12 +784,7 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	hasStart, hasStop := false, false
 	for _, effect := range batch {
-		eligibleStart := declinedStart(cfg, owner.Root, now, effect.Start) == ""
-		if string(effect.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-			token, allowed := cfg.CodexGeneration(effect.CodexProjectRoot, effect.CodexCwd, now, now)
-			eligibleStart = allowed && token == effect.CodexPolicyToken && effect.Start.Kind == agentapi.FreshExplicit
-		}
-		hasStart = hasStart || effect.Kind == agentapi.EventStart && eligibleStart
+		hasStart = hasStart || effect.Kind == agentapi.EventStart && gitStartEligible(cfg, owner.Root, now, effect)
 		hasStop = hasStop || effect.Kind == agentapi.EventStop
 	}
 	if !registered && hasStart {
@@ -807,15 +802,30 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	if registered && hasStop {
 		reg, found, err := store.LoadRegistration(id)
-		accepted := err == nil && found && cfg.AcceptSession(reg)
-		if string(event.Session.Agent) == "codex" && (reg.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) {
-			accepted = accepted && codexContinuationAccepted(cfg, event, reg)
-		}
+		accepted := err == nil && found && gitContinuationAccepted(cfg, event, reg)
 		if accepted && reg.ParentSessionID == "" && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root) {
 			return gitLookups{lastHead: boundedGitHead(o.gitHead, event.ProjectRoot, false, now)}
 		}
 	}
 	return gitLookups{}
+}
+
+func gitStartEligible(cfg config.Config, root string, now time.Time, event agentapi.LifecycleEvent) bool {
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		token, allowed := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
+		return allowed && token == event.CodexPolicyToken && event.Start.Kind == agentapi.FreshExplicit
+	}
+	return declinedStart(cfg, root, now, event.Start) == ""
+}
+
+func gitContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent, reg archive.SessionRegistration) bool {
+	if !cfg.AcceptSession(reg) {
+		return false
+	}
+	if string(event.Session.Agent) == "codex" && (reg.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) {
+		return codexContinuationAccepted(cfg, event, reg)
+	}
+	return true
 }
 
 // hookProjectActivation consumes facts resolved before hooks.lock for all mode.
