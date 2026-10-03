@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // SchemaVersion is bumped only when Config's on-disk shape changes
@@ -61,6 +63,19 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// SpareKeys is the desired unused key count; nil means two.
+	SpareKeys *int `json:"spare_keys,omitempty"`
+	// SpareCredentialRefs is an advisory index. The issued ledger owns eligibility.
+	SpareCredentialRefs []string `json:"spare_credential_refs,omitempty"`
+	// CloudflareTokenCommand returns a management token for explicit interactive operations only.
+	CloudflareTokenCommand []string `json:"cloudflare_token_command,omitempty"`
+	// MachineName is a chosen label, never a detected hostname.
+	MachineName string `json:"machine_name,omitempty"`
+	// MachineAssignment is locally committed credential provenance for one destination.
+	MachineAssignment *MachineAssignment `json:"machine_assignment,omitempty"`
+	// MCPServerNames supplies display labels for server IDs in stats.
+	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
+
 	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
 	RetiredCredentialRefs []string               `json:"retired_credential_refs,omitempty"`
 	StorageVerifiedAt     time.Time              `json:"storage_verified_at,omitempty"`
@@ -74,6 +89,10 @@ type Config struct {
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
 	Paused bool `json:"paused"`
+	// PauseGeneration changes with each pause/resume transition. Deferred
+	// hook admissions must belong to the same uninterrupted capture window.
+	// Empty is the legacy window, valid until the first transition.
+	PauseGeneration string `json:"pause_generation,omitempty"`
 	// Harnesses lists which applications setup installed hooks for
 	// (values match archive.Harness.Name: "codex", "claude", "cursor").
 	Harnesses []string `json:"harnesses,omitempty"`
@@ -101,6 +120,32 @@ type Config struct {
 	// written before this field existed falls back to the current
 	// environment's paths.
 	HookFiles map[string]string `json:"hook_files,omitempty"`
+	// BackgroundBackend names the scheduler that runs the background collector
+	// ("systemd"), as setup recorded it. Status, uninstall, refresh and
+	// recovery address the job through this backend and never pick another.
+	// Setup leaves out "launchd", and an absent field means launchd on macOS
+	// and systemd on Linux, for all time, so a macOS configuration never
+	// changes and a binary that rewrites this file without the field cannot
+	// change what it means.
+	BackgroundBackend string `json:"background_backend,omitempty"`
+	// HostID is a digest of the Linux machine ID (local.HostFingerprint) of
+	// the machine that set this data directory up, recorded next to MachineID
+	// the first time setup runs there. Status and setup compare it with the
+	// machine they run on: a different one means the data directory was
+	// copied, typically with a cloned VM or container image, and the two
+	// machines now claim the same sessions. Empty on macOS (never recorded),
+	// and on a Linux system with no machine ID to read. It is local: it is
+	// not in any published file.
+	HostID string `json:"host_id,omitempty"`
+	// AllowNetworkHome records that the person allowed this installation's
+	// data directory or systemd unit directory to be on a network
+	// filesystem (setup --allow-network-home), which setup and setup
+	// --refresh otherwise refuse on Linux, since a home shared between
+	// machines shares one machine ID, cannot rely on file locks and runs the
+	// background job on every machine. Setup records it only while a
+	// directory is on one. Status warns of the network filesystem whether or
+	// not it is set. Absent otherwise, and always on macOS.
+	AllowNetworkHome bool `json:"allow_network_home,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this
@@ -136,14 +181,11 @@ type HandoffConfig struct {
 	DefaultTo map[string]string `json:"default_to,omitempty"`
 }
 
-// handoffAgents are the agents a handoff can come from or go to.
-var handoffAgents = []string{"claude", "codex", "cursor"}
-
 // validate rejects names handoff would not recognize, so a typo in a
 // hand-edited file is reported rather than silently ignored.
-func (h HandoffConfig) validate() error {
+func (h HandoffConfig) validateWithCatalog(c agentmeta.Catalog) error {
 	for agent, args := range h.Args {
-		if !slices.Contains(handoffAgents, agent) {
+		if !knownAgent(c, agent) {
 			return fmt.Errorf("handoff.args: unknown agent %q; use claude, codex, or cursor", agent)
 		}
 		for _, arg := range args {
@@ -155,10 +197,10 @@ func (h HandoffConfig) validate() error {
 		}
 	}
 	for source, dest := range h.DefaultTo {
-		if !slices.Contains(handoffAgents, source) {
+		if !knownAgent(c, source) {
 			return fmt.Errorf("handoff.default_to: unknown harness %q; use claude, codex, or cursor", source)
 		}
-		if !slices.Contains(handoffAgents, dest) {
+		if !knownAgent(c, dest) {
 			return fmt.Errorf("handoff.default_to.%s: unknown agent %q; use claude, codex, or cursor", source, dest)
 		}
 	}
@@ -171,7 +213,11 @@ func path(home string) string { return filepath.Join(home, "config.json") }
 // when setup has never run. An error names the file, and for one that no
 // longer decodes, the way out: every command needs it, so nothing else can
 // say which file stopped it.
-func Load(home string) (cfg Config, found bool, err error) {
+func Load(home string) (Config, bool, error) { return LoadWithCatalog(home, agentmeta.Builtins()) }
+
+// LoadWithCatalog reads configuration using the caller's supported identities.
+func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, err error) {
+	defer trace.Start("load config").End()
 	err = local.Read(path(home), &cfg)
 	if errors.Is(err, os.ErrNotExist) {
 		return Config{}, false, nil
@@ -179,7 +225,7 @@ func Load(home string) (cfg Config, found bool, err error) {
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this Mac's machine ID) and running agent-archive setup configures this Mac again", ErrUnreadable, path(home), err)
+		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
@@ -187,7 +233,16 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
-	if err := cfg.Handoff.validate(); err != nil {
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return Config{}, false, err
+	}
+	if err := cfg.ValidateSpares(); err != nil {
+		return Config{}, false, err
+	}
+	if err := cfg.ValidateMachine(); err != nil {
+		return Config{}, false, err
+	}
+	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
 	return cfg, true, nil
@@ -197,11 +252,23 @@ func Load(home string) (cfg Config, found bool, err error) {
 var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
-func Save(home string, cfg Config) error {
+func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, agentmeta.Builtins()) }
+
+// SaveWithCatalog validates and writes configuration with injected identities.
+func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSpares(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateMachine(); err != nil {
+		return err
+	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
 	}
-	if err := cfg.Handoff.validate(); err != nil {
+	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
 		return err
 	}
 	if cfg.SchemaVersion == 0 {
@@ -210,8 +277,9 @@ func Save(home string, cfg Config) error {
 	return local.Write(path(home), cfg)
 }
 
-// SetPaused updates only the Paused flag, preserving the rest of an existing
-// configuration. It fails if setup has not run yet: pausing before there is
+// SetPaused updates the Paused flag and rotates PauseGeneration at a state
+// transition, preserving the rest of an existing configuration. It fails if
+// setup has not run yet: pausing before there is
 // anything to pause is not a meaningful state.
 func SetPaused(home string, paused bool) (Config, error) {
 	cfg, found, err := Load(home)
@@ -220,6 +288,12 @@ func SetPaused(home string, paused bool) (Config, error) {
 	}
 	if !found {
 		return Config{}, errors.New("not set up yet; run `agent-archive setup` first")
+	}
+	if cfg.Paused != paused {
+		cfg.PauseGeneration, err = local.ID()
+		if err != nil {
+			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
+		}
 	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {
@@ -300,4 +374,35 @@ func (c Config) acceptsHarness(r archive.SessionRegistration) bool {
 		return true
 	}
 	return r.Imported() && slices.Contains(c.ImportedHarnesses, r.Harness.Name)
+}
+
+func knownAgent(c agentmeta.Catalog, name string) bool { _, ok := c.Lookup(name); return ok }
+
+func normalizeHandoff(h *HandoffConfig, c agentmeta.Catalog) error {
+	if err := h.validateWithCatalog(c); err != nil {
+		return err
+	}
+	args := make(map[string][]string, len(h.Args))
+	for name, words := range h.Args {
+		id := agentmeta.Canonical(c, name)
+		if _, ok := args[id]; ok {
+			return fmt.Errorf("handoff.args: duplicate agent %q", id)
+		}
+		args[id] = slices.Clone(words)
+	}
+	defaults := make(map[string]string, len(h.DefaultTo))
+	for name, dest := range h.DefaultTo {
+		id := agentmeta.Canonical(c, name)
+		if _, ok := defaults[id]; ok {
+			return fmt.Errorf("handoff.default_to: duplicate harness %q", id)
+		}
+		defaults[id] = agentmeta.Canonical(c, dest)
+	}
+	if h.Args != nil {
+		h.Args = args
+	}
+	if h.DefaultTo != nil {
+		h.DefaultTo = defaults
+	}
+	return nil
 }

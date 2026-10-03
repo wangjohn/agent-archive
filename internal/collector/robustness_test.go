@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ func writePublishedStateFile(t *testing.T, store *state.Store, id string, file p
 
 func runAt(t *testing.T, store *state.Store, remote storage.ObjectStore, at time.Time) Result {
 	t.Helper()
-	result, err := Run(context.Background(), store, remote, Options{MachineID: "m", Now: func() time.Time { return at }})
+	result, err := Run(context.Background(), store, remote, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +67,7 @@ func mtime(t *testing.T, path string) time.Time {
 // the steady state. It must be a recorded gap, written once, that keeps the
 // published snapshot and clears on its own if the file ever comes back.
 func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -149,6 +151,7 @@ func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 
 // The transcript is missing before anything was ever captured, then appears.
 func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -177,6 +180,7 @@ func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T
 // holds its bundle once. A newer candidate that differs gets its own copy, and
 // the actually-published baseline survives it intact.
 func TestPublishedCacheStoresTheBundleOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -219,14 +223,15 @@ func TestPublishedCacheStoresTheBundleOnce(t *testing.T) {
 // State written before the shared-copy marker existed carries a full second
 // copy and must keep loading.
 func TestPublishedCacheReadsTheOlderTwoCopyShape(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, "/unused")
-	filtered, err := archive.CodexAdapter{}.FilterJSONL(strings.NewReader(codexTranscript + "\n"))
+	filtered, err := codex.Filter{}.FilterJSONL(strings.NewReader(codexTranscript + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	bundle, err := archive.NewSourceBundle(reg, archive.CodexAdapter{}, filtered, at, nil)
+	bundle, err := archive.NewSourceBundle(reg, codex.Filter{}, filtered, at, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +260,8 @@ func settledSession(t *testing.T, local *state.Store, content string) archive.Se
 }
 
 func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
-	opts := Options{MachineID: "m"}
+	t.Parallel()
+	opts := Options{Sources: testSources, MachineID: "m"}
 	check := func(t *testing.T, local *state.Store, reg archive.SessionRegistration, o Options) bool {
 		t.Helper()
 		unchanged, err := unchangedSinceLastScan(context.Background(), local, reg, o)
@@ -266,6 +272,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	}
 
 	t.Run("settled and untouched", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		if !check(t, local, reg, opts) {
@@ -273,6 +280,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("same size, mtime moved by one nanosecond", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		modified := mtime(t, reg.TranscriptPath).Add(time.Nanosecond)
@@ -287,6 +295,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("grew", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		f, err := os.OpenFile(reg.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0)
@@ -300,13 +309,15 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("parser upgrade", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		if check(t, local, reg, Options{MachineID: "m", ParserVersion: "next"}) {
+		if check(t, local, reg, Options{Sources: testSources, MachineID: "m", ParserVersion: "next"}) {
 			t.Fatal("a parser upgrade skipped re-derivation")
 		}
 	})
 	t.Run("pending publication", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
@@ -317,6 +328,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("interrupted scan", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		if err := local.SetScanPending(reg.ArchiveSessionID, true); err != nil {
@@ -327,6 +339,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("blocked", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		if _, err := blockSession(local, reg.ArchiveSessionID, state.Request{}, state.BlockedReasonTranscriptRewritten, nil); err != nil {
@@ -337,6 +350,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("subagent owing its parent a link", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		reg.ParentSessionID = "parent"
@@ -345,6 +359,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("subagent its parent links", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		reg.ParentSessionID = "parent"
@@ -360,6 +375,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		}
 	})
 	t.Run("cursor text is never trusted to a stat", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		signature, _, _ := local.LoadScanSignature(reg.ArchiveSessionID)
@@ -375,6 +391,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	// in-place rewrite to the same byte length that also restores the exact
 	// nanosecond mtime is indistinguishable by stat, and is skipped.
 	t.Run("residual risk: same size and same nanosecond", func(t *testing.T) {
+		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		original := mtime(t, reg.TranscriptPath)
@@ -394,6 +411,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 // A same-length in-place rewrite that moves the mtime by any amount is read
 // and recorded as the gap it is.
 func TestSameLengthRewriteIsDetected(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	reg := settledSession(t, local, codexTranscript)
@@ -478,6 +496,11 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 			t.Skip("the wall-clock target is for a plain build, not the race detector")
 		}
 		sessions, size, timed = 300, 400*1024, true
+	}
+	// Timed, it runs alone: Go starts the parallel tests only after every
+	// sequential one, so none shares the process with its measured pass.
+	if !timed {
+		t.Parallel()
 	}
 	home := t.TempDir()
 	local, err := state.Open(home)
@@ -581,6 +604,7 @@ const perfEnv = "AGENT_ARCHIVE_PERF"
 // The on-disk published cache after one publication, for the ledger: the
 // shared-copy marker roughly halves it.
 func TestPublishedCacheSizeIsAboutOneBundle(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := settledSession(t, local, largeCodexTranscript(64*1024))
 	raw, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
@@ -616,6 +640,7 @@ func evidenceKinds(evidence []archive.SupplementalEvidence) []string {
 // the response is dropped on the floor. Instead the block holds it, and it
 // publishes when the file returns, even when the file returns byte-identical.
 func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -695,6 +720,7 @@ func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 // status to restore, so the first real candidate replaces it, and the held
 // evidence must still ride along.
 func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()

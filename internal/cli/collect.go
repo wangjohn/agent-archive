@@ -152,13 +152,16 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, err
 	}
 
+	// Registration gets an independent budget after capture and retention,
+	// including their failure paths. It cannot cause either to be skipped.
+	defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
 	// The previous pass's time, read before this pass overwrites it: the
 	// retention sweep checks the clock against it (see retention.Options).
 	var previousScanAt time.Time
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{Sources: registryFor(env), Decoders: env.agentRegistry(),
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:        cfg.EffectiveSkillEvidence(),
@@ -250,7 +253,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 	}
 	// A clock that disagrees with the storage service's holds every deletion
 	// by age until it is fixed, which status must say. A hold for one pass
-	// after a long gap (the Mac was off) clears itself and says nothing.
+	// after a long gap (the machine was off) clears itself and says nothing.
 	if held := sweepResult.Held; held != nil && !errors.Is(held, retention.ErrClockJumped) {
 		addStatusProblem(localStore, fmt.Sprintf("retention: %v", held))
 	}

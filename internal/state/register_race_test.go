@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -24,7 +25,7 @@ func registrationFor(id string) archive.SessionRegistration {
 // written back; an update error saves nothing.
 func TestUpdateRegistrationReportsAForgottenSessionAndSavesNothingOnError(t *testing.T) {
 	local := newTestStore(t)
-	reg, err := local.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
+	reg, err := local.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestUpdateRegistrationReportsAForgottenSessionAndSavesNothingOnError(t *tes
 	if current, _, _ := local.LoadRegistration(reg.ArchiveSessionID); current.TranscriptPath != "/t.jsonl" {
 		t.Fatalf("a refused update was saved: %#v", current)
 	}
-	if err := local.ForgetSession(reg.ArchiveSessionID, "native-1"); err != nil {
+	if err := local.ForgetSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	called := false
@@ -58,7 +59,7 @@ func TestUpdateRegistrationReportsAForgottenSessionAndSavesNothingOnError(t *tes
 // whose index entry it created, instead of reusing the dead one.
 func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) {
 	store := newTestStore(t)
-	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
+	old, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 	done := make(chan archive.SessionRegistration, 1)
 	failed := make(chan error, 1)
 	go func() {
-		reg, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
+		reg, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration { return registrationFor(id) })
 		if err != nil {
 			failed <- err
 			return
@@ -81,7 +82,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 		done <- reg
 	}()
 	time.Sleep(100 * time.Millisecond)
-	if err := store.ForgetSession(old.ArchiveSessionID, "native-1"); err != nil {
+	if err := store.ForgetSession(old.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -94,7 +95,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 	if fresh.ArchiveSessionID == old.ArchiveSessionID {
 		t.Fatal("the forgotten archive ID was reused")
 	}
-	if id, found, _ := store.ArchiveSessionID("native-1"); !found || id != fresh.ArchiveSessionID {
+	if id, found, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); !found || id != fresh.ArchiveSessionID {
 		t.Fatalf("index = %q (found=%t), want %q", id, found, fresh.ArchiveSessionID)
 	}
 }
@@ -108,7 +109,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 // anything for the forgotten ID, whichever inode it holds.
 func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	store := newTestStore(t)
-	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
+	old, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = stale.Close() }()
-	if err := store.ForgetSession(old.ArchiveSessionID, "native-1"); err != nil {
+	if err := store.ForgetSession(old.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -145,7 +146,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	if err := store.SaveRequest(old.ArchiveSessionID, "stop", time.Now()); !errors.Is(err, ErrSessionNotRegistered) {
 		t.Fatalf("SaveRequest on a forgotten ID: %v", err)
 	}
-	fresh, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
+	fresh, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}

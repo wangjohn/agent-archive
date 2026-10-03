@@ -1,7 +1,9 @@
 package state
 
 import (
+	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Every entry a Store owns has a decided answer to "what if this file no
@@ -83,35 +84,48 @@ func TestPendingOfAnotherShapeIsNeverMovedAside(t *testing.T) {
 	}
 }
 
-// The native-session index is derived from the registrations: an entry that
-// no longer decodes is recovered from the registration naming the native
-// session, so the session keeps its archive ID instead of getting a second.
+// Corruption stays bounded on lookup; explicit off-hot-path recovery preserves
+// the admitted archive ID and durably distinguishes a genuinely absent key.
 func TestCorruptSessionIndexIsRecoveredFromTheRegistration(t *testing.T) {
 	store := newTestStore(t)
-	reg, err := store.RegisterNewSession("native-1", func(id string) (r archive.SessionRegistration) {
-		r = registration(t)
+	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-1"}
+	reg, err := store.RegisterNewSession(key, func(id string) archive.SessionRegistration {
+		r := registration(t)
 		r.ArchiveSessionID = id
 		return r
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeCorrupt(t, nativeSessionIndexPath(store.home, "native-1"))
-	id, found, err := store.ArchiveSessionID("native-1")
-	if err != nil || !found || id != reg.ArchiveSessionID {
-		t.Fatalf("recovered %q %v %v, want %q", id, found, err, reg.ArchiveSessionID)
+	writeCorrupt(t, qualifiedSessionIndexPath(store.home, key))
+	if _, _, err := store.ArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("bounded lookup: %v", err)
 	}
-	id, created, err := store.EnsureArchiveSessionID("native-1")
-	if err != nil || created || id != reg.ArchiveSessionID {
+	if err := store.RequestSessionIndexRecovery(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id, found, err := store.ArchiveSessionID(key)
+	if err != nil || !found || id != reg.ArchiveSessionID {
+		t.Fatalf("recovered %q %v %v", id, found, err)
+	}
+	if id, created, err := store.EnsureArchiveSessionID(key); err != nil || created || id != reg.ArchiveSessionID {
 		t.Fatalf("ensure = %q %v %v", id, created, err)
 	}
-	var entry sessionIndexEntry
-	if err := local.Read(nativeSessionIndexPath(store.home, "native-1"), &entry); err != nil || entry.ArchiveSessionID != reg.ArchiveSessionID {
-		t.Fatalf("index not repaired: %#v %v", entry, err)
+	absent := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-2"}
+	writeCorrupt(t, nativeSessionIndexPath(store.home, absent.NativeID))
+	if _, _, err := store.EnsureArchiveSessionID(absent); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("corrupt orphan: %v", err)
 	}
-	// With no registration to recover from, a fresh ID replaces the entry.
-	writeCorrupt(t, nativeSessionIndexPath(store.home, "native-2"))
-	if id, created, err := store.EnsureArchiveSessionID("native-2"); err != nil || !created || id == "" {
+	if err := store.RequestSessionIndexRecovery(absent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if id, created, err := store.EnsureArchiveSessionID(absent); err != nil || !created || id == "" {
 		t.Fatalf("fresh = %q %v %v", id, created, err)
 	}
 }

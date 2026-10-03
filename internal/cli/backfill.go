@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,7 +102,7 @@ func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg 
 }
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
-// sessions already on this Mac, shows the plan, and after confirmation
+// sessions already on this machine, shows the plan, and after confirmation
 // imports them (see dev/specs/backfill.md). `--dry-run [--json]` prints
 // the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -261,7 +263,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	}
 	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
 	// database is removed on the way out instead of left in the temporary
-	// folder. A second Ctrl-C, SIGTERM, or SIGHUP quits at once, removing
+	// folder. A second Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
 	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, opts.filters)
@@ -385,7 +387,7 @@ func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home
 }
 
 // offerSetupImport follows a committed interactive setup: when the chosen
-// projects have sessions on this Mac that are not in the archive, it asks
+// projects have sessions on this machine that are not in the archive, it asks
 // whether to import them, and imports them as agent-archive backfill
 // --project would, with the same plan, safety checks and import record, so
 // backfill undo removes them again. setup already holds setup.lock and has
@@ -489,7 +491,7 @@ func setupImportRetry(plan backfill.Plan, cfg config.Config) string {
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,
-// saying on out that it is stopping. A second Ctrl-C, or SIGTERM or SIGHUP
+// saying on out that it is stopping. A second Ctrl-C, or SIGTERM, SIGHUP or SIGQUIT
 // at any point, ends the process at once, after removing this process's
 // copies of Cursor's database (see watchSignals). stop ends the watch and
 // waits for it; it is called once.
@@ -503,7 +505,7 @@ func interruptibleContext(env Env, out io.Writer) (context.Context, func()) {
 }
 
 // exitOnSignal ends the process on a signal that stops backfill at once: a
-// second Ctrl-C, or SIGTERM or SIGHUP. It first removes the copies of
+// second Ctrl-C, or SIGTERM, SIGHUP or SIGQUIT. It first removes the copies of
 // Cursor's database this process made, which the Readers holding them would
 // otherwise never close: a copy of every chat left in the temporary folder
 // until a later sweep. The exit status is the shell's for the signal. A test
@@ -524,9 +526,9 @@ func exitAfterSignal(sig os.Signal, removeOwnSnapshots func(), exit func(code in
 }
 
 // signalWatch watches, while backfill works, for the signals env.interrupts
-// delivers: Ctrl-C, SIGTERM, and SIGHUP. The first Ctrl-C calls onFirst and
+// delivers: Ctrl-C, SIGTERM, SIGHUP, and SIGQUIT. The first Ctrl-C calls onFirst and
 // says so on out, and the work stops at its next safe point. A second
-// Ctrl-C, or a SIGTERM or SIGHUP (sent by a closing terminal or a process
+// Ctrl-C, or a SIGTERM, SIGHUP or SIGQUIT (sent by a closing terminal or a process
 // manager, which will not wait), calls exitOnSignal.
 type signalWatch struct {
 	stop   func()
@@ -684,7 +686,7 @@ func (e Env) backfillTempDirs() []string {
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	claude, codex := e.appSessionDirs(userHome, cfg)
-	env := backfill.Environment{
+	env := backfill.Environment{Sources: e.agentRegistry(),
 		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
@@ -736,7 +738,7 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // has one the configuration no longer accepts. An index entry without a
 // registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
-	archiveID, found, err := s.store.ArchiveSessionID(nativeSessionID)
+	archiveID, found, err := s.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
 	if err != nil {
 		return "", err
 	}

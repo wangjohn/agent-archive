@@ -104,7 +104,7 @@ func printPurgePlan(w io.Writer, file string, plan purge.Plan) {
 	for _, s := range plan.CurrentOldSessions {
 		terminal.Printf(w, "  %s -> %s (filter %s)\n", s.MetadataKey, s.SourceKey, s.FilterVersion)
 	}
-	terminal.Println(w, "Pause every uploading Mac before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.")
+	terminal.Println(w, "Pause every uploading machine before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.")
 }
 
 func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -164,7 +164,7 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 		return purgeError(stderr, errors.New("purge plan bucket or prefix differs from current setup"))
 	}
 	if !cfg.Paused {
-		return purgeError(stderr, errors.New("pause this Mac and every other uploading Mac before purge apply"))
+		return purgeError(stderr, errors.New("pause this machine and every other uploading machine before purge apply"))
 	}
 	if !*yes {
 		if code, confirmed := confirmPurge(plan, stdin, stdout, stderr); !confirmed {

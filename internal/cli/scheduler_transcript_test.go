@@ -13,7 +13,8 @@ import (
 
 // What setup and uninstall ask launchctl, in what order, and what is on disk
 // at each call (the harness is scheduler_harness_test.go). A behavior change
-// is a golden diff.
+// is a golden diff. None of these tests is parallel: newSchedRun replaces
+// launchctl.
 
 // install runs an ordinary setup and forgets what launchctl was asked.
 func (r *schedRun) install() {

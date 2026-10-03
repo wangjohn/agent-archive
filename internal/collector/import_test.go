@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func publishedMetadataBytes(t *testing.T, reg archive.SessionRegistration) []byt
 	}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
-	if result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+	if result, err := Run(context.Background(), local, remote, Options{Sources: testSources, MachineID: "machine", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
@@ -42,6 +43,7 @@ func publishedMetadataBytes(t *testing.T, reg archive.SessionRegistration) []byt
 // None of them may reach its metadata: it must be byte-identical to what a
 // registration without them published before.
 func TestHookMetadataIsByteIdenticalWithAdmissionFields(t *testing.T) {
+	t.Parallel()
 	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
 	legacy := registration(t, path)
 	hook := legacy
@@ -64,6 +66,7 @@ func TestHookMetadataIsByteIdenticalWithAdmissionFields(t *testing.T) {
 // the evidence it lacks, on first publication and after a metadata-only
 // parser upgrade alike.
 func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
 	reg := registration(t, path)
@@ -75,7 +78,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	now := importedAt.Add(time.Minute)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -116,6 +119,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 // that hook's lifecycle event; one backfill found gets none. A hook that
 // reports a subagent of a resumed import gives an import child the event.
 func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *testing.T) {
+	t.Parallel()
 	parentStart := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	importedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -132,6 +136,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 		{"hook-reported child of an import", archive.SessionOriginImport, importedAt, "2026-09-23-1", importedAt.Add(time.Hour), archive.SessionOriginHook, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			local, err := state.Open(home)
 			if err != nil {
@@ -174,7 +179,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			}}}}
 			remote := storagetest.NewMemoryStore()
 			now := tc.observedAt.Add(time.Minute)
-			result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+			result, err := Run(context.Background(), local, remote, Options{Sources: testSources, MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 			if err != nil || len(result.Errors) != 0 {
 				t.Fatalf("%#v %v", result, err)
 			}
@@ -224,6 +229,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 }
 
 func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {
@@ -275,6 +281,7 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 // A registration written under the "claude-code" spelling (a hand-edited
 // hook) leaves a record backfill finds under "claude".
 func TestRemovalRecordCanonicalApp(t *testing.T) {
+	t.Parallel()
 	local, err := state.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -292,6 +299,7 @@ func TestRemovalRecordCanonicalApp(t *testing.T) {
 // gets no record; a record that cannot be written leaves the session
 // registered, and a retry then records and forgets it.
 func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	removal := &state.RemovalRecord{Harness: "codex", Reason: state.RemovalReasonUndo, At: at}
 
@@ -303,7 +311,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := kept.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := kept.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || forgotten {
+	if forgotten, err := kept.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err != nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 	if _, found, err := kept.Removal("codex", reg.NativeSessionID); err != nil || found {
@@ -318,7 +326,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := failing.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := failing.EnsureArchiveSessionID(reg.NativeSessionID); err != nil {
+	if _, _, err := failing.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); err != nil {
 		t.Fatal(err)
 	}
 	// A file where the records directory belongs makes every write fail.
@@ -326,19 +334,19 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err == nil || forgotten {
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err == nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v, want a failure", forgotten, err)
 	}
 	if _, registered, _ := failing.LoadRegistration(reg.ArchiveSessionID); !registered {
 		t.Fatal("the session was forgotten without its removal record")
 	}
-	if _, indexed, _ := failing.ArchiveSessionID(reg.NativeSessionID); !indexed {
+	if _, indexed, _ := failing.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}); !indexed {
 		t.Fatal("the native index entry was removed without a removal record")
 	}
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal); err != nil || !forgotten {
 		t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
 	}
 	if record, found, err := failing.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != state.RemovalReasonUndo || !record.At.Equal(at) {
@@ -350,6 +358,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 // candidate waits. One backfill found is history and will not grow: it is
 // rejected once, and the parent is told, instead of being retried forever.
 func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
+	t.Parallel()
 	parentStart := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	importedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -362,6 +371,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 		{"import", archive.SessionOriginImport, false, "subagent_transcript_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			local, err := state.Open(home)
 			if err != nil {
@@ -397,7 +407,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			}
 			for range 2 {
 				// Inside the grace a hook candidate is given to write.
-				materializeSubagentCandidates(local, Options{}, importedAt.Add(time.Minute))
+				materializeSubagentCandidates(context.Background(), local, Options{Sources: testSources}, importedAt.Add(time.Minute))
 			}
 			candidates, err := local.LoadSubagentCandidates()
 			if err != nil {

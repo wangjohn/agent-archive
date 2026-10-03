@@ -481,7 +481,7 @@ func TestSkillsAndMCP(t *testing.T) {
 	if len(got.Skills) != 1 || got.Skills[0] != (Skill{"review-pr", 3}) {
 		t.Fatalf("skills = %+v (a repeated skill in one session counts once)", got.Skills)
 	}
-	if got.MCP == nil || len(got.MCP.Servers) != 1 || got.MCP.Servers[0] != (MCPServer{"github", 42, 2}) || got.MCP.Scope != MCPScope {
+	if got.MCP == nil || len(got.MCP.Servers) != 1 || got.MCP.Servers[0] != (MCPServer{Name: "github", Calls: 42, Sessions: 2}) || got.MCP.Scope != MCPScope {
 		t.Fatalf("mcp = %+v", got.MCP)
 	}
 }

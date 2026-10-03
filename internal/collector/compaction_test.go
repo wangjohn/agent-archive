@@ -44,6 +44,7 @@ func claudeSession(t *testing.T, local *state.Store, content string) string {
 // published records, so the rewrite guard lets the compaction publish like
 // any other new activity, with the new counts.
 func TestAppendedCompactionPublishesNormally(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	lines := compactionFixtureLines(t)
@@ -83,6 +84,7 @@ func TestAppendedCompactionPublishesNormally(t *testing.T) {
 // earlier records instead of appending, the published snapshot is richer than
 // the file, and the session is recorded as a gap rather than overwritten.
 func TestCompactionThatRewroteTheTranscriptIsRecordedAsAGap(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	lines := compactionFixtureLines(t)

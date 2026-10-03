@@ -46,6 +46,7 @@ func finalResponse(t *testing.T, at time.Time) archive.SupplementalEvidence {
 // request and its evidence must survive, and the next collector pass must
 // publish that evidence rather than lose it.
 func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	memory := storagetest.NewMemoryStore()
@@ -103,6 +104,10 @@ func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
 // them. Whatever the interleaving, a request SaveRequest reported as written
 // is never lost to expiry, and a request refused because the session was
 // already forgotten leaves no orphan behind.
+//
+// Not parallel: real sleeps spread the hook across the sweep, and the hook's
+// SaveRequest waits at most a second for the request lock the sweep's forget
+// holds, so a busy parallel run could make it fail with ErrBusy.
 func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 	const rounds = 30
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -166,6 +171,7 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 // calls, and the request's hook text goes with it. The same request on a
 // registration with a transcript path still defers expiry.
 func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -212,6 +218,7 @@ func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.
 //
 // Regression: 2026-09 pre-release review, collector bug 4.
 func TestQueuedRequestDoesNotKeepAnEmptyTranscriptSessionPastRetention(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -251,6 +258,7 @@ func TestQueuedRequestDoesNotKeepAnEmptyTranscriptSessionPastRetention(t *testin
 // waiting to upload, is work the collector will do: an empty transcript does
 // not stop it from deferring expiry.
 func TestPendingUploadKeepsAnEmptyTranscriptSessionPastRetention(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -279,6 +287,7 @@ func TestPendingUploadKeepsAnEmptyTranscriptSessionPastRetention(t *testing.T) {
 // but the collector still captures it: its queued request keeps deferring
 // expiry past the retention window, as a file session's does.
 func TestQueuedRequestKeepsACursorDatabaseSessionPastRetention(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	reg := registration("cursor-db", "")

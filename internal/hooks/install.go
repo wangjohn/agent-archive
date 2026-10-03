@@ -1,8 +1,14 @@
 package hooks
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/fileapply"
+	"github.com/wangjohn/agent-archive/internal/filechange"
+	"github.com/wangjohn/agent-archive/internal/jsonedit"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"maps"
 	"os"
 	"path/filepath"
@@ -10,39 +16,8 @@ import (
 	"strings"
 )
 
-// Change is prepared before any mutation so callers can show a concrete plan.
-type Change struct {
-	Path    string
-	Before  []byte
-	After   []byte
-	Existed bool
-	Mode    os.FileMode
-	// Delete is a removal that leaves the file with nothing in it (see
-	// Empty): Apply deletes it instead of writing After, so a file setup
-	// created goes away again. Only a regular file is deleted, never a link
-	// a dotfile manager keeps.
-	Delete bool `json:",omitempty"`
-}
-
-// Applied reports whether the file at c.Path is as c leaves it: deleted, or
-// holding After.
-func (c Change) Applied() bool {
-	current, err := os.ReadFile(c.Path)
-	if c.Delete {
-		return os.IsNotExist(err)
-	}
-	return err == nil && string(current) == string(c.After)
-}
-
-// Unapplied reports whether the file at c.Path is as c found it: holding
-// Before, or absent when it did not exist.
-func (c Change) Unapplied() bool {
-	current, err := os.ReadFile(c.Path)
-	if !c.Existed {
-		return os.IsNotExist(err)
-	}
-	return err == nil && string(current) == string(c.Before)
-}
+// Change is the shared value-only file plan.
+type Change = filechange.Change
 
 // Files maps each harness to the absolute path of its hook configuration
 // file. See ResolveFiles.
@@ -55,26 +30,32 @@ type Files map[string]string
 // reads the environment setup runs in, which is the one the user starts the
 // applications from; a relative directory is taken relative to the current
 // directory, as the application would.
-func ResolveFiles(userHome string, lookupEnv func(string) (string, bool)) Files {
-	dir := func(variable, fallback string) string {
-		if value, ok := lookupEnv(variable); ok && value != "" {
-			if abs, err := filepath.Abs(value); err == nil {
-				return abs
+func ResolveFiles(userHome string, lookupEnv func(string) (string, bool), ports agentapi.HooksLookup) Files {
+	cwd, _ := os.Getwd()
+	env := map[string]string{}
+	for _, name := range ports.HookAgents() {
+		p, ok := ports.LookupHooks(name)
+		if !ok {
+			continue
+		}
+		for _, key := range p.EnvironmentKeys() {
+			if v, found := lookupEnv(key); found {
+				env[key] = v
 			}
 		}
-		return filepath.Join(userHome, fallback)
 	}
-	return Files{
-		string(harnessClaude): filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
-		string(harnessCodex):  filepath.Join(dir("CODEX_HOME", ".codex"), "hooks.json"),
-		string(harnessCursor): filepath.Join(userHome, ".cursor", "hooks.json"),
+	files := Files{}
+	for _, name := range ports.HookAgents() {
+		p, ok := ports.LookupHooks(name)
+		if ok {
+			files[name] = p.Location(agentapi.HookLocations{UserHome: userHome, WorkingDirectory: cwd, Environment: env})
+		}
 	}
+	return files
 }
 
 func (f Files) path(harness string) (string, error) {
-	if _, err := events(harness); err != nil {
-		return "", err
-	}
+
 	path := f[harness]
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("no hook configuration file for %s", harness)
@@ -90,7 +71,21 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 		if err != nil {
 			return nil, err
 		}
-		changes = append(changes, change)
+		duplicate := false
+		for _, prior := range changes {
+			// Atomic replacement writes destinations independently, even for hardlinks.
+			if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+				continue
+			}
+			if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.Before, change.Before) || !bytes.Equal(prior.After, change.After) {
+				return nil, fmt.Errorf("hook owners have conflicting installation plans for %s", change.Path)
+			}
+			duplicate = true
+			break
+		}
+		if !duplicate {
+			changes = append(changes, change)
+		}
 	}
 	return changes, nil
 }
@@ -110,28 +105,24 @@ func (e *readError) Unwrap() error { return e.cause }
 // is the one place Plan and Validate check a file, so the two cannot
 // disagree about which files setup can install into.
 func planFile(files Files, harness string, hook Hook) (Change, error) {
-	path, err := files.path(harness)
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
 		return Change{}, err
 	}
-	before, err := os.ReadFile(path)
-	exists := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return Change{}, &readError{path: path, cause: err}
+	if file.ReadError != nil {
+		return Change{}, &readError{path: file.Path, cause: file.ReadError}
 	}
-	after, err := Merge(before, harness, hook)
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: cloneHookFile(file), Owner: owner})
 	if err != nil {
-		return Change{}, fmt.Errorf("%s: %w", path, err)
+		return Change{}, fmt.Errorf("%s: %w", file.Path, err)
 	}
-	mode := os.FileMode(0600)
-	if exists {
-		info, e := os.Stat(path)
-		if e != nil {
-			return Change{}, e
-		}
-		mode = info.Mode().Perm()
+	if len(changes) != 1 {
+		return Change{}, errors.New("hook install must plan one file")
 	}
-	return Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode}, nil
+	if err := validateHookChange(file, changes[0], agentapi.HookInstall); err != nil {
+		return Change{}, err
+	}
+	return changes[0], nil
 }
 
 // Problem is why setup cannot install into one hook file, as Validate finds
@@ -159,7 +150,6 @@ type Problem struct {
 // validationHook stands in for the Hook setup installs when Validate runs
 // Merge: a file Merge refuses is refused for what it holds, never for the
 // command installed into it, so any valid Hook refuses the same files.
-var validationHook = Hook{Executable: string(filepath.Separator)}
 
 // Validate checks every hook file in files the way Plan does before it
 // installs into one, and returns a Problem for each file Plan would refuse:
@@ -168,7 +158,8 @@ var validationHook = Hook{Executable: string(filepath.Separator)}
 // hooks of a shape setup cannot edit. It reads the files, through any
 // symbolic links, and changes nothing. A missing file is no problem: setup
 // creates it. Problems come in harness order.
-func Validate(files Files) []Problem {
+func Validate(files Files, ports agentapi.HooksLookup) []Problem {
+	validationHook := Hook{Executable: string(filepath.Separator), Ports: ports}
 	var problems []Problem
 	for _, harness := range slices.Sorted(maps.Keys(files)) {
 		_, err := planFile(files, harness, validationHook)
@@ -176,80 +167,21 @@ func Validate(files Files) []Problem {
 			continue
 		}
 		path := files[harness]
-		p := Problem{Harness: harness, Path: path, Err: err}
-		var unread *readError
-		var located *configError
-		switch {
-		case errors.As(err, &unread):
-			p.Reason = "the file cannot be read"
-			if cause := errors.Unwrap(unread.cause); cause != nil {
-				p.Reason += ": " + cause.Error()
+		line, column, reason := jsonedit.Problem(err)
+		p := Problem{Harness: harness, Path: path, Err: err, Line: line, Column: column, Reason: reason}
+		if p.Reason == "" {
+			p.Reason = strings.TrimPrefix(strings.TrimPrefix(err.Error(), path+": "), jsonedit.ErrInvalidConfiguration.Error()+": ")
+			var unread *readError
+			if errors.As(err, &unread) {
+				p.Reason = "the file cannot be read"
+				if cause := errors.Unwrap(unread.cause); cause != nil {
+					p.Reason += ": " + cause.Error()
+				}
 			}
-		case errors.As(err, &located):
-			p.Line, p.Column, p.Reason = located.line, located.column, located.reason
-		default:
-			p.Reason = strings.TrimPrefix(err.Error(), path+": ")
-			p.Reason = strings.TrimPrefix(p.Reason, errInvalidConfiguration.Error()+": ")
 		}
 		problems = append(problems, p)
 	}
 	return problems
-}
-
-// ErrChanged reports that a file changed after its Change was planned.
-// Apply wraps it with the file's path; the caller says how to retry.
-var ErrChanged = errors.New("changed while it was being updated")
-
-// Apply rolls back already written files on failure. It refuses a configuration
-// changed since the plan was prepared, rather than overwriting concurrent edits.
-func Apply(changes []Change) error { return apply(changes, resolveTarget) }
-
-// apply is Apply writing each change where writeTarget says: resolveTarget,
-// or a stand-in a test gives to point a write somewhere else.
-func apply(changes []Change, writeTarget func(path string) (string, error)) error {
-	applied := []Change{}
-	for _, c := range changes {
-		current, err := os.ReadFile(c.Path)
-		exists := err == nil
-		if (err != nil && !os.IsNotExist(err)) || exists != c.Existed || string(current) != string(c.Before) {
-			return errors.Join(fmt.Errorf("%s %w", c.Path, ErrChanged), rollback(applied))
-		}
-		target, err := writeTarget(c.Path)
-		if err != nil {
-			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
-		}
-		if c.Delete && target != c.Path {
-			// It became a link since it was planned: the file it points to
-			// is kept, emptied, as for any link (see PlanRemovalOf).
-			c.Delete = false
-		}
-		if c.Delete {
-			if err = os.Remove(c.Path); err != nil {
-				return errors.Join(fmt.Errorf("cannot remove %s: %w", c.Path, err), rollback(applied))
-			}
-			applied = append(applied, c)
-			continue
-		}
-		undo, err := snapshot(target)
-		if err != nil {
-			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
-		}
-		if err = writeFile(target, c.After, c.Mode); err != nil {
-			// writeFile replaces the file only by its final rename, so a
-			// failure left the file as it was: only directories it created
-			// are taken back.
-			undo.removeCreatedDirs()
-			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
-		}
-		// What the application will read is the file through c.Path, links
-		// and all; a write that landed anywhere else is not a success, and
-		// is taken back along with the earlier changes.
-		if written, err := os.ReadFile(c.Path); err != nil || string(written) != string(c.After) {
-			return errors.Join(fmt.Errorf("cannot update %s: the file written (%s) does not read back through it", c.Path, target), undo.restore(), rollback(applied))
-		}
-		applied = append(applied, c)
-	}
-	return nil
 }
 
 // PlanRemovalOf prepares the inverse of Plan for one harness, for uninstall:
@@ -261,200 +193,24 @@ func apply(changes []Change, writeTarget func(path string) (string, error)) erro
 // Apply the result with Apply, which keeps its refuse-on-concurrent-edit and
 // rollback behavior.
 func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
-	path, err := files.path(harness)
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
 		return Change{}, false, err
 	}
-	before, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: cloneHookFile(file), Owner: owner})
+	if err != nil {
+		return Change{}, false, fmt.Errorf("%s: %w", file.Path, err)
+	}
+	if len(changes) == 0 {
 		return Change{}, false, nil
 	}
-	if err != nil {
-		return Change{}, false, fmt.Errorf("cannot read %s", path)
+	if len(changes) != 1 {
+		return Change{}, false, errors.New("hook remove must plan one file")
 	}
-	after, removed, err := Remove(before, harness, hook)
-	if err != nil {
-		return Change{}, false, fmt.Errorf("%s: %w", path, err)
-	}
-	if !removed {
-		return Change{}, false, nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
+	if err := validateHookChange(file, changes[0], agentapi.HookRemove); err != nil {
 		return Change{}, false, err
 	}
-	link, err := os.Lstat(path)
-	if err != nil {
-		return Change{}, false, err
-	}
-	// A file left with nothing in it means what no file means, and is what
-	// setup leaves of one it created, so it is deleted.
-	remove := Empty(after) && link.Mode().IsRegular()
-	return Change{Path: path, Before: before, After: after, Existed: true, Mode: info.Mode().Perm(), Delete: remove}, true, nil
-}
-
-// Rollback undoes applied changes in reverse order: each file is restored to
-// its Before content, or removed if the change created it. A file whose
-// content is no longer the change's After was edited since, so it is left
-// untouched and reported as needing manual recovery. All failures are joined
-// into the returned error.
-func Rollback(changes []Change) error { return rollback(changes) }
-
-func rollback(changes []Change) error {
-	var failures []error
-	for i := len(changes) - 1; i >= 0; i-- {
-		c := changes[i]
-		if !c.Applied() {
-			failures = append(failures, fmt.Errorf("%s changed; manual recovery required", c.Path))
-			continue
-		}
-		var e error
-		if c.Existed {
-			e = atomicWrite(c.Path, c.Before, c.Mode)
-		} else {
-			// Remove what was created: through a symlink, its target.
-			var target string
-			if target, e = resolveTarget(c.Path); e == nil {
-				e = os.Remove(target)
-			}
-		}
-		if e != nil {
-			failures = append(failures, e)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-// resolveTarget follows path through any symlinks to the file they name,
-// which need not exist yet.
-func resolveTarget(path string) (string, error) {
-	for range 40 {
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			// A missing file may still sit in a symlinked directory; that is
-			// resolved by the rename itself.
-			return path, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return path, nil
-		}
-		link, err := os.Readlink(path)
-		if err != nil {
-			return "", err
-		}
-		if !filepath.IsAbs(link) {
-			// Relative to the directory the link really sits in, which is
-			// not filepath.Dir(path) when that directory is itself a link
-			// (~/.claude -> dotfiles/claude).
-			dir, err := filepath.EvalSymlinks(filepath.Dir(path))
-			if err != nil {
-				return "", err
-			}
-			link = filepath.Join(dir, link)
-		}
-		path = link
-	}
-	return "", fmt.Errorf("%s: too many levels of symbolic links", path)
-}
-
-// atomicWrite replaces the file at path with data by renaming a temporary
-// file into place. When path is a symlink (a dotfile manager's link into a
-// repository, say) it writes the file the link names, in that file's own
-// directory, so the link survives and the repository copy is the one
-// updated.
-func atomicWrite(path string, data []byte, mode os.FileMode) error {
-	target, err := resolveTarget(path)
-	if err != nil {
-		return err
-	}
-	return writeFile(target, data, mode)
-}
-
-// priorFile is what was at a path before Apply wrote it, so a write that
-// must be taken back can be: the old content, or its absence together with
-// the directories the write created.
-type priorFile struct {
-	path    string
-	data    []byte
-	mode    os.FileMode
-	existed bool
-	created []string // directories that did not exist, deepest first
-}
-
-func snapshot(path string) (priorFile, error) {
-	prior := priorFile{path: path}
-	info, err := os.Stat(path)
-	switch {
-	case err == nil:
-		// A file that is there but cannot be read could not be put back,
-		// so it is refused rather than overwritten.
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return priorFile{}, err
-		}
-		prior.mode, prior.data, prior.existed = info.Mode().Perm(), data, true
-	case !os.IsNotExist(err):
-		return priorFile{}, err
-	}
-	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
-		if _, err := os.Lstat(dir); err == nil || filepath.Dir(dir) == dir {
-			break
-		}
-		prior.created = append(prior.created, dir)
-	}
-	return prior, nil
-}
-
-// restore puts the path back as snapshot found it. Directories it created
-// are removed only while empty.
-func (p priorFile) restore() error {
-	if p.existed {
-		return writeFile(p.path, p.data, p.mode)
-	}
-	if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	p.removeCreatedDirs()
-	return nil
-}
-
-// removeCreatedDirs removes the directories a write created, while empty.
-func (p priorFile) removeCreatedDirs() {
-	for _, dir := range p.created {
-		_ = os.Remove(dir) // fails, and keeps the directory, if it is not empty
-	}
-}
-
-// writeFile atomically replaces the regular file at path (no link
-// following: see atomicWrite) with data.
-func writeFile(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".archive-")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	// After a successful rename there is nothing left at name to remove.
-	defer func() { _ = os.Remove(name) }()
-	if err = f.Chmod(mode); err == nil {
-		_, err = f.Write(data)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return os.Rename(name, path)
+	return changes[0], true, nil
 }
 
 // Installed reports whether harness's hook file holds exactly what setup
@@ -464,137 +220,49 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 // else. Formatting, key order, the user's own handlers, and another
 // installation's do not affect the result (see OtherInstallations).
 func Installed(files Files, hook Hook, harness string) (bool, error) {
-	path, err := files.path(harness)
-	if err != nil {
-		return false, err
-	}
-	command, err := hook.Command(harness)
-	if err != nil {
-		return false, err
-	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	doc, err := parseDocument(data)
-	if err != nil {
-		return false, err
-	}
-	app := harnessName(harness)
-	if app == harnessCursor {
-		if v, _ := doc.root.get("version"); !isOne(v) {
-			return false, nil
-		}
-	}
-	hs, err := hooksObject(doc.root)
-	if err != nil || hs == nil {
-		return false, err
-	}
-	names, _ := events(harness)
-	for _, event := range names {
-		if _, ok := hs.get(event); !ok {
-			return false, nil
-		}
-	}
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
-		if !ok {
-			return false, fmt.Errorf("invalid hook list for %s", m.key)
-		}
-		handlers, err := handlerList(groups, app)
-		if err != nil {
-			return false, err
-		}
-		ours := 0
-		for _, handler := range handlers {
-			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
-				continue
-			}
-			got, _ := handler.get("command")
-			kind, _ := handler.get("type")
-			if got != command || (app != harnessCursor && kind != "command") {
-				return false, nil
-			}
-			ours++
-		}
-		want := 0
-		if slices.Contains(names, m.key) {
-			want = 1
-		}
-		if ours != want {
-			return false, nil
-		}
-	}
-	return true, nil
+	result, err := Inspect(files, hook, harness)
+	return result.Installed, err
 }
 
-// OtherInstallation is a hook handler another installation of agent-archive
-// (another data directory) installed in a file this one uses.
-type OtherInstallation struct {
-	// DataHome is the data directory the handler runs with: its
-	// AGENT_ARCHIVE_HOME, or the default installation's directory (""
-	// when that is not known).
-	DataHome string
-	// Default is whether it is the account's default installation, whose
-	// handlers set no AGENT_ARCHIVE_HOME.
-	Default bool
-	// Command is the handler's command when no data directory could be read
-	// from it (it was edited by hand); DataHome is then "".
-	Command string
-}
+// OtherInstallation is local information about another managed owner.
+type OtherInstallation = agentapi.HookOtherOwner
 
-// OtherInstallations lists, once each, the other installations whose
-// handlers are in harness's hook file: handlers that carry agent-archive's
-// marker but run with another data directory than hook's. Setup, uninstall,
-// and Installed leave them alone; setup refuses to install beside them, since
-// every session would then be captured twice. A missing file has none.
+// OtherInstallations reports foreign handlers without changing settings.
 func OtherInstallations(files Files, hook Hook, harness string) ([]OtherInstallation, error) {
-	path, err := files.path(harness)
+	result, err := Inspect(files, hook, harness)
+	return result.Others, err
+}
+
+// Inspect supplies bounded host observations to the integration's pure inspector.
+func Inspect(files Files, hook Hook, harness string) (agentapi.HookInspection, error) {
+	file, port, owner, err := observe(files, hook, harness)
 	if err != nil {
-		return nil, err
+		return agentapi.HookInspection{State: agentapi.HookUnreadable, Reason: "settings_unreadable"}, err
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
+	return port.Inspect(agentapi.HookInspectionRequest{File: cloneHookFile(file), Owner: owner})
+}
+
+// ErrChanged reports a concurrent edit after planning.
+var ErrChanged = fileapply.ErrChanged
+
+// Apply applies generic byte plans with rollback on failure.
+func Apply(c []Change) error { return fileapply.Apply(c) }
+
+// Keep host prior facts independent of the buffers supplied to native ports.
+func cloneHookFile(file agentapi.HookFile) agentapi.HookFile {
+	file.Bytes = bytes.Clone(file.Bytes)
+	return file
+}
+
+func validateHookChange(file agentapi.HookFile, change Change, action agentapi.HookAction) error {
+	if change.Path != file.Path || change.Existed != file.Present || !bytes.Equal(change.Before, file.Bytes) {
+		return errors.New("hook plan does not match observed settings")
 	}
-	if err != nil {
-		return nil, err
+	if change.Delete && (action != agentapi.HookRemove || !file.Present || !file.Regular) {
+		return errors.New("hook plan cannot delete these settings")
 	}
-	doc, err := parseDocument(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	if len(change.After) > maxHookSettingsBytes || change.Mode & ^os.FileMode(0777) != 0 {
+		return errors.New("hook plan has invalid replacement facts")
 	}
-	hs, err := hooksObject(doc.root)
-	if err != nil || hs == nil {
-		return nil, err
-	}
-	app := harnessName(harness)
-	var others []OtherInstallation
-	for _, m := range hs.members {
-		groups, ok := m.value.([]any)
-		if !ok {
-			return nil, fmt.Errorf("%s: invalid hook list for %s", path, m.key)
-		}
-		handlers, err := handlerList(groups, app)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		for _, handler := range handlers {
-			kind, dataHome, unreadable := classify(handler, app, hook)
-			if kind != kindOther {
-				continue
-			}
-			other := OtherInstallation{DataHome: dataHome, Command: unreadable}
-			if other.Command == "" && other.DataHome == "" {
-				other.DataHome, other.Default = hook.DefaultDataHome, true
-			}
-			if !slices.Contains(others, other) {
-				others = append(others, other)
-			}
-		}
-	}
-	return others, nil
+	return nil
 }

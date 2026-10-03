@@ -64,6 +64,23 @@ func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), obj.data...), nil
 }
 
+// GetLimited refuses an oversized body before copying it.
+func (s *MemoryStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.objects[key]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if limit < 1 || int64(len(obj.data)) > limit {
+		return nil, storage.ErrObjectTooLarge
+	}
+	return append([]byte(nil), obj.data...), nil
+}
+
 // Stat describes an object, with the SHA-256 of its bytes.
 func (s *MemoryStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	if err := ctx.Err(); err != nil {
@@ -144,6 +161,34 @@ func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string,
 	return page, nil
 }
 
+// ListRange returns the objects under prefix, with the same prefix rule as
+// List, whose keys are greater than after and at most through (either bound
+// empty means unbounded), sorted by key. It sorts only the keys in range, so
+// many ranges over a large store cost about one sort of it. It reads the map
+// directly, so a test wrapper that overrides List (to count or rewrite
+// listings) must override ListRange too: a reader lists in ranges once its
+// metadata cache knows a few hundred sidecars.
+func (s *MemoryStore) ListRange(ctx context.Context, prefix, after, through string) ([]storage.Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var keys []string
+	for key := range s.objects {
+		if (len(prefix) == 0 || hasPrefixKey(key, prefix)) && key > after && (through == "" || key <= through) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	objects := make([]storage.Object, 0, len(keys))
+	for _, key := range keys {
+		obj := s.objects[key]
+		objects = append(objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
+	}
+	return objects, nil
+}
+
 // Delete removes the object at key; a missing object is not an error.
 func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
@@ -166,6 +211,7 @@ var (
 	_ storage.ObjectStore   = (*MemoryStore)(nil)
 	_ storage.ObjectStatter = (*MemoryStore)(nil)
 	_ storage.PageLister    = (*MemoryStore)(nil)
+	_ storage.RangeLister   = (*MemoryStore)(nil)
 )
 
 // md5Hex is the ETag an S3-compatible store reports for a single-part,

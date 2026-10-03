@@ -109,7 +109,7 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	if *maxBytes < 0 {
 		return evalExportOptions{}, fs.usageError("--max-bytes must be 0 or more")
 	}
-	canonical, ok := harnessFlag(*harness)
+	canonical, ok := harnessFlagWithCatalog(fs.catalog, *harness)
 	if !ok {
 		return evalExportOptions{}, fs.usageError("%s", harnessFlagError(*harness))
 	}

@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +62,41 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 	}
 }
 
+// A row shows the name the person's agent gave the session, else the first
+// prompt's preview, else the short ID.
+func TestFormatSessionRowsShowTheDisplayTitle(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+	rows := formatSessionRows([]archive.Metadata{
+		{SessionID: "aaaaaaaa0123456789abcdef01234567", Name: "Named in the agent", Title: "First prompt", CapturedAt: now},
+		{SessionID: "bbbbbbbb0123456789abcdef01234567", Title: "First prompt only", CapturedAt: now},
+		{SessionID: "cccccccc0123456789abcdef01234567", Name: "Name only", CapturedAt: now},
+		{SessionID: "dddddddd0123456789abcdef01234567", CapturedAt: now},
+	}, listFormatOptions{Now: now})
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Title)
+	}
+	if want := []string{"Named in the agent", "First prompt only", "Name only", "dddddddd"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("titles = %q, want %q", got, want)
+	}
+}
+
+func TestListTableShowsLongerStoredTitle(t *testing.T) {
+	t.Parallel()
+	const title = "In the agent-archive repository, investigate why sessions take so long to find and propose a practical fix"
+	rows := formatSessionRows([]archive.Metadata{{
+		SessionID: "aaaaaaaa0123456789abcdef01234567", Title: title,
+	}}, listFormatOptions{Now: time.Now()})
+	var out bytes.Buffer
+	if err := printSessionTable(&out, rows, listFormatOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(title)) {
+		t.Fatalf("list lost the distinguishing end of the title: %s", out.String())
+	}
+}
+
 func TestProjectLabelsUsesBasename(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(t.TempDir(), "my-app")
@@ -93,5 +131,46 @@ func TestMatchBrowseRow(t *testing.T) {
 	}
 	if _, ok := matchBrowseRow("9", rows); ok {
 		t.Fatal("out of range should miss")
+	}
+}
+
+// With color on, a dimmed hint, a dimmed ID, the live dot and the cursor
+// mark take no room of their own: every row's PR, WHEN and ID start in the
+// same column as the header's, hint or not.
+func TestColoredCellsKeepTheColumnsAligned(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
+	rows := formatSessionRows([]archive.Metadata{
+		{SessionID: "aaaaaaaa0123456789abcdef01234567", Title: "With a skill", CapturedAt: now, SkillsUsed: []archive.SkillUse{{Name: "code-review"}}},
+		{SessionID: "bbbbbbbb0123456789abcdef01234567", Title: "Parent of many", CapturedAt: now},
+		{SessionID: "cccccccc0123456789abcdef01234567", Title: "No hint", CapturedAt: now},
+	}, listFormatOptions{Now: now, Children: map[string]int{childKey("", "bbbbbbbb0123456789abcdef01234567"): 18}})
+	for i := range rows {
+		rows[i].PR = "#12"
+	}
+	rows[0].Live, rows[1].Highlight = true, true
+	format, _ := listFormatOptions{Style: textStyle{color: true}, DimID: true, Cursor: true}.withColumns(rows)
+	var out bytes.Buffer
+	if err := printSessionTable(&out, rows, format); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 4 || !strings.Contains(lines[1], "\x1b[2m") {
+		t.Fatalf("want a header and three colored rows:\n%s", out.String())
+	}
+	column := func(line, cell string) int {
+		i := strings.Index(line, cell)
+		if i < 0 {
+			t.Fatalf("no %q in %q", cell, line)
+		}
+		return visibleWidth(line[:i])
+	}
+	for i, r := range rows {
+		line := lines[i+1]
+		for _, cells := range [][2]string{{"PR", "#12"}, {"WHEN", "just now"}, {"ID", r.ShortID}} {
+			if got, want := column(line, cells[1]), column(lines[0], cells[0]); got != want {
+				t.Errorf("%s starts at column %d, want %d (the header's), in %q", cells[0], got, want, line)
+			}
+		}
 	}
 }

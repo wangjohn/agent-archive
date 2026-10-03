@@ -34,7 +34,7 @@ func askAll(t *testing.T, p *prompter) string {
 	must(t, err)
 	profile, err := p.withDefault("AWS profile", "work")
 	must(t, err)
-	byNumber, err := p.menu("Where should sessions be stored?", "r2", option{"r2", "Cloudflare R2"}, option{"s3", "Amazon S3"})
+	byNumber, err := p.menu("Where should your archive live?", "r2", option{"r2", "Cloudflare R2"}, option{"s3", "Amazon S3"})
 	must(t, err)
 	byKey, err := p.menu("What next?", "fix", option{"fix", "Fix it"}, option{"retry", "Retry the check"})
 	must(t, err)
@@ -70,7 +70,7 @@ func TestPlainPromptsAreUnchanged(t *testing.T) {
 			t.Errorf("%s: answers %q, want %q", name, got, want)
 		}
 		want := "Include Codex? [Y/n] Include Cursor? [y/N] AWS profile [work]: " +
-			"Where should sessions be stored?\n  1) Cloudflare R2\n  2) Amazon S3\nEnter 1-2 [1]: " +
+			"Where should your archive live?\n  1) Cloudflare R2\n  2) Amazon S3\nEnter 1-2 [1]: " +
 			"What next?\n  1) Fix it\n  2) Retry the check\nEnter 1-2 [1]: " +
 			"Keep sessions for how many days? [90]: Project path: "
 		if out.String() != want {
@@ -93,7 +93,7 @@ func TestColorPromptsBoldTheQuestionAndDefault(t *testing.T) {
 		"\x1b[1mInclude Codex?\x1b[0m [\x1b[1mY\x1b[0m/n] › ",
 		"\x1b[1mInclude Cursor?\x1b[0m [y/\x1b[1mN\x1b[0m] › ",
 		"\x1b[1mAWS profile\x1b[0m [\x1b[1mwork\x1b[0m] › ",
-		"\x1b[1mWhere should sessions be stored?\x1b[0m\n",
+		"\x1b[1mWhere should your archive live?\x1b[0m\n",
 		// A menu's answer line is not a question: only its default is bold.
 		"\nEnter 1-2 [\x1b[1m1\x1b[0m] › ",
 		"\x1b[1mKeep sessions for how many days?\x1b[0m [\x1b[1m90\x1b[0m] › ",
@@ -278,7 +278,7 @@ func TestStorageCheckSkipsSpinnerForCredentialProcess(t *testing.T) {
 // status for it, as the signal does anywhere else in setup.
 func TestStorageCheckInterruptKeepsTheSignalsExitStatus(t *testing.T) {
 	t.Parallel()
-	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129, syscall.SIGQUIT: 131} {
 		signals := make(chan os.Signal, 1)
 		release := make(chan struct{})
 		env := Env{

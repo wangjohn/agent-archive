@@ -1,0 +1,48 @@
+{
+  "reference": "98f8bd0898abc8f22e4d67d567cf11ae2b88ee2f",
+  "current_original_base": "c85d239f09a3ae963f59e7023153a7a7f3ee7539",
+  "integrated_main": "12c14b1adc7bfa9ded544ce6e0bc061f97cdf161",
+  "measurement_head": "ff6d2506fd2512067e24f51e76b4cd5557493bab",
+  "toolchain": "go1.27.1 linux/amd64",
+  "core_production_differences_from_reference": [],
+  "dependency_production_differences_from_reference": [
+    "internal/capture/admission_intent.go",
+    "internal/capture/hook.go",
+    "internal/cli/cli.go",
+    "internal/cli/clipboard.go",
+    "internal/cli/handoff_destination.go",
+    "internal/cli/read_dependencies.go",
+    "internal/cli/setup.go",
+    "internal/cli/setup_r2_create.go",
+    "internal/cli/setup_review.go",
+    "internal/cli/setup_transaction.go",
+    "internal/cli/stats_html.go",
+    "internal/cli/status.go",
+    "internal/cloudflare/r2.go",
+    "internal/config/config.go",
+    "internal/reader/list_index.go"
+  ],
+  "note": "Short samples preceded the t\u2192tb identifier-only test-helper rename. Longer rechecks use these exact matching hashes. Hooks binary current built with uncommitted lint-only Unknown case/grouped-field fixes; vcs.modified=true. No hook semantics changed.",
+  "short_sample_instrumentation_sha256": {
+    "internal/capture/hook_bench_test.go": "2bb7f1816599061a14b3b8f7fcc1c0d597aaafdc06d2d3f5d257dccfc50b8049",
+    "internal/collector/settled_scan_bench_test.go": "39794e9965e81a59cf7ac62909e9684c6f31a385fee8a6d9173383b121f47617",
+    "internal/collector/cursor_scan_bench_test.go": "6abb8b9afde6a047c09084313b1010af848a5708f10309a0c2bb2c3ab5b1bd6f",
+    "internal/archive/analysis_consumers_bench_test.go": "3cdcdfb743bba46a59f7c87256cced6f01e9b33594fe523cf0ac233728691278",
+    "internal/archive/record_limits_bench_test.go": "ec2905065f487acdff105a087e8b76a49cf9884f476bc166bd92f2b2cfc5b36f",
+    "internal/collector/source_test.go": "3c8e40b2b3ee3fee12fc4038a82b8e0861ada39cab5ac5d64040811eea2f0cf1",
+    "scripts/measure-hook.py": "6aabcc0c3ad0300aedcd1bd19c4f70beb361de2f9947910debd0593803b05259"
+  },
+  "recheck_instrumentation_sha256": {
+    "internal/capture/hook_bench_test.go": "2bb7f1816599061a14b3b8f7fcc1c0d597aaafdc06d2d3f5d257dccfc50b8049",
+    "internal/collector/settled_scan_bench_test.go": "39794e9965e81a59cf7ac62909e9684c6f31a385fee8a6d9173383b121f47617",
+    "internal/collector/cursor_scan_bench_test.go": "6abb8b9afde6a047c09084313b1010af848a5708f10309a0c2bb2c3ab5b1bd6f",
+    "internal/archive/analysis_consumers_bench_test.go": "3cdcdfb743bba46a59f7c87256cced6f01e9b33594fe523cf0ac233728691278",
+    "internal/archive/record_limits_bench_test.go": "ec2905065f487acdff105a087e8b76a49cf9884f476bc166bd92f2b2cfc5b36f",
+    "internal/collector/source_test.go": "435456feedc5bf11b5a664e87003d8912e6b7ac03ff431207552d46621f2e17a",
+    "scripts/measure-hook.py": "6aabcc0c3ad0300aedcd1bd19c4f70beb361de2f9947910debd0593803b05259"
+  },
+  "binary_sha256": {
+    "baseline-agent-archive": "511317bac167693ec7983a4b6d9be86858356b212a6321a959095f8facbeeb3f",
+    "current-agent-archive": "c955ef195c4f1c0e87365edbc06cea275f5a1715da421ff006f4282b2aed71c3"
+  }
+}

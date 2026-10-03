@@ -1047,39 +1047,49 @@ class ManualInstallGuideTest(unittest.TestCase):
     def test_checks_and_installs_only_the_selected_asset(self):
         guide = INSTALL_GUIDE.read_text()
         select = re.search(r'2\. Select the binary.*?```sh\n(.*?)\n   ```', guide, re.S)
-        verify = re.search(r'3\. Check the selected binary.*?```sh\n(.*?)\n   ```', guide, re.S)
+        verify = re.search(r'3\. On macOS, check the selected binary.*?```sh\n(.*?)\n   ```', guide, re.S)
         install = re.search(r'4\. Make the selected binary.*?```sh\n(.*?)\n   ```', guide, re.S)
         self.assertIsNotNone(select)
         self.assertIsNotNone(verify)
         self.assertIsNotNone(install)
-        commands = select.group(1) + '\n' + verify.group(1) + '\n' + install.group(1) + '\n'
-
-        for machine, expected in (('arm64', 'arm64'), ('x86_64', 'amd64')):
+        # The signature step is macOS only: Linux binaries are unsigned.
+        commands = {
+            'darwin': select.group(1) + '\n' + verify.group(1) + '\n' + install.group(1) + '\n',
+            'linux': select.group(1) + '\n' + install.group(1) + '\n',
+        }
+        systems = (('Darwin', 'arm64', 'darwin', 'arm64'), ('Darwin', 'x86_64', 'darwin', 'amd64'),
+                   ('Linux', 'aarch64', 'linux', 'arm64'), ('Linux', 'x86_64', 'linux', 'amd64'))
+        for system, machine, goos, expected in systems:
             for checksums in ('both', 'selected_missing', 'selected_bad'):
-                with self.subTest(machine=machine, checksums=checksums), tempfile.TemporaryDirectory() as root:
+                with self.subTest(system=system, machine=machine, checksums=checksums), \
+                        tempfile.TemporaryDirectory() as root:
                     root = Path(root)
                     home = root / 'home'
                     home.mkdir()
                     shims = root / 'shims'
                     shims.mkdir()
-                    write_executable(shims / 'uname', f'#!/bin/sh\necho {machine}\n')
+                    write_executable(shims / 'uname',
+                                     f'#!/bin/sh\ncase "$1" in -s) echo {system} ;; *) echo {machine} ;; esac\n')
                     write_executable(shims / 'codesign',
                                      '#!/bin/sh\ncase "$1" in -dv) echo TeamIdentifier=568CGRV32C ;; esac\n')
-                    for arch in ('arm64', 'amd64'):
-                        (root / f'agent-archive-darwin-{arch}').write_text(arch)
+                    for os_name in ('darwin', 'linux'):
+                        for arch in ('arm64', 'amd64'):
+                            (root / f'agent-archive-{os_name}-{arch}').write_text(arch)
                     other = 'amd64' if expected == 'arm64' else 'arm64'
                     lines = []
-                    for arch in ('arm64', 'amd64'):
-                        if arch == expected and checksums == 'selected_missing':
-                            continue
-                        digest = hashlib.sha256(arch.encode()).hexdigest()
-                        if arch == expected and checksums == 'selected_bad':
-                            digest = '0' * 64
-                        lines.append(f'{digest}  agent-archive-darwin-{arch}\n')
+                    for os_name in ('darwin', 'linux'):
+                        for arch in ('arm64', 'amd64'):
+                            selected = (os_name, arch) == (goos, expected)
+                            if selected and checksums == 'selected_missing':
+                                continue
+                            digest = hashlib.sha256(arch.encode()).hexdigest()
+                            if selected and checksums == 'selected_bad':
+                                digest = '0' * 64
+                            lines.append(f'{digest}  agent-archive-{os_name}-{arch}\n')
                     (root / 'SHA256SUMS').write_text(''.join(lines))
 
                     result = subprocess.run(
-                        ['sh', '-e', '-c', commands], cwd=root,
+                        ['sh', '-e', '-c', commands[goos]], cwd=root,
                         env={'HOME': str(home), 'PATH': f'{shims}:/usr/bin:/bin'},
                         capture_output=True, text=True,
                     )
@@ -1089,7 +1099,7 @@ class ManualInstallGuideTest(unittest.TestCase):
                     else:
                         self.assertNotEqual(result.returncode, 0)
                         self.assertFalse((home / '.local/bin/agent-archive').exists())
-                    self.assertTrue((root / f'agent-archive-darwin-{other}').exists())
+                    self.assertTrue((root / f'agent-archive-{goos}-{other}').exists())
 
 
 if __name__ == '__main__':

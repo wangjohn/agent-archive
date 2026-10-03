@@ -9,7 +9,7 @@ start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 | Doc | For |
 | --- | --- |
 | [Architecture](contributing/architecture.md) | How the pieces fit, and the package map. |
-| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real Mac. |
+| [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real machine. |
 | [Adding an adapter](contributing/adding-an-adapter.md) | Supporting another coding agent. |
 | [Session admission](contributing/session-admission.md) | How a registration's start and admission times drive each boundary check, and the guard tests. |
 
@@ -26,10 +26,25 @@ differ, the code and the user documentation describe current behavior.
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
 | [Agent skills](specs/agent-skill.md) | Implemented; follow-ups listed in the spec. |
+
+## Proposals
+
+Open and in-progress proposals stay at the top level of [proposals](proposals/README.md);
+implemented design records live in `proposals/implemented/`.
+
+| Proposal | Status |
+| --- | --- |
+| [Release remediation](proposals/release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
-| [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Proposed. Parts 1 and 2 in progress; Part 3 (Linux) planned. |
-| [Git activity in metadata](proposals/git-activity.md) | Implemented in parser 0.15.0. |
-| [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
+| [Local session discovery](proposals/local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
+| [Portable handoff, guided setup, and Linux](proposals/implemented/portable-handoff-and-onboarding.md) | Implemented (repo-key handoff, guided S3 and R2 creation, Linux); guided R2 is experimental. Open items in the document. |
+| [Platform abstraction](proposals/implemented/platform-abstraction.md) | Implemented (scheduler port, OS value, systemd backend, Linux support); open items in the document. |
+| [Git activity in metadata](proposals/implemented/git-activity.md) | Implemented in parser 0.15.0. |
+| [List and browse UX](proposals/implemented/list-browse-ux.md) | Implemented design record; see the current list and show documentation. |
+| [Archive listing at scale](proposals/listing-at-scale.md) | In progress: phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
+| [Adding a machine: pairing, per-machine keys, and revocation](proposals/machine-pairing.md) | Proposed; not implemented. |
+| [First local handoff before bucket setup](proposals/local-handoff-before-setup.md) | Proposed; on-demand utility, no persistent local archive. |
+| [Coding-agent integration abstraction](proposals/agent-integration-abstraction.md) | Proposed; interfaces and migration plan for adding fully archived agents. |
 
 ## Maintainers
 

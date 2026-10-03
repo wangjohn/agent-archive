@@ -258,7 +258,7 @@ func TestFindMetadataKeysReadsKnownHarnessKeysBeforeListing(t *testing.T) {
 		t.Fatal(err)
 	}
 	lists, gets := store.counts()
-	if len(found) != 1 || found[0] != key || len(lists) != 0 || len(gets) != len(Harnesses) {
+	if len(found) != 1 || found[0] != key || len(lists) != 0 || len(gets) != len(defaultFinder.harnesses) {
 		t.Fatalf("found=%q lists=%q gets=%q", found, lists, gets)
 	}
 

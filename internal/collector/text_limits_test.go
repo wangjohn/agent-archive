@@ -34,7 +34,8 @@ func cursorTextSession(t *testing.T, local *state.Store, content string) string 
 
 // A text transcript over the record limit used to be refused by the adapter
 // on every pass. It is now the record_size_limit gap: recorded once, never an
-// error, and cleared when the transcript changes.
+// error, and cleared when the transcript changes. Not parallel: it lowers
+// recordLimit.
 func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 	withCollectorRecordLimit(t, 4096)
 	local := newTestStore(t)
@@ -71,6 +72,7 @@ func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 // to the same 64 KB, hiding the new activity), and a truncated file is still
 // a rewrite.
 func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	content := cursorTextTranscript(100, 1000)
@@ -118,6 +120,7 @@ func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
 // the same length, means the published snapshot is no longer a prefix of the
 // file: it is a rewrite, not new activity.
 func TestCursorTextMidSectionEditIsARewrite(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	content := cursorTextTranscript(100, 1000)

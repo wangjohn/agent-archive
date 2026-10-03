@@ -3,13 +3,13 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -75,7 +75,7 @@ func TestWaitingCursorChatDoesNotBlockADestinationChange(t *testing.T) {
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000cccc"
 	for _, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop"} {
-		if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, nil), now.Add(time.Minute)); err != nil {
+		if err := handleTestHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, nil), now.Add(time.Minute)); err != nil {
 			t.Fatalf("%s: %v", event, err)
 		}
 	}
@@ -116,13 +116,13 @@ func TestCursorChatWithATranscriptStillBlocksADestinationChange(t *testing.T) {
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000dddd"
 	transcript := cursorTranscriptLocation(t, conversation)
-	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), now.Add(time.Minute)); err != nil {
+	if err := handleTestHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(transcript, []byte(`{"role":"user","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("stop", conversation, project, transcript), now.Add(2*time.Minute)); err != nil {
+	if err := handleTestHookEvent(home, "cursor", cursorDesktopPayload("stop", conversation, project, transcript), now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyCursorRegistration(t, home); reg.TranscriptPath != transcript {
@@ -142,7 +142,7 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000eeee"
 	for _, event := range []string{"beforeSubmitPrompt", "stop"} {
-		if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, nil), now.Add(time.Minute)); err != nil {
+		if err := handleTestHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, nil), now.Add(time.Minute)); err != nil {
 			t.Fatalf("%s: %v", event, err)
 		}
 	}
@@ -191,7 +191,7 @@ func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	admitted := now.Add(time.Minute)
-	reg, err := store.RegisterNewSession("db-chat", func(id string) archive.SessionRegistration {
+	reg, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("cursor")), NativeID: "db-chat"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "db-chat", ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "db-chat",
 			SessionStartedAt: now.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceCursorComposer,
@@ -223,7 +223,7 @@ func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, dir, now.Add(-time.Hour))
 	path := writeCodexTranscript(t, dir)
-	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": dir, "transcript_path": path}, now); err != nil {
+	if err := handleTestHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": dir, "transcript_path": path}, now); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(home)
@@ -235,7 +235,7 @@ func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	cloud := storagetest.NewMemoryStore()
-	opts := collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	run := func(store storage.ObjectStore, fail bool) {
 		t.Helper()
 		r, e := collector.Run(context.Background(), ls, store, opts)

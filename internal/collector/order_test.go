@@ -14,6 +14,7 @@ import (
 // then the rest in archive ID order. Progress reports each one; Stop ends
 // the pass before the next session, leaving the rest pending.
 func TestRunOrderProgressAndStop(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -36,7 +37,7 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 	now := base.Add(time.Hour)
 	var order []string
 	stopAfter := 0
-	opts := Options{MachineID: "m", Now: func() time.Time { return now },
+	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now },
 		Progress: func(p Progress) {
 			order = append(order, fmt.Sprintf("%s:%t", p.ArchiveSessionID, p.Published))
 		},

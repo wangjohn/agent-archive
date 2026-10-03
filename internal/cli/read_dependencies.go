@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
@@ -36,6 +38,7 @@ type terminalSizeDependencies interface {
 type sessionSelectionDependencies interface {
 	metadataCacheDependencies
 	terminalSizeDependencies
+	scopeDependencies
 	now() time.Time
 }
 
@@ -54,6 +57,7 @@ type sessionBrowserDependencies interface {
 type listCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
+	scopeDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
@@ -87,13 +91,15 @@ type statsCommandDependencies interface {
 type showCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies
+	scopeDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
 type showQueryDependencies interface {
 	metadataCacheDependencies
-	sessionBrowseDependencies
+	sessionBrowserDependencies
+	scopeDependencies
 	now() time.Time
 }
 
@@ -113,6 +119,8 @@ type handoffResolverDependencies interface {
 	openStore(config.Config) (storage.ObjectStore, error)
 	now() time.Time
 	cursorDatabase() string
+	// repoKeyResolver looks up the repository key of a directory.
+	repoKeyResolver() func(root string) string
 }
 
 type handoffFileDependencies interface {
@@ -120,6 +128,7 @@ type handoffFileDependencies interface {
 }
 
 type currentSessionDependencies interface {
+	runtimeLookup() agentapi.RuntimeLookup
 	lookupEnv(string) (string, bool)
 }
 
@@ -137,15 +146,31 @@ type workingDirDependencies interface {
 	workingDir() (string, error)
 }
 
+type nativeHandoffDependencies interface {
+	tempDir() string
+	nativeFiles() nativesessions.FileSystem
+	nativeRoots(string) ([]nativesessions.StoreRoot, error)
+	workingDirDependencies
+	currentSessionDependencies
+	sessionBrowserDependencies
+	now() time.Time
+}
+
 type handoffCommandDependencies interface {
+	loadHandoffConfig(string) (config.Config, bool, error)
+	nativeHandoffDependencies
 	handoffOptionsDependencies
 	handoffTargetDependencies
-	sessionBrowseDependencies
+	handoffCheckoutDependencies
+	scopeDependencies
+	sessionBrowserDependencies
 	handoffLaunchDependencies
 	handoffDestinationDependencies
 }
 
 type launchSpecDependencies interface {
+	launcherLookup() agentapi.LauncherLookup
+	runtimeLookup() agentapi.RuntimeLookup
 	lookPath(string) (string, error)
 	environ() []string
 }
@@ -170,4 +195,5 @@ type handoffDestinationDependencies interface {
 	workingDirDependencies
 	userHomeDir() (string, error)
 	clipboard([]byte) error
+	clipboardAvailable() bool
 }

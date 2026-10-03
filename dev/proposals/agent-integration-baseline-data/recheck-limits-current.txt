@@ -1,0 +1,11 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/archive
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkFilterRecordLimits/near-limit-5         	       5	 234801648 ns/op	 285.80 MB/s	201331675 B/op	     235 allocs/op
+BenchmarkFilterRecordLimits/near-limit-5         	       5	 206141376 ns/op	 325.54 MB/s	201307936 B/op	     223 allocs/op
+BenchmarkFilterRecordLimits/near-limit-5         	       5	 182028981 ns/op	 368.66 MB/s	201304408 B/op	     206 allocs/op
+BenchmarkFilterRecordLimits/near-limit-5         	       5	 209709986 ns/op	 320.00 MB/s	201298006 B/op	     208 allocs/op
+BenchmarkFilterRecordLimits/near-limit-5         	       5	 254329456 ns/op	 263.86 MB/s	201289164 B/op	     199 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/archive	13.216s

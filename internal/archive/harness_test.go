@@ -49,7 +49,7 @@ func TestCanonicalHarness(t *testing.T) {
 func TestHarnessAliasIsSpelledOnce(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]string{
-		"internal/archive/harness.go": "the canonical helper",
+		"internal/agentmeta/catalog.go": "the identity declaration",
 		// A folder of Claude's desktop app, not a harness name.
 		"internal/cli/capabilities.go": "a directory name",
 	}
