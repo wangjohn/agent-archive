@@ -177,6 +177,11 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   convenience, not proof of identity: see the
   [threat model](#threat-model) for what a repository that lies about its
   `origin` can do and what `handoff` does about it.
+- **Replay marker** (`replay`, in the metadata): only for a session a
+  replay tool ran with `AGENT_ARCHIVE_REPLAY` set in its environment, the
+  tool's run identifier (letters, digits, `.`, `_`, `:`, `-`; any other
+  value marks the session without being recorded). Nothing else is read
+  from the environment.
 - **Commit** (`git_head`, in the metadata): for a session whose working
   directory is in a git repository, the full name of the commit checked out
   when the session started, whether the working tree then had uncommitted

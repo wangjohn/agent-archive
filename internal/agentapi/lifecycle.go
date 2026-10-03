@@ -173,6 +173,8 @@ type AdmissionIntent struct {
 	ObservedAt       time.Time      `json:"observed_at"`
 	Version          int            `json:"version,omitempty"`
 	Effects          []ReplayEffect `json:"effects,omitempty"`
+	// Replay is the hook process marker, retained for queued new admissions.
+	Replay *archive.Replay `json:"replay,omitempty"`
 	// LastHead is the commit the contended hook saw for a stop it queued.
 	LastHead *archive.GitHead `json:"last_head,omitempty"`
 }

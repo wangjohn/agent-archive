@@ -547,7 +547,7 @@ type localMatches struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) localMatches {
 	var matches localMatches
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || reg.Replay != nil || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
 			continue
 		}
 		byPath := sameProject(reg.ProjectRoot, dir)
@@ -630,7 +630,7 @@ func (r handoffResolver) archiveCandidates(dir string) (archiveMatches, error) {
 	if err != nil {
 		return archiveMatches{}, fmt.Errorf("no local session for %s, and the archive could not be opened: %w", dir, err)
 	}
-	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
+	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness, Replays: reader.ReplaysHidden}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
 	if err != nil {
 		return archiveMatches{}, err
 	}
@@ -672,7 +672,7 @@ func (r handoffResolver) firstArchive(a archiveMatches, candidates []archive.Met
 // order given; a session that matches by path is never in byRepo.
 func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs map[string]bool, repoKey string, skip map[agentmeta.SessionKey]bool) (byPath, byRepo []archive.Metadata) {
 	for _, m := range sessions {
-		if skip[handoffSessionKey(m.Harness.Name, m.NativeSessionID)] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
+		if m.IsReplay() || skip[handoffSessionKey(m.Harness.Name, m.NativeSessionID)] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
 			continue
 		}
 		switch {

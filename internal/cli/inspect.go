@@ -81,6 +81,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	rebuildIndex := fs.Bool("rebuild-index", false, "rebuild the time-ordered listing index from all live metadata sidecars")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	replays := fs.String("replays", string(replaysHide), replaysFlagUsage)
 	limit := fs.Int("limit", defaultListLimit, "show at most this many sessions, newest first (0 for all)")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	verbose := fs.Bool("verbose", false, "show full session IDs, absolute times, origin, parser, and all models/skills")
@@ -101,7 +102,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
 		skillUsage: *skillUsage, since: *since, complete: *complete,
-		imported: *imported, hookCaptured: *hookCaptured, limit: *limit,
+		imported: *imported, hookCaptured: *hookCaptured, replays: replaysFlag(*replays), limit: *limit,
 		noCache: *noCache, noPager: *noPager, verbose: *verbose, jsonOut: *jsonOut,
 	}, env.now())
 	if code != 0 {
@@ -316,11 +317,39 @@ type listFlagValues struct {
 	complete     bool
 	imported     bool
 	hookCaptured bool
+	replays      replaysFlag
 	noCache      bool
 	noPager      bool
 	verbose      bool
 	jsonOut      bool
 	limit        int
+}
+
+// replaysFlag is a value of --replays.
+type replaysFlag string
+
+// The values of --replays, on list and stats. hide, the default, keeps the
+// sessions a replay tool ran (archive.ReplayEnv) out of a person's history.
+const (
+	replaysHide    replaysFlag = "hide"
+	replaysInclude replaysFlag = "include"
+	replaysOnly    replaysFlag = "only"
+)
+
+// replaysFlagUsage is --replays' help.
+const replaysFlagUsage = "sessions a replay tool ran (" + archive.ReplayEnv + " set): hide, include, or only"
+
+// replayFilterFlag reads --replays; ok is false for any other value.
+func replayFilterFlag(value replaysFlag) (reader.ReplayFilter, bool) {
+	switch value {
+	case replaysHide:
+		return reader.ReplaysHidden, true
+	case replaysInclude:
+		return reader.ReplaysIncluded, true
+	case replaysOnly:
+		return reader.ReplaysOnly, true
+	}
+	return "", false
 }
 
 // listOptions is the validated list command configuration.
@@ -344,6 +373,13 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	}
 	if v.imported && v.hookCaptured {
 		return listOptions{}, fs.usageError("choose one of --imported and --hook-captured")
+	}
+	if v.replays == "" {
+		v.replays = replaysHide
+	}
+	replays, ok := replayFilterFlag(v.replays)
+	if !ok {
+		return listOptions{}, fs.usageError("--replays must be hide, include, or only, not %q", v.replays)
 	}
 	canonical, ok := harnessFlagWithCatalog(fs.catalog, v.harness)
 	if !ok {
@@ -377,7 +413,7 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	return listOptions{
 		filter: reader.Filter{
 			Harness: canonical, Model: v.model, Skill: v.skill, SkillSHA256: v.skillSHA256,
-			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from,
+			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from, Replays: replays,
 		},
 		skillUsage: usage, imported: v.imported, hookCaptured: v.hookCaptured,
 		noCache: v.noCache, noPager: v.noPager, verbose: v.verbose, jsonOut: v.jsonOut, limit: v.limit,
@@ -506,6 +542,7 @@ func sessionOrigin(m archive.Metadata) string {
 	if m.Origin == archive.SessionOriginImport {
 		return "imported"
 	}
+	// A replay is hook-captured too; its [replay] title mark says it is one.
 	return "hook"
 }
 

@@ -28,6 +28,8 @@ agent-archive list "flaky retention"  # the sessions these words find (see Which
 agent-archive list --harness claude --model claude-opus-5 --since 7d
 agent-archive list --imported          # only sessions backfill imported
 agent-archive list --hook-captured     # only sessions captured as they ran
+agent-archive list --replays include   # also sessions a replay tool ran (hidden by default)
+agent-archive list --replays only      # only those, marked [replay]
 agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps

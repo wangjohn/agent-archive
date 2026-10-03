@@ -36,6 +36,7 @@ type Option func(*eventOptions)
 
 type eventOptions struct {
 	repoKey     RepoKeyFunc
+	replay      *archive.Replay
 	gitHead     GitHeadFunc
 	decoders    agentapi.DecodersLookup
 	stat        func(string) (os.FileInfo, error)
@@ -55,6 +56,12 @@ const (
 	effectChildCandidate     effectName = "child-candidate"
 	effectIntentAck          effectName = "intent-ack"
 )
+
+// WithReplay records the hook's replay marker only when a new session is admitted.
+// Continuations preserve their original marker.
+func WithReplay(value string) Option {
+	return func(o *eventOptions) { o.replay = archive.ParseReplay(value) }
+}
 
 // RepoKeyFunc is the command-owned, bounded repository lookup.
 type RepoKeyFunc func(string) string
@@ -170,7 +177,7 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	unlock, err := lock(home, wait)
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
-			queued, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, lookups.lastHead, nil)
+			queued, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, lookups.lastHead, nil, o.replay)
 			diagnosticErr := recordHookBusyEvent(home, batch[0], now)
 			if queueErr != nil || diagnosticErr != nil {
 				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, err, errors.Join(queueErr, diagnosticErr))
@@ -203,16 +210,16 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	ordered, orderErr := needsOrderedAdmission(store, cfg, batch, now)
 	// Let the existing loop request qualified-index recovery on lookup failure.
 	if orderErr == nil && ordered {
-		err = applyOrderedAdmission(home, store, cfg, batch, now, lookups, o.afterEffect)
+		err = applyOrderedAdmission(home, store, cfg, batch, now, lookups, o.afterEffect, o.replay)
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, lookups.lastHead, err)
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, lookups.lastHead, err, o.replay)
 		}
 		return err
 	}
 	for _, event := range batch {
-		err = applyEvent(home, store, cfg, event, now, lookups, o.afterEffect)
+		err = applyEvent(home, store, cfg, event, now, lookups, o.afterEffect, o.replay)
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, lookups.lastHead, err)
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, lookups.lastHead, err, o.replay)
 		}
 		if errors.Is(err, state.ErrSessionNotRegistered) {
 			continue
@@ -224,13 +231,13 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	return nil
 }
 
-func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, lastHead *archive.GitHead, cause error) error {
+func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, lastHead *archive.GitHead, cause error, replay *archive.Replay) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
 	}
 	recoveryErr := store.RequestSessionIndexRecovery(key)
-	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil)
+	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil, replay)
 	project, owned := hookProjectActivation(cfg, event, now)
 	var diagnosticErr error
 	if owned && project.Included {
@@ -263,8 +270,8 @@ func needsOrderedAdmission(store *state.Store, cfg config.Config, batch []agenta
 	return false, nil
 }
 
-func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error) error {
-	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lookups.lastHead, nil)
+func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
+	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lookups.lastHead, nil, replay)
 	if err != nil || path == "" {
 		return err
 	}
@@ -284,7 +291,7 @@ func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, b
 				continue
 			}
 		}
-		if err := applyEvent(home, store, cfg, event, now, lookups, after); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
+		if err := applyEvent(home, store, cfg, event, now, lookups, after, replay); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
 			return err
 		}
 		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
@@ -300,7 +307,7 @@ func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, b
 				continue
 			}
 			for _, pending := range waiting {
-				if err := applyEvent(home, store, cfg, pending, now, lookups, after); err != nil {
+				if err := applyEvent(home, store, cfg, pending, now, lookups, after, replay); err != nil {
 					return err
 				}
 			}
@@ -388,7 +395,7 @@ func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Tim
 	return nil
 }
 
-func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error) error {
+func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
 	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && event.CodexProjectRoot == "" {
 		return RecordDiagnostic(home, Diagnostic{Code: DiagnosticProjectUnavailable, Harness: "codex", ObservedAt: now})
 	}
@@ -413,7 +420,7 @@ func applyEvent(home string, store *state.Store, cfg config.Config, event agenta
 	}
 	switch event.Kind {
 	case agentapi.EventStart:
-		return handleSessionStart(home, store, cfg, event, now, lookups, after)
+		return handleSessionStart(home, store, cfg, event, now, lookups, after, replay)
 	case agentapi.EventTurnStart:
 		return handleSessionActivity(store, event, now, after)
 	case agentapi.EventStop, agentapi.EventResponse:
@@ -426,7 +433,7 @@ func applyEvent(home string, store *state.Store, cfg config.Config, event agenta
 			return err
 		}
 		if !found && event.Deferred == agentapi.DeferredFollowup {
-			_, err = queueEventBatchInGeneration(home, []agentapi.LifecycleEvent{event}, now, cfg.PauseGeneration, nil, nil)
+			_, err = queueEventBatchInGeneration(home, []agentapi.LifecycleEvent{event}, now, cfg.PauseGeneration, nil, nil, replay)
 			return err
 		}
 		return handleSessionStop(store, event, now, lookups.lastHead, after)
@@ -443,7 +450,7 @@ func effectBoundary(after func(effectName) error, name effectName) error {
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error) error {
+func handleSessionStart(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
@@ -487,7 +494,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 	harness := archive.Harness{Name: string(key.Agent)}
 	applyObservation(&harness, event.Session)
 	reg, err := store.RegisterOrMerge(key, func(id string) archive.SessionRegistration {
-		return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: event.CodexCwd, ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: lookups.repoKey, StartHead: lookups.startHead, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, HookObservedAt: now, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
+		return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: event.CodexCwd, ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: lookups.repoKey, StartHead: lookups.startHead, Replay: replay, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, HookObservedAt: now, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
 	})
 	if err != nil {
 		return fmt.Errorf("register session: %w", err)
