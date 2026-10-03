@@ -61,6 +61,22 @@ Planned for v0.2.0. This release has not been tagged or published.
   infers a commit later. See
   [JSON output](docs/reference/json-output.md#show) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+- Shared local discovery foundations: shared project/worktree facts, durable
+  authorization intervals, immutable admission, and actual hook observation.
+  Parser 0.20.0 records discovery provenance alongside the existing Cursor
+  title derivation. Automatic Codex discovery remains disabled pending scanner and onboarding
+  integration. Protected discovery configuration makes published older writers
+  refuse rather than discard authorization; existing hook-only configs retain
+  their numeric schema and behavior. Status uses actual hook observation,
+  including hooks that resume imported sessions, with legacy hook-origin fallback.
+  Setup drafts preserve protected authorization while changing skill evidence;
+  start hooks avoid synchronizing an already persisted observation twice.
+  Every permission generation retains its native-start floor even when created
+  while paused; updated protected writer fencing refuses older discovery writers.
+  Unknown empty older histories require setup renewal before resume.
+  Pause/resume rejects clock reversals that would erase consent boundaries;
+  shared child materialization retains native transcript start provenance.
+
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
   plus transaction-based

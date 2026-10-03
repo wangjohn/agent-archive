@@ -1,0 +1,256 @@
+package config
+
+import (
+	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
+)
+
+const discoveryWriterMarker = "+discovery-v2"
+
+// DiscoveryConfig records consent, roots and current per-project generations.
+// Retain it even after disablement: old writers must never flatten the history.
+type DiscoveryConfig struct {
+	Enabled        bool                     `json:"enabled"`
+	CodexHomes     []string                 `json:"codex_homes"`
+	Authorizations []DiscoveryAuthorization `json:"authorizations"`
+}
+
+// DiscoveryAuthorization is a current permission generation for one scope.
+type DiscoveryAuthorization struct {
+	Generation string `json:"generation"`
+	// NativeStartFloor is immutable within a generation, including while paused.
+	// Zero identifies an older empty history whose consent boundary is unknown.
+	NativeStartFloor time.Time           `json:"native_start_floor,omitzero"`
+	Agent            string              `json:"agent"`
+	ProjectRoot      string              `json:"project_root"`
+	DestinationID    string              `json:"destination_id"`
+	Intervals        []DiscoveryInterval `json:"intervals"`
+}
+
+// DiscoveryInterval is a half-open unpaused interval; zero end is open.
+type DiscoveryInterval struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end,omitzero"`
+}
+
+func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
+	return SkillEvidence(strings.TrimSuffix(string(mode), discoveryWriterMarker))
+}
+
+func prepareDiscoveryConfig(c *Config) error {
+	if c.SchemaVersion > 2 {
+		return errors.New("configuration requires a newer agent-archive writer")
+	}
+	if c.Discovery != nil {
+		// Migrate only provable retained permission, on a private value copy.
+		// Empty old histories have no recoverable floor and remain fail closed.
+		d := *c.Discovery
+		d.Authorizations = slices.Clone(d.Authorizations)
+		for i := range d.Authorizations {
+			a := &d.Authorizations[i]
+			if a.NativeStartFloor.IsZero() && len(a.Intervals) > 0 {
+				a.NativeStartFloor = a.Intervals[0].Start
+			}
+		}
+		c.Discovery = &d
+		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + discoveryWriterMarker)
+		c.SchemaVersion = 2
+	}
+	return validateDiscoveryConfig(*c)
+}
+
+func validateDiscoveryConfig(c Config) error {
+	marked := strings.HasSuffix(string(c.SkillEvidence), discoveryWriterMarker)
+	if marked != (c.Discovery != nil) {
+		return errors.New("discovery writer compatibility marker and authorization must be kept together")
+	}
+	if c.SchemaVersion > 2 {
+		return errors.New("configuration requires a newer agent-archive writer")
+	}
+	if c.Discovery == nil {
+		return nil
+	}
+	if c.SchemaVersion != 2 {
+		return errors.New("discovery requires configuration schema 2")
+	}
+	if len(c.Discovery.Authorizations) > 4096 || len(c.Discovery.CodexHomes) > 16 {
+		return errors.New("discovery authorization limits exceeded")
+	}
+	for _, a := range c.Discovery.Authorizations {
+		if a.Generation == "" || a.Agent != "codex" || a.ProjectRoot == "" || a.DestinationID == "" || len(a.Intervals) > 256 {
+			return errors.New("invalid discovery authorization")
+		}
+		var prior time.Time
+		for i, v := range a.Intervals {
+			if v.Start.IsZero() || (!a.NativeStartFloor.IsZero() && v.Start.Before(a.NativeStartFloor)) || (!v.End.IsZero() && !v.End.After(v.Start)) || (i > 0 && (prior.IsZero() || v.Start.Before(prior))) {
+				return errors.New("invalid discovery intervals")
+			}
+			prior = v.End
+		}
+	}
+	return nil
+}
+
+// ReconcileDiscovery creates new generations when effective scope changes.
+// Setup calls it before its journal commits the config and all permissions.
+func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
+	if next.Discovery == nil {
+		next.Discovery = previous.Discovery
+	}
+	if next.Discovery == nil {
+		return nil
+	}
+	d := *next.Discovery
+	d.CodexHomes = slices.Clone(d.CodexHomes)
+	d.Authorizations = nil
+	if d.Enabled && slices.Contains(next.Harnesses, "codex") && next.Archive.Enabled {
+		for _, p := range next.Archive.Projects {
+			if !p.Included {
+				continue
+			}
+			var kept *DiscoveryAuthorization
+			if previous.Discovery != nil && previous.Discovery.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.Archive.Enabled && sameDiscoveryProjectScope(p.Root, previous, *next) && slices.Equal(previous.Discovery.CodexHomes, d.CodexHomes) {
+				for _, a := range previous.Discovery.Authorizations {
+					if a.ProjectRoot == p.Root && a.DestinationID == next.DestinationID() && (!a.NativeStartFloor.IsZero() || len(a.Intervals) > 0) {
+						a.Intervals = slices.Clone(a.Intervals)
+						kept = &a
+						break
+					}
+				}
+			}
+			if kept == nil {
+				id, err := local.ID()
+				if err != nil {
+					return err
+				}
+				start := now.UTC()
+				if p.ActivatedAt.After(start) {
+					start = p.ActivatedAt
+				}
+				if next.DestinationSince.After(start) {
+					start = next.DestinationSince
+				}
+				var intervals []DiscoveryInterval
+				if !next.Paused {
+					intervals = []DiscoveryInterval{{Start: start}}
+				}
+				a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", ProjectRoot: p.Root, DestinationID: next.DestinationID(), Intervals: intervals}
+				kept = &a
+			}
+			d.Authorizations = append(d.Authorizations, *kept)
+		}
+	}
+	next.Discovery = &d
+	return prepareDiscoveryConfig(next)
+}
+
+func transitionDiscoveryPause(c *Config, paused bool, now time.Time) error {
+	if c.Discovery == nil || c.Paused == paused {
+		return nil
+	}
+	// Check every scope before mutating shared slices. Closing at or before
+	// an open interval's start would erase its durable consent boundary.
+	for _, a := range c.Discovery.Authorizations {
+		if !paused {
+			floor := discoveryNativeStartFloor(a)
+			if floor.IsZero() {
+				return errors.New("discovery consent boundary is unavailable; run setup to renew authorization before resuming")
+			}
+			if now.Before(floor) {
+				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+			}
+		}
+		if n := len(a.Intervals); n > 0 {
+			last := a.Intervals[n-1]
+			if (paused && last.End.IsZero() && !now.After(last.Start)) || (!paused && (last.End.IsZero() || now.Before(last.End))) {
+				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+			}
+		}
+	}
+	for i := range c.Discovery.Authorizations {
+		a := &c.Discovery.Authorizations[i]
+		if paused {
+			if n := len(a.Intervals); n > 0 && a.Intervals[n-1].End.IsZero() {
+				a.Intervals[n-1].End = now
+			}
+		} else {
+			// Expired interval history fails closed, never widens prior permission.
+			if len(a.Intervals) >= 256 {
+				a.Intervals = a.Intervals[1:]
+			}
+			a.Intervals = append(a.Intervals, DiscoveryInterval{Start: now})
+		}
+	}
+	return nil
+}
+
+// DiscoveryGeneration authorizes native start evidence under the current
+// agent/project/destination generation. Scan time is never a start boundary.
+func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) (string, bool) {
+	if c.Discovery == nil || !c.Discovery.Enabled || c.Paused || !c.Archive.Enabled || !slices.Contains(c.Harnesses, agent) || started.IsZero() || started.After(now.Add(2*time.Minute)) {
+		return "", false
+	}
+	for _, a := range c.Discovery.Authorizations {
+		if a.Agent != agent || a.ProjectRoot != root || a.DestinationID != c.DestinationID() {
+			continue
+		}
+		floor := discoveryNativeStartFloor(a)
+		if floor.IsZero() || started.Before(floor) {
+			continue
+		}
+		for _, v := range a.Intervals {
+			if !started.Before(v.Start) && (v.End.IsZero() || started.Before(v.End)) {
+				return a.Generation, true
+			}
+		}
+	}
+	return "", false
+}
+
+// Legacy retained history can only narrow permission to its earliest surviving
+// interval. Activation or observation times cannot recover an empty history.
+func discoveryNativeStartFloor(a DiscoveryAuthorization) time.Time {
+	if !a.NativeStartFloor.IsZero() {
+		return a.NativeStartFloor
+	}
+	if len(a.Intervals) > 0 {
+		return a.Intervals[0].Start
+	}
+	return time.Time{}
+}
+
+func sameDiscoveryProjectScope(root string, previous, next Config) bool {
+	within := func(c Config) []archive.ProjectActivation {
+		var relevant []archive.ProjectActivation
+		for _, p := range c.Archive.Projects {
+			if local.PathWithin(p.Root, root) || local.PathWithin(root, p.Root) {
+				relevant = append(relevant, p)
+			}
+		}
+		slices.SortFunc(relevant, func(a, b archive.ProjectActivation) int { return strings.Compare(a.Root, b.Root) })
+		return relevant
+	}
+	return reflect.DeepEqual(within(previous), within(next))
+}
+
+// ProtectIdentityWriter preserves policy while making older writers refuse
+// namespaced state. Callers hold hooks.lock after checking setup's journal.
+// Disablement is explicit: this never grants discovery consent or intervals.
+func ProtectIdentityWriter(home string) error {
+	c, found, fenced, err := loadConfig(home)
+	if err != nil || !found {
+		return err
+	}
+	if c.Discovery != nil && fenced {
+		return nil
+	}
+	if c.Discovery == nil {
+		c.Discovery = &DiscoveryConfig{}
+	}
+	return Save(home, c)
+}

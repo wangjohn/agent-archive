@@ -168,6 +168,9 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if err != nil {
 		return plan, userHome, err
 	}
+	if err := protectSetupWriter(home, cfg); err != nil {
+		return plan, userHome, err
+	}
 	if plan, err = planSetupRefresh(home, userHome, exe, cfg, env); err != nil {
 		return plan, userHome, err
 	}
