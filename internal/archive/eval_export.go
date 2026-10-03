@@ -214,46 +214,40 @@ func EvalExportFromMetadata(m Metadata, source EvalExportSource) EvalExport {
 	}
 }
 
-// BuildEvalExport is the record of a session at detail, from its metadata and
+// BuildEvalExportWithAnalysis is the record of a session at detail, from its metadata and
 // its filtered source bundle. At metadata detail the bundle adds only the
 // branch; at full detail it adds the prompts, the final response, the edited
-// files, and explicit feedback. A source that cannot be parsed is an error
-// (IsParseError), never a record without its prompts.
-func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, detail EvalExportDetail) (EvalExport, error) {
+// files, and explicit feedback. The caller supplies successful analysis of
+// the filtered source; this builder never resolves a native parser.
+func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metadata, source EvalExportSource, detail EvalExportDetail, parser ParserInfo) (EvalExport, error) {
 	e := EvalExportFromMetadata(m, source)
 	e.Detail = detail
-	e.Branch = firstBranch(bundle)
+	e.Branch = validBranch(analysis.Facts.FirstBranch)
+	if e.Branch == "HEAD" {
+		e.Branch = ""
+	}
 	if detail != EvalExportDetailFull {
 		return e, nil
 	}
-	view, err := ParseNormalized(bundle)
-	if err != nil {
+	if err := validateBundle(bundle); err != nil {
+		return EvalExport{}, &ParseError{Reason: err.Error()}
+	}
+	if err := e.rederiveWithAnalysis(bundle, analysis, m, parser); err != nil {
 		return EvalExport{}, err
 	}
-	if err := e.rederive(bundle, m); err != nil {
-		return EvalExport{}, err
-	}
+	view := analysis.View
 	prompts := []EvalPrompt{}
 	var last *EvalFinalResponse
-	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
-		// A Cursor text transcript: role sections, no records to walk.
-		exchanges, leftOff := textTranscriptExchanges(bundle.NativeText, HandoffOptions{})
-		for _, exchange := range exchanges {
-			if exchange.Prompt != "" {
-				prompts = append(prompts, EvalPrompt{Text: exchange.Prompt})
-			}
-		}
-		if leftOff != "" {
-			last = &EvalFinalResponse{Text: leftOff, Source: "transcript"}
-		}
-	}
 	for _, turn := range view.Turns {
 		// Every other kind (tool results, harness-written records) is
 		// neither a prompt nor a reply.
 		if turn.Kind == TurnKindHumanPrompt {
 			// As the person typed it: without Cursor's wrapper, and a
 			// Claude Code slash command as its command line.
-			prompts = append(prompts, EvalPrompt{Text: cleanPrompt(turn.Text), Timestamp: turn.Timestamp})
+			text := turnDisplayText(turn)
+			if !analysis.Facts.TextOnly || text != "" {
+				prompts = append(prompts, EvalPrompt{Text: text, Timestamp: turn.Timestamp})
+			}
 		} else if turn.Kind == TurnKindAssistant && turn.Text != "" {
 			last = &EvalFinalResponse{Text: turn.Text, Source: "transcript"}
 		}
@@ -263,7 +257,7 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 	}
 	files := []string{}
 	if len(bundle.NativeRecords) > 0 {
-		files = append(files, sessionFilesTouched(view.ToolCalls, workspaceRoot(bundle))...)
+		files = append(files, sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot)...)
 	}
 	e.Prompts, e.FinalResponse, e.FilesEdited = &prompts, last, &files
 	e.Feedback = explicitFeedback(bundle.SupplementalEvidence)
@@ -275,11 +269,12 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 // record's counts, tools, and parser describe the same parse as its
 // prompts and edited files. What the registration contributed (identity,
 // project, commits, replay, admission gaps) stays the sidecar's.
-func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
-	if m.Parser.Version == DefaultParserVersion {
+func (e *EvalExport) rederiveWithAnalysis(bundle SourceBundle, analysis Analysis, m Metadata, parser ParserInfo) error {
+	parser = defaultMetadataParser(bundle, parser)
+	if m.Parser.Version == parser.Version {
 		return nil
 	}
-	derived, err := BuildMetadata(bundle, m.MachineID, m.StartedAt, m.MetadataDerivedAt, m.SourceBundle, ParserInfo{})
+	derived, err := BuildMetadataWithAnalysis(bundle, analysis, nil, m.MachineID, m.StartedAt, m.MetadataDerivedAt, m.SourceBundle, parser)
 	if err != nil && !IsParseError(err) {
 		// Inputs an old sidecar lacks (a derivation time, say): keep
 		// what it says rather than fail a record whose source parses.
@@ -297,26 +292,6 @@ func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
 		}
 	}
 	return nil
-}
-
-// firstBranch is the first git branch a retained record names (Claude Code's
-// gitBranch): the branch the session started on. "" when none does, and
-// when the first is malformed or HEAD (a detached checkout names no branch),
-// as the metadata's branch is: a later record's branch is not the one the
-// session started on.
-func firstBranch(bundle SourceBundle) string {
-	for _, record := range bundle.NativeRecords {
-		if bundle.ParentSessionID == "" && isSidechainRecord(record) {
-			continue
-		}
-		if branch := firstStringDeep(record, "gitBranch"); branch != "" {
-			if branch = validBranch(branch); branch == "HEAD" {
-				return ""
-			}
-			return branch
-		}
-	}
-	return ""
 }
 
 // lastHookFinal is the text of the last final message a stop hook reported,
@@ -481,7 +456,7 @@ func jsonLen(s string) int {
 }
 
 // LocalTranscript describes a transcript file on this machine for
-// BuildLocalEvalExport.
+// BuildLocalEvalExportWithAnalysis.
 type LocalTranscript struct {
 	// Path is the transcript's absolute path.
 	Path string
@@ -497,28 +472,26 @@ type LocalTranscript struct {
 	Now time.Time
 }
 
-// localMachineID stands in for the machine ID BuildMetadata requires; a local
+// localMachineID stands in for the machine ID metadata derivation requires; a local
 // record carries no machine ID.
 const localMachineID = "local"
 
-// BuildLocalEvalExport is the record of a transcript file, filtered as the
+// BuildLocalEvalExportWithAnalysis is the record of a transcript file, filtered as the
 // collector filters it (bundle), with no setup: its metadata is derived with
 // the running parser, exactly as a first publication would derive it. Where a
 // local record differs from an archived one, it says less rather than guess:
 // no git_head, replay, feedback, machine ID, or capture time, and no start
 // time unless a record or local.StartedAt gives one.
-func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail EvalExportDetail) (EvalExport, error) {
+func BuildLocalEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr error, local LocalTranscript, detail EvalExportDetail, parser ParserInfo) (EvalExport, error) {
 	bundle.SupplementalEvidence = nil
 	startedAt := local.StartedAt
-	if bundle.Capture.Harness.Name == HarnessCodex {
-		if native := codexSessionStart(bundle); !native.IsZero() {
-			startedAt = native
-		}
+	if !analysis.Facts.NativeStartedAt.IsZero() {
+		startedAt = analysis.Facts.NativeStartedAt
 	}
 	if startedAt.IsZero() {
-		startedAt = earliestNativeRecordTime(bundle)
+		startedAt = analysis.Facts.EarliestRecordAt
 	}
-	// BuildMetadata needs a start and a reference to the bundle it
+	// Metadata derivation needs a start and a reference to the bundle it
 	// summarizes. The reference is the bundle's own content address; it is
 	// never uploaded or exported.
 	derivationStart := startedAt
@@ -534,16 +507,16 @@ func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail Eva
 		return EvalExport{}, err
 	}
 	reference := SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-	metadata, err := BuildMetadata(bundle, localMachineID, derivationStart, local.Now, reference, ParserInfo{})
+	metadata, err := BuildMetadataWithAnalysis(bundle, analysis, parseErr, localMachineID, derivationStart, local.Now, reference, parser)
 	if err != nil {
 		return EvalExport{}, err
 	}
 	root := local.ProjectRoot
 	if root == "" {
-		root = workspaceRoot(bundle)
+		root = analysis.Facts.WorkspaceRoot
 	}
 	metadata.ApplyProjectName(root)
-	record, err := BuildEvalExport(bundle, metadata, EvalExportSourceLocal, detail)
+	record, err := BuildEvalExportWithAnalysis(bundle, analysis, metadata, EvalExportSourceLocal, detail, parser)
 	if err != nil {
 		return EvalExport{}, err
 	}
@@ -554,42 +527,4 @@ func BuildLocalEvalExport(bundle SourceBundle, local LocalTranscript, detail Eva
 		record.StartedAt = nil
 	}
 	return record, nil
-}
-
-// earliestNativeRecordTime includes native bookkeeping such as session_meta;
-// synthetic text-section timestamps never establish a session's original start.
-func earliestNativeRecordTime(bundle SourceBundle) time.Time {
-	var earliest time.Time
-	for _, record := range bundle.NativeRecords {
-		if at := parseNativeTimestamp(record); !at.IsZero() && (earliest.IsZero() || at.Before(earliest)) {
-			earliest = at
-		}
-		if record["type"] == "session_meta" {
-			if payload, ok := record["payload"].(map[string]any); ok {
-				if at := parseNativeTimestamp(payload); !at.IsZero() && (earliest.IsZero() || at.Before(earliest)) {
-					earliest = at
-				}
-			}
-		}
-	}
-	return earliest
-}
-
-// codexSessionStart uses the original session timestamp in Codex metadata,
-// whose envelope timestamp may describe a later rollout observation.
-func codexSessionStart(bundle SourceBundle) time.Time {
-	for _, record := range bundle.NativeRecords {
-		if record["type"] != "session_meta" {
-			continue
-		}
-		if payload, ok := record["payload"].(map[string]any); ok {
-			if at := parseNativeTimestamp(payload); !at.IsZero() {
-				return at
-			}
-		}
-		if at := parseNativeTimestamp(record); !at.IsZero() {
-			return at
-		}
-	}
-	return time.Time{}
 }

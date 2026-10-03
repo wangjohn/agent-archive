@@ -1,10 +1,9 @@
 package archive
 
 import (
-	"encoding/json"
 	"fmt"
 	"path"
-	"regexp"
+
 	"slices"
 	"sort"
 	"strings"
@@ -143,7 +142,7 @@ type HandoffPlanItem struct {
 	Status string `json:"status,omitempty"`
 	// id is the item's ID in the harness's plan tool (Cursor's todo_write
 	// writes one), by which a later partial update (merge: true) finds it.
-	id string
+	ID string `json:"-"`
 }
 
 // HandoffExchange is one human prompt and everything the agent did before
@@ -225,44 +224,6 @@ const (
 	// dropped.
 	HandoffElisionPromptText HandoffElisionKind = "prompt_text"
 )
-
-// BuildHandoff arranges a filtered bundle for handoff without any budget.
-// metadata is optional; when present it supplies lifecycle state and models a
-// hook reported. Every string in the result is display text (see
-// displayText), so the Markdown and the JSON forms carry no bare carriage
-// return or terminal control sequence.
-func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) (Handoff, error) {
-	view, err := ParseNormalized(bundle)
-	if err != nil {
-		return Handoff{}, err
-	}
-	var exchanges []HandoffExchange
-	var leftOff string
-	var plan []HandoffPlanItem
-	var files []string
-	toolResultsUnavailable := bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
-	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
-		// A Cursor text transcript: role sections, no records to walk.
-		exchanges, leftOff = textTranscriptExchanges(bundle.NativeText, opts)
-		toolResultsUnavailable = false
-	} else {
-		root := workspaceRoot(bundle)
-		exchanges, leftOff, plan = selectHandoffExchanges(handoffEvents(view), root, opts)
-		files = sessionFilesTouched(view.ToolCalls, root)
-	}
-	h := Handoff{
-		Version:                HandoffVersion,
-		Session:                handoffSession(bundle, view, metadata, opts),
-		Workspace:              compareWorkspace(recordedWorkspace(bundle), workspaceRoot(bundle), opts.Checkout),
-		ToolResultsUnavailable: toolResultsUnavailable,
-		Exchanges:              exchanges,
-		LeftOff:                leftOff,
-		Plan:                   plan,
-		FilesTouched:           files,
-		Gaps:                   countGaps(bundle.Capture.Gaps),
-	}
-	return displayHandoff(h), nil
-}
 
 // handoffSession selects recorded identity, model, and time metadata without
 // consulting the clock or changing the parsed view.
@@ -347,14 +308,14 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 			switch turn.Kind {
 			case TurnKindHumanPrompt:
 				flush()
-				current = &HandoffExchange{Prompt: cleanPrompt(turn.Text), Timestamp: turn.Timestamp}
+				current = &HandoffExchange{Prompt: turnDisplayText(*turn), Timestamp: turn.Timestamp}
 			case TurnKindAssistant:
 				if text := strings.TrimSpace(turn.Text); text != "" {
 					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
 					leftOff = text
 				}
 			case TurnKindShellCommand:
-				if command := strings.TrimSpace(stripHarnessTag(turn.Text, "bash-input")); command != "" {
+				if command := strings.TrimSpace(turnDisplayText(*turn)); command != "" {
 					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepShell, Text: command})
 				}
 			case TurnKindCompactSummary:
@@ -374,7 +335,9 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 		if tool == nil {
 			continue
 		}
-		if updated := planItems(tool.Name, call.Input, plan); updated != nil {
+		updated := applyPlan(call.Action.Plan, plan)
+
+		if updated != nil {
 			plan = updated
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
@@ -394,68 +357,13 @@ func handoffToolCall(call *NormalizedToolCall, root string, opts HandoffOptions)
 	var result string
 	var resultLines, resultBytes int
 	if call.ResultRecordIndex != nil {
-		text := call.resultText
+		text := call.ResultText
 		result, resultLines, resultBytes = trimResult(text, opts.resultLines(), opts.resultBytes()), lineCount(text), len(text)
 	}
 	return &HandoffToolCall{
 		Name: name, Summary: summary, IsError: call.IsError != nil && *call.IsError,
 		Result: result, ResultLines: resultLines, ResultBytes: resultBytes,
 	}
-}
-
-// textTranscriptExchanges reads the role sections of a filtered text
-// transcript with the parser FilterText used (parseTextSections): a "user:"
-// section starts an exchange, an "assistant:" section is agent text, and a
-// "tool:" section is tool output. Continuation lines belong to the section
-// above them.
-func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]HandoffExchange, string) {
-	exchanges := []HandoffExchange{}
-	current := &HandoffExchange{}
-	leftOff := ""
-	var role textRole
-	body := []string{}
-	flushSection := func() {
-		text := strings.TrimSpace(strings.Join(body, "\n"))
-		switch role {
-		case textRoleUser:
-			if current.Prompt != "" || len(current.Steps) > 0 {
-				exchanges = append(exchanges, *current)
-			}
-			current = &HandoffExchange{Prompt: cleanPrompt(text)}
-		case textRoleAssistant:
-			if text != "" {
-				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
-				leftOff = text
-			}
-		case textRoleTool:
-			if text != "" {
-				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{
-					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
-					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
-				}})
-			}
-		case textRoleSystem, textRoleDeveloper, textRoleThinking, textRoleAnalysis:
-			// FilterText omitted hidden sections, and only a visible role
-			// starts one here.
-		}
-		role, body = "", body[:0]
-	}
-	for _, transcript := range texts {
-		parsed, _ := parseTextSections(transcript.Content)
-		for _, section := range parsed.sections {
-			if !visibleTextRoles[section.role] {
-				continue
-			}
-			role = section.role
-			body = append(body, strings.TrimSpace(section.header))
-			body = append(body, section.lines[1:]...)
-			flushSection()
-		}
-	}
-	if current.Prompt != "" || len(current.Steps) > 0 {
-		exchanges = append(exchanges, *current)
-	}
-	return exchanges, leftOff
 }
 
 // handoffEvent is one turn or one tool call, in record order.
@@ -485,27 +393,6 @@ func handoffEvents(view NormalizedView) []handoffEvent {
 	return events
 }
 
-// recordedWorkspace returns the directory the session started in, reduced to
-// its base name, and the last git branch the transcript recorded.
-func recordedWorkspace(bundle SourceBundle) HandoffWorkspace {
-	directory := ""
-	if root := workspaceRoot(bundle); root != "" {
-		directory = path.Base(root)
-	}
-	return HandoffWorkspace{Directory: directory, Branch: recordedBranch(bundle)}
-}
-
-// recordedBranch is the last git branch the transcript recorded, as written
-// ("" when it recorded none).
-func recordedBranch(bundle SourceBundle) string {
-	for i := len(bundle.NativeRecords) - 1; i >= 0; i-- {
-		if branch := firstStringDeep(bundle.NativeRecords[i], "gitBranch"); branch != "" {
-			return branch
-		}
-	}
-	return ""
-}
-
 // compareWorkspace marks where the recorded workspace differs from the
 // checkout the handoff is for. root is the full recorded directory, compared
 // here and never kept. A recorded directory that contains the checkout, or is
@@ -524,19 +411,6 @@ func compareWorkspace(ws HandoffWorkspace, root string, checkout HandoffCheckout
 	return ws
 }
 
-// workspaceRoot is the first working directory the transcript recorded: where
-// the session started, normally the project root. Claude Code stamps every
-// record with the shell's current directory, which follows a `cd`, so a later
-// cwd can be a subdirectory that would make every relative path wrong.
-func workspaceRoot(bundle SourceBundle) string {
-	for _, record := range bundle.NativeRecords {
-		if cwd := firstStringDeep(record, "cwd"); cwd != "" {
-			return path.Clean(cwd)
-		}
-	}
-	return ""
-}
-
 func countGaps(gaps []CaptureGap) []HandoffGap {
 	counts := map[string]int{}
 	for _, gap := range gaps {
@@ -550,54 +424,7 @@ func countGaps(gaps []CaptureGap) []HandoffGap {
 	return out
 }
 
-// cursorTimestamp matches the <timestamp> line Cursor prepends to a prompt.
-var cursorTimestamp = regexp.MustCompile(`(?s)^\s*<timestamp>.*?</timestamp>\s*`)
-
-// slashCommandName and slashCommandArgs read the tags Claude Code writes for a
-// typed slash command: <command-name>/review-pr</command-name>,
-// <command-message>…</command-message>, <command-args>12</command-args>.
-var (
-	slashCommandName = regexp.MustCompile(`(?s)<command-name>(.*?)</command-name>`)
-	slashCommandArgs = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
-)
-
-// cleanPrompt shows a prompt as the person typed it. It removes the wrapper
-// Cursor puts around a query (<timestamp>…</timestamp> then
-// <user_query>…</user_query>), and turns Claude Code's slash-command tags
-// back into the command line (/review-pr 12). Other prompts are only trimmed.
-func cleanPrompt(text string) string {
-	text = stripCursorWrapper(text)
-	if strings.HasPrefix(strings.TrimSpace(text), "<command-") {
-		if name := slashCommandName.FindStringSubmatch(text); name != nil {
-			command := strings.TrimSpace(name[1])
-			if args := slashCommandArgs.FindStringSubmatch(text); args != nil && strings.TrimSpace(args[1]) != "" {
-				command += " " + strings.TrimSpace(args[1])
-			}
-			return command
-		}
-	}
-	return strings.TrimSpace(text)
-}
-
-// stripCursorWrapper removes the wrapper Cursor puts around a query: a
-// <timestamp>…</timestamp> line, then <user_query>…</user_query>. Other text
-// is only trimmed.
-func stripCursorWrapper(text string) string {
-	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
-	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
-		text = stripHarnessTag(text, "user_query")
-	}
-	return text
-}
-
-// stripHarnessTag removes a Claude Code harness wrapper such as
-// <bash-input>…</bash-input> around a record's text.
-func stripHarnessTag(text, tag string) string {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "<"+tag+">")
-	return strings.TrimSuffix(text, "</"+tag+">")
-}
-
+// lineCount counts visible lines, excluding trailing line separators.
 func lineCount(text string) int {
 	if text == "" {
 		return 0
@@ -656,160 +483,6 @@ func firstLine(s string, limit int) string {
 		s = TruncateUTF8(s, limit) + "…"
 	}
 	return s
-}
-
-var (
-	shellToolNames  = map[string]bool{"bash": true, "shell": true, "exec_command": true, "local_shell_call": true, "commandexecution": true, "run_terminal_cmd": true}
-	readToolNames   = map[string]bool{"read": true, "read_file": true, "read_file_v2": true, "view": true}
-	editToolNames   = map[string]bool{"edit": true, "multiedit": true, "write": true, "notebookedit": true, "apply_patch": true, "str_replace": true, "strreplace": true, "search_replace": true, "edit_file": true, "edit_file_v2": true, "create_file": true, "write_file": true, "delete_file": true}
-	searchToolNames = map[string]bool{"grep": true, "glob": true, "search": true, "codebase_search": true, "grep_search": true, "file_search": true, "ripgrep_raw_search": true, "glob_file_search": true}
-	agentToolNames  = map[string]bool{"agent": true, "task": true}
-	planToolNames   = map[string]bool{"todowrite": true, "todo_write": true, "update_plan": true}
-)
-
-// toolSummary renders one line describing a call from its retained
-// arguments. Edit bodies are deliberately never included. Paths under root
-// are shown relative to it.
-func toolSummary(name string, input map[string]any, raw map[string]any, root string) string {
-	lower := strings.ToLower(name)
-	switch {
-	case shellToolNames[lower]:
-		if command := argumentText(input, "command", "cmd"); command != "" {
-			return firstLine(command, handoffSummaryCap)
-		}
-		if command := argumentText(raw, "command"); command != "" {
-			return firstLine(command, handoffSummaryCap)
-		}
-	case readToolNames[lower]:
-		file := shownFile(firstString(input, touchedPathKeys...), root)
-		if file == "" {
-			break
-		}
-		if offset, ok := input["offset"].(float64); ok {
-			if limit, ok := input["limit"].(float64); ok {
-				return fmt.Sprintf("%s (lines %d–%d)", file, int(offset), int(offset)+int(limit)-1)
-			}
-			return fmt.Sprintf("%s (from line %d)", file, int(offset))
-		}
-		return file
-	case editToolNames[lower]:
-		if files := touchedFiles(name, input, raw); len(files) > 0 {
-			for i := range files {
-				files[i] = shownFile(files[i], root)
-			}
-			return strings.Join(files, ", ")
-		}
-		return ""
-	case searchToolNames[lower]:
-		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob", "globPattern")
-		// Searching the workspace root is the default, so "in <root>" is
-		// left out.
-		where := workspaceFile(firstString(input, "path", "target_directory", "targetDirectory"), root)
-		if pattern != "" && where != "" {
-			return firstLine(pattern+" in "+where, handoffSummaryCap)
-		}
-		if pattern != "" {
-			return firstLine(pattern, handoffSummaryCap)
-		}
-	case agentToolNames[lower]:
-		if description := firstString(input, "description"); description != "" {
-			return firstLine(description, handoffSummaryCap)
-		}
-		if prompt := firstString(input, "prompt"); prompt != "" {
-			return firstLine(prompt, handoffAgentPromptCap)
-		}
-	case planToolNames[lower]:
-		return "updated the plan"
-	}
-	if title := firstString(input, "title"); title != "" {
-		return firstLine(title, handoffSummaryCap)
-	}
-	if input != nil {
-		encoded, err := json.Marshal(input)
-		if err == nil && string(encoded) != "{}" {
-			return firstLine(string(encoded), handoffSummaryCap)
-		}
-	}
-	// A custom tool (Codex exec, apply_patch) carries its input as one raw
-	// string. Codex's exec tool is JavaScript that usually calls
-	// tools.exec_command({cmd: …}); the command is the useful part.
-	if text, ok := raw["input"].(string); ok {
-		if command := codexExecCommand(text); command != "" {
-			return firstLine(command, handoffSummaryCap)
-		}
-		return firstLine(text, handoffSummaryCap)
-	}
-	return ""
-}
-
-// codexExecCommand returns the cmd of the first exec_command({…}) call in a
-// Codex exec script, or "" when there is none or it does not decode.
-func codexExecCommand(script string) string {
-	at := strings.Index(script, "exec_command(")
-	if at < 0 {
-		return ""
-	}
-	var args map[string]any
-	if err := json.NewDecoder(strings.NewReader(script[at+len("exec_command("):])).Decode(&args); err != nil {
-		return ""
-	}
-	return argumentText(args, "cmd", "command")
-}
-
-// argumentText returns the first named argument as text, joining a list of
-// strings (Codex shell's argv) with spaces.
-func argumentText(args map[string]any, keys ...string) string {
-	for _, key := range keys {
-		switch value := args[key].(type) {
-		case string:
-			if value != "" {
-				return value
-			}
-		case []any:
-			parts := make([]string, 0, len(value))
-			for _, part := range value {
-				if s, ok := part.(string); ok {
-					parts = append(parts, s)
-				}
-			}
-			if len(parts) > 0 {
-				return strings.Join(parts, " ")
-			}
-		}
-	}
-	return ""
-}
-
-// touchedPathKeys are the argument names an editing or reading call puts its
-// file under: Claude's file_path and notebook_path, Cursor's path and
-// target_file, and relativeWorkspacePath, where Cursor's database chats keep
-// the file of edit_file_v2 and read_file_v2 (their params; they have no
-// rawArgs).
-var touchedPathKeys = []string{"file_path", "path", "target_file", "notebook_path", "relativeWorkspacePath"}
-
-// touchedFiles lists the files an editing call names: its path argument, or
-// for apply_patch the files named in the patch headers.
-func touchedFiles(name string, input map[string]any, raw map[string]any) []string {
-	lower := strings.ToLower(name)
-	if !editToolNames[lower] {
-		return nil
-	}
-	if file := firstString(input, touchedPathKeys...); file != "" {
-		return []string{file}
-	}
-	patch := firstString(input, "input", "patch")
-	if patch == "" {
-		patch, _ = raw["input"].(string)
-	}
-	var out []string
-	for line := range strings.SplitSeq(patch, "\n") {
-		for _, prefix := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
-			if file, ok := strings.CutPrefix(line, prefix); ok {
-				out = append(out, strings.TrimSpace(file))
-			}
-		}
-	}
-	return out
 }
 
 // workspaceFile is how a file a call names is shown and deduplicated, so the
@@ -898,10 +571,13 @@ func slashPath(p string, windows bool) string {
 // for a call with none the type of its record. The filter drops Codex's
 // local_shell_call action, so such a call is listed as "local_shell_call".
 func callToolName(call NormalizedToolCall) string {
+	if call.ObservedName != "" {
+		return call.ObservedName
+	}
 	if call.Name != "" {
 		return call.Name
 	}
-	return firstString(call.raw, "type")
+	return call.ObservedName
 }
 
 // listedCall is how handoff lists a call and whether tools_used counts it:
@@ -917,11 +593,8 @@ func listedCall(call NormalizedToolCall, root string) (name, summary string, lis
 	if name == "" {
 		name = "tool"
 	}
-	summary = toolSummary(name, call.Input, call.raw, root)
-	if call.Name != "" || toolInvocationTypes[strings.ToLower(strings.TrimSpace(firstString(call.raw, "type")))] {
-		return name, summary, true
-	}
-	return name, summary, summary != ""
+	summary = actionSummary(call.Action, root)
+	return name, summary, call.Name != "" || call.Invocation || summary != ""
 }
 
 // sessionFilesTouched lists, in first-touched order, the distinct files the
@@ -931,7 +604,9 @@ func listedCall(call NormalizedToolCall, root string) (name, summary string, lis
 func sessionFilesTouched(calls []NormalizedToolCall, root string) []string {
 	files := fileSet{}
 	for _, call := range calls {
-		for _, file := range touchedFiles(callToolName(call), call.Input, call.raw) {
+		namedFiles := call.Action.Files
+
+		for _, file := range namedFiles {
 			files.add(workspaceFile(file, root))
 		}
 	}
@@ -954,94 +629,6 @@ func (s *fileSet) add(file string) {
 		s.seen[file] = true
 		s.list = append(s.list, file)
 	}
-}
-
-// planItems reads a plan-writing call: Claude's TodoWrite {todos: [{content,
-// status}]}, Codex's update_plan {plan: [{step, status}]}, and Cursor's
-// todo_write {todos: [{id, content, status}], merge}. It returns the plan
-// after the call, or nil for any other call and for a plan call whose item
-// list it cannot find.
-//
-// A call replaces the plan (previous), except a Cursor todo_write with
-// merge: true, which sends only the items that changed: each is matched to
-// the previous item with the same id and updates its text and status (an
-// empty field leaves the previous one), and an item with a new id, or none,
-// is added at the end. Filter 10's handoff took such a call as the whole
-// plan, so it showed only the last item changed.
-func planItems(name string, input map[string]any, previous []HandoffPlanItem) []HandoffPlanItem {
-	items := replacementPlanItems(name, input)
-	if items == nil {
-		return nil
-	}
-	if merge, _ := input["merge"].(bool); !merge {
-		return slices.DeleteFunc(items, func(item HandoffPlanItem) bool { return item.Text == "" })
-	}
-	merged := slices.Clone(previous)
-	for _, item := range items {
-		index := -1
-		if item.id != "" {
-			index = slices.IndexFunc(merged, func(prior HandoffPlanItem) bool { return prior.id == item.id })
-		}
-		if index < 0 {
-			if item.Text != "" {
-				merged = append(merged, item)
-			}
-			continue
-		}
-		if item.Text != "" {
-			merged[index].Text = item.Text
-		}
-		if item.Status != "" {
-			merged[index].Status = item.Status
-		}
-	}
-	if merged == nil {
-		merged = []HandoffPlanItem{}
-	}
-	return merged
-}
-
-// replacementPlanItems reads the item list of a plan-writing call as a whole
-// plan (see planItems).
-func replacementPlanItems(name string, input map[string]any) []HandoffPlanItem {
-	if !planToolNames[strings.ToLower(name)] {
-		return nil
-	}
-	var list []any
-	found := false
-	for _, key := range []string{"todos", "plan", "items"} {
-		if value, ok := input[key].([]any); ok {
-			list, found = value, true
-			break
-		}
-	}
-	if !found {
-		// Arguments that did not decode, or a shape this reader does not
-		// know, say nothing about the plan; they must not erase an earlier
-		// one. An explicit empty list does clear it.
-		return nil
-	}
-	items := []HandoffPlanItem{}
-	for _, raw := range list {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		item := HandoffPlanItem{Text: firstString(entry, "content", "step", "description", "title", "text"), Status: firstString(entry, "status")}
-		switch id := entry["id"].(type) {
-		case string:
-			item.id = id
-		case float64, json.Number:
-			item.id = fmt.Sprint(id)
-		}
-		// An item with no text is kept only for its id: a merge may update
-		// the status of an item it names by id alone.
-		if item.Text == "" && item.id == "" {
-			continue
-		}
-		items = append(items, item)
-	}
-	return items
 }
 
 // FitHandoff returns a copy of h trimmed until measure(copy) is at most
@@ -1262,4 +849,85 @@ func cloneHandoff(h Handoff) Handoff {
 		out.Exchanges[i] = copied
 	}
 	return out
+}
+
+// BuildHandoffWithAnalysis renders a handoff from one previously derived analysis.
+func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *Metadata, opts HandoffOptions) (Handoff, error) {
+	view := analysis.View
+	var exchanges []HandoffExchange
+	var leftOff string
+	var plan []HandoffPlanItem
+	var files []string
+	toolResultsUnavailable := !analysis.Observability.ToolResults.Available()
+	if analysis.Facts.TextOnly {
+		// A Cursor text transcript: role sections, no records to walk.
+		exchanges, leftOff = textTurnsExchanges(view.Turns, opts)
+		toolResultsUnavailable = false
+	} else {
+		root := analysis.Facts.WorkspaceRoot
+		exchanges, leftOff, plan = selectHandoffExchanges(handoffEvents(view), root, opts)
+		files = sessionFilesTouched(view.ToolCalls, root)
+	}
+	directory := path.Base(analysis.Facts.WorkspaceRoot)
+	if analysis.Facts.WorkspaceRoot == "" {
+		directory = ""
+	}
+	h := Handoff{
+		Version:                HandoffVersion,
+		Session:                handoffSession(bundle, view, metadata, opts),
+		Workspace:              compareWorkspace(HandoffWorkspace{Directory: directory, Branch: analysis.Facts.Branch}, analysis.Facts.WorkspaceRoot, opts.Checkout),
+		ToolResultsUnavailable: toolResultsUnavailable,
+		Exchanges:              exchanges,
+		LeftOff:                leftOff,
+		Plan:                   plan,
+		FilesTouched:           files,
+		Gaps:                   countGaps(bundle.Capture.Gaps),
+	}
+	return displayHandoff(h), nil
+}
+
+func textTurnsExchanges(turns []NormalizedTurn, opts HandoffOptions) ([]HandoffExchange, string) {
+	exchanges := []HandoffExchange{}
+	current := &HandoffExchange{}
+	leftOff := ""
+	var kind TurnKind
+	body := []string{}
+	flushSection := func() {
+		text := strings.TrimSpace(strings.Join(body, "\n"))
+		switch kind {
+		case TurnKindHumanPrompt:
+			if current.Prompt != "" || len(current.Steps) > 0 {
+				exchanges = append(exchanges, *current)
+			}
+			current = &HandoffExchange{Prompt: strings.TrimSpace(text)}
+		case TurnKindAssistant:
+			if text != "" {
+				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
+				leftOff = text
+			}
+		case TurnKindToolResult:
+			if text != "" {
+				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{
+					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
+					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
+				}})
+			}
+		case TurnKindCommandOutput, TurnKindShellCommand, TurnKindLocalCommand, TurnKindCompactSummary, TurnKindHarnessNotification:
+		// Text formats do not establish these native structured categories.
+		case TurnKindHarnessMeta:
+			// FilterText omitted hidden sections, and only a visible role
+			// starts one here.
+		}
+		kind, body = "", body[:0]
+	}
+	for _, turn := range turns {
+		kind = turn.Kind
+		body = append(body, turnDisplayText(turn))
+		flushSection()
+	}
+
+	if current.Prompt != "" || len(current.Steps) > 0 {
+		exchanges = append(exchanges, *current)
+	}
+	return exchanges, leftOff
 }

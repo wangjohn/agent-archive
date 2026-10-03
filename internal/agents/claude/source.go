@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
+
 	"sync/atomic"
 	"time"
 )
@@ -98,11 +98,11 @@ func (s *sourceSnapshot) Close() error {
 }
 
 // Filter delegates the current pure privacy codec behind the native input port.
-type Filter struct{ archive.ClaudeAdapter }
+type Filter struct{ nativecodec.ClaudeAdapter }
 
 // Filter consumes verified native input under shared collection limits.
 func (Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
-	a := archive.ClaudeAdapter{}
+	a := nativecodec.ClaudeAdapter{}
 	fn := a.FilterJSONL
 	if in.SubagentMeta != nil {
 		fn = func(r io.Reader) (archive.FilteredTranscript, error) {
@@ -124,7 +124,7 @@ func readMetadata(path string, files transcriptio.Opener) (data []byte, resultEr
 	if files == nil {
 		files = transcriptio.OS{}
 	}
-	p, ok := subagentMetaPath(path)
+	p, ok := nativecodec.SubagentMetaPath(path)
 	if !ok {
 		return nil, nil
 	}
@@ -145,22 +145,19 @@ func readMetadata(path string, files transcriptio.Opener) (data []byte, resultEr
 	if err != nil || !os.SameFile(found, opened) {
 		return nil, nil
 	}
-	data, err = io.ReadAll(io.NewSectionReader(f, 0, archive.MaxSubagentMetaBytes+1))
-	if err != nil || len(data) > archive.MaxSubagentMetaBytes {
+	data, err = io.ReadAll(io.NewSectionReader(f, 0, nativecodec.MaxSubagentMetaBytes+1))
+	if err != nil || len(data) > nativecodec.MaxSubagentMetaBytes {
 		return nil, nil
 	}
 	return data, nil
 }
 
-func subagentMetaPath(transcriptPath string) (string, bool) {
-	name := filepath.Base(transcriptPath)
-	if !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") || len(name) <= len("agent-.jsonl") {
-		return "", false
-	}
-	return strings.TrimSuffix(transcriptPath, ".jsonl") + ".meta.json", true
+// EvidenceExtends compares retained native facts under unchanged codec versions.
+func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
+	return nativecodec.EvidenceExtends(previous, candidate)
 }
 
-// Activities reads only cheap file ordering observations.
+// Activities observes content-free file activity while preserving batching.
 func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
 	return (sourceio.FileProvider{}).Activities(ctx, e, refs)
 }

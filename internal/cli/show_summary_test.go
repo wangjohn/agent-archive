@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -250,9 +251,9 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	}
 	_, adapter, ok := productionAgents.LookupSources("claude")
 	if !ok {
-		t.Fatal("fixture source filter missing")
+		t.Fatal("Claude filter unavailable")
 	}
-	filtered, err := adapter.FilterJSONL(bytes.NewReader(raw))
+	filtered, err := (claude.Filter{}).FilterJSONL(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcript, err := buildTranscript(bundle)
+	transcript, err := buildTranscript(context.Background(), nil, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}

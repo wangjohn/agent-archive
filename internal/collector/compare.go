@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
-	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -148,41 +148,15 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 	return out
 }
 
-// nativeEvidenceExtends reports whether candidate carries everything previous
-// did, record for record, so replacing previous loses no retained evidence.
-// A Cursor chat's name is not such evidence: a chat Cursor names or the
-// person renames still extends its earlier snapshot (archive.SameNativeRecord),
-// and neither is a subagent's description, the record filter 14 writes first
-// (archive.WithoutSubagentMeta): a subagent captured before its .meta.json
-// existed, or whose description changed, still extends its earlier snapshot.
-// It compares filtered output, so it is only meaningful when both were
-// filtered the same way: a new filter or adapter version legitimately changes
-// what earlier records look like, and must not read as a rewrite. A rewrite
-// across an upgrade is found from the transcript instead (see refilter.go).
-func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
+// nativeEvidenceExtends applies shared version policy before the integration comparator.
+func nativeEvidenceExtends(comparator agentapi.RetainedComparator, previous, candidate archive.SourceBundle) bool {
 	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion {
 		return true
 	}
-	if previous.Capture.SourceFormat != candidate.Capture.SourceFormat {
+	if previous.Capture.SourceFormat != candidate.Capture.SourceFormat || comparator == nil {
 		return false
 	}
-	format := previous.Capture.SourceFormat
-	previousRecords := archive.WithoutSubagentMeta(format, previous.NativeRecords)
-	candidateRecords := archive.WithoutSubagentMeta(format, candidate.NativeRecords)
-	if len(candidateRecords) < len(previousRecords) || len(candidate.NativeText) < len(previous.NativeText) {
-		return false
-	}
-	for i := range previousRecords {
-		if !archive.SameNativeRecord(format, previousRecords[i], candidateRecords[i]) {
-			return false
-		}
-	}
-	for i := range previous.NativeText {
-		if previous.NativeText[i].Format != candidate.NativeText[i].Format || !strings.HasPrefix(candidate.NativeText[i].Content, previous.NativeText[i].Content) {
-			return false
-		}
-	}
-	return true
+	return comparator.EvidenceExtends(previous, candidate)
 }
 
 func mergeSupplementalEvidence(existing []archive.SupplementalEvidence, groups ...[]archive.SupplementalEvidence) []archive.SupplementalEvidence {

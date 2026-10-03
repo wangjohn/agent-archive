@@ -87,7 +87,7 @@ The four ways of naming sessions are mutually exclusive; `--project`,
 - `--file PATH --harness NAME` exports one transcript, the way
   `handoff --file` renders one: `collector.FilterTranscriptFile`, then a
   source bundle, then metadata derived with the current parser
-  (`archive.BuildLocalEvalExport`). No configuration is read, and the data
+  (`archive.BuildLocalEvalExportWithAnalysis`). No configuration is read, and the data
   directory is never read or created: only an archive input opens the
   archive.
 - A transcript path given on `--ids-from` names its app by the folder it is

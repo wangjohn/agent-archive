@@ -195,13 +195,13 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
-	f, ok := adapter.(agentapi.TranscriptFilter)
-	if !ok {
-		return out, observed, errors.New("native filter port required")
-	}
 	provider, _, err := r.binding()
 	if err != nil {
 		return out, observed, err
+	}
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return out, observed, errors.New("native filter port required")
 	}
 	p, closePass, err := r.pass(ctx, provider, f.Name())
 	if err != nil {
@@ -417,7 +417,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 	}
 	return local.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{
 		SkillEvidence: string(opts.skillEvidence()),
-		ParserVersion: opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
+		ParserVersion: opts.parserVersionFor(reg.Harness.Name), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,

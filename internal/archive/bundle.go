@@ -60,7 +60,13 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	if reg.Origin == SessionOriginDiscovery {
 		discoveryOrigin = reg.Origin
 	}
-	harness := observedHarness(reg.Harness, transcript.Format, records)
+	harness := reg.Harness
+	if transcript.ObservedHarness.Version != "" {
+		harness.Version = transcript.ObservedHarness.Version
+	}
+	if transcript.ObservedHarness.Mode != "" {
+		harness.Mode = transcript.ObservedHarness.Mode
+	}
 	filteredSupplemental, gaps, err := FilterSupplementalEvidence(supplemental)
 	if err != nil {
 		return SourceBundle{}, err
@@ -156,31 +162,6 @@ func linkedStatusRank(status LinkedSessionStatus) int {
 	}
 }
 
-// observedHarness attributes the capture to the harness version the
-// transcript itself reports: Codex writes cli_version on session_meta and
-// Claude Code stamps every JSONL record with a top-level version. Cursor's
-// version arrives through its hook payload (cursor_version), not here.
-func observedHarness(base Harness, format string, records []map[string]any) Harness {
-	for _, record := range records {
-		if format == "claude-jsonl" {
-			if version := strings.TrimSpace(firstString(record, "version")); version != "" {
-				base.Version = version
-			}
-			continue
-		}
-		if firstString(record, "type") != "session_meta" {
-			continue
-		}
-		if version := firstStringDeep(record, "cli_version"); version != "" {
-			base.Version = version
-		}
-		if mode := firstStringDeep(record, "source"); mode != "" {
-			base.Mode = mode
-		}
-	}
-	return base
-}
-
 // FilterSupplementalEvidence applies the same strict allowlist and secret
 // redaction policy used for native records. Hooks must call it (or use
 // NewSourceBundle, which calls it) before persisting upload-ready evidence.
@@ -195,11 +176,11 @@ func FilterSupplementalEvidence(in []SupplementalEvidence) ([]SupplementalEviden
 		if evidence.Kind == EvidenceKindCaptureGap {
 			extraAllowed = captureGapKeys
 		}
-		state := sanitizeState{
-			addGap: func(code string, _ int, detail string) {
+		state := PrivacyState{
+			AddGap: func(code string, _ int, detail string) {
 				gaps = append(gaps, CaptureGap{Code: code, Detail: "supplemental " + detail})
 			},
-			extraAllowed: extraAllowed,
+			ExtraAllowed: extraAllowed,
 		}
 		payload, keep := sanitizeObject(evidence.Payload, &state)
 		if !keep {

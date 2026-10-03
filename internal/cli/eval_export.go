@@ -367,7 +367,7 @@ func (x *evalExporter) write(w io.Writer, record any) {
 // export is one input's record.
 func (x *evalExporter) export(input evalInput) any {
 	if input.archiveID != "" {
-		return exportArchivedSession(x.ctx, x.store, input.archiveID, x.opts)
+		return exportArchivedSession(x.ctx, x.env.agentRegistry(), x.store, input.archiveID, x.opts)
 	}
 	return x.exportLocal(input)
 }
@@ -378,7 +378,7 @@ func (x *evalExporter) export(input evalInput) any {
 // export is always of exactly the session named. At metadata detail only the
 // sidecar is read; at full detail the source bundle is read and verified
 // against it, as show --transcript does.
-func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id string, opts evalExportOptions) any {
+func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, store storage.ObjectStore, id string, opts evalExportOptions) any {
 	fail := func(code archive.EvalErrorCode, message string) any {
 		record := archive.NewEvalExportError(archive.EvalExportSourceArchive, id, code, message)
 		if isArchiveSessionID(id) {
@@ -426,7 +426,18 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 	if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
 		return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 	}
-	record, err := archive.BuildEvalExport(bundle, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
+	if parsers == nil {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	parser, ok := parsers.LookupParser(bundle.Capture.Harness.Name)
+	if !ok {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	analysis, err := agentapi.Analyze(ctx, parser, bundle)
+	if err != nil {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	record, err := archive.BuildEvalExportWithAnalysis(bundle, analysis, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull, archive.ParserInfo{Version: parser.Version()})
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}
@@ -480,7 +491,7 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	// sanitized identity for output. Text-only transcripts retain discovery's
 	// identity because they have no structured records to sanitize.
 	if nativeID == "" || len(filtered.Records) > 0 {
-		nativeID = transcriptSessionID(harness, path, filtered)
+		nativeID = transcriptSessionID(adapter, path, filtered)
 	}
 	sum := sha256.Sum256([]byte(path))
 	root := input.projectRoot
@@ -502,7 +513,14 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	if !filtered.NativeStartAt.IsZero() {
 		startedAt = filtered.NativeStartAt
 	}
-	record, err := archive.BuildLocalEvalExport(bundle, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail)
+	parser, _ := x.env.agentRegistry().LookupParser(bundle.Capture.Harness.Name)
+	analysis, parseErr := agentapi.Analyze(x.ctx, parser, bundle)
+	var parserVersion string
+	if parser != nil {
+		parserVersion = parser.Version()
+	}
+	parserInfo := archive.ParserInfo{Version: parserVersion}
+	record, err := archive.BuildLocalEvalExportWithAnalysis(bundle, analysis, parseErr, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail, parserInfo)
 	if err != nil {
 		return fail(path, archive.EvalErrorParseFailed, "the filtered transcript could not be parsed")
 	}
@@ -533,47 +551,17 @@ func (x *evalExporter) filterLocal(harness, path string, startedAt time.Time) (o
 	return collector.FilterTranscriptSnapshot(x.ctx, file, harness, startedAt, collector.DefaultMaxTranscriptBytes, x.env.agentRegistry())
 }
 
-// transcriptSessionID is the app's session ID for a transcript named
-// directly: the one its records carry, else, for a Codex rollout
-// (rollout-<time>-<uuid>.jsonl), the UUID its name ends with, else the file's
-// name without its extension, as handoff --file names it.
-func transcriptSessionID(harness, path string, filtered archive.FilteredTranscript) string {
-	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	var safeIDs []string
-	for _, raw := range filtered.Records {
-		var record struct {
-			Type            string `json:"type"`
-			SessionID       string `json:"session_id"`
-			ClaudeSessionID string `json:"sessionId"`
-			Payload         struct {
-				ID string `json:"id"`
-			} `json:"payload"`
-		}
-		if json.Unmarshal(raw, &record) != nil {
-			continue
-		}
-		if harness == "codex" && record.Type == "session_meta" && record.Payload.ID != "" {
-			return record.Payload.ID
-		}
-		for _, id := range []string{record.SessionID, record.ClaudeSessionID} {
-			if id != "" {
-				safeIDs = append(safeIDs, id)
-			}
-		}
+// transcriptSessionID consumes the integration's sanitized identity facts and
+// optional filename policy. The generic fallback preserves original spelling.
+func transcriptSessionID(adapter archive.Adapter, path string, filtered archive.FilteredTranscript) string {
+	identity := filtered.LocalIdentity
+	if resolver, ok := adapter.(agentapi.LocalIdentityResolver); ok {
+		identity = resolver.LocalIdentity(filtered, filepath.Base(path))
 	}
-	for _, id := range safeIDs {
-		if id == stem {
-			return id
-		}
+	if identity.ID != "" {
+		return identity.ID
 	}
-	if len(safeIDs) > 0 {
-		return safeIDs[0]
-	}
-	const uuidLength = 36
-	if strings.HasPrefix(stem, "rollout-") && len(stem) > len("rollout-")+uuidLength {
-		return stem[len(stem)-uuidLength:]
-	}
-	return stem
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 // transcriptHarness is the app whose transcript folder holds path: Claude

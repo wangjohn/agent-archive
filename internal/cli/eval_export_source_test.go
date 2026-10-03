@@ -106,9 +106,15 @@ func TestEvalExportLocalUsesNativeSessionStart(t *testing.T) {
 // Copied Claude history can name its old session first; the admitted file stem wins.
 func TestEvalExportLocalUsesResumedClaudeIdentity(t *testing.T) {
 	t.Parallel()
-	filtered := archive.FilteredTranscript{SessionIDs: []string{"original", "resumed"}, Records: [][]byte{[]byte(`{"sessionId":"original"}`), []byte(`{"sessionId":"resumed"}`)}}
-	if got := transcriptSessionID("claude", "/sessions/resumed.jsonl", filtered); got != "resumed" {
-		t.Fatalf("identity %s", got)
+	f := localEvalFixture(t)
+	path := filepath.Join(f.root, "resumed.jsonl")
+	raw := `{"type":"user","sessionId":"original","message":{"role":"user","content":"old"}}` + "\n" + `{"type":"user","sessionId":"resumed","message":{"role":"user","content":"new"}}` + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	records, stderr, code := f.evalLines(t, "", "--file", path, "--harness", "claude")
+	if code != 0 || len(records) != 1 || records[0]["session_id"] != "resumed" {
+		t.Fatalf("%d %v %s", code, records, stderr)
 	}
 }
 

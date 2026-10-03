@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"time"
 )
 
 // Filter selects only the previously accepted Cursor file and composer formats.
-type Filter struct{ archive.CursorAdapter }
+type Filter struct{ nativecodec.CursorAdapter }
 
 // Filter consumes verified native input under shared collection limits.
 func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
@@ -36,25 +37,27 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 	if in.Records == nil {
 		return archive.FilteredTranscript{}, errors.New("cursor native input required")
 	}
-	var composer archive.CursorComposer
-	for {
-		r, ok, err := in.Records.Next(ctx)
-		if err != nil {
-			return archive.FilteredTranscript{}, err
-		}
-		if !ok {
-			break
-		}
-		switch r.Kind {
-		case agentapi.ComposerRecord:
-			composer.Composer = r.Raw
-		case agentapi.BubbleRecord:
-			composer.Bubbles = append(composer.Bubbles, archive.CursorBubble{ID: r.Key, Value: r.Raw})
-		default:
-			return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("unexpected Cursor record framing"))
-		}
+	r, ok, err := in.Records.Next(ctx)
+	if err != nil {
+		return archive.FilteredTranscript{}, err
 	}
-	out, err := f.FilterComposer(composer)
+	if !ok || r.Kind != agentapi.ComposerRecord || r.Missing {
+		return archive.FilteredTranscript{}, agentapi.Wrap(agentapi.Unsafe, errors.New("cursor composer framing required"))
+	}
+	out, err := nativecodec.FilterComposerRecords(ctx, r.Raw, func(ctx context.Context) (nativecodec.CursorBubble, bool, error) {
+		row, ok, err := in.Records.Next(ctx)
+		if err != nil || !ok {
+			return nativecodec.CursorBubble{}, ok, err
+		}
+		if row.Kind != agentapi.BubbleRecord {
+			return nativecodec.CursorBubble{}, false, agentapi.Wrap(agentapi.Unsafe, errors.New("unexpected cursor record framing"))
+		}
+		var value []byte
+		if !row.Missing {
+			value = row.Raw
+		}
+		return nativecodec.CursorBubble{ID: row.Key, Value: value}, true, nil
+	})
 	return out, errors.Join(sourceio.Classify(err), ctx.Err())
 }
 
@@ -64,4 +67,9 @@ func (f Filter) Refilter(ctx context.Context, b archive.SourceBundle, at time.Ti
 		return sourceio.RefilterText(ctx, b, at, f.FilterText)
 	}
 	return sourceio.RefilterJSONL(ctx, f, b)
+}
+
+// EvidenceExtends compares retained native facts under unchanged codec versions.
+func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
+	return nativecodec.EvidenceExtends(previous, candidate)
 }

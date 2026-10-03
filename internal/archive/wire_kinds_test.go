@@ -26,13 +26,6 @@ func TestWireKindSpellings(t *testing.T) {
 		{string(SourceLineNativeRecord), "native_record"},
 		{string(SourceLineNativeText), "native_text"},
 		{string(SourceLineSupplementalEvidence), "supplemental_evidence"},
-		{string(textRoleUser), "user"},
-		{string(textRoleAssistant), "assistant"},
-		{string(textRoleTool), "tool"},
-		{string(textRoleSystem), "system"},
-		{string(textRoleDeveloper), "developer"},
-		{string(textRoleThinking), "thinking"},
-		{string(textRoleAnalysis), "analysis"},
 	}
 
 	for _, c := range cases {
