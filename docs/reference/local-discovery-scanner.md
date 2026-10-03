@@ -25,7 +25,13 @@ Old history remains old when copied or resumed.
 Registrations remain authoritative. A missing identity lookup requests the
 existing registration census, then defers admission until that census restores
 an owner or records explicit absence. Census enumeration and source reads run
-outside the hooks lock. The census currently enumerates registrations in memory;
+outside the hooks lock. A completed census also checks bounded directory presence:
+if both derived index directories are empty while registrations remain, it
+rebuilds ownership before scanning, including when startup recreated the empty
+directories. This preserves admitted continuations outside a newer start window
+without requesting recovery for every old unknown source. Arbitrary individual
+index loss while other entries survive still requires a recovery signal.
+The census currently enumerates registrations in memory;
 it is deadline-aware but has no fixed entry or memory cap. Recovery retains the
 collector pass context rather than the scanner's five-second deadline, so a
 larger census can finish instead of repeatedly restarting and blocking admission.

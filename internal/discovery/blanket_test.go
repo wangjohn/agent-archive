@@ -328,3 +328,81 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 		t.Fatalf("readback %v", e)
 	}
 }
+
+func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProject(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		nestedRepository bool
+		excluded         bool
+		allowed          bool
+	}{{name: "excluded-after-reduction", excluded: true}, {name: "nested-repository", nestedRepository: true}, {name: "allowed-after-reduction", allowed: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, cfg, at, codex := fixture(t)
+			project := cfg.Archive.Projects[0].Root
+			child := filepath.Join(project, "child")
+			for _, dir := range []string{filepath.Join(project, ".git"), child} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			setTestCodexScope(&cfg, config.CodexAllProjects)
+			if err := config.ReconcileDiscovery(&cfg, config.Config{}, at); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			native := "00000000-0000-0000-0000-000000000001"
+			if err := handleCodexHook(store.Home(), map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": project}, at.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 1 || regs[0].CodexAdmission == nil || regs[0].TranscriptPath != "" {
+				t.Fatalf("initial hook proof %#v %v", regs, err)
+			}
+			before := regs[0]
+			old := cfg
+			if tc.nestedRepository {
+				if err := os.Mkdir(filepath.Join(child, ".git"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				setTestCodexScope(&cfg, config.CodexIncludedProjects)
+				if tc.excluded {
+					cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: child, Included: false})
+				}
+			}
+			if err := config.ReconcileDiscovery(&cfg, old, at.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			writeRollout(t, codex, child, at.Add(3*time.Minute), 1, "sessions")
+			if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport); err != nil {
+				t.Fatal(err)
+			}
+			after, found, err := store.LoadRegistration(before.ArchiveSessionID)
+			if err != nil || !found || after.ProjectRoot != before.ProjectRoot || *after.CodexAdmission != *before.CodexAdmission || !after.AdmittedAt.Equal(before.AdmittedAt) || after.Origin != before.Origin || after.DestinationID != before.DestinationID {
+				t.Fatalf("continuation changed ownership %#v %v", after, err)
+			}
+			allowed := tc.allowed
+			if (after.TranscriptPath != "") != allowed {
+				t.Fatalf("locator grant for %s: %q", tc.name, after.TranscriptPath)
+			}
+			objects := storagetest.NewMemoryStore()
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+			expected := 0
+			if allowed {
+				expected = 1
+			}
+			if err != nil || len(result.Published) != expected {
+				t.Fatalf("publication %#v %v", result, err)
+			}
+			regs, err = store.LoadRegistrations()
+			if err != nil || len(regs) != 1 {
+				t.Fatalf("duplicate identity %#v %v", regs, err)
+			}
+		})
+	}
+}

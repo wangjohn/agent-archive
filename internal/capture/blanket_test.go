@@ -176,3 +176,75 @@ func setTestCodexScope(c *config.Config, scope config.CodexCaptureScope) {
 	p.Scope = scope
 	c.CodexCapture = &p
 }
+
+func TestBlanketInterruptedReplayCompletesPhysicalProjectEffects(t *testing.T) {
+	for _, kind := range []string{"git-subdirectory", "worktree"} {
+		t.Run(kind, func(t *testing.T) {
+			home, root, _, at := blanketHookFixture(t)
+			cwd := filepath.Join(root, "subdirectory")
+			gitdir := filepath.Join(root, ".git", "worktrees", "one")
+			if err := os.MkdirAll(gitdir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "worktree" {
+				cwd = t.TempDir()
+			}
+			if err := os.MkdirAll(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "worktree" {
+				for path, body := range map[string]string{filepath.Join(cwd, ".git"): "gitdir: " + gitdir, filepath.Join(gitdir, "commondir"): "../..", filepath.Join(gitdir, "gitdir"): filepath.Join(cwd, ".git")} {
+					if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			observed := at.Add(time.Minute)
+			path := filepath.Join(cwd, "fresh.jsonl")
+			busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
+			if err := handleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": cwd, "transcript_path": path}, observed, busy, nil); err != nil {
+				t.Fatal(err)
+			}
+			interrupted := false
+			err := replayAdmissionIntents(home, observed.Add(time.Minute), testDecoders, func(effect effectName) error {
+				if effect == effectRegistrationCreate {
+					interrupted = true
+					return errors.New("interrupted after durable registration")
+				}
+				return nil
+			})
+			if err == nil || !interrupted {
+				t.Fatalf("missing registration interruption: %v", err)
+			}
+			store := state.OpenReadOnly(home)
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 1 || regs[0].CodexAdmission == nil {
+				t.Fatalf("durable registration %#v %v", regs, err)
+			}
+			before := regs[0]
+			if before.ProjectRoot == cwd {
+				t.Fatal("fixture did not separate physical root and cwd")
+			}
+			for range 2 {
+				if err := ReplayAdmissionIntents(home, observed.Add(2*time.Minute), testDecoders); err != nil {
+					t.Fatal(err)
+				}
+			}
+			regs, err = store.LoadRegistrations()
+			if err != nil || len(regs) != 1 || regs[0].ArchiveSessionID != before.ArchiveSessionID || *regs[0].CodexAdmission != *before.CodexAdmission || !regs[0].AdmittedAt.Equal(observed) || !regs[0].SessionStartedAt.Equal(observed) {
+				t.Fatalf("replay changed identity %#v %v", regs, err)
+			}
+			if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "native", "cwd": cwd, "transcript_path": path}, observed.Add(3*time.Minute), WithDecoders(testDecoders)); err != nil {
+				t.Fatal(err)
+			}
+			requests, err := store.LoadRequests()
+			if err != nil || len(requests) != 1 || !requests[0].Urgent() || len(requests[0].HookEvidence) != 3 {
+				t.Fatalf("replay did not complete start/stop effects exactly once %#v %v", requests, err)
+			}
+			entries, err := os.ReadDir(admissionIntentDir(home))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("intent remains after completion %#v %v", entries, err)
+			}
+		})
+	}
+}

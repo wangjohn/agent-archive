@@ -431,14 +431,12 @@ func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidat
 	if err != nil || !found {
 		return reg, found, err
 	}
-	compatible := reg.ProjectRoot == project || (cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && local.PathWithin(candidate.WorkingDirectory, reg.ProjectRoot))
+	compatible := reg.ProjectRoot == project || (reg.CodexAdmission == nil && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && local.PathWithin(candidate.WorkingDirectory, reg.ProjectRoot))
 	permission := true
-	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		if reg.CodexAdmission != nil {
-			permission = cfg.CodexContinuationAllowed(project, hint.CanonicalCwd)
-		} else {
-			permission = cfg.CodexProjectAllowed(project, hint.CanonicalCwd, reg.Admitted())
-		}
+	if reg.CodexAdmission != nil {
+		permission = hint.CanonicalCwd != "" && cfg.CodexContinuationAllowed(project, hint.CanonicalCwd)
+	} else if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		permission = cfg.CodexProjectAllowed(project, hint.CanonicalCwd, reg.Admitted())
 	}
 	if !compatible || !cfg.AcceptSession(reg) || !permission {
 		return reg, true, errors.New("identity conflict")

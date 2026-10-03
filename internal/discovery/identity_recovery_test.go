@@ -104,14 +104,21 @@ func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, found, err := store.ArchiveSessionID(sessionKey("codex", native)); err != nil || found {
+		t.Fatalf("lost derived indexes unexpectedly retained lookup: %v %v", found, err)
+	}
 	// Publication enumerates authoritative registrations, not identity indexes.
 	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("lost indexes blocked registered publication: %#v %v", result, err)
 	}
+	owner, found, err := store.ArchiveSessionID(sessionKey("codex", native))
+	if err != nil || !found || owner != before.ArchiveSessionID {
+		t.Fatalf("collector startup did not restore authority: owner=%q found=%v err=%v", owner, found, err)
+	}
 	adapters := []SourceAdapter{codexAdapter{supported: syntheticSupport}}
 	h, err := runWithAdapters(context.Background(), store, cfg, options, adapters)
-	if err != nil || h.Registered != 0 || h.Outcomes["admission_retry"] == 0 {
+	if err != nil || h.Registered != 0 {
 		t.Fatalf("lost indexes caused allocation: %#v %v", h, err)
 	}
 	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
@@ -121,7 +128,7 @@ func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 	if err != nil || h.Registered != 0 {
 		t.Fatalf("recovered identity reallocated: %#v %v", h, err)
 	}
-	owner, found, err := store.ArchiveSessionID(sessionKey("codex", native))
+	owner, found, err = store.ArchiveSessionID(sessionKey("codex", native))
 	if err != nil || !found || owner != before.ArchiveSessionID {
 		t.Fatalf("recovered owner=%q found=%v err=%v", owner, found, err)
 	}

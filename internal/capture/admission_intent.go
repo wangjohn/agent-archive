@@ -587,7 +587,7 @@ func completeReplayStart(store *state.Store, cfg config.Config, intent admission
 		return reg, nil
 	}
 	updated, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
-		if !cfg.AcceptSession(*current) || current.NativeSessionID != intent.NativeSessionID || archive.CanonicalHarness(current.Harness.Name) != archive.CanonicalHarness(intent.Harness) || filepath.Clean(current.ProjectRoot) != filepath.Clean(intent.ProjectRoot) {
+		if !replayProjectMatches(cfg, intent, *current) || current.NativeSessionID != intent.NativeSessionID || archive.CanonicalHarness(current.Harness.Name) != archive.CanonicalHarness(intent.Harness) {
 			return errContinuationDeclined
 		}
 		if sameReplayAdmission(*current, intent.ObservedAt) {
@@ -686,6 +686,15 @@ func replayRegistrationMatches(store *state.Store, cfg config.Config, intent adm
 	if err != nil || !found {
 		return false, err
 	}
-	return filepath.Clean(reg.ProjectRoot) == filepath.Clean(intent.ProjectRoot) &&
+	return replayProjectMatches(cfg, intent, reg) &&
 		archive.CanonicalHarness(reg.Harness.Name) == archive.CanonicalHarness(intent.Harness) && reg.NativeSessionID == intent.NativeSessionID && cfg.AcceptSession(reg), nil
+}
+
+// replayProjectMatches consumes the original intent facts already checked
+// against physical resolution before hooks.lock; legacy root matching stays exact.
+func replayProjectMatches(cfg config.Config, intent admissionIntent, reg archive.SessionRegistration) bool {
+	if intent.CodexPolicyToken != "" {
+		return len(intent.Effects) > 0 && codexContinuationAccepted(cfg, intent.Effects[0].Event, reg)
+	}
+	return cfg.AcceptSession(reg) && filepath.Clean(reg.ProjectRoot) == filepath.Clean(intent.ProjectRoot)
 }
