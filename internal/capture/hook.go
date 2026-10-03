@@ -175,7 +175,7 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	unlock, err := lock(home, wait)
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
-			queued, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, nil, o.replay)
+			queued, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, lookups.lastHead, nil, o.replay)
 			diagnosticErr := recordHookBusyEvent(home, batch[0], now)
 			if queueErr != nil || diagnosticErr != nil {
 				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, err, errors.Join(queueErr, diagnosticErr))
@@ -210,14 +210,14 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	if orderErr == nil && ordered {
 		err = applyOrderedAdmission(home, store, cfg, batch, now, lookups, o.afterEffect, o.replay)
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, err, o.replay)
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, lookups.lastHead, err, o.replay)
 		}
 		return err
 	}
 	for _, event := range batch {
 		err = applyEvent(home, store, cfg, event, now, lookups, o.afterEffect, o.replay)
 		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
-			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, err, o.replay)
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, lookups.lastHead, err, o.replay)
 		}
 		if errors.Is(err, state.ErrSessionNotRegistered) {
 			continue
@@ -229,13 +229,13 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	return nil
 }
 
-func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, cause error, replay *archive.Replay) error {
+func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, lastHead *archive.GitHead, cause error, replay *archive.Replay) error {
 	key, err := eventKey(event)
 	if err != nil {
 		return err
 	}
 	recoveryErr := store.RequestSessionIndexRecovery(key)
-	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil, replay)
+	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lastHead, nil, replay)
 	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
 	var diagnosticErr error
 	if owned && project.Included {
@@ -269,7 +269,7 @@ func needsOrderedAdmission(store *state.Store, cfg config.Config, batch []agenta
 }
 
 func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
-	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil, replay)
+	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, lookups.lastHead, nil, replay)
 	if err != nil || path == "" {
 		return err
 	}
@@ -409,7 +409,7 @@ func applyEvent(home string, store *state.Store, cfg config.Config, event agenta
 			return err
 		}
 		if !found && event.Deferred == agentapi.DeferredFollowup {
-			_, err = queueEventBatchInGeneration(home, []agentapi.LifecycleEvent{event}, now, cfg.PauseGeneration, nil, replay)
+			_, err = queueEventBatchInGeneration(home, []agentapi.LifecycleEvent{event}, now, cfg.PauseGeneration, nil, nil, replay)
 			return err
 		}
 		return handleSessionStop(store, event, now, lookups.lastHead, after)
