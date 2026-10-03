@@ -114,7 +114,7 @@ func (p NativeHeaders) Discover(ctx context.Context, r agentapi.DiscoveryRequest
 	if roots == nil {
 		roots = p.Roots(r.Locations, r.Purpose)
 	}
-	return discoveryio.Files(ctx, r, agentmeta.Codex, roots, p, true, emit)
+	return discoveryio.Files(ctx, r, agentmeta.Codex, roots, p, r.Purpose != agentapi.DiscoveryBoundedProjects, emit)
 }
 
 // DefaultDirectories declares the native configuration location without host probes.

@@ -208,3 +208,19 @@ func TestBoundedProjectsRecordsCancellationAfterLastEmptyDirectoryRead(t *testin
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestBoundedProjectsKeepsSameNamedNativeCopiesAcrossStores(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	a, b := tr.repo("home/a"), tr.repo("home/b")
+	record := func(cwd string) string {
+		raw, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]string{"cwd": cwd}})
+		return string(raw) + "\n"
+	}
+	tr.write("home/.codex/sessions/day/rollout-same.jsonl", record(a))
+	tr.write("home/.codex/archived_sessions/rollout-same.jsonl", record(b))
+	got := KnownProjectsBounded(t.Context(), tr.env(), config.Config{}, 128)
+	if got.Incomplete() || len(got.Projects) != 2 {
+		t.Fatalf("native copies hid repository roots: %+v", got)
+	}
+}
