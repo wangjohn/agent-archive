@@ -56,12 +56,12 @@ func classifyHookEvent(harness, name string) hookEventKind {
 	return hookEventIgnored
 }
 
-func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) error {
+func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func()) error {
 	batch, err := testBatch(harness, payload, now)
 	if err != nil {
 		return err
 	}
-	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{repoKey: repoKey, decoders: testDecoders})
+	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{decoders: testDecoders})
 }
 
 func provesFreshSessionStart(harness string, payload map[string]any) bool {

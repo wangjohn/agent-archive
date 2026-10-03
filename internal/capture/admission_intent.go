@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -92,7 +93,7 @@ func PruneAdmissionIntents(home string, cfg config.Config) error {
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		readErr := local.Read(path, &intent)
-		if readErr == nil && intent.DestinationID == cfg.DestinationID() && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) {
+		if readErr == nil && intent.DestinationID == cfg.DestinationID() && ((intent.CodexPolicyToken != "" && replayIntentEligible(cfg, intent, intent.ObservedAt)) || (intent.CodexPolicyToken == "" && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects))) {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -234,6 +235,14 @@ func eventAdmissionIntent(home string, batch []agentapi.LifecycleEvent, now time
 		return admissionIntent{}, false, err
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	blanket := string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && event.CodexProjectRoot != ""
+	if blanket {
+		token, allowed := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
+		if !allowed || token != event.CodexPolicyToken {
+			return admissionIntent{}, false, nil
+		}
+		return admissionIntent{Version: 1, Harness: "codex", Event: event.NativeEvent, NativeSessionID: event.Session.NativeID, ProjectRoot: event.ProjectRoot, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(), PauseGeneration: cfg.PauseGeneration, TranscriptPath: event.Source.Path, Effects: effects, CodexPolicyToken: token}, true, nil
+	}
 	if !owned || !project.Included || !cfg.Archive.Eligible(project.Root, now) {
 		return admissionIntent{}, false, nil
 	}
@@ -253,8 +262,16 @@ func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused || setupjournal.TransactionPending(home) {
 		return false, err
 	}
-	current, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
-	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
+	if intent.CodexPolicyToken != "" {
+		if !replayIntentEligible(cfg, intent, intent.ObservedAt) {
+			return false, nil
+		}
+	}
+	current, owned := archive.ProjectActivation{}, false
+	if intent.CodexPolicyToken == "" {
+		current, owned = ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
+	}
+	if intent.CodexPolicyToken == "" && (!owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt)) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -299,6 +316,22 @@ func replayAdmissionIntents(home string, now time.Time, lookup agentapi.Decoders
 	if setupjournal.TransactionPending(home) {
 		return nil
 	}
+	preflight := map[string]sourcefacts.ProjectFacts{}
+	entriesBefore, _ := os.ReadDir(admissionIntentDir(home))
+	resolver := sourcefacts.NewProjectResolver()
+	for _, entry := range entriesBefore {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(admissionIntentDir(home), entry.Name())
+		var intent admissionIntent
+		if local.Read(path, &intent) == nil && intent.CodexPolicyToken != "" && len(intent.Effects) > 0 {
+			facts, ok := resolver.Resolve(intent.ProjectRoot)
+			if ok {
+				preflight[path] = facts
+			}
+		}
+	}
 	unlock, err := local.NamedLockWait(home, "hooks.lock", 2*time.Second)
 	if err != nil {
 		return err
@@ -330,7 +363,7 @@ func replayAdmissionIntents(home string, now time.Time, lookup agentapi.Decoders
 			continue
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
-		followup, err := replayAdmissionFile(home, store, cfg, path, now, lookup, after)
+		followup, err := replayAdmissionFile(home, store, cfg, path, now, lookup, after, preflight)
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -346,10 +379,20 @@ func replayAdmissionIntents(home string, now time.Time, lookup agentapi.Decoders
 	return errors.Join(failures...)
 }
 
-func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) (*deferredFollowup, error) {
+func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error, preflights ...map[string]sourcefacts.ProjectFacts) (*deferredFollowup, error) {
 	var intent admissionIntent
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
+	}
+	if intent.CodexPolicyToken != "" {
+		if len(preflights) == 0 || len(intent.Effects) == 0 {
+			return nil, nil
+		}
+		facts, ok := preflights[0][path]
+		event := intent.Effects[0].Event
+		if !ok || facts.Root != event.CodexProjectRoot || facts.Cwd != event.CodexCwd {
+			return nil, nil
+		}
 	}
 	if !replayIntentEligible(cfg, intent, now) {
 		return nil, removeAdmissionIntent(path)
@@ -405,6 +448,14 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Time) bool {
 	if now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute)) {
 		return false
+	}
+	if intent.CodexPolicyToken != "" {
+		if intent.Harness != "codex" || len(intent.Effects) == 0 || intent.DestinationID != cfg.DestinationID() || intent.PauseGeneration != cfg.PauseGeneration {
+			return false
+		}
+		e := intent.Effects[0].Event
+		token, ok := cfg.CodexGeneration(e.CodexProjectRoot, e.CodexCwd, intent.ObservedAt, now)
+		return ok && token == intent.CodexPolicyToken
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	return owned && project.Included && project.Root == intent.ProjectRoot &&

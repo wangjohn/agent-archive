@@ -14,6 +14,8 @@ type configWriter string
 
 const discoveryWriter configWriter = "discovery-v2"
 
+const codexWriter configWriter = "codex-scope-v3"
+
 type writerVersion struct {
 	Version int          `json:"version"`
 	Writer  configWriter `json:"writer"`
@@ -28,16 +30,20 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	plain := configJSON(c)
-	if c.Discovery == nil {
+	if c.Discovery == nil && c.CodexCapture == nil {
 		return json.Marshal(plain)
 	}
 	if err := validateDiscoveryConfig(c); err != nil {
 		return nil, err
 	}
+	version := writerVersion{Version: 2, Writer: discoveryWriter}
+	if c.CodexCapture != nil {
+		version = writerVersion{Version: 3, Writer: codexWriter}
+	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
 		*configJSON
-	}{SchemaVersion: writerVersion{Version: 2, Writer: discoveryWriter}, configJSON: &plain})
+	}{SchemaVersion: version, configJSON: &plain})
 }
 
 // UnmarshalJSON reads legacy numeric versions and the protected writer fence.
@@ -63,10 +69,14 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		if err := json.Unmarshal(raw, &version); err != nil {
 			return false, err
 		}
-		if version.Version != 2 || version.Writer != discoveryWriter {
+		if (version.Version != 2 || version.Writer != discoveryWriter) && (version.Version != 3 || version.Writer != codexWriter) {
 			return false, errors.New("configuration requires a supported writer fence")
 		}
-		if plain.Discovery == nil || !strings.HasSuffix(string(plain.SkillEvidence), discoveryWriterMarker) {
+		if version.Version == 3 {
+			if plain.CodexCapture == nil || !strings.HasSuffix(string(plain.SkillEvidence), codexWriterMarker) {
+				return false, errors.New("writer fence requires Codex policy")
+			}
+		} else if plain.Discovery == nil || !strings.HasSuffix(string(plain.SkillEvidence), discoveryWriterMarker) {
 			return false, errors.New("writer fence requires protected discovery configuration")
 		}
 		plain.SchemaVersion = version.Version

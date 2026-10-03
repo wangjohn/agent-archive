@@ -315,15 +315,23 @@ const (
 //
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
+// CodexAdmissionProof is immutable evidence of fresh blanket admission.
+type CodexAdmissionProof struct {
+	Cwd        string `json:"cwd"`
+	Generation string `json:"generation"`
+	Revision   string `json:"revision"`
+}
+
 type SessionRegistration struct {
-	ArchiveSessionID string    `json:"archive_session_id"`
-	NativeSessionID  string    `json:"native_session_id"`
-	ProjectID        string    `json:"project_id"`
-	ProjectRoot      string    `json:"project_root"`
-	Harness          Harness   `json:"harness"`
-	TranscriptPath   string    `json:"transcript_path"`
-	SessionStartedAt time.Time `json:"session_started_at"`
-	RegisteredAt     time.Time `json:"registered_at"`
+	CodexAdmission   *CodexAdmissionProof `json:"codex_admission,omitempty"`
+	ArchiveSessionID string               `json:"archive_session_id"`
+	NativeSessionID  string               `json:"native_session_id"`
+	ProjectID        string               `json:"project_id"`
+	ProjectRoot      string               `json:"project_root"`
+	Harness          Harness              `json:"harness"`
+	TranscriptPath   string               `json:"transcript_path"`
+	SessionStartedAt time.Time            `json:"session_started_at"`
+	RegisteredAt     time.Time            `json:"registered_at"`
 	// RepoKey is RepoKey of the project's origin remote when the session
 	// registered: a hash, never the URL. Empty when there was no portable
 	// origin, or on older registrations; the collector then derives it from
@@ -389,6 +397,9 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.CodexAdmission != nil && (r.Harness.Name != "codex" || r.Imported() || (r.Origin != SessionOriginHook && r.Origin != SessionOriginDiscovery) || r.CodexAdmission.Generation == "" || r.CodexAdmission.Revision == "" || !filepath.IsAbs(r.CodexAdmission.Cwd) || r.ProjectID != ProjectID(r.ProjectRoot) || !filepath.IsAbs(r.ProjectRoot)) {
+		return errors.New("invalid Codex admission proof")
+	}
 	if strings.TrimSpace(r.ArchiveSessionID) == "" || strings.TrimSpace(r.NativeSessionID) == "" {
 		return errors.New("archive and native session IDs are required")
 	}

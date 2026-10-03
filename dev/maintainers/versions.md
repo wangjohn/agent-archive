@@ -51,3 +51,12 @@ is re-uploaded unless it changed.
 Discovery authorization uses an incompatible schema-version object
 `{version: 2, writer: discovery-v2}`. Hook-only configuration retains numeric
 version 1; the current decoder understands both and refuses unknown fences.
+
+Codex capture scope and local admission proof use the stronger incompatible
+`{version: 3, writer: codex-scope-v3}` configuration fence. It remains installed
+when scope is reduced or discovery disabled, and on rollback over protected
+history. New readers retain numeric/v2 included-project consent without
+opening blanket windows. This changes session consent and physical project
+attribution, not adapter filtering, native parsing or derived-field algorithms;
+filter, adapter, parser and published source/metadata schema versions remain
+unchanged. The private policy/proof contract is documented in configuration.

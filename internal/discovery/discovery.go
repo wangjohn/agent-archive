@@ -36,20 +36,22 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled        bool           `json:"enabled"`
-	Supported      bool           `json:"supported"`
-	LastAttempt    time.Time      `json:"last_attempt,omitzero"`
-	LastReconciled time.Time      `json:"last_reconciled,omitzero"`
-	Pending        bool           `json:"pending"`
-	Probes         int            `json:"header_probes"`
-	Entries        int            `json:"directory_entries"`
-	IndexBytes     int64          `json:"index_bytes_read,omitempty"`
-	IndexQueries   int            `json:"index_queries,omitempty"`
-	IndexLocators  int            `json:"index_locators,omitempty"`
-	Bytes          int64          `json:"bytes_read"`
-	Registered     int            `json:"registered"`
-	Outcomes       map[string]int `json:"outcomes,omitempty"`
-	Errors         []string       `json:"errors,omitempty"`
+	Enabled           bool           `json:"enabled"`
+	Supported         bool           `json:"supported"`
+	LastAttempt       time.Time      `json:"last_attempt,omitzero"`
+	LastReconciled    time.Time      `json:"last_reconciled,omitzero"`
+	Pending           bool           `json:"pending"`
+	ProjectOperations int            `json:"project_metadata_operations"`
+	GitBytes          int            `json:"git_metadata_bytes"`
+	Probes            int            `json:"header_probes"`
+	Entries           int            `json:"directory_entries"`
+	IndexBytes        int64          `json:"index_bytes_read,omitempty"`
+	IndexQueries      int            `json:"index_queries,omitempty"`
+	IndexLocators     int            `json:"index_locators,omitempty"`
+	Bytes             int64          `json:"bytes_read"`
+	Registered        int            `json:"registered"`
+	Outcomes          map[string]int `json:"outcomes,omitempty"`
+	Errors            []string       `json:"errors,omitempty"`
 }
 
 type directory struct {
@@ -128,7 +130,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	deadline := time.Now().Add(Budget)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	priority := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
+	resolver := sourcefacts.NewProjectResolver()
+	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
 	priority.observeIndexHints(ctx, o, roots, deadline)
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
@@ -149,7 +152,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			h.Errors = appendUnique(h.Errors, "source_root_unavailable")
 			continue
 		}
-		worker := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx}
+		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx}
 		for _, source := range batch.Entries {
 			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
@@ -171,6 +174,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			c.Queue = append(c.Queue, d)
 		}
 	}
+	h.ProjectOperations = resolver.Operations
+	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
@@ -179,6 +184,9 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	c.Health = h
 	if err := local.Write(path, c); err != nil {
 		return h, errors.New("discovery state write failed; retry next scan")
+	}
+	if err := writeHealth(store.Home(), h); err != nil {
+		return h, err
 	}
 	return h, nil
 }
@@ -256,6 +264,13 @@ func readBatch(d directory) ([]string, int64, bool, error) {
 }
 
 func resolveProject(cfg config.Config, cwd string) (string, bool) {
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		facts, ok := sourcefacts.PhysicalProject(cwd)
+		if !ok || !cfg.CodexProjectAllowed(facts.Root, facts.Cwd, time.Now().Add(100*365*24*time.Hour)) {
+			return "", false
+		}
+		return facts.Root, true
+	}
 	resolved, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		return "", false
@@ -315,58 +330,80 @@ func sessionKey(agent, native string) agentmeta.SessionKey {
 	return agentmeta.SessionKey{Agent: agentmeta.ID(agent), NativeID: native}
 }
 
-func admit(store *state.Store, candidate Candidate, project, generation string, now time.Time) (archive.SessionRegistration, bool, error) {
+func admitSession(store *state.Store, candidate Candidate, project, generation string, now time.Time, factSnapshots ...sourcefacts.ProjectFacts) (bool, error) {
+	var cfgFacts *sourcefacts.ProjectFacts
+	if len(factSnapshots) > 0 {
+		cfgFacts = &factSnapshots[0]
+	}
+	var facts sourcefacts.ProjectFacts
+	var factsOK bool
+	if cfgFacts != nil {
+		facts = *cfgFacts
+		factsOK = true
+	} else {
+		facts, factsOK = sourcefacts.PhysicalProject(candidate.WorkingDirectory)
+	}
 	sourceRoot, locator := candidate.Source.Root, candidate.Source.Locator
 	previous, replace := continuationLocator(store, candidate.Agent, candidate.NativeSessionID, candidate.Source)
 	unlock, err := local.NamedLock(store.Home(), "hooks.lock")
 	if err != nil {
-		return archive.SessionRegistration{}, false, err
+		return false, err
 	}
 	defer unlock()
 	if setupjournal.TransactionPending(store.Home()) {
-		return archive.SessionRegistration{}, false, errors.New("setup pending")
+		return false, errors.New("setup pending")
 	}
 	cfg, found, err := config.Load(store.Home())
 	if err != nil || !found {
-		return archive.SessionRegistration{}, false, errors.New("configuration unavailable")
+		return false, errors.New("configuration unavailable")
 	}
 	if cfg.Paused || !cfg.Archive.Enabled {
-		return archive.SessionRegistration{}, false, errors.New("capture authorization is inactive")
+		return false, errors.New("capture authorization is inactive")
 	}
 	if _, removed, err := store.Removal(candidate.Agent, candidate.NativeSessionID); err != nil {
-		return archive.SessionRegistration{}, false, err
+		return false, err
 	} else if removed {
-		return archive.SessionRegistration{}, false, errors.New("session was removed")
+		return false, errors.New("session was removed")
 	}
 	id, exists, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
 	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 		err = errors.Join(err, store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID)))
 	}
 	if err != nil {
-		return archive.SessionRegistration{}, false, err
+		return false, err
 	}
 	if exists {
-		reg, found, err := mergeContinuation(store, cfg, candidate, project, continuationHint{ArchiveID: id, Previous: previous, Replace: replace}, now)
+		_, found, err := mergeContinuation(store, cfg, candidate, project, continuationHint{ArchiveID: id, Previous: previous, Replace: replace, CanonicalCwd: facts.Cwd}, now)
 		if found || err != nil {
-			return reg, false, err
+			return false, err
 		}
 	}
 	// A silent loss of both derived indexes is indistinguishable from a new
 	// identity. Only the existing registration census can authorize that miss.
 	absent, err := store.SessionIndexAbsent(sessionKey(candidate.Agent, candidate.NativeSessionID))
 	if err != nil {
-		return archive.SessionRegistration{}, false, err
+		return false, err
 	}
 	if !absent {
 		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
-		return archive.SessionRegistration{}, false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
+		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
 	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
+			return false, errors.New("project facts changed")
+		}
+		current, allowed = cfg.CodexDiscoveryGeneration(facts.Root, facts.Cwd, candidate.StartedAt, now)
+	}
 	if !allowed || current != generation {
-		return archive.SessionRegistration{}, false, errors.New("authorization changed")
+		return false, errors.New("authorization changed")
 	}
 	reg, err := store.RegisterOrMerge(sessionKey(candidate.Agent, candidate.NativeSessionID), func(id string) archive.SessionRegistration {
-		return archive.SessionRegistration{
+		var proof *archive.CodexAdmissionProof
+		if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
+		}
+		return archive.SessionRegistration{CodexAdmission: proof,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
@@ -377,13 +414,14 @@ func admit(store *state.Store, candidate Candidate, project, generation string, 
 	if err == nil {
 		err = store.SaveRequest(reg.ArchiveSessionID, "discovery", now)
 	}
-	return reg, true, err
+	return true, err
 }
 
 type continuationHint struct {
-	ArchiveID string
-	Previous  string
-	Replace   bool
+	CanonicalCwd string
+	ArchiveID    string
+	Previous     string
+	Replace      bool
 }
 
 // mergeContinuation runs under hooks.lock. Only the source locator can change;
@@ -393,7 +431,16 @@ func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidat
 	if err != nil || !found {
 		return reg, found, err
 	}
-	if reg.ProjectRoot != project || !cfg.AcceptSession(reg) {
+	compatible := reg.ProjectRoot == project || (cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && local.PathWithin(candidate.WorkingDirectory, reg.ProjectRoot))
+	permission := true
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		if reg.CodexAdmission != nil {
+			permission = cfg.CodexContinuationAllowed(project, hint.CanonicalCwd)
+		} else {
+			permission = cfg.CodexProjectAllowed(project, hint.CanonicalCwd, reg.Admitted())
+		}
+	}
+	if !compatible || !cfg.AcceptSession(reg) || !permission {
 		return reg, true, errors.New("identity conflict")
 	}
 	if reg.Origin == archive.SessionOriginDiscovery && (reg.DiscoveryCwd != candidate.WorkingDirectory || !reg.SessionStartedAt.Equal(candidate.StartedAt)) {
@@ -443,6 +490,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	resolver *sourcefacts.ProjectResolver
 	store    *state.Store
 	cfg      config.Config
 	catalog  *catalog
@@ -454,7 +502,7 @@ type scan struct {
 }
 
 func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
-	store, cfg, c, h, now := s.store, s.cfg, s.catalog, s.health, s.now
+	c, h, now := s.catalog, s.health, s.now
 	h.Entries++
 	if source.Directory != "" {
 		s.enqueueDirectory(d, source.Directory)
@@ -506,30 +554,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.removalBlocks(candidate) {
 		return false, false
 	}
-	root, ok := resolveProject(cfg, candidate.WorkingDirectory)
-	if !ok {
-		h.Outcomes["project_not_authorized"]++
-		return false, false
-	}
-	generation, authorized := cfg.DiscoveryGeneration(candidate.Agent, root, candidate.StartedAt, now)
-	if !authorized {
-		_, existing, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
-		if err != nil || !existing {
-			h.Outcomes["start_not_authorized"]++
-			return false, false
-		}
-	}
-	_, created, e := admit(store, candidate, root, generation, now)
-	if e != nil {
-		h.Outcomes["admission_retry"]++
-		delete(c.Cache, loc)
-		s.retainRetry(candidate.Source)
-		return false, false
-	}
-	if created {
-		h.Registered++
-	}
-	return false, false
+	return s.admitCandidate(candidate, loc)
 }
 
 // Retained admission retries rotate separately from directory enumeration.
@@ -615,4 +640,71 @@ func pruneCatalog(c *catalog) {
 			delete(c.Cache, key)
 		}
 	}
+}
+
+func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
+	cfg, store, h, c, now := s.cfg, s.store, s.health, s.catalog, s.now
+	var facts sourcefacts.ProjectFacts
+	var root string
+	var ok bool
+	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
+	if id, known, e := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID)); e == nil && known {
+		if prior, found, e := store.LoadRegistration(id); e == nil && found {
+			if !cfg.AcceptSession(prior) {
+				h.Outcomes["project_not_authorized"]++
+				return false, false
+			}
+			if prior.CodexAdmission != nil {
+				physical = true
+			}
+		}
+	}
+
+	if physical {
+		facts, ok = s.resolver.Resolve(candidate.WorkingDirectory)
+		root = facts.Root
+		if !ok && s.resolver.Exhausted {
+			h.Outcomes["project_budget_exhausted"]++
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+	} else {
+		root, ok = resolveProject(cfg, candidate.WorkingDirectory)
+	}
+	if !ok {
+		if physical {
+			h.Outcomes["project_facts_unavailable"]++
+			return false, false
+		}
+		h.Outcomes["project_not_authorized"]++
+		return false, false
+	}
+	generation, authorized := cfg.DiscoveryGeneration(candidate.Agent, root, candidate.StartedAt, now)
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		generation, authorized = cfg.CodexDiscoveryGeneration(root, facts.Cwd, candidate.StartedAt, now)
+	}
+	if !authorized {
+		_, existing, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
+		if err != nil || !existing {
+			h.Outcomes["start_not_authorized"]++
+			return false, false
+		}
+	}
+	var created bool
+	var e error
+	if physical {
+		created, e = admitSession(store, candidate, root, generation, now, facts)
+	} else {
+		created, e = admitSession(store, candidate, root, generation, now)
+	}
+	if e != nil {
+		h.Outcomes["admission_retry"]++
+		delete(c.Cache, loc)
+		s.retainRetry(candidate.Source)
+		return false, false
+	}
+	if created {
+		h.Registered++
+	}
+	return false, false
 }

@@ -143,3 +143,53 @@ it from its process environment; it is never saved. Deliver it separately from
 the encrypted bundle, and clear it in the parent shell afterward. There is no
 code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
 redirected bundle input uses a private terminal for the code and destination review.
+
+## Protected Codex capture scope
+
+The optional local `codex_capture` record separates Codex project permission
+from `discovery.enabled`. Its tagged `scope` is `included-projects` or
+`all-projects`; absent means included projects. All mode grants only Codex
+fresh starts after local consent, including approved hooks when discovery is
+off. It never turns an empty project list into permission for another app.
+The public setup choice is described in the setup documentation; the policy
+and consumers preserve included-project behavior for existing configurations.
+
+One blanket authorization binds a generation to the current destination and
+at most 256 half-open unpaused intervals. Discovery also needs its independent
+source authorization: disabling and re-enabling discovery or changing approved
+homes opens a new source window without withdrawing approved hook permission.
+Changing the scope, destination or selected Codex app opens a new blanket
+window. Registered sessions keep their original admission, identity, origin and
+destination; changing destinations does not move their archives.
+
+Explicit include/exclude rules use the nearest canonical ancestor, with
+intentional child inclusions beneath exclusions. Checkout and mapped-main rules are evaluated together. An unrelated positive
+checkout rule cannot bypass a mapped-main exclusion; a deliberate child
+inclusion beneath the same excluded ancestor keeps its nearest-rule grant.
+New Git projects use their physical repository root, validated worktrees use
+the main repository, and nonGit projects use their canonical working directory.
+Existing native IDs retain their previous configured-owner attribution.
+
+Removing or lifting an exclusion records a forward subtree barrier. Unknown starts
+from its excluded period remain ineligible, while unrelated projects retain
+their consent window. The policy stores canonical rule roots and at most 4,096
+user-edited barriers/rules. Exhausting history fails closed; discovered
+projects never append permissions or cause configuration writes.
+
+Scope-capable records use the incompatible writer fence
+`{"version":3,"writer":"codex-scope-v3"}` in `schema_version` and a protected
+skill-evidence marker. Active, disabled and rollback snapshots retain this
+fence. Older discovery-v2 and numeric writers refuse it before mutation;
+removing authorization fields is not a supported downgrade. Pairing transfers
+scope preferences, then obtains new local permission, not another machine's
+live authorization.
+
+A private registration's immutable `codex_admission` proof is written only
+while admitting a fresh authorized hook/discovery start. Publication consumes
+that proof for unlisted projects while still checking current exceptions,
+selected app and destination. Legacy/import registrations never gain proof
+on continuation. An already admitted proof stops while excluded and resumes
+when the current exception permits it again; a forward barrier does not revoke
+that immutable admission. Its physical identity remains eligible inside a
+remaining included parent when scope is reduced. The proof remains local; filtered source and metadata schemas
+are unchanged.

@@ -69,3 +69,35 @@ Census work is outside the five-second source-scan budget and runs before
 publication, so large inventories can delay publication even when source
 observation itself is bounded. This implementation retains the existing census
 architecture rather than asserting a fixed memory or time limit for it.
+
+## Blanket policy integration
+
+Codex scope is independent of the ingress. All mode shares a single consent
+window across physical projects; discovery additionally checks its own approved
+source window. Resolving a candidate never saves configuration. New projects
+remain separate registration/archive identities, even below a configured parent.
+Fresh hook starts use the same permission windows, while retained hook intents
+replay their original observation and freshness evidence. Neither resuming a
+session nor finding its file later creates a new historical permission.
+
+Physical resolution has a fresh pass-local cache of at most 1,024 cwd facts,
+64 ancestors, 4 KiB per Git metadata file, at most 1,024 accounted metadata
+operations and 256 KiB aggregate Git bytes. Canonicalization counts each
+`lstat`/`readlink`; other counted operations include directory checks and Git
+metadata opens/stat/read work. These are resolver limits, not total scan I/O.
+Exhaustion retains an admission retry with `project_budget_exhausted`; it never
+invents a nonGit fallback for an unresolved Git/worktree mapping. Cache facts
+expire each pass, and every reuse validates the observed file/directory
+identities, missing Git markers and regular-file fingerprints within the same
+aggregate budget. Metadata-operation counts cover explicit lstat/readlink,
+open/fstat and bounded metadata-file read calls, rather than hidden
+canonicalization stats or transcript/index I/O. Source probe, directory cursor and rotating retry budgets
+remain unchanged, and complete identity census still governs unknown IDs.
+
+`discovery-health.json` is an atomically written, versioned summary capped at
+16 KiB. It contains aggregate counts, stable diagnostic codes and attempt/
+reconciliation timestamps, with no cwd, project sample, native ID or transcript
+body. Status reads this summary without opening the full source catalog, Git,
+SQLite or storage. Missing/corrupt/oversized summaries are uncertainty; freshness
+must be evaluated against the caller's clock. Scan evidence remains distinct
+from registration, queued publication, upload and verified readback.

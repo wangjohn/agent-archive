@@ -64,6 +64,7 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	CodexCapture *CodexCaptureConfig `json:"codex_capture,omitempty"`
 	// Discovery carries forward-only authorization; absent means disabled.
 	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
 	// SpareKeys is the desired unused key count; nil means two.
@@ -274,6 +275,13 @@ func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, age
 
 // SaveWithCatalog validates and writes configuration with injected identities.
 func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	previous, found, _, err := loadConfigWithCatalog(home, c)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if found {
+		PreserveWriterFence(&cfg, previous)
+	}
 	if err := prepareDiscoveryConfig(&cfg); err != nil {
 		return err
 	}
@@ -371,12 +379,21 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 		return false
 	}
 	admitted := r.Admitted()
+	if r.CodexAdmission != nil && r.Harness.Name == "codex" && !r.Imported() && r.CodexAdmission.Generation != "" && r.CodexAdmission.Revision != "" && filepath.IsAbs(r.CodexAdmission.Cwd) && slices.Contains(c.Harnesses, "codex") && c.Archive.Enabled && r.ProjectID == archive.ProjectID(r.ProjectRoot) {
+		if c.EffectiveCodexCaptureScope() == CodexIncludedProjects {
+			rule, found := c.codexWinningRule(r.ProjectRoot, r.CodexAdmission.Cwd)
+			if !found || !rule.Included {
+				return false
+			}
+		}
+		return c.CodexContinuationAllowed(r.ProjectRoot, r.CodexAdmission.Cwd)
+	}
 	for _, p := range c.Archive.Projects {
 		if p.Included && p.Root == r.ProjectRoot {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
 		}
 	}
-	return len(c.Archive.Projects) == 0 // older programmatic configurations
+	return c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
 }
 
 // InCurrentDestination reports whether a registration published to the

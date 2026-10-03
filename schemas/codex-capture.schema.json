@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/codex-capture.schema.json",
+  "title": "Local Codex capture scope",
+  "type": "object",
+  "required": ["scope", "revision"],
+  "properties": {
+    "scope": {"enum": ["included-projects", "all-projects"]},
+    "revision": {"type": "string"},
+    "authorization": {"$ref": "#/$defs/authorization"},
+    "source_authorization": {"$ref": "#/$defs/authorization"},
+    "rule_roots": {"type": "object", "maxProperties": 4096, "additionalProperties": {"type": "string"}},
+    "barriers": {"type": "array", "maxItems": 4096, "items": {"type": "object", "required": ["root", "since"], "properties": {"root": {"type": "string", "minLength": 1}, "since": {"type": "string", "format": "date-time"}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "authorization": {
+      "type": "object",
+      "required": ["generation", "agent", "project_root", "destination_id", "intervals"],
+      "properties": {
+        "generation": {"type": "string", "minLength": 1},
+        "agent": {"const": "codex"},
+        "project_root": {"const": ""},
+        "destination_id": {"type": "string", "minLength": 1},
+        "intervals": {"type": ["array", "null"], "maxItems": 256, "items": {"type": "object", "required": ["start"], "properties": {"start": {"type": "string", "format": "date-time"}, "end": {"type": "string", "format": "date-time"}}, "additionalProperties": false}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

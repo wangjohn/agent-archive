@@ -205,7 +205,12 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 		// Its start is set below from the earliest native record.
 		startedAtSource = archive.StartedAtSourceTranscript
 	}
-	return archive.SessionRegistration{
+	var proof *archive.CodexAdmissionProof
+	if parent.CodexAdmission != nil {
+		proofCopy := *parent.CodexAdmission
+		proof = &proofCopy
+	}
+	return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, RepoKey: parent.RepoKey, Harness: parent.Harness,
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,
