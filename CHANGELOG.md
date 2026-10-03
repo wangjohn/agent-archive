@@ -21,7 +21,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   title derivation. Automatic Codex discovery remains disabled pending scanner and onboarding
   integration. Protected discovery configuration makes published older writers
   refuse rather than discard authorization; existing hook-only configs retain
-  their numeric schema and behavior.
+  their numeric schema and behavior. Status uses actual hook observation,
+  including hooks that resume imported sessions, with legacy hook-origin fallback.
 
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
