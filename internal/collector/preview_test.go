@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"os"
 	"path/filepath"
@@ -24,7 +25,7 @@ func TestPreviewUsesFilteredHeadPromptAndRecentTailName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	p, err := PreviewTranscript(context.Background(), s, "claude", PreviewLimits{HeadBytes: 1024, TailBytes: 1024, RecordBytes: 1024})
+	p, err := PreviewTranscript(context.Background(), s, testClaudePreview(), PreviewLimits{HeadBytes: 1024, TailBytes: 1024, RecordBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +46,13 @@ func TestPreviewDoesNotPromoteTailReplyAcrossUnreadGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	p, err := PreviewTranscript(context.Background(), s, "claude", PreviewLimits{HeadBytes: 512, TailBytes: 512, RecordBytes: 512})
+	p, err := PreviewTranscript(context.Background(), s, testClaudePreview(), PreviewLimits{HeadBytes: 512, TailBytes: 512, RecordBytes: 512})
 	if err != nil || p.Title != "" {
 		t.Fatalf("gap inferred prompt %+v %v", p, err)
 	}
+}
+
+func testClaudePreview() agentapi.RecordPreviewer {
+	preview, _ := testParsers.LookupPreview("claude")
+	return preview
 }

@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -46,6 +45,9 @@ const handoffFallbackRows = 5
 type handoffTarget struct {
 	native   *nativesessions.Candidate
 	bundle   archive.SourceBundle
+	analysis archive.Analysis
+	parseErr error
+	analyzed bool
 	metadata *archive.Metadata
 	source   string
 	filePath string
@@ -148,7 +150,14 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	if target.describe != "" {
 		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
 	}
-	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
+	if !target.analyzed {
+		target, err = analyzeTarget(context.Background(), parsersFor(env), target)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+	}
+	h, err := archive.BuildHandoffWithAnalysis(target.bundle, target.analysis, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
 		Checkout: handoffCheckout(opts, env)})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -344,7 +353,7 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, source: "file", filePath: abs, lastActivityAt: info.ModTime()}, nil
+	return analyzeTarget(context.Background(), parsersFor(env), handoffTarget{bundle: bundle, source: "file", filePath: abs, lastActivityAt: info.ModTime()})
 }
 
 // errNotRegisteredHere means a session ID has no registration on this machine,
@@ -378,21 +387,15 @@ func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTa
 		return handoffTarget{}, err
 	}
 	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase(), registryFor(r.env))
-	return handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt}, nil
+	return analyzeTarget(r.ctx, parsersFor(r.env), handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt})
 }
 
 // hasPrompt reports whether a bundle holds anything the person said, so
 // `--latest` passes over a session that has only just started. It is
 // archive.SessionLabels's second result, without deriving the labels.
-func hasPrompt(bundle archive.SourceBundle) bool {
-	if len(bundle.NativeText) > 0 {
-		return true
-	}
-	view, err := archive.ParseNormalized(bundle)
-	if err != nil {
-		return false
-	}
-	return slices.ContainsFunc(view.Turns, func(turn archive.NormalizedTurn) bool { return turn.Kind == archive.TurnKindHumanPrompt })
+func hasPrompt(analysis archive.Analysis) bool {
+	_, ok := archive.LabelsFromAnalysis(analysis)
+	return ok
 }
 
 type handoffResolver struct {
@@ -467,7 +470,7 @@ func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe st
 		}
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, metadata: &metadata, source: "archive", describe: describe}, nil
+	return analyzeTarget(r.ctx, parsersFor(r.env), handoffTarget{bundle: bundle, metadata: &metadata, source: "archive", describe: describe})
 }
 
 // latest resolves `--latest`. A session is for the project when it ran at
@@ -582,7 +585,7 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time.Time, skipped *[]string) (handoffTarget, bool, error) {
 	for _, c := range candidates {
 		target, err := r.localTarget(c.reg)
-		if err == nil && !hasPrompt(target.bundle) {
+		if err == nil && !hasPrompt(target.analysis) {
 			err = errors.New("no prompt yet")
 		}
 		if err != nil {
@@ -592,7 +595,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 			continue
 		}
 		if c.byRepo {
-			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.bundle)); err != nil {
+			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.analysis)); err != nil {
 				return handoffTarget{}, false, err
 			}
 		}
@@ -604,12 +607,12 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 
 // localRepoMatch describes a registration on this machine that matched only by
 // repository, from what the registration and its transcript say.
-func localRepoMatch(reg archive.SessionRegistration, bundle archive.SourceBundle) repoMatch {
+func localRepoMatch(reg archive.SessionRegistration, analysis archive.Analysis) repoMatch {
 	project := ""
 	if reg.ProjectRoot != "" {
 		project = filepath.Base(filepath.Clean(reg.ProjectRoot))
 	}
-	labels, _ := archive.SessionLabels(bundle)
+	labels, _ := archive.LabelsFromAnalysis(analysis)
 	return repoMatch{id: reg.ArchiveSessionID, machine: machineThis, started: reg.SessionStartedAt, project: project, title: labels.Title}
 }
 

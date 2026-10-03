@@ -1,25 +1,21 @@
 package archive
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
+
 	"io"
 	"reflect"
-	"slices"
+
 	"sort"
 	"strings"
-	"time"
 )
 
-// Adapter filters one application's hook-provided JSONL transcript. Adapters
-// are deliberately readers only; the collector owns paths, retries, and I/O.
+// Adapter identifies the codec which produced retained source evidence.
 type Adapter interface {
 	Name() string
 	Version() string
-	FilterJSONL(io.Reader) (FilteredTranscript, error)
 }
 
 // FilterError means no new source bundle may be made from this input. It is
@@ -52,389 +48,12 @@ var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size lim
 // record's size (about 175 MiB for a 63 MiB record).
 const MaxRecordBytes = 64 * 1024 * 1024
 
-// maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
-var maxRecordBytes = MaxRecordBytes
-
-const adapterVersion = "0.15.0"
-
-// maxOmittedKeyNames bounds how many distinct omitted key names one filtered
-// transcript reports, so a pathological source cannot grow the gap list.
-const maxOmittedKeyNames = 64
-
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
 const DefaultParserVersion = "0.20.0"
 
-// CodexAdapter supports the conservative JSONL shapes observed by this
-// foundation. Unsupported Codex record types are gaps, never pass-through.
-type CodexAdapter struct{}
-
-// Name returns the canonical harness name, "codex".
-func (CodexAdapter) Name() string { return "codex" }
-
-// Version returns the adapter version shared by every adapter.
-func (CodexAdapter) Version() string { return adapterVersion }
-
-// FilterJSONL keeps only the Codex record types this adapter recognizes,
-// through the shared privacy filter, and labels the result codex-jsonl.
-func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
-	return filterJSONL(r, "codex-jsonl", map[string]bool{
-		"session_meta": true, "turn_context": true, "response_item": true,
-		"event_msg": true, "message": true, "token_usage_record": true,
-	}, nil)
-}
-
-// ClaudeAdapter handles a small, explicit subset of Claude Code JSONL event
-// types. It does not claim schema coverage for every installed version.
-type ClaudeAdapter struct{}
-
-// Name returns the canonical harness name, "claude".
-func (ClaudeAdapter) Name() string { return "claude" }
-
-// Version returns the adapter version shared by every adapter.
-func (ClaudeAdapter) Version() string { return adapterVersion }
-
-// FilterJSONL keeps only the Claude Code record types this adapter recognizes,
-// through the shared privacy filter, and labels the result claude-jsonl.
-func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
-	return filterClaudeJSONL(r, nil)
-}
-
-// FilterSubagentJSONL is FilterJSONL for a Claude Code subagent's transcript
-// with the contents of its sibling agent-<id>.meta.json (see
-// SubagentMetaPath). The description in it, redacted and bounded as prompt
-// text is, becomes one subagent-meta record at the front of the filtered
-// records; nothing else of the file is kept. metaJSON that is empty,
-// oversized, not a JSON object, or without a non-blank string description
-// changes nothing and records no gap: the file is optional. The record is
-// written only when the transcript has records of its own, so a transcript
-// that is still empty stays empty, and it never makes an unrecognized
-// transcript acceptable.
-func (ClaudeAdapter) FilterSubagentJSONL(r io.Reader, metaJSON []byte) (FilteredTranscript, error) {
-	return filterClaudeJSONL(r, subagentMetaLead(metaJSON))
-}
-
-// filterClaudeJSONL is the Claude Code filter, with lead, when not nil, a
-// subagent-meta record to write first.
-func filterClaudeJSONL(r io.Reader, lead map[string]any) (FilteredTranscript, error) {
-	return filterJSONL(r, "claude-jsonl", map[string]bool{
-		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
-		"message": true, "summary": true,
-	}, lead)
-}
-
-// CursorAdapter filters hook-provided JSONL records, a hook-provided text
-// transcript (FilterText), and a chat read from Cursor's database
-// (FilterComposer, in cursor_composer.go). Undocumented formats remain
-// unsupported capture gaps upstream.
-type CursorAdapter struct{}
-
-// Name returns the canonical harness name, "cursor".
-func (CursorAdapter) Name() string { return "cursor" }
-
-// Version returns the adapter version shared by every adapter.
-func (CursorAdapter) Version() string { return adapterVersion }
-
-// FilterJSONL keeps only the Cursor record types this adapter recognizes,
-// through the shared privacy filter, and labels the result cursor-jsonl.
-func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
-	return filterJSONL(r, "cursor-jsonl", map[string]bool{
-		"session": true, "message": true, "tool_call": true, "tool_result": true,
-		"event": true, "turn_ended": true,
-	}, nil)
-}
-
-// textRole is the lower-case role name of a Cursor text transcript section
-// header, such as "user" in "user: fix the build".
-type textRole string
-
-// The visible textRole values: the sections FilterText retains.
-const (
-	textRoleUser      textRole = "user"
-	textRoleAssistant textRole = "assistant"
-	textRoleTool      textRole = "tool"
-)
-
-// The hidden textRole values: the sections FilterText omits.
-const (
-	textRoleSystem    textRole = "system"
-	textRoleDeveloper textRole = "developer"
-	textRoleThinking  textRole = "thinking"
-	textRoleAnalysis  textRole = "analysis"
-)
-
-// visibleTextRoles and hiddenTextRoles are the role headers of a Cursor
-// text transcript: a visible section is retained, a hidden one omitted.
-var (
-	visibleTextRoles = map[textRole]bool{textRoleUser: true, textRoleAssistant: true, textRoleTool: true}
-	hiddenTextRoles  = map[textRole]bool{textRoleSystem: true, textRoleDeveloper: true, textRoleThinking: true, textRoleAnalysis: true}
-)
-
-// textHeaderCase is how a Cursor text transcript writes its role headers:
-// `user:` or `User:`. The real format is not pinned by a fixture, so both
-// are read, but one transcript uses one: the case of its first header (see
-// textHeaderCaseOf) is the only one that starts a section anywhere in it.
-type textHeaderCase int
-
-const (
-	// textHeaderLower is a lower-case header: `user:`, `assistant:`.
-	textHeaderLower textHeaderCase = iota
-	// textHeaderTitle is a capitalized header: `User:`, `Assistant:`.
-	textHeaderTitle
-)
-
-// textRoleHeader reports whether line has the shape of a role header of a
-// Cursor text transcript written in headerCase, and returns the role and
-// the text after the header. A header is a role name written exactly in
-// that case and a colon at column 0, then a space or the end of the line.
-// An indented "user:" is content (a YAML key in tool output), and so, since
-// filter 11, is a header in the other case: in a lower-case transcript,
-// prose such as "Analysis: the bug is …" or "System: linux" at the start of
-// a line no longer hides what follows it, and in a capitalized one a YAML
-// `user:` line no longer starts a Person turn. Whether a line with this
-// shape really starts a section also depends on the lines around it; see
-// parseTextSections.
-func textRoleHeader(line string, headerCase textHeaderCase) (role textRole, rest string, ok bool) {
-	line = strings.TrimSuffix(line, "\r")
-	colon := strings.IndexByte(line, ':')
-	if colon <= 0 {
-		return "", "", false
-	}
-	name := line[:colon]
-	role, rest = textRole(strings.ToLower(name)), line[colon+1:]
-	if !visibleTextRoles[role] && !hiddenTextRoles[role] {
-		return "", "", false
-	}
-	want := string(role)
-	if headerCase == textHeaderTitle {
-		want = strings.ToUpper(want[:1]) + want[1:]
-	}
-	if name != want {
-		return "", "", false
-	}
-	if rest != "" && rest[0] != ' ' {
-		return "", "", false
-	}
-	return role, strings.TrimPrefix(rest, " "), true
-}
-
-// textHeaderCaseOf returns the header case of a Cursor text transcript: the
-// case of its first non-blank line when that is a header in either case. A
-// transcript whose first non-blank line is no header is refused by
-// parseTextSections whatever the case.
-func textHeaderCaseOf(content string) textHeaderCase {
-	for line := range strings.SplitSeq(content, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if _, _, ok := textRoleHeader(line, textHeaderTitle); ok {
-			return textHeaderTitle
-		}
-		break
-	}
-	return textHeaderLower
-}
-
-// indentHeaderShapedLines indents by one space every line of a sanitized
-// section, after its first, that has a role header's shape in the
-// transcript's header case. Such a line was content in the transcript
-// (parseTextSections decided so), or sanitizing brought it to the start of
-// a line (stripping an injected block can); the handoff reads the retained
-// text back with the same parser, and the indent keeps the line content
-// there too, so a line of a tool's output can never become a Person turn or
-// hide the rest.
-func indentHeaderShapedLines(section string, headerCase textHeaderCase) string {
-	lines := strings.Split(section, "\n")
-	changed := false
-	for i := 1; i < len(lines); i++ {
-		if _, _, header := textRoleHeader(lines[i], headerCase); header {
-			lines[i], changed = " "+lines[i], true
-		}
-	}
-	if !changed {
-		return section
-	}
-	return strings.Join(lines, "\n")
-}
-
-// textSection is one role section of a Cursor text transcript: its role,
-// the text after its header, and its lines, the header line first. Blank
-// lines inside the section are kept; blank lines after its last line are
-// not.
-type textSection struct {
-	role   textRole
-	header string
-	lines  []string
-}
-
-// textSections is a Cursor text transcript split into its role sections
-// (see parseTextSections).
-type textSections struct {
-	sections []textSection
-	// blankSeparated reports whether the transcript separates its sections
-	// with a blank line.
-	blankSeparated bool
-	// headerCase is the transcript's header case (textHeaderCaseOf).
-	headerCase textHeaderCase
-}
-
-// parseTextSections splits a Cursor text transcript into its role sections.
-// FilterText and the handoff reader both use it, so the retained text is
-// read back exactly as it was filtered. It returns ok false when non-blank
-// text comes before the first header; that text is in no section.
-//
-// A line with a header's shape (textRoleHeader) at column 0, in the case of
-// the transcript's first header (textHeaderCaseOf), starts a section, with
-// one refinement. Cursor separates its sections with a blank
-// line; when the transcript does (its second header follows a blank line),
-// a visible header that does not follow a blank line is content, so a
-// `user: …` line in the middle of a tool's output cannot start a Person
-// turn. A hidden header (`system:`, `thinking:`, …) always starts a
-// section, so text that might be a hidden section is never retained. A
-// transcript whose second header does not follow a blank line is read as
-// filter 10 read it, one header per line. blankSeparated reports which
-// reading applied.
-func parseTextSections(content string) (parsed textSections, ok bool) {
-	headerCase := textHeaderCaseOf(content)
-	var sections []textSection
-	decided, blankSeparated, previousBlank, leading := false, false, false, false
-	for line := range strings.SplitSeq(content, "\n") {
-		blank := strings.TrimSpace(line) == ""
-		role, rest, header := textRoleHeader(line, headerCase)
-		if header && len(sections) > 0 {
-			switch {
-			case !decided:
-				blankSeparated, decided = previousBlank, true
-			case blankSeparated && !previousBlank && visibleTextRoles[role]:
-				header = false
-			}
-		}
-		previousBlank = blank
-		switch {
-		case header:
-			sections = append(sections, textSection{role: role, header: rest, lines: []string{line}})
-		case len(sections) > 0:
-			sections[len(sections)-1].lines = append(sections[len(sections)-1].lines, line)
-		case !blank:
-			// Text before the first header belongs to no section.
-			leading = true
-		}
-	}
-	for i := range sections {
-		lines := sections[i].lines
-		for len(lines) > 1 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-			lines = lines[:len(lines)-1]
-		}
-		sections[i].lines = lines
-	}
-	return textSections{sections: sections, blankSeparated: blankSeparated, headerCase: headerCase}, !leading
-}
-
-// FilterText retains a hook-provided Cursor text transcript only when the hook
-// has established that this is a fresh eligible session. It labels the source
-// as text rather than fabricating message events from unstructured content.
-//
-// The transcript as a whole is bounded by the record size limit (a text
-// transcript is one unit, like one JSONL record); a longer one fails with
-// ErrRecordTooLarge, which the collector records as a capture gap. Filter 6
-// and earlier stopped at 2 MB.
-//
-// Each visible role section — a `user:`, `assistant:`, or `tool:` line and the
-// continuation lines under it — is sanitized on its own, so redaction and the
-// 64 KB string cap apply per message, as they do to JSONL records. Filter 6
-// sanitized the whole joined text as one string, which truncated any text
-// transcript over 64 KB to its first 64 KB. The sanitized sections are joined
-// again in their original order, one line per original line, so the result is
-// read back by the same section prefixes (see textSectionPrefixes). Hidden
-// sections (`system:`, `developer:`, `thinking:`, `analysis:`) and their
-// continuation lines are omitted. Each gap is recorded once.
-//
-// The collector's rewrite guard compares the retained text by prefix across
-// passes. Per-section sanitizing keeps every completed section's bytes
-// stable, but the last section, if it is still being written, can change
-// bytes it already produced once more of it lands (a credential that only
-// matches when complete, or an injected block whose stripping trims the
-// section's edges). That is a property of sanitizing a growing string, not
-// of this function, and a text transcript offers no record boundary to stop
-// short of.
-func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (FilteredTranscript, error) {
-	if freshStartedAt.IsZero() {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no reliable fresh-session start"}
-	}
-	content, err := io.ReadAll(io.LimitReader(r, int64(maxRecordBytes)+1))
-	if err != nil {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript cannot be read"}
-	}
-	if len(content) > maxRecordBytes {
-		return FilteredTranscript{}, ErrRecordTooLarge
-	}
-	result := FilteredTranscript{Format: "cursor-text", FirstEventAt: freshStartedAt.UTC()}
-	gapSet := map[CaptureGap]bool{}
-	addGap := func(code, detail string) {
-		gap := CaptureGap{Code: code, Detail: detail}
-		if !gapSet[gap] {
-			gapSet[gap] = true
-			result.Gaps = append(result.Gaps, gap)
-		}
-	}
-	addGap("text_structure_partial", "Cursor role sections retained without manufactured events")
-
-	parsed, ok := parseTextSections(string(content))
-	if !ok {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has unrecognized role section"}
-	}
-	// Keep each visible section's lines as they were, blank lines inside it
-	// included (filter 10 dropped them). Sections are joined with a blank
-	// line when the transcript separated them with one, so the retained
-	// text is read back with the same rule.
-	var sections [][]string
-	hiddenSections, hiddenLines := 0, 0
-	for _, section := range parsed.sections {
-		if hiddenTextRoles[section.role] {
-			hiddenSections++
-			for _, line := range section.lines {
-				if strings.TrimSpace(line) != "" {
-					hiddenLines++
-				}
-			}
-			continue
-		}
-		sections = append(sections, section.lines)
-	}
-	if hiddenSections > 0 {
-		addGap("hidden_instruction_omitted", fmt.Sprintf("%d text sections omitted (%d lines)", hiddenSections, hiddenLines))
-	}
-	if len(sections) == 0 {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable visible sections"}
-	}
-	state := sanitizeState{addGap: func(code string, _ int, detail string) { addGap(code, detail) }}
-	retained := make([]string, 0, len(sections))
-	for _, section := range sections {
-		safe, keep := sanitizeValue(strings.Join(section, "\n"), &state)
-		if !keep {
-			continue
-		}
-		text, ok := safe.(string)
-		if !ok {
-			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
-		}
-		retained = append(retained, indentHeaderShapedLines(text, parsed.headerCase))
-	}
-	if len(retained) == 0 {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable content"}
-	}
-	separator := "\n"
-	if parsed.blankSeparated {
-		separator = "\n\n"
-	}
-	text := strings.Join(retained, separator)
-	result.Text = []string{text}
-	result.Boundary.RetainedBytes = len(text)
-	return result, nil
-}
-
-var allowedKeys = map[string]bool{
+var supplementalAllowedKeys = map[string]bool{
 	"type": true, "id": true, "uuid": true, "session_id": true, "parent_id": true,
 	"parent_uuid": true, "parentuuid": true, "timestamp": true, "created_at": true, "updated_at": true,
 	"cwd": true, "model": true, "model_provider": true, "role": true, "content": true,
@@ -464,7 +83,7 @@ var allowedKeys = map[string]bool{
 	// answers through tool_use_id, and a turn's own identity (sessionId,
 	// requestId, gitBranch) is what lets a reader place a record in its
 	// session and working branch. usage and the Codex *_token_usage subtrees
-	// are retained as numbers only (see numericSubtreeKeys).
+	// are retained as numbers only (see supplementalNumericSubtreeKeys).
 	"tool_use_id": true, "tooluseid": true, "is_error": true, "stop_reason": true,
 	"usage": true, "sessionid": true, "requestid": true, "gitbranch": true,
 	// Codex token accounting records.
@@ -481,7 +100,7 @@ var allowedKeys = map[string]bool{
 	// marked isCompactSummary (and usually isVisibleInTranscriptOnly). The
 	// flags tell a parser it is not a prompt. Unlike an isMeta record, the
 	// summary's text is kept: it is model output, useful for a handoff. Both
-	// are admitted as booleans only (see booleanFlagKeys).
+	// are admitted as booleans only (see supplementalBooleanFlagKeys).
 	"iscompactsummary": true, "isvisibleintranscriptonly": true,
 	// Filter 6: Claude Code says who produced a user record. A person's prompt
 	// carries origin.kind "human"; a background-task completion carries
@@ -491,12 +110,12 @@ var allowedKeys = map[string]bool{
 	"origin": true, "promptsource": true,
 }
 
-// booleanFlagKeys are allowed only as the boolean flag the harness writes. Any
+// supplementalBooleanFlagKeys are allowed only as the boolean flag the harness writes. Any
 // other value under one of these names is prose the allowlist never retained.
-var booleanFlagKeys = map[string]bool{"ismeta": true, "iscompactsummary": true, "isvisibleintranscriptonly": true}
+var supplementalBooleanFlagKeys = map[string]bool{"ismeta": true, "iscompactsummary": true, "isvisibleintranscriptonly": true}
 
 // toolArgumentKeys name the subtrees which carry a tool call's own arguments.
-// Filter 2 applied allowedKeys recursively inside them, which dropped every
+// Filter 2 applied supplementalAllowedKeys recursively inside them, which dropped every
 // Edit old_string/new_string, Agent prompt, Grep pattern, and MCP argument and
 // left tool evidence unusable. Inside these subtrees every argument name is
 // retained; blockedKeys, value redaction (redactSensitive), the string cap, and the
@@ -520,8 +139,7 @@ var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_i
 // credentialVocabulary the text patterns use too) is dropped for every
 // tool.
 var (
-	typedInputArgumentKeys  = map[string]bool{"text": true, "value": true, "values": true, "keys": true, "chars": true}
-	deniedToolArgumentIntro = "omitted tool argument keys: "
+	typedInputArgumentKeys = map[string]bool{"text": true, "value": true, "values": true, "keys": true, "chars": true}
 )
 
 // typedInputToolWords are the words of a tool name that say the tool types
@@ -558,56 +176,14 @@ func deniedToolArgument(key, toolName string, sensitiveLabelled bool) bool {
 	return typedInputArgumentKeys[strings.ToLower(key)] && (sensitiveLabelled || isTypedInputTool(toolName))
 }
 
-// keyNameSet collects distinct key names for one summary gap, capped so a
-// pathological source cannot grow the gap list. Names only, never values.
-type keyNameSet struct {
-	names  map[string]bool
-	capped bool
-}
-
-func (s *keyNameSet) add(key string) {
-	if s.names == nil {
-		s.names = map[string]bool{}
-	}
-	if s.names[key] {
-		return
-	}
-	if len(s.names) >= maxOmittedKeyNames {
-		s.capped = true
-		return
-	}
-	s.names[key] = true
-}
-
-// detail renders the sorted names after intro, noting when the cap was hit,
-// or returns "" when nothing was collected.
-func (s *keyNameSet) detail(intro string) string {
-	if len(s.names) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(s.names))
-	for key := range s.names {
-		names = append(names, key)
-	}
-	sort.Strings(names)
-	detail := intro + strings.Join(names, ", ")
-	if s.capped {
-		detail += "; further key names omitted"
-	}
-	return detail
-}
-
-// numericSubtreeKeys name subtrees retained for their numbers only: token
-// accounting carries no prose, so anything in them which is not a number (or a
-// nested object or array of numbers) is omitted with its key name recorded.
-var numericSubtreeKeys = map[string]bool{
+var supplementalNumericSubtreeKeys = map[string]bool{
 	"usage": true, "total_token_usage": true, "last_token_usage": true,
 	"turn_token_usage": true, "thread_token_usage": true,
 }
 
 // captureGapKeys are additionally allowed inside a capture_gap evidence
 // payload, whose whole content is an archive-authored code and its fixed
-// description. They are deliberately not in allowedKeys: `detail` is a
+// description. They are deliberately not in supplementalAllowedKeys: `detail` is a
 // common free-text field name in native transcripts, and sanitizeObject
 // recurses, so allowing it globally would retain arbitrary nested prose.
 var captureGapKeys = map[string]bool{"code": true, "detail": true}
@@ -620,438 +196,48 @@ var blockedKeys = map[string]bool{
 	"image": true, "images": true, "audio": true, "binary": true, "attachment": true,
 }
 
-// filterJSONL is the shared JSONL filter. lead, only for a claude-jsonl
-// transcript, is a subagent-meta record to write at the front of the retained
-// records (see ClaudeAdapter.FilterSubagentJSONL); it is not part of what was
-// read, so it counts toward no recognition, timestamp, or identity.
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any) (FilteredTranscript, error) {
-	scanner := bufio.NewScanner(r)
-	// Individual native JSONL records can contain tool output. A hard limit keeps
-	// filtering bounded; exceeding it is refused rather than silently
-	// truncated. The buffer holds a record plus its newline, so a record of
-	// exactly maxRecordBytes is still read. bufio.Scanner allows the larger of
-	// its maximum and the initial buffer's capacity, so the initial buffer
-	// must not exceed the limit either.
-	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
-	return filterRecords(format, knownTypes, lead, func() ([]byte, bool) {
-		if scanner.Scan() {
-			return scanner.Bytes(), true
-		}
-		return nil, false
-	}, scanner.Err)
-}
-
-// filterRecords applies exactly the full filter's record rules to a record stream.
-func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error) (FilteredTranscript, error) {
-	result := FilteredTranscript{Format: format, NativeStartComplete: true}
-	lineNo, recognized := 0, 0
-	gapSet := map[string]bool{}
-	// Filter 2 collapsed every omission into one content-free gap, so a reader
-	// could not see what this filter version was unable to keep. Collect the
-	// distinct key names — names only, never values — and report them once.
-	// Tool arguments dropped by the deny list are reported the same way under
-	// their own code.
-	var omittedKeys, deniedKeys keyNameSet
-	addGap := func(code string, record int, detail string) {
-		key := fmt.Sprintf("%s:%s", code, detail)
-		if !gapSet[key] {
-			gapSet[key] = true
-			// Do not retain a source line number: an excluded preceding line must
-			// not alter an otherwise identical retained snapshot.
-			result.Gaps = append(result.Gaps, CaptureGap{Code: code, Detail: detail})
-		}
-	}
-	// A transcript holds one subagent-meta record: the lead when there is one,
-	// else the first the transcript itself holds (a retained snapshot filtered
-	// again).
-	var meta subagentMetaSlot
-	var filteredLead subagentLead
-	if lead != nil && format == "claude-jsonl" {
-		var err error
-		if filteredLead, err = meta.lead(lead); err != nil {
-			return FilteredTranscript{}, err
-		}
-	}
-	for {
-		line, more := next()
-		if !more {
-			break
-		}
-		lineNo++
-		// bytes.TrimSpace, not strings.TrimSpace(string(line)): the same test
-		// without copying a record that can be tens of megabytes.
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var raw map[string]any
-		if err := json.Unmarshal(line, &raw); err != nil {
-			result.NativeStartComplete = false
-			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
-			continue
-		}
-		result.noteRecordTime(raw)
-		result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
-		result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
-		kind, _ := raw["type"].(string)
-		if format == "claude-jsonl" && isCompactBoundary(raw) {
-			recognized++
-			encoded, err := json.Marshal(compactBoundaryRecord(raw, omittedKeys.add))
-			if err != nil {
-				return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
-			}
-			result.retain(encoded)
-			continue
-		}
-		if format == "claude-jsonl" && isClaudeLabelType(kind) {
-			recognized++
-			encoded, err := filterClaudeLabel(raw, lineNo, addGap, omittedKeys.add)
-			if err != nil {
-				return FilteredTranscript{}, err
-			}
-			result.retain(encoded)
-			continue
-		}
-		if format == "claude-jsonl" && kind == subagentMetaType {
-			recognized++
-			encoded, err := meta.filter(raw, lineNo, addGap, omittedKeys.add)
-			if err != nil {
-				return FilteredTranscript{}, err
-			}
-			result.retain(encoded)
-			continue
-		}
-		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
-		if !recordTypeAllowed(knownTypes, kind, cursorRoleContent) {
-			addGap("unknown_record_type", lineNo, "record omitted")
-			continue
-		}
-		recognized++
-		if stripMetaRecordText(raw) {
-			addGap("hidden_instruction_omitted", lineNo, "meta record text omitted")
-		}
-		state := sanitizeState{record: lineNo, addGap: addGap, omittedKey: omittedKeys.add, deniedKey: deniedKeys.add}
-		safe, keep := sanitizeObject(raw, &state)
-		if !keep {
-			continue
-		}
-		encoded, err := json.Marshal(safe)
-		if err != nil {
-			return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
-		}
-		result.retain(encoded)
-	}
-	if err := readError(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return FilteredTranscript{}, ErrRecordTooLarge
-		}
-		return FilteredTranscript{}, &FilterError{Reason: "transcript cannot be read"}
-	}
-	if lineNo > 0 && recognized == 0 {
-		return FilteredTranscript{}, ErrUnsafeSourceFormat
-	}
-	filteredLead.writeTo(&result, addGap, omittedKeys.add)
-	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
-		addGap("unknown_field_omitted", 0, detail)
-	}
-	if detail := deniedKeys.detail(deniedToolArgumentIntro); detail != "" {
-		addGap("sensitive_or_hidden_field_omitted", 0, detail)
-	}
-	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
-	return result, nil
-}
-
-// retain appends one encoded record to the retained records and counts it;
-// nil, a record the filter dropped, retains nothing.
-func (t *FilteredTranscript) retain(encoded []byte) {
-	if encoded == nil {
-		return
-	}
-	t.Records = append(t.Records, encoded)
-	t.Boundary.RetainedRecords++
-	t.Boundary.RetainedBytes += len(encoded)
-}
-
-// retainFirst is retain at the front of the records, and only when there are
-// records already: a record that is no part of what was read, such as a
-// subagent's description, never makes a transcript with none look captured.
-func (t *FilteredTranscript) retainFirst(encoded []byte) {
-	if encoded == nil || len(t.Records) == 0 {
-		return
-	}
-	t.Records = slices.Insert(t.Records, 0, encoded)
-	t.Boundary.RetainedRecords++
-	t.Boundary.RetainedBytes += len(encoded)
-}
-
-// noteRecordTime folds one native record's timestamp into the transcript's
-// first event, native start and end, and marks the start incomplete when a
-// record that carries conversation has none.
-func (t *FilteredTranscript) noteRecordTime(raw map[string]any) {
-	observed := parseNativeTimestamp(raw)
-	if t.FirstEventAt.IsZero() {
-		t.FirstEventAt = observed
-	}
-	if observed.IsZero() {
-		if recordCarriesConversation(raw) {
-			t.NativeStartComplete = false
-		}
-	} else if t.NativeStartAt.IsZero() || observed.Before(t.NativeStartAt) {
-		t.NativeStartAt = observed
-	}
-	if !observed.IsZero() && (t.NativeEndAt.IsZero() || observed.After(t.NativeEndAt)) {
-		t.NativeEndAt = observed
-	}
-}
-
-// isCompactBoundary reports whether a Claude Code record is the marker it
-// writes where a conversation was compacted: exactly type "system" with
-// subtype "compact_boundary". Every other system record stays hidden.
-func isCompactBoundary(record map[string]any) bool {
-	kind, _ := record["type"].(string)
-	subtype, _ := record["subtype"].(string)
-	return kind == "system" && subtype == "compact_boundary"
-}
-
-// compactBoundaryIDKeys are the identifiers a compact_boundary record keeps
-// beside its type, subtype, and timestamp. logicalParentUuid is how Claude
-// Code links the boundary to the last record before the compaction.
-var compactBoundaryIDKeys = map[string]bool{"uuid": true, "parentUuid": true, "logicalParentUuid": true, "sessionId": true}
-
-// compactBoundaryRecord rebuilds a compact_boundary record from what filter 5
-// retains of it: type, subtype, its ids, its timestamp, and the isSidechain
-// flag (so a subagent's compaction inlined in a parent transcript is excluded
-// from the parent's counts like the rest of the subagent's records). Nothing
-// else of a system record is kept, text above all; each omitted key's name is
-// reported through omit. It is built from an allowlist of typed values rather
-// than sanitized, because a system record is otherwise hidden whole.
-func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any {
-	out := map[string]any{"type": "system", "subtype": "compact_boundary"}
-	for key, value := range raw {
-		switch {
-		//lint:ignore LV1001 keys of an external JSON record are an open domain
-		case key == "type" || key == "subtype":
-		case key == "timestamp":
-			if stamp, ok := value.(string); ok && !parseNativeTimestamp(map[string]any{"timestamp": stamp}).IsZero() {
-				out[key] = stamp
-			} else {
-				omit(key)
-			}
-		case compactBoundaryIDKeys[key]:
-			// An id is kept only when it looks like one (see
-			// looksLikeRecordID). A null parent is kept as null.
-			if value == nil {
-				out[key] = nil
-			} else if id, ok := value.(string); ok && looksLikeRecordID(id) {
-				out[key] = id
-			} else {
-				omit(key)
-			}
-		case key == "isSidechain":
-			if flag, ok := value.(bool); ok {
-				out[key] = flag
-			} else {
-				omit(key)
-			}
-		default:
-			omit(key)
-		}
-	}
-	return out
-}
-
-// looksLikeRecordID reports whether a string can be kept as a record id on a
-// rebuilt compact_boundary record: a short token with no whitespace and no
-// tag brackets, which the credential redaction would leave unchanged. The
-// boundary bypasses sanitizeObject, so this is what keeps its ids under the
-// same value rules as every other retained string.
-func looksLikeRecordID(value string) bool {
-	if value == "" || len(value) > 256 || strings.ContainsAny(value, " \t\r\n<>") {
-		return false
-	}
-	_, sensitive := redactSensitive(value)
-	return !sensitive
-}
-
-// isMetaRecord reports whether a native record is one Claude Code marked as
-// harness-written with isMeta: true.
-func isMetaRecord(record map[string]any) bool {
-	flag, ok := record["isMeta"].(bool)
-	return ok && flag
-}
-
-// stripMetaRecordText removes the text of an isMeta record before it is
-// sanitized, and reports whether anything was removed. Such a record carries a
-// harness-expanded skill or slash command, or a local-command caveat: injected
-// instruction text, like a <system-reminder> block, not something a person
-// wrote. The record itself, its ids, its parent link, and the isMeta flag are
-// kept so the conversation's parent chain survives; string content and text
-// blocks are removed at every depth of the content. Any other block keeps its
-// shape and identifiers (a tool result keeps its tool_use_id and is_error),
-// loses its own text and nested content text, and is then left to the
-// ordinary rules. A message left with nothing but its role still keeps the
-// record.
-func stripMetaRecordText(record map[string]any) bool {
-	if !isMetaRecord(record) {
-		return false
-	}
-	stripped := stripContentText(record)
-	if message, ok := record["message"].(map[string]any); ok {
-		if stripContentText(message) {
-			stripped = true
-		}
-		if len(message) == 0 {
-			delete(record, "message")
-		}
-	}
-	return stripped
-}
-
-// stripContentText removes string content and text blocks from one object's
-// "content", dropping the key when nothing is left. A block that survives
-// (a tool result, for instance) is stripped the same way: its own "text" and
-// its nested "content" text go too, so no text of the harness-written record
-// remains at any depth.
-func stripContentText(holder map[string]any) bool {
-	content, present := holder["content"]
-	if !present {
-		return false
-	}
-	switch value := content.(type) {
-	case string:
-		delete(holder, "content")
-		return true
-	case map[string]any:
-		return stripBlockText(value)
-	case []any:
-		kept := make([]any, 0, len(value))
-		stripped := false
-		for _, raw := range value {
-			switch block := raw.(type) {
-			case string:
-				stripped = true
-			case map[string]any:
-				if textBlockTypes[strings.ToLower(strings.TrimSpace(firstString(block, "type")))] {
-					stripped = true
-					continue
-				}
-				if stripBlockText(block) {
-					stripped = true
-				}
-				kept = append(kept, block)
-			default:
-				kept = append(kept, raw)
-			}
-		}
-		if len(kept) == 0 {
-			delete(holder, "content")
-		} else {
-			holder["content"] = kept
-		}
-		return stripped
-	}
-	return false
-}
-
-// stripBlockText removes a non-text block's own "text" string and the text
-// of its nested "content", recursively.
-func stripBlockText(block map[string]any) bool {
-	stripped := false
-	if _, isText := block["text"].(string); isText {
-		delete(block, "text")
-		stripped = true
-	}
-	if stripContentText(block) {
-		stripped = true
-	}
-	return stripped
-}
-
-func appendUniqueString(values []string, candidate string) []string {
-	if candidate == "" {
-		return values
-	}
-	if slices.Contains(values, candidate) {
-		return values
-	}
-	return append(values, candidate)
-}
-
-// conversationRecordTypes are the record types whose start time is part of a
-// session's timestamp provenance. Harnesses also write bookkeeping entries
-// beside the conversation — Claude Code's `summary` and `file-history-snapshot`
-// records are the observed examples — which carry no top-level timestamp and
-// no conversational content. Treating those as missing provenance would make
-// an otherwise fully timestamped transcript permanently ineligible for child
-// capture, so only conversation-bearing records are required to be stamped.
-var conversationRecordTypes = map[string]bool{
-	"user": true, "assistant": true, "system": true, "message": true,
-	"tool_use": true, "tool_result": true, "tool_call": true,
-	"session_meta": true, "turn_context": true, "response_item": true,
-	"event_msg": true, "session": true, "event": true,
-}
-
-func recordCarriesConversation(record map[string]any) bool {
-	if _, present := record["message"]; present {
-		return true
-	}
-	if firstString(record, "role") != "" {
-		return true
-	}
-	kind, _ := record["type"].(string)
-	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
-}
-
-func parseNativeTimestamp(record map[string]any) time.Time {
-	for _, key := range []string{"timestamp", "created_at"} {
-		value, _ := record[key].(string)
-		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
-			return parsed.UTC()
-		}
-	}
-	return time.Time{}
-}
-
-type sanitizeState struct {
-	record int
-	addGap func(string, int, string)
+// PrivacyState carries shared mandatory redaction decisions and omission accounting.
+type PrivacyState struct {
+	Record int
+	AddGap func(string, int, string)
 	// extraAllowed widens the key allowlist for one archive-authored payload
 	// shape. It applies at every depth of that payload, which is safe only
 	// because such payloads are flat maps this repository writes itself.
-	extraAllowed map[string]bool
+	ExtraAllowed map[string]bool
 	// retainAllKeys is set while sanitizing a tool-argument subtree, where the
 	// argument names are the tool's own vocabulary and no allowlist can
 	// anticipate them. Value sanitization is unchanged.
-	retainAllKeys bool
+	RetainAllKeys bool
 	// numericOnly is set while sanitizing a token-accounting subtree.
-	numericOnly bool
+	NumericOnly bool
 	// toolName is the name of the tool whose argument subtree is being
 	// sanitized, read from the `name` or `tool_name` beside that subtree. It
 	// decides whether typed-input arguments are denied.
-	toolName string
+	ToolName string
 	// omittedKey, when set, receives the name of each key the filter could not
 	// keep so the caller can report the distinct names once. Without it an
 	// omission falls back to the content-free unknown_field_omitted gap.
-	omittedKey func(string)
+	OmittedKey func(string)
 	// deniedKey, when set, receives the name of each tool argument dropped by
 	// the deny list. Without it the drop falls back to the content-free
 	// sensitive_or_hidden_field_omitted gap.
-	deniedKey func(string)
+	DeniedKey func(string)
 }
 
-func (s *sanitizeState) omitField(key string) {
-	if s.omittedKey != nil {
-		s.omittedKey(key)
+func (s *PrivacyState) omitField(key string) {
+	if s.OmittedKey != nil {
+		s.OmittedKey(key)
 		return
 	}
-	s.addGap("unknown_field_omitted", s.record, "field omitted")
+	s.AddGap("unknown_field_omitted", s.Record, "field omitted")
 }
 
-func (s *sanitizeState) denyArgument(key string) {
-	if s.deniedKey != nil {
-		s.deniedKey(key)
+func (s *PrivacyState) denyArgument(key string) {
+	if s.DeniedKey != nil {
+		s.DeniedKey(key)
 		return
 	}
-	s.addGap("sensitive_or_hidden_field_omitted", s.record, "field omitted")
+	s.AddGap("sensitive_or_hidden_field_omitted", s.Record, "field omitted")
 }
 
 // isHiddenObject reports whether an object is a system, developer, or
@@ -1063,17 +249,17 @@ func isHiddenObject(in map[string]any) bool {
 	return isHiddenRole(role) || isHiddenChannel(channel) || isHiddenRole(kind)
 }
 
-func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bool) {
+func sanitizeObject(in map[string]any, state *PrivacyState) (map[string]any, bool) {
 	if isHiddenObject(in) {
-		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
+		state.AddGap("hidden_instruction_omitted", state.Record, "record omitted")
 		return nil, false
 	}
 	// Filter 9: a pasted screenshot, a PDF, or an image a tool read arrives
 	// as a content block whose data is base64. Its key names pass the
 	// allowlist (type, source), so the block is recognized by shape and
 	// dropped whole, wherever it sits, rather than kept key by key.
-	if detail, binary := binaryContentBlock(in); binary && !state.numericOnly {
-		state.addGap("binary_content_omitted", state.record, detail)
+	if detail, binary := binaryContentBlock(in); binary && !state.NumericOnly {
+		state.AddGap("binary_content_omitted", state.Record, detail)
 		return nil, false
 	}
 	out := make(map[string]any)
@@ -1086,28 +272,28 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 	// one-time code, or card number (`{"name": "Password", "value": …}`,
 	// `{"name": "DB_PASSWORD", "value": …}`) is typed input, whatever the
 	// tool.
-	sensitiveLabelled := state.retainAllKeys && hasSensitiveLabel(in)
+	sensitiveLabelled := state.RetainAllKeys && hasSensitiveLabel(in)
 	for _, key := range keys {
 		value := in[key]
 		lower := strings.ToLower(key)
 		if blockedKeys[lower] {
-			state.addGap("sensitive_or_hidden_field_omitted", state.record, "field omitted")
+			state.AddGap("sensitive_or_hidden_field_omitted", state.Record, "field omitted")
 			continue
 		}
 		switch {
-		case state.numericOnly:
+		case state.NumericOnly:
 			if !isNumericSubtreeValue(value) {
 				state.omitField(key)
 				continue
 			}
-		case state.retainAllKeys:
+		case state.RetainAllKeys:
 			// A tool argument's own name is retained; its value is not trusted,
 			// and a typed-input or credential-named argument is dropped whole.
-			if deniedToolArgument(key, state.toolName, sensitiveLabelled) {
+			if deniedToolArgument(key, state.ToolName, sensitiveLabelled) {
 				state.denyArgument(key)
 				continue
 			}
-		case !allowedKeys[lower] && !state.extraAllowed[lower]:
+		case !supplementalAllowedKeys[lower] && !state.ExtraAllowed[lower]:
 			state.omitField(key)
 			continue
 		case lower == "origin":
@@ -1125,7 +311,7 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 				state.omitField(key)
 				continue
 			}
-		case booleanFlagKeys[lower]:
+		case supplementalBooleanFlagKeys[lower]:
 			// Filter 4 admits isMeta, and filter 5 isCompactSummary and
 			// isVisibleInTranscriptOnly, only as the boolean flag Claude Code
 			// writes. Any other value under those names is prose the allowlist
@@ -1135,30 +321,30 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 				continue
 			}
 		}
-		retainAll, numericOnly, toolName := state.retainAllKeys, state.numericOnly, state.toolName
+		retainAll, numericOnly, toolName := state.RetainAllKeys, state.NumericOnly, state.ToolName
 		switch {
-		case numericSubtreeKeys[lower]:
-			state.numericOnly, state.retainAllKeys = true, false
-		case toolArgumentKeys[lower] && !state.numericOnly:
-			if !state.retainAllKeys {
-				state.toolName = firstString(in, "name", "tool_name")
+		case supplementalNumericSubtreeKeys[lower]:
+			state.NumericOnly, state.RetainAllKeys = true, false
+		case toolArgumentKeys[lower] && !state.NumericOnly:
+			if !state.RetainAllKeys {
+				state.ToolName = firstString(in, "name", "tool_name")
 			}
-			state.retainAllKeys = true
+			state.RetainAllKeys = true
 		}
 		safe, keep := sanitizeValue(value, state)
-		state.retainAllKeys, state.numericOnly, state.toolName = retainAll, numericOnly, toolName
+		state.RetainAllKeys, state.NumericOnly, state.ToolName = retainAll, numericOnly, toolName
 		if keep {
 			out[key] = safe
 		}
 	}
 	if len(out) == 0 {
-		state.addGap("record_without_allowed_fields_omitted", state.record, "record omitted")
+		state.AddGap("record_without_allowed_fields_omitted", state.Record, "record omitted")
 		return nil, false
 	}
 	for _, key := range []string{"payload", "message", "item", "event"} {
 		if _, had := in[key]; had {
 			if _, kept := out[key]; !kept {
-				state.addGap("hidden_or_unknown_nested_content_omitted", state.record, "record omitted")
+				state.AddGap("hidden_or_unknown_nested_content_omitted", state.Record, "record omitted")
 				return nil, false
 			}
 		}
@@ -1169,7 +355,7 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 // originKindOnly reduces a Claude Code origin object to {kind: <string>},
 // reporting every other member as omitted. It keeps nothing when origin is not
 // an object or has no string kind.
-func originKindOnly(value any, state *sanitizeState) (map[string]any, bool) {
+func originKindOnly(value any, state *PrivacyState) (map[string]any, bool) {
 	origin, ok := value.(map[string]any)
 	if !ok {
 		return nil, false
@@ -1226,7 +412,7 @@ func isNumericSubtreeValue(value any) bool {
 // escaping) only when sanitizing changed something; otherwise the string is
 // kept byte for byte. A value the sanitizer keeps nothing of becomes `{}` or
 // `[]`. ok is false when the string is not a JSON object or array.
-func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
+func sanitizeNestedJSON(v string, state *PrivacyState) (out string, ok bool) {
 	trimmed := strings.TrimSpace(v)
 	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return v, false
@@ -1243,14 +429,14 @@ func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
 	if !nonEmptyValue(decoded) {
 		return v, true
 	}
-	retainAll, deniedKey := state.retainAllKeys, state.deniedKey
+	retainAll, deniedKey := state.RetainAllKeys, state.DeniedKey
 	if !retainAll {
 		// Outside a tool call's arguments a dropped key is not a tool
 		// argument, so it is not named as one.
-		state.retainAllKeys, state.deniedKey = true, nil
+		state.RetainAllKeys, state.DeniedKey = true, nil
 	}
 	safe, keep := sanitizeValue(decoded, state)
-	state.retainAllKeys, state.deniedKey = retainAll, deniedKey
+	state.RetainAllKeys, state.DeniedKey = retainAll, deniedKey
 	if !keep {
 		return emptyJSONContainer(trimmed[0]), true
 	}
@@ -1321,31 +507,31 @@ const maxTextBytes = 64 * 1024
 // sanitizeStringOnce is one pass of the string rules: JSON inside the
 // string, injected instruction blocks, base64 data URLs, credential
 // redaction, and the length cap. keep is false when nothing is left.
-func sanitizeStringOnce(v string, state *sanitizeState) (string, bool) {
+func sanitizeStringOnce(v string, state *PrivacyState) (string, bool) {
 	if nested, isJSON := sanitizeNestedJSON(v, state); isJSON {
 		v = nested
 	}
 	if injected, stripped := stripInjectedInstructions(v); injected {
-		state.addGap("hidden_instruction_omitted", state.record, "injected instruction block omitted")
+		state.AddGap("hidden_instruction_omitted", state.Record, "injected instruction block omitted")
 		if stripped == "" {
 			return "", false
 		}
 		v = stripped
 	}
 	if base64DataURL.MatchString(v) {
-		state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
+		state.AddGap("binary_content_omitted", state.Record, "base64 data URL omitted")
 		v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
 	}
 	// One redaction pass: sanitizeValue repeats this function until the
 	// string is stable, which repeats the redaction as redactSensitive would.
 	if redacted, hit := redactSensitiveOnce(v); hit {
-		state.addGap("sensitive_content_redacted", state.record, "content redacted")
+		state.AddGap("sensitive_content_redacted", state.Record, "content redacted")
 		v = redacted
 	}
 	if len(v) > maxTextBytes {
 		// Cut on a character boundary, so a retained string stays valid
 		// UTF-8 (filter 8 could split a multi-byte character).
-		state.addGap("content_truncated", state.record, "content truncated")
+		state.AddGap("content_truncated", state.Record, "content truncated")
 		v = TruncateUTF8(v, maxTextBytes)
 	}
 	return v, true
@@ -1359,7 +545,7 @@ func emptyJSONContainer(open byte) string {
 	return "{}"
 }
 
-func sanitizeValue(value any, state *sanitizeState) (any, bool) {
+func sanitizeValue(value any, state *PrivacyState) (any, bool) {
 	switch v := value.(type) {
 	case nil, bool, float64, json.Number:
 		return v, true
@@ -1386,16 +572,16 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 	case []any:
 		// Filter 11: an argument vector's secret values (`-pS3cret` after
 		// mysql, the word after `--token`) are redacted by their position.
-		if redacted, hit := redactArgv(v); hit && !state.numericOnly {
-			state.addGap("sensitive_content_redacted", state.record, "content redacted")
+		if redacted, hit := redactArgv(v); hit && !state.NumericOnly {
+			state.AddGap("sensitive_content_redacted", state.Record, "content redacted")
 			v = redacted
 		}
 		out := make([]any, 0, len(v))
 		for _, item := range v {
 			// An array inside a numbers-only subtree is filtered per element,
 			// since only sanitizeObject sees the key that admitted it.
-			if state.numericOnly && !isNumericSubtreeValue(item) {
-				state.addGap("unsupported_value_omitted", state.record, "value omitted")
+			if state.NumericOnly && !isNumericSubtreeValue(item) {
+				state.AddGap("unsupported_value_omitted", state.Record, "value omitted")
 				continue
 			}
 			safe, keep := sanitizeValue(item, state)
@@ -1404,12 +590,12 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 			}
 		}
 		if len(v) > 0 && len(out) == 0 {
-			state.addGap("hidden_or_unknown_nested_content_omitted", state.record, "field omitted")
+			state.AddGap("hidden_or_unknown_nested_content_omitted", state.Record, "field omitted")
 			return nil, false
 		}
 		return out, true
 	default:
-		state.addGap("unsupported_value_omitted", state.record, "value omitted")
+		state.AddGap("unsupported_value_omitted", state.Record, "value omitted")
 		return nil, false
 	}
 }
@@ -1423,6 +609,22 @@ func isHiddenRole(value string) bool {
 	}
 }
 
-func recordTypeAllowed(known map[string]bool, kind string, cursorRole bool) bool {
-	return known[kind] || cursorRole
+type sanitizeState = PrivacyState
+
+func nonEmptyValue(raw any) bool {
+	switch value := raw.(type) {
+	case nil:
+		return false
+	case bool:
+		return value
+	case float64:
+		return value != 0
+	case string:
+		return value != ""
+	case []any:
+		return len(value) > 0
+	case map[string]any:
+		return len(value) > 0
+	}
+	return true
 }

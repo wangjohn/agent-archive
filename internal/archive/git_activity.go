@@ -109,42 +109,6 @@ var (
 	ghAutoMergeFlag   = regexp.MustCompile(`(?:^|\s)--auto(?:\s|$)`)
 )
 
-// deriveGitActivity lists the git and pull request work the session's calls
-// confirmed, in transcript order, capped at MaxGitActivity, and counts all of
-// it. A call counts only when a result was linked to it, the result is not
-// an error, and its output shows the effect (a commit's SHA, a push's ref
-// update, a pull request's URL, a merge's confirmation): an attempt that
-// failed, was rejected, changed nothing, or was a dry run is not an event.
-func deriveGitActivity(bundle SourceBundle, calls []NormalizedToolCall) ([]GitEvent, gitCounts) {
-	var events []GitEvent
-	for _, call := range calls {
-		if call.ResultRecordIndex == nil || (call.IsError != nil && *call.IsError) {
-			continue
-		}
-		name := callToolName(call)
-		var found []GitEvent
-		if server, tool, ok := mcpServerTool(name); ok {
-			found = mcpGitEvents(server, tool, call)
-		} else if command := shellCommandText(name, call); command != "" {
-			found = shellGitEvents(command, call.resultText, recordBranch(bundle, call.RecordIndex))
-		}
-		at := recordTime(bundle, *call.ResultRecordIndex)
-		for i := range found {
-			found[i].At = at
-		}
-		events = append(events, found...)
-	}
-	fillMergedFromCreated(events)
-	var counts gitCounts
-	for _, event := range events {
-		counts.add(event.Kind)
-	}
-	if len(events) > MaxGitActivity {
-		events = events[:MaxGitActivity]
-	}
-	return events, counts
-}
-
 // mcpServerTool splits an MCP tool name, mcp__<server>__<tool>.
 func mcpServerTool(name string) (server, tool string, ok bool) {
 	rest, ok := strings.CutPrefix(name, mcpToolPrefix)
@@ -161,42 +125,7 @@ func mcpServerTool(name string) (server, tool string, ok bool) {
 // shellCommandText is the command a shell call ran, as toolSummary reads it,
 // or a Codex exec script whole (its exec_command calls are in it). "" for
 // any other call.
-func shellCommandText(name string, call NormalizedToolCall) string {
-	lower := strings.ToLower(name)
-	if shellToolNames[lower] {
-		if command := argumentText(call.Input, "command", "cmd"); command != "" {
-			return command
-		}
-		return argumentText(call.raw, "command")
-	}
-	if lower == "exec" {
-		if script, ok := call.raw["input"].(string); ok {
-			return script
-		}
-	}
-	return ""
-}
-
-// recordBranch is the branch a Claude Code record says the session was on,
-// or "" when it names none or one outside the published shape.
-func recordBranch(bundle SourceBundle, index int) string {
-	if index < 0 || index >= len(bundle.NativeRecords) {
-		return ""
-	}
-	return validBranch(firstString(bundle.NativeRecords[index], "gitBranch"))
-}
-
-// recordTime is the timestamp of one native record, or nil when it has none.
-func recordTime(bundle SourceBundle, index int) *time.Time {
-	if index < 0 || index >= len(bundle.NativeRecords) {
-		return nil
-	}
-	at := parseNativeTimestamp(bundle.NativeRecords[index])
-	if at.IsZero() {
-		return nil
-	}
-	return &at
-}
+func shellCommandText(_ string, call NormalizedToolCall) string { return call.ShellCommand }
 
 // shellGitEvents reads the events one shell command confirmed. The command
 // only gates which outputs are read; the evidence is the output, so a
@@ -432,28 +361,6 @@ func validBranch(branch string) string {
 	return branch
 }
 
-// parsePRNumber reads a pull request number written as decimal digits, as a
-// pull request URL has it, for filter 13's pr-link. False when it is not all
-// digits or is outside 1 to maxPRNumber. (pullRequestEvent keeps its own
-// reading, which also takes a leading "+" from an MCP call's argument.)
-func parsePRNumber(digits string) (int, bool) {
-	if digits == "" || strings.Trim(digits, "0123456789") != "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(digits)
-	return n, err == nil && n >= 1 && n <= maxPRNumber
-}
-
-// splitRepository splits "owner/name" into its parts when both have the
-// published shape (repoPartPattern), as a git_activity repository does.
-func splitRepository(repository string) (owner, name string, ok bool) {
-	owner, name, found := strings.Cut(repository, "/")
-	if !found || !repoPartPattern.MatchString(owner) || !repoPartPattern.MatchString(name) {
-		return "", "", false
-	}
-	return owner, name, true
-}
-
 // pullRequestEvent builds a pull request event from a parsed URL's parts,
 // rebuilding the URL from them. False when a part is out of shape.
 func pullRequestEvent(kind GitEventKind, host, owner, name, number string) (GitEvent, bool) {
@@ -535,12 +442,12 @@ const (
 // create_or_update_file). Other tools, including enable_pr_auto_merge,
 // yield nothing.
 func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
-	result := decodeObject(call.resultText)
+	result := decodeObject(call.ResultText)
 	owner, name := firstString(call.Input, "owner"), firstString(call.Input, "repo")
 	githubServer := strings.Contains(strings.ToLower(server), "github")
 	switch gitHubMCPTool(tool) {
 	case mcpCreatePullRequest:
-		event, ok := mcpPullRequest(GitEventPRCreated, call.resultText, result, owner, name, numberText(result["number"]), githubServer)
+		event, ok := mcpPullRequest(GitEventPRCreated, call.ResultText, result, owner, name, numberText(result["number"]), githubServer)
 		if !ok {
 			return nil
 		}
@@ -551,7 +458,7 @@ func mcpGitEvents(server, tool string, call NormalizedToolCall) []GitEvent {
 		// must say the merge succeeded.
 		merged, flagged := result["merged"].(bool)
 		if !flagged {
-			merged = strings.Contains(strings.ToLower(call.resultText), "successfully merged")
+			merged = strings.Contains(strings.ToLower(call.ResultText), "successfully merged")
 		}
 		if !merged {
 			return nil
@@ -665,4 +572,34 @@ func numberText(value any) string {
 		return v
 	}
 	return ""
+}
+
+func deriveAnalyzedGitActivity(calls []NormalizedToolCall) ([]GitEvent, gitCounts) {
+	var events []GitEvent
+	for _, call := range calls {
+		if call.ResultRecordIndex == nil || (call.IsError != nil && *call.IsError) {
+			continue
+		}
+		name := callToolName(call)
+		var found []GitEvent
+		if server, tool, ok := mcpServerTool(name); ok {
+			found = mcpGitEvents(server, tool, call)
+		} else if command := shellCommandText(name, call); command != "" {
+			found = shellGitEvents(command, call.ResultText, call.RecordedBranch)
+		}
+		at := call.ResultAt
+		for i := range found {
+			found[i].At = at
+		}
+		events = append(events, found...)
+	}
+	fillMergedFromCreated(events)
+	var counts gitCounts
+	for _, event := range events {
+		counts.add(event.Kind)
+	}
+	if len(events) > MaxGitActivity {
+		events = events[:MaxGitActivity]
+	}
+	return events, counts
 }

@@ -1,6 +1,7 @@
 package doclinks
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,7 +31,7 @@ func TestVersionsDocMatchesCode(t *testing.T) {
 	}
 	want := map[string]string{
 		"Filter":          archive.FilterVersion,
-		"Adapter":         archive.ClaudeAdapter{}.Version(),
+		"Adapter":         claude.Filter{}.Version(),
 		"Parser":          archive.DefaultParserVersion,
 		"Source schema":   strconv.Itoa(archive.SourceSchemaVersion),
 		"Metadata schema": strconv.Itoa(archive.MetadataSchemaVersion),

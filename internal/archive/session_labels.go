@@ -28,113 +28,6 @@ type Labels struct {
 	PullRequests []PullRequestLink
 }
 
-// SessionLabels derives name, title, branch and pull requests from a filtered
-// bundle. BuildMetadata and the handoff picker's local rows both use it, so a
-// session carries the same labels before and after it is published. ok
-// reports whether the transcript holds a prompt from the person (a text
-// transcript is taken to); false when the bundle cannot be parsed.
-func SessionLabels(bundle SourceBundle) (Labels, bool) {
-	view, err := ParseNormalized(bundle)
-	if err != nil {
-		return Labels{}, false
-	}
-	hasPrompt := len(bundle.NativeText) > 0
-	for _, turn := range view.Turns {
-		if turn.Kind == TurnKindHumanPrompt {
-			hasPrompt = true
-			break
-		}
-	}
-	return deriveLabels(bundle, view), hasPrompt
-}
-
-// deriveLabels is SessionLabels for a bundle already parsed into view, so
-// BuildMetadata does not parse a transcript twice.
-func deriveLabels(bundle SourceBundle, view NormalizedView) Labels {
-	return Labels{
-		Name:         deriveSessionName(bundle),
-		Title:        deriveSessionTitle(view, bundle.NativeText, bundle.harness() == "cursor"),
-		Branch:       deriveBranch(bundle),
-		PullRequests: derivePullRequests(bundle),
-	}
-}
-
-// deriveSessionName is the last custom-title a Claude Code transcript holds
-// (the person can rename a session, and every name is kept), or a Cursor
-// chat's name from its session record, collapsed like a title. A Claude Code
-// subagent has no name of its own: its name is the description its parent
-// gave the task, from the subagent-meta record filter 14 writes first. A
-// custom-title, which a subagent transcript does not normally hold, comes
-// later in the records and so wins over it, as a later name always does.
-// "" when there is none.
-func deriveSessionName(bundle SourceBundle) string {
-	name := ""
-	for _, record := range bundle.NativeRecords {
-		rawKind, _ := record["type"].(string)
-		switch {
-		case claudeLabelKind(rawKind) == claudeCustomTitleType:
-			if text, _ := record["customTitle"].(string); collapseSessionTitle(text) != "" {
-				name = collapseSessionTitle(text)
-			}
-		case rawKind == subagentMetaType:
-			if text, _ := record[subagentDescriptionKey].(string); collapseSessionTitle(text) != "" {
-				name = collapseSessionTitle(text)
-			}
-		case rawKind == "session" && bundle.Capture.SourceFormat == cursorComposerFormat:
-			if text, _ := record[cursorChatNameKey].(string); collapseSessionTitle(text) != "" {
-				name = collapseSessionTitle(text)
-			}
-		}
-	}
-	return name
-}
-
-// deriveBranch is the last git branch the transcript recorded, as handoff
-// reads it, when it has the shape git_activity requires. "" when none was
-// recorded, it is malformed, or it is HEAD (a detached checkout names no
-// branch).
-func deriveBranch(bundle SourceBundle) string {
-	branch := validBranch(recordedBranch(bundle))
-	if branch == "HEAD" {
-		return ""
-	}
-	return branch
-}
-
-// derivePullRequests lists the pull requests the transcript's pr-link records
-// name, in the order they were first linked, each once, at most
-// MaxPullRequests. A record whose repository or number is out of shape is
-// skipped (filter 13 drops such a record, so this only matters for a bundle
-// that did not come through it).
-func derivePullRequests(bundle SourceBundle) []PullRequestLink {
-	var links []PullRequestLink
-	seen := map[PullRequestLink]bool{}
-	for _, record := range bundle.NativeRecords {
-		if kind, _ := record["type"].(string); claudeLabelKind(kind) != claudePRLinkType {
-			continue
-		}
-		repository, _ := record["prRepository"].(string)
-		owner, name, ok := splitRepository(repository)
-		number, numberOK := claudePRNumber(record["prNumber"])
-		if !ok || !numberOK {
-			continue
-		}
-		link := PullRequestLink{Repository: repository, Number: number}
-		if seen[link] {
-			continue
-		}
-		seen[link] = true
-		if url, _ := record["prUrl"].(string); url == claudePRURL(owner, name, number) {
-			link.URL = url
-		}
-		links = append(links, link)
-		if len(links) == MaxPullRequests {
-			break
-		}
-	}
-	return links
-}
-
 // DisplayTitle is what a row shows for a session: the name its harness gave
 // it, else the first prompt's preview. "" when it has neither.
 func DisplayTitle(m Metadata) string {
@@ -158,4 +51,38 @@ func LatestPR(m Metadata) (PullRequestLink, bool) {
 		}
 	}
 	return PullRequestLink{}, false
+}
+
+// LabelsFromAnalysis derives presentation from one already computed analysis.
+func LabelsFromAnalysis(analysis Analysis) (Labels, bool) {
+	view, facts := analysis.View, analysis.Facts
+	hasPrompt := facts.Text
+	title := facts.TextTitle
+	for _, turn := range view.Turns {
+		if turn.Kind == TurnKindHumanPrompt {
+			hasPrompt = true
+			if title == "" {
+				title = collapseSessionTitle(turn.Text)
+			}
+		}
+	}
+	branch := validBranch(facts.Branch)
+	if branch == "HEAD" {
+		branch = ""
+	}
+	var links []PullRequestLink
+	seen := map[PullRequestLink]bool{}
+	for _, link := range facts.PullRequests {
+		key := link
+		key.URL = ""
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		links = append(links, link)
+		if len(links) == MaxPullRequests {
+			break
+		}
+	}
+	return Labels{Name: collapseSessionTitle(facts.Name), Title: title, Branch: branch, PullRequests: links}, hasPrompt
 }

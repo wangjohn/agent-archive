@@ -10,6 +10,35 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- **`agent-archive eval export`** prints archived sessions for an evaluation
+  tool: one JSON line per session, in a versioned format
+  ([`schemas/eval-export.schema.json`](schemas/eval-export.schema.json)).
+  `--detail metadata` reads only metadata sidecars and prints identity,
+  commits (`git_head`), counts, tokens, tools, and outcome; `--detail full`
+  (the default) adds every filtered human prompt in order, the final
+  response, the edited files, and feedback. A session that cannot be
+  exported is an error record on its own line and the rest still print.
+  `--max-bytes` bounds each record. Read-only and never interactive. See the
+  [guide](docs/guides/eval-export.md). Export failures omit private decoder
+  details, reject mismatched session identities, and report failed output
+  writes; size limits include escaped display controls and preserve whole
+  UTF-8 characters at the text floor. Decoded sidecars with missing or null
+  model attributes are rejected; model, tool and MCP name limits count
+  Unicode characters, matching the published schema. Malformed HTTPS URLs
+  in Git activity produce a `read_failed` error at either detail without
+  exposing the invalid URL.
+- `eval export` also works without setup, on this machine's transcripts:
+  `--file PATH --harness NAME` for one, and `--scan` for every transcript
+  backfill would find (with its `--harness`, `--project`, `--since`, and
+  `--until` filters). It never creates the data directory. `--ids-from -`
+  reads session IDs and transcript paths from standard input, and
+  `--workers N` exports several sessions at once, writing each record as it
+  finishes. Local records carry the transcript's path and project folder,
+  and no commit, replay marker, or feedback. Original native start times
+  are preserved, native identities come from filtered records, local decoder
+  errors omit private details, and failed
+  output cancels further source reads.
+
 - **Replay sessions stay out of your history.** A tool that replays archived
   tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
   agents it runs; the sessions its runs produce are captured as usual but
@@ -19,6 +48,15 @@ Planned for v0.2.0. This release has not been tagged or published.
   show them, marked `[replay]` in the table. `show ID` opens one as usual,
   and `status --json` counts them per app in `replay_sessions`. See
   [JSON output](docs/reference/json-output.md#replay-sessions).
+
+- Codex-only blanket policy and admission consumers retain one explicit scope
+  across current and future physical projects, independently of discovery.
+  Fresh hook/discovery starts keep immutable local proof and current exclusion/
+  destination checks; new projects never grow configuration. Scope-capable
+  configuration uses the incompatible `codex-scope-floor-v3` writer fence,
+  including disabled history. Scope and source generations retain immutable
+  start floors; invalid clock transitions refuse atomically.
+  Public selection remains in the activation change.
 
 - Disabled Codex discovery machinery performs bounded source scans before
   storage access and reopens admitted sources within approved roots. Identity

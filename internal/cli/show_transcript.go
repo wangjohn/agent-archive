@@ -33,8 +33,12 @@ const (
 )
 
 // buildTranscript arranges a verified bundle for reading.
-func buildTranscript(bundle archive.SourceBundle) (archive.Transcript, error) {
-	return archive.BuildTranscript(bundle, archive.HandoffOptions{ToolResultLines: transcriptResultLines, ToolResultBytes: transcriptResultBytes})
+func buildTranscript(ctx context.Context, deps any, bundle archive.SourceBundle) (archive.Transcript, error) {
+	analysis, err := analyzeSource(ctx, parsersFor(deps), bundle)
+	if err != nil {
+		return archive.Transcript{}, err
+	}
+	return archive.BuildTranscriptWithAnalysis(bundle, analysis, archive.HandoffOptions{ToolResultLines: transcriptResultLines, ToolResultBytes: transcriptResultBytes})
 }
 
 // renderTranscript writes `show --transcript`: a short header, then each

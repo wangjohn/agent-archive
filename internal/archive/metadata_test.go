@@ -38,14 +38,14 @@ func TestSummarizeTurnsDeduplicatesStreamedAssistantAndSortsModels(t *testing.T)
 func TestStructuredCountsKeepsMissingTokensUnknownAndPrefersCompactionBoundaries(t *testing.T) {
 	t.Parallel()
 	view := NormalizedView{CompactBoundaries: 2, CompactSummaries: 3}
-	counts := structuredCounts(SourceBundle{}, view, 1, 2, 3)
+	counts := analyzedCounts(Analysis{View: view, Observability: Observability{StructuredCounts: Availability{State: AvailabilityAvailable}}}, 1, 2, 3)
 	if counts.InputTokens != nil || counts.OutputTokens != nil || counts.Compactions != nil {
 		t.Fatalf("unexpected unobserved counts: %#v", counts)
 	}
 	// A Claude bundle from a version that observes compactions must count
 	// boundaries rather than counting both the boundary and summary records.
-	bundle := SourceBundle{Capture: SourceCapture{Harness: Harness{Name: "claude"}, FilterVersion: FilterVersion}}
-	counts = structuredCounts(bundle, view, 1, 2, 3)
+	analysis := Analysis{View: view, Observability: Observability{StructuredCounts: Availability{State: AvailabilityAvailable}, Compactions: Availability{State: AvailabilityAvailable}}}
+	counts = analyzedCounts(analysis, 1, 2, 3)
 	if counts.Compactions == nil || *counts.Compactions != 2 {
 		t.Fatalf("compactions = %v", counts.Compactions)
 	}

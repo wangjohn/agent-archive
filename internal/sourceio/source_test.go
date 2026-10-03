@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
@@ -216,7 +217,7 @@ func TestRefusedFilterRetainsReadFailure(t *testing.T) {
 	fault := errors.New("synthetic transient read fault")
 	in := snap.Input()
 	in.File = failedReadInput{FileInput: in.File, fault: fault}
-	_, err = FilterJSONL(t.Context(), in, agentapi.FilterContext{}, archive.CodexAdapter{}.FilterJSONL)
+	_, err = FilterJSONL(t.Context(), in, agentapi.FilterContext{}, nativecodec.CodexAdapter{}.FilterJSONL)
 	if !errors.Is(err, fault) || !agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.Deterministic(err) {
 		t.Fatalf("filter refusal hid retryable read: %v", err)
 	}
