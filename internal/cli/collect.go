@@ -155,7 +155,11 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recoveryBudget = remaining / 2
 	}
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
-	if _, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4)); recoveryErr != nil && (!errors.Is(recoveryErr, context.DeadlineExceeded) || ctx.Err() != nil) {
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
+	if recoveryErr != nil {
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
@@ -189,8 +193,11 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		CursorDatabase:       env.cursorDatabase(),
 		RepoKey:              env.repoKey,
 	})
-	// Collector status replaces its previous LastErrors. Restore discovery's
-	// preflight failure even when collection itself returns an error.
+	// Collector status replaces its previous LastErrors. Restore local
+	// preflight failures even when collection itself returns an error.
+	if recoveryErr != nil {
+		addStatusProblem(localStore, recoveryErr.Error())
+	}
 	if discoveryErr != nil {
 		addStatusProblem(localStore, discoveryErr.Error())
 	}

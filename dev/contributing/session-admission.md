@@ -82,7 +82,11 @@ Valid continuation updates retain identity and do not change the revision.
 Recorded membership evidence that disappears stays uncertain rather than
 becoming a legacy store again.
 
-The scheduled allowance is at most four seconds; the CLI reserves checkpoint
+The scheduled application allowance is at most four seconds and starts after
+complete registration validation and fingerprinting. One deadline charges all
+application phases, including later phase inventories and checkpoints. The
+caller context bounds the entire stage separately; if complete validation
+cannot finish within it, recovery stays uncertified. The CLI reserves checkpoint
 time and publication time within its existing soft/hard budgets. Complete
 inventory reads and one in-flight atomic operation can exceed an allowance on
 slow storage, so this is a measured scheduling target rather than an arbitrary

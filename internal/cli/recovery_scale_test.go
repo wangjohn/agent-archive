@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,28 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
+
+func TestCollectPassPreservesRecoveryFailureWhilePublishingAdmittedSession(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	home, env, _ := collectFixture(t, now)
+	if err := os.WriteFile(filepath.Join(home, "session-membership.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runPass(env, false, passOptions{})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("admitted publication under failed recovery: %#v %v", result, err)
+	}
+	status, err := state.OpenReadOnly(home).LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, problem := range status.LastErrors {
+		if strings.Contains(problem, state.ErrSessionIndexRecoveryRequired.Error()) {
+			return
+		}
+	}
+	t.Fatalf("collector erased recovery diagnostic: %q", status.LastErrors)
+}
 
 // This explicit scale gate uses a synthetic home and an in-memory bucket. It
 // exercises the real CLI ordering with 100k authoritative registrations, so

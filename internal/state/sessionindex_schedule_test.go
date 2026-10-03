@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -24,6 +25,50 @@ func seedRecoveryInventory(t *testing.T, s *Store, count int) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestScheduledRecoveryApplicationAllowanceFollowsValidatedCensus(t *testing.T) {
+	s := newTestStore(t)
+	seedRecoveryInventory(t, s, 2)
+	absent := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "slow-census-unowned"}
+	if err := s.RequestSessionIndexRecovery(absent); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		censuses := 0
+		s.onIndexStep = func(step string) error {
+			if step == "recovery-enumerated" {
+				censuses++
+				// Model complete validation costing more than application's
+				// allowance while remaining inside the whole-stage context.
+				time.Sleep(2 * time.Second)
+			}
+			return nil
+		}
+		complete := false
+		for attempts := 0; attempts < 3 && !complete; attempts++ {
+			var err error
+			complete, err = s.RecoverSessionIndexScheduled(ctx, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !complete || censuses != 1 {
+			t.Fatalf("validated census consumed application progress: complete=%v censuses=%d", complete, censuses)
+		}
+		for i := range 2 {
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: fmt.Sprintf("native-%04d", i)}
+			id, found, err := s.ArchiveSessionID(key)
+			if err != nil || !found || id != fmt.Sprintf("owner-%04d", i) {
+				t.Fatalf("owner application: %q %v %v", id, found, err)
+			}
+		}
+		if yes, err := s.SessionIndexAbsent(absent); !yes || err != nil {
+			t.Fatalf("complete absence proof: %v %v", yes, err)
+		}
+	})
 }
 
 func TestScheduledRecoveryResumesAndDelaysAbsence(t *testing.T) {

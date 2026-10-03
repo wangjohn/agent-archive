@@ -81,7 +81,6 @@ func (s *Store) RecoverSessionIndexScheduled(ctx context.Context, allowance time
 }
 
 func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Duration) (bool, error) {
-	started := time.Now()
 	cursor, complete, err := s.prepareRecoveryCursor(ctx)
 	if err != nil || complete {
 		return complete, err
@@ -102,7 +101,10 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 		cursor.Revision, cursor.Inventory = revision, fingerprint
 		cursor.Phase, cursor.Offset, cursor.PhaseInventory = 0, 0, ""
 	}
-	deadline := started.Add(allowance)
+	// Complete registration validation is mandatory before application. Charge
+	// one aggregate application allowance after that census; the caller's
+	// context independently bounds the whole recovery stage.
+	deadline := time.Now().Add(allowance)
 	if cursor.Phase == 0 {
 		if cursor.Offset > len(keys) {
 			cursor.Offset = 0
