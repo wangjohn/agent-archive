@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 Planned for v0.2.0. This release has not been tagged or published.
 
+### Fixed
+
+- Before-setup handoff launch files use a private temporary namespace per user,
+  so users sharing a temporary directory do not block one another. Reuse and
+  seven-day cleanup check ownership as well as permissions and reject symlinks.
+
 ### Added
 
 - **`agent-archive eval export`** prints archived sessions for an evaluation
@@ -142,6 +148,14 @@ Planned for v0.2.0. This release has not been tagged or published.
   refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
+
+- Second-machine setup commands preserve excluded folders and reincluded
+  subtrees, including when a repository checkout moves to another path.
+  Scope transfer resolves all rules before applying any inclusion, treats
+  symlink aliases as the same scope, and refuses conflicts with saved
+  destination exclusions or reinclusions. Distinct clones retain separate
+  scopes, unresolved symlinks are refused, and pairing rejects ordinary
+  scope-transfer flags.
 
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.

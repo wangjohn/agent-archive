@@ -58,3 +58,9 @@ Experimental revocation journals and operation objects follow
 per-key provider outcomes and optional explicitly unverified request selectors,
 never secret values or deletion authority copied
 from bucket claims. Operator proofs are private inputs; they are not uploaded.
+
+Second-machine capture scope follows
+[`project-scope.schema.json`](../../schemas/project-scope.schema.json), a local
+input to `setup --project-scope`. It preserves inclusion and exclusion decisions
+as a single transfer. Repository matching and resolved-path containment are
+runtime checks beyond the JSON schema; these rules are not uploaded.

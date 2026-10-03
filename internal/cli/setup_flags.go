@@ -47,6 +47,7 @@ type setupOptions struct {
 	apps                   string
 	projects               []string
 	projectRepos           []string
+	projectScope           string
 	projectMatches         *projectMatchResult
 	yes                    bool
 	verbose                bool
@@ -133,6 +134,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
 	fs.Var(&projectRepos, "project-repo", "repository key to capture (repeatable; unresolved or ambiguous keys are skipped)")
+	fs.StringVar(&opts.projectScope, "project-scope", "", "portable JSON capture rules, including exclusions")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -161,7 +163,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScope != "" || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -377,6 +379,9 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 				}
 			}
 		}
+	}
+	if opts.projectScope != "" {
+		problems = append(problems, setupProjectScope(&cfg, opts.projectScope, userHome, env)...)
 	}
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
