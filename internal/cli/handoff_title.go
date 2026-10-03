@@ -136,6 +136,8 @@ type handoffQueryResolver struct {
 	scope sessionScope
 	// archive is the archive's top-level sessions, read once (archiveRead).
 	archive []handoffPickerRow
+	// replays are available to explicit short IDs, never to title search.
+	replays []handoffPickerRow
 	// subagents are the archive's subagent sessions, read with archive.
 	subagents   []handoffPickerRow
 	archiveRead bool
@@ -182,6 +184,16 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 		rows, _, truncated := picker.rows(regs, nil, handoffTitleScanLimit)
 		stop()
 		local, scanned = rows, truncated
+	}
+	// The picker hides replays, but the short ID list displays still names
+	// one explicitly. Its identity needs no transcript read to resolve.
+	for _, reg := range regs {
+		if reg.Replay != nil && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
+			local = append(local, handoffPickerRow{metadata: archive.Metadata{
+				SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID,
+				Harness: reg.Harness, Replay: reg.Replay,
+			}})
+		}
 	}
 	if exact := r.exactID(local); len(exact) > 0 {
 		return r.choose(exact)
@@ -273,7 +285,7 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 	}
 	// archiveRows reads r.subagents too, so it runs before they are read.
 	top := r.archiveRows()
-	return exact(append(slices.Clone(top), r.subagents...))
+	return exact(append(append(slices.Clone(top), r.subagents...), r.replays...))
 }
 
 // within keeps the rows in the scope.
@@ -287,7 +299,7 @@ func (r *handoffQueryResolver) within(rows []handoffPickerRow) []handoffPickerRo
 // ID wins outright.
 func (r *handoffQueryResolver) match(rows []handoffPickerRow) []handoffPickerRow {
 	rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
-		return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)] || archivedWithoutPrompt(row.metadata)
+		return row.metadata.IsReplay() || r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)] || archivedWithoutPrompt(row.metadata)
 	})
 	return matchPool(rows, r.q, func(row handoffPickerRow) sessionFields {
 		return fieldsOf(row.metadata, sessionProjectName(row.metadata, r.labels))
@@ -358,7 +370,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness, Replays: reader.ReplaysHidden}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		r.archiveErr = err
@@ -366,6 +378,10 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 	}
 	for _, m := range sessions {
 		row := handoffPickerRow{metadata: m, active: lastActivity(m)}
+		if m.IsReplay() {
+			r.replays = append(r.replays, row)
+			continue
+		}
 		if m.ParentSessionID == "" {
 			r.archive = append(r.archive, row)
 		} else {
