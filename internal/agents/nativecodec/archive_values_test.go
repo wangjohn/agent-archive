@@ -614,7 +614,7 @@ func deriveGitActivity(calls []NormalizedToolCall) []GitEvent {
 }
 
 func textTranscriptExchanges(texts []TextTranscript) ([]HandoffExchange, string) {
-	a := archive.Analysis{Facts: archive.NativeFacts{Text: true}}
+	a := archive.Analysis{Facts: archive.NativeFacts{Text: true, TextOnly: true}}
 	b := archive.SourceBundle{NativeText: texts}
 	parseText(&a, b)
 	h, err := archive.BuildHandoffWithAnalysis(b, a, nil, HandoffOptions{})
@@ -627,7 +627,7 @@ func textTranscriptExchanges(texts []TextTranscript) ([]HandoffExchange, string)
 func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
 	a := archive.Analysis{View: view}
 	if len(texts) > 0 {
-		parseText(&a, SourceBundle{NativeText: texts})
+		parseText(&a, SourceBundle{Capture: SourceCapture{Harness: Harness{Name: "cursor"}}, NativeText: texts})
 	}
 	labels, _ := archive.LabelsFromAnalysis(a)
 	return labels.Title

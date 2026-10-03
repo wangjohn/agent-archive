@@ -23,16 +23,33 @@ func (d unreadableExtensionDiscovery) DiscoveryAgents() []string {
 }
 
 func (d unreadableExtensionDiscovery) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
-	if name == "orbifold" {
+	if name == "orbifold" || name == "orbit" {
 		return d, true
 	}
 	return d.DiscoveryLookup.LookupDiscovery(name)
+}
+
+func (d unreadableExtensionDiscovery) CanonicalDiscovery(name string) (string, bool) {
+	if name == "orbit" || name == "orbifold" {
+		return "orbifold", true
+	}
+	return d.DiscoveryLookup.CanonicalDiscovery(name)
 }
 
 func (unreadableExtensionDiscovery) DefaultDirectories(string) []string { return nil }
 
 func (unreadableExtensionDiscovery) Discover(context.Context, agentapi.DiscoveryRequest, func(agentapi.DiscoveryCandidate) error) (agentapi.DiscoveryReport, error) {
 	return agentapi.DiscoveryReport{StoreUnreadable: true, Incomplete: true}, nil
+}
+
+func TestExtensionAliasUnreadableStoreIsNamed(t *testing.T) {
+	t.Parallel()
+	env := newTree(t).env()
+	env.Discovery = unreadableExtensionDiscovery{env.Discovery}
+	p := plan(t, env, nil, config.Config{}, Filters{Harnesses: []string{"orbit"}})
+	if strings.Join(p.UnreadableStores, ",") != "orbifold" || strings.Join(p.Filters.Harnesses, ",") != "orbifold" {
+		t.Fatalf("alias identity/warning lost: %+v", p)
+	}
 }
 
 func TestExtensionUnreadableStoreIsNamed(t *testing.T) {

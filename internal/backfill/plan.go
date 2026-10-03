@@ -170,7 +170,9 @@ func markDuplicates(group []*work) {
 // BuildPlan finds every session on this machine and decides, for each, whether it
 // is imported or why not. It writes nothing.
 func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg config.Config, filters Filters) (Plan, error) {
-	if err := filters.Validate(env.Discovery); err != nil {
+	var err error
+	filters, err = filters.Canonicalize(env.Discovery)
+	if err != nil {
 		return Plan{}, err
 	}
 	now := env.now()

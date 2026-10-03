@@ -88,6 +88,9 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	}
 	address, detail := storageAddress(cfg.Storage)
 	rows = append(rows, reviewRow{label: "Storage", values: []string{address}, detail: detail})
+	if cfg.MachineAssignment != nil && cfg.MachineAssignment.Kind == config.MachineAssignmentR2Own {
+		rows = append(rows, reviewRow{label: "R2 keys", values: []string{fmt.Sprintf("Own dedicated key · %d unused spares (target %d)", len(cfg.SpareCredentialRefs), cfg.SpareTarget())}})
+	}
 	days := fmt.Sprintf("%d days", cfg.RetentionDays)
 	if cfg.RetentionDays == 1 {
 		days = "1 day"

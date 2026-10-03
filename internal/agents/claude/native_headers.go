@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -17,8 +18,21 @@ type NativeHeaders struct{}
 
 // InspectHeader preserves import compatibility and stricter native selection.
 func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
-	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects {
+	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects && r.Purpose != agentapi.DiscoveryBoundedProjects {
 		return agentapi.NativeHeader{}, fmt.Errorf("invalid native header request")
+	}
+	if r.Purpose == agentapi.DiscoveryBoundedProjects {
+		var h agentapi.NativeHeader
+		var decodeErr error
+		scanErr := r.Scan(func(line []byte) bool {
+			var v struct {
+				Cwd string `json:"cwd"`
+			}
+			decodeErr = json.Unmarshal(line, &v)
+			h.Directory = v.Cwd
+			return false
+		})
+		return h, errors.Join(decodeErr, scanErr)
 	}
 	stem := strings.TrimSuffix(filepath.Base(r.Path), ".jsonl")
 	if r.Purpose != agentapi.DiscoveryHandoff {
@@ -27,7 +41,8 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 			var v struct {
 				Cwd string `json:"cwd"`
 			}
-			if json.Unmarshal(line, &v) == nil && v.Cwd != "" {
+			decodeErr := json.Unmarshal(line, &v)
+			if decodeErr == nil && v.Cwd != "" {
 				h.Directory = v.Cwd
 				return false
 			}
@@ -80,7 +95,7 @@ func (p NativeHeaders) Roots(l agentapi.NativeLocations, purpose agentapi.Discov
 	}
 	var out []agentapi.NativeStoreRoot
 	for _, dir := range dirs {
-		out = append(out, agentapi.NativeStoreRoot{Harness: "claude", Path: filepath.Join(dir, "projects"), Depth: 1, Recursive: false, Prefix: "", Suffix: ".jsonl"})
+		out = append(out, agentapi.NativeStoreRoot{Harness: "claude", Path: filepath.Join(dir, "projects"), Depth: 1, Recursive: purpose == agentapi.DiscoveryBoundedProjects, Prefix: "", Suffix: ".jsonl"})
 	}
 	return out
 }

@@ -226,6 +226,23 @@ func (f Filters) Validate(discovery agentapi.DiscoveryLookup) error {
 	return nil
 }
 
+// Canonicalize resolves external names to the declared discovery identities.
+// It returns a copy so caller-owned flag slices are never changed.
+func (f Filters) Canonicalize(discovery agentapi.DiscoveryLookup) (Filters, error) {
+	if err := f.Validate(discovery); err != nil {
+		return Filters{}, err
+	}
+	f.Harnesses = append([]string(nil), f.Harnesses...)
+	for i, name := range f.Harnesses {
+		canonical, ok := discovery.CanonicalDiscovery(name)
+		if !ok {
+			return Filters{}, fmt.Errorf("historical identity unavailable for %q", name)
+		}
+		f.Harnesses[i] = canonical
+	}
+	return f, nil
+}
+
 // harness is an app whose sessions backfill imports, by the name the archive
 // uses for it.
 type harness string

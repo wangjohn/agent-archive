@@ -291,6 +291,12 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   independently of `--project`; ambiguous, excluded, or incomplete matches
   are skipped. See [repository matching](../guides/multiple-machines.md#repository-matching-in-setup-commands)
   for discovery limits.
+- `--prefix PREFIX` sets the folder inside the bucket, including when changing
+  only that setting on an existing installation.
+- `--retention-days DAYS` sets retention from 1 to 36500 days.
+- `--require-skill-use` captures only sessions that use skills;
+  `--no-require-skill-use` captures sessions with or without skills. Omitted
+  settings keep their saved values (fresh setup captures both).
 - `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
   setup defaults to `metadata`; an older configuration without the field
   retains `body` until changed.
@@ -597,16 +603,26 @@ instead.
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
 Setup's last line, after the import offer, is the command that sets up another machine with the same
-storage, apps and projects ([without questions](#set-up-without-questions)),
+storage, capture rules, agent skill installation policy, apps and projects
+([without questions](#set-up-without-questions)),
 ready to copy:
 
 ```text
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --project ~/code/app
+  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/code/app
 ```
 
-Projects in your home folder are written from `~`. For R2 the command never
+Whole repositories with a known origin use `--project-repo` for bounded
+[repository matching](../guides/multiple-machines.md#repository-matching-in-setup-commands).
+Other project paths in your home folder are written from `~`; adjust those
+paths for the new machine. For R2 the command never
 carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
-`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. `--yes` has
-no option for the folder inside the bucket, so when you changed it, setup
-adds a line saying to set it there with `agent-archive setup`.
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other machine first. The command
+carries the saved folder with `--prefix`, retention, skill-use capture rule,
+effective skill evidence mode, and whether agent skills are installed.
+Omitting these flags from a scripted reconfiguration keeps the saved settings.
+
+For another machine, the encrypted shared-key beta can transfer settings through
+`setup --pair` or `setup --pair-file PATH`. Read [Multiple machines](../guides/multiple-machines.md)
+for separate bundle/code delivery, destination consent, scope review, and the
+shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.

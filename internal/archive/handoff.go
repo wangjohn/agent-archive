@@ -859,7 +859,7 @@ func BuildHandoffWithAnalysis(bundle SourceBundle, analysis Analysis, metadata *
 	var plan []HandoffPlanItem
 	var files []string
 	toolResultsUnavailable := !analysis.Observability.ToolResults.Available()
-	if analysis.Facts.Text {
+	if analysis.Facts.TextOnly {
 		// A Cursor text transcript: role sections, no records to walk.
 		exchanges, leftOff = textTurnsExchanges(view.Turns, opts)
 		toolResultsUnavailable = false

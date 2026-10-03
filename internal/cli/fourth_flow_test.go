@@ -42,7 +42,7 @@ func fourthRegistry(t *testing.T, ports *orbifold.Ports) *builtin.Registry {
 		integration.Descriptor = agentmeta.Descriptor{ID: d.ID}
 		integrations = append(integrations, integration)
 	}
-	descriptors = append(descriptors, agentmeta.Descriptor{ID: orbifold.ID, DisplayName: "Orbifold fixture"})
+	descriptors = append(descriptors, agentmeta.Descriptor{ID: orbifold.ID, Aliases: []string{"orbit"}, DisplayName: "Orbifold fixture"})
 	catalog, err := agentmeta.New(descriptors)
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +362,7 @@ func TestFourthOrdinarySetupInventory(t *testing.T) {
 	if len(cfg.Harnesses) != 1 || cfg.Harnesses[0] != string(orbifold.ID) {
 		t.Fatalf("selection discarded injected app: %v", cfg.Harnesses)
 	}
-	if !slices.Contains(installedApps(env.setupNames(), config.Config{}, true), string(orbifold.ID)) {
+	if !slices.Contains(installedApps(config.Config{}, true, env.agentRegistry()), string(orbifold.ID)) {
 		t.Fatal("legacy installed inventory discarded injected app")
 	}
 	userHome := t.TempDir()
@@ -494,5 +494,65 @@ func TestFourthOrdinarySetupStatusAndUninstallCommands(t *testing.T) {
 	}
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestFourthAliasOrdinaryBackfill(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	ports := &orbifold.Ports{Generation: 1}
+	registry := fourthRegistry(t, ports)
+	root := filepath.Join(userHome, ".orbifold", "constellations")
+	must(t, os.MkdirAll(root, 0700))
+	raw, err := json.Marshal(orbifold.NativePulse{PulseKind: "exchange", Speaker: orbifold.SpeakerPilot, Words: "Historical orbit", NativeIdentity: "history", Clock: at.Add(-time.Hour).Format(time.RFC3339), Landing: project})
+	must(t, err)
+	ports.Shards = [][]byte{raw}
+	writeFourthTranscript(t, root, "orbit-history.orbit", string(raw)+"\n")
+	cfg := config.Config{MachineID: "fourth", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "test-bucket", Region: "us-east-1", AWSProfile: "test"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "fourth", Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: at.Add(-2 * time.Hour)}}}}
+	must(t, config.Save(home, cfg))
+	env := testEnv(t, home, at)
+	env.UserHomeDir = func() (string, error) { return userHome, nil }
+	env.Agents = registry
+	env.Now = func() time.Time { return at }
+	for _, spelling := range []string{"orbifold", "orbit", " ORBIT "} {
+		var out, stderr bytes.Buffer
+		code := Run([]string{"backfill", "--dry-run", "--json", "--harness", spelling}, &out, &stderr, env)
+		var summary struct {
+			Filters struct {
+				Harnesses []string `json:"harnesses"`
+			} `json:"filters"`
+			Projects []struct {
+				Sessions int `json:"sessions"`
+			} `json:"projects"`
+			Skipped map[string]int `json:"skipped"`
+		}
+		must(t, json.Unmarshal(out.Bytes(), &summary))
+		total := 0
+		for _, p := range summary.Projects {
+			total += p.Sessions
+		}
+		if code != 0 || total != 1 || strings.Join(summary.Filters.Harnesses, ",") != "orbifold" || summary.Skipped["filtered_out"] != 0 {
+			t.Fatalf("--harness %q: code=%d summary=%+v stderr=%s", spelling, code, summary, stderr.String())
+		}
+	}
+}
+
+func TestFourthHistoryRepositoryMatch(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	project := filepath.Join(userHome, "relocated")
+	must(t, os.MkdirAll(filepath.Join(project, ".git"), 0700))
+	registry := fourthRegistry(t, &orbifold.Ports{})
+	nativeRoot := filepath.Join(userHome, ".orbifold", "constellations")
+	must(t, os.MkdirAll(nativeRoot, 0700))
+	raw, err := json.Marshal(orbifold.NativePulse{PulseKind: "exchange", NativeIdentity: "history-only", Landing: project})
+	must(t, err)
+	writeFourthTranscript(t, nativeRoot, "orbit-history-only.orbit", string(raw)+"\n")
+	key := archive.RepoKey("https://example.test/acme/relocated.git")
+	env := Env{Agents: registry, BackfillTempDirs: []string{}, LookupEnv: func(string) (string, bool) { return "", false }, WorkingDir: func() (string, error) { return "", nil }, repoKeyContext: func(context.Context, string) string { return key }}
+	got := matchProjects(t.Context(), env, userHome, config.Config{}, []projectMatchRequest{{RepoKey: key}})
+	if got.Incomplete || len(got.Roots) != 1 || len(got.Roots[0]) != 1 || got.Roots[0][0] != project {
+		t.Fatalf("history-only fourth clone missed: %+v", got)
 	}
 }

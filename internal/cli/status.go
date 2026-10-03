@@ -451,6 +451,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	}
 	if userHome, err := env.userHomeDir(); err == nil {
 		view.Warnings = append(view.Warnings, env.networkHomeWarnings(cfg, home, userHome)...)
+		view.Warnings = append(view.Warnings, pairingWarnings(home, env.now())...)
 	}
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {

@@ -234,7 +234,7 @@ func BuildTranscriptWithAnalysis(bundle SourceBundle, analysis Analysis, opts Ha
 	view := analysis.View
 	var exchanges []TranscriptExchange
 	toolResultsUnavailable := !analysis.Observability.ToolResults.Available()
-	if analysis.Facts.Text {
+	if analysis.Facts.TextOnly {
 		// A Cursor text transcript: role sections, read as handoff reads
 		// them.
 		handoff, _ := textTurnsExchanges(view.Turns, opts)

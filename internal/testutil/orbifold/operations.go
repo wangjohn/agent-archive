@@ -242,6 +242,9 @@ func (d Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, em
 			inspected := r.Stage == agentapi.DiscoveryIdentities
 			if inspected {
 				header, identityError = d.InspectHeader(agentapi.NativeHeaderRequest{Purpose: r.Purpose, Path: ref.Path, Scan: func(visit func([]byte) bool) error {
+					if r.Scan != nil {
+						return r.Scan(ref.Path, visit)
+					}
 					return discoveryio.ScanRecords(ctx, r.Files, ref.Path, r.HeaderBytes, r.RecordBytes, visit)
 				}})
 				id = header.NativeID

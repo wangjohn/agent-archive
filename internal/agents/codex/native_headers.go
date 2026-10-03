@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -20,8 +21,26 @@ var rolloutUUID = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 // InspectHeader preserves the native 16-record metadata compatibility scan.
 func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
-	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects {
+	if r.Scan == nil || r.Purpose != agentapi.DiscoveryImport && r.Purpose != agentapi.DiscoveryHandoff && r.Purpose != agentapi.DiscoveryProjects && r.Purpose != agentapi.DiscoveryBoundedProjects {
 		return agentapi.NativeHeader{}, fmt.Errorf("invalid native header request")
+	}
+	if r.Purpose == agentapi.DiscoveryBoundedProjects {
+		var h agentapi.NativeHeader
+		var decodeErr error
+		scanErr := r.Scan(func(line []byte) bool {
+			var v struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Cwd string `json:"cwd"`
+				} `json:"payload"`
+			}
+			decodeErr = json.Unmarshal(line, &v)
+			if v.Type == "session_meta" {
+				h.Directory = v.Payload.Cwd
+			}
+			return false
+		})
+		return h, errors.Join(decodeErr, scanErr)
 	}
 	var h agentapi.NativeHeader
 	seen := 0
@@ -39,7 +58,7 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 				Source    json.RawMessage `json:"source"`
 			} `json:"payload"`
 		}
-		if json.Unmarshal(line, &v) != nil || v.Type != "session_meta" {
+		if decodeErr := json.Unmarshal(line, &v); decodeErr != nil || v.Type != "session_meta" {
 			return seen < 16
 		}
 		found = true
@@ -84,7 +103,7 @@ func (p NativeHeaders) Roots(l agentapi.NativeLocations, purpose agentapi.Discov
 	var out []agentapi.NativeStoreRoot
 	for _, dir := range dirs {
 		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "sessions"), Priority: 1, Depth: -1, Recursive: true, Prefix: "rollout-", Suffix: ".jsonl"})
-		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "archived_sessions"), Historical: true, Depth: 0, Recursive: purpose == agentapi.DiscoveryHandoff, Prefix: "rollout-", Suffix: ".jsonl"})
+		out = append(out, agentapi.NativeStoreRoot{Harness: "codex", Path: filepath.Join(dir, "archived_sessions"), Historical: true, Depth: 0, Recursive: purpose == agentapi.DiscoveryHandoff || purpose == agentapi.DiscoveryBoundedProjects, Prefix: "rollout-", Suffix: ".jsonl"})
 	}
 	return out
 }

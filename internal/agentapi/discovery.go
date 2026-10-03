@@ -33,6 +33,8 @@ type DiscoveryRequest struct {
 	MaxFiles    int
 	HeaderBytes int64
 	RecordBytes int64
+	// Scan optionally supplies a stricter caller-owned read boundary.
+	Scan func(string, func([]byte) bool) error
 }
 
 // DiscoveryCandidate contains local evidence, never an admitted registration.
@@ -67,6 +69,7 @@ type Discoverer interface {
 // DiscoveryLookup projects implemented enumeration ports without host probes.
 type DiscoveryLookup interface {
 	LookupDiscovery(string) (Discoverer, bool)
+	CanonicalDiscovery(string) (string, bool)
 	DiscoveryAgents() []string
 }
 

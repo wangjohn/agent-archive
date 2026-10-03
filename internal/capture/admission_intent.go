@@ -124,21 +124,26 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 // window observed before its lock wait, rather than whichever window is active
 // after that wait. A complete pause/resume cycle must not admit the old start.
 func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func()) (bool, error) {
+	path, err := persistEventBatchInGeneration(home, batch, now, generation, afterStage)
+	return path != "", err
+}
+
+func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func()) (string, error) {
 	intent, queued, err := eventAdmissionIntent(home, batch, now)
 	if err != nil || !queued {
-		return false, err
+		return "", err
 	}
 	if intent.PauseGeneration != generation {
-		return false, nil
+		return "", nil
 	}
 	id, err := local.ID()
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	path := filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id))
 	staged, err := stageEventIntent(home, intent, path, local.StageInExistingDir)
 	if err != nil || staged == nil {
-		return false, err
+		return "", err
 	}
 	defer staged.Discard()
 	if afterStage != nil {
@@ -146,12 +151,12 @@ func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, n
 	}
 	committed, err := commitEventIntent(home, intent, staged)
 	if err != nil || committed == nil {
-		return false, err
+		return "", err
 	}
 	if err := committed.SyncDir(); err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return path, nil
 }
 
 // Create the first queue directory under its lock, but sync every intent
@@ -382,7 +387,13 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 			return nil, removeAdmissionIntent(path)
 		}
 	}
-	if !registered && events[0].Deferred == agentapi.DeferredFollowup {
+	hasStart := false
+	for _, event := range events {
+		if event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit {
+			hasStart = true
+		}
+	}
+	if !registered && !hasStart && events[0].Deferred == agentapi.DeferredFollowup {
 		return &deferredFollowup{path: path, intent: intent, events: events}, nil
 	}
 	if err := replayEffects(home, store, cfg, intent, events, registered, after); err != nil {
@@ -450,7 +461,22 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 	if err != nil {
 		return err
 	}
+	var waiting []agentapi.LifecycleEvent
 	for _, event := range prepared {
+		if event.Deferred == agentapi.DeferredFollowup {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				waiting = append(waiting, event)
+				continue
+			}
+		}
 		if registered && event.Deferred == agentapi.DeferredStart {
 			key, err := eventKey(event)
 			if err != nil {
@@ -470,6 +496,10 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 			if !found {
 				return state.ErrSessionNotRegistered
 			}
+			reg, err = completeReplayStart(store, cfg, intent, event, reg, after)
+			if err != nil {
+				return err
+			}
 			if err := adoptLocator(store, &reg, event, after); err != nil {
 				return err
 			}
@@ -479,6 +509,72 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 				return err
 			}
 			continue
+		}
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
+			return err
+		}
+		// Complete earlier waiting effects immediately after the admitting
+		// start, before any subsequent native effect. The durable original
+		// batch remains the retry record until all effects succeed.
+		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
+			if err := applyWaitingReplayEffects(home, store, cfg, intent, waiting, after); err != nil {
+				return err
+			}
+			waiting = nil
+		}
+	}
+	if len(waiting) > 0 {
+		return state.ErrSessionNotRegistered
+	}
+	return nil
+}
+
+// Complete later native start observations after an interrupted registration
+// create, while preserving a newer live continuation and NewOnly semantics.
+func completeReplayStart(store *state.Store, cfg config.Config, intent admissionIntent, event agentapi.LifecycleEvent, reg archive.SessionRegistration, after func(effectName) error) (archive.SessionRegistration, error) {
+	if event.NewOnly || !sameReplayAdmission(reg, intent.ObservedAt) {
+		return reg, nil
+	}
+	updated, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
+		if !cfg.AcceptSession(*current) || current.NativeSessionID != intent.NativeSessionID || archive.CanonicalHarness(current.Harness.Name) != archive.CanonicalHarness(intent.Harness) || filepath.Clean(current.ProjectRoot) != filepath.Clean(intent.ProjectRoot) {
+			return errContinuationDeclined
+		}
+		if sameReplayAdmission(*current, intent.ObservedAt) {
+			applyLocator(current, event)
+			applyObservation(&current.Harness, event.Session)
+		}
+		reg = *current
+		return nil
+	})
+	if err != nil {
+		return reg, err
+	}
+	if !updated {
+		return reg, state.ErrSessionNotRegistered
+	}
+	return reg, effectBoundary(after, effectRegistrationUpdate)
+}
+
+// Existing replay provenance has observation-time granularity, not an intent ID.
+// Only a hook admission whose three timestamps still match can be completed by
+// an old start; an imported or subsequently refreshed registration is kept.
+func sameReplayAdmission(reg archive.SessionRegistration, observed time.Time) bool {
+	return reg.Origin == archive.SessionOriginHook && reg.StartedAtSource == archive.StartedAtSourceHook &&
+		reg.AdmittedAt.Equal(observed) && reg.SessionStartedAt.Equal(observed) && reg.RegisteredAt.Equal(observed)
+}
+
+func applyWaitingReplayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, waiting []agentapi.LifecycleEvent, after func(effectName) error) error {
+	for _, event := range waiting {
+		key, err := eventKey(event)
+		if err != nil {
+			return err
+		}
+		found, err := HasRegistration(store, key)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return state.ErrSessionNotRegistered
 		}
 		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after); err != nil {
 			return err

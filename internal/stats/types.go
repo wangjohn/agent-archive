@@ -23,6 +23,9 @@ const (
 // Options say what to compute. The zero value of every field but Now is a
 // usable default.
 type Options struct {
+	// MCPServerNames maps recorded server IDs to locally configured display names.
+	MCPServerNames map[string]string
+
 	// Now is the caller's clock: the end of the window. Compute never reads
 	// the system clock. A zero Now stands for the newest captured_at in the
 	// input (the Unix epoch when the input is empty).
@@ -217,6 +220,11 @@ type PriceInfo struct {
 
 // Coverage says how much of the window the numbers rest on.
 type Coverage struct {
+	// FirstRecordedDay is the earliest available session day, clamped to the
+	// requested window start when earlier history exists. It is an evidence
+	// boundary, not proof of continuous capture.
+	FirstRecordedDay string `json:"first_recorded_day,omitempty"`
+
 	// Sessions is the window's session count (subagents rolled into their
 	// parents); Agents how many distinct agents they came from.
 	Sessions int `json:"sessions"`
@@ -430,6 +438,9 @@ type MCP struct {
 
 // MCPServer is one MCP server's call count.
 type MCPServer struct {
+	// DisplayName is a friendly label; Name remains the recorded identity.
+	DisplayName string `json:"display_name,omitempty"`
+
 	Name     string `json:"name"`
 	Calls    int64  `json:"calls"`
 	Sessions int    `json:"sessions"`

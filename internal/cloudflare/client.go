@@ -193,12 +193,34 @@ type envelope struct {
 		Message string `json:"message"`
 	} `json:"errors"`
 	Result     json.RawMessage `json:"result"`
-	ResultInfo struct {
-		Page       int `json:"page"`
-		PerPage    int `json:"per_page"`
-		Count      int `json:"count"`
-		TotalCount int `json:"total_count"`
-	} `json:"result_info"`
+	ResultInfo paginationInfo  `json:"result_info"`
+}
+
+// paginationInfo distinguishes an explicit empty inventory from absent evidence.
+type paginationInfo struct {
+	Page          int `json:"page"`
+	PerPage       int `json:"per_page"`
+	Count         int `json:"count"`
+	TotalCount    int `json:"total_count"`
+	countsPresent bool
+}
+
+func (p *paginationInfo) UnmarshalJSON(raw []byte) error {
+	type plain paginationInfo
+	var decoded plain
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	var counts struct {
+		Count      *int `json:"count"`
+		TotalCount *int `json:"total_count"`
+	}
+	if err := json.Unmarshal(raw, &counts); err != nil {
+		return err
+	}
+	*p = paginationInfo(decoded)
+	p.countsPresent = counts.Count != nil && counts.TotalCount != nil
+	return nil
 }
 
 // call is one request.
@@ -272,9 +294,12 @@ func (c *Client) once(ctx context.Context, cl call, payload []byte, out any) (en
 		return envelope{}, &Error{Op: cl.op, Err: c.scrubbed(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return envelope{}, &Error{Op: cl.op, Status: resp.StatusCode, Err: c.scrubbed(err)}
+	}
+	if len(raw) > maxResponseBytes {
+		return envelope{}, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer exceeded its size limit")}
 	}
 	var env envelope
 	decodeErr := json.Unmarshal(raw, &env)

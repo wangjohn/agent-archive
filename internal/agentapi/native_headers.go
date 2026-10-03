@@ -10,6 +10,8 @@ const (
 	DiscoveryImport DiscoveryPurpose = iota + 1
 	DiscoveryHandoff
 	DiscoveryProjects
+	// DiscoveryBoundedProjects inspects only the first record for interactive repository matching.
+	DiscoveryBoundedProjects
 )
 
 // NativeHeader contains only inspected native identity and checkout evidence.

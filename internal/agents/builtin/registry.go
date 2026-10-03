@@ -211,7 +211,7 @@ func (r *Registry) HookAgents() []string {
 
 // LookupDecoder resolves a narrow lifecycle port without host operations.
 func (r *Registry) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.bindings[agentmeta.ID(agentmeta.Canonical(r.catalog, name))]
 	return b.Decoder, ok && b.Decoder != nil
 }
 
@@ -420,4 +420,10 @@ func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
 		}
 	}
 	return operations, nil
+}
+
+// CanonicalDiscovery normalizes a supported external name before planning.
+func (r *Registry) CanonicalDiscovery(name string) (string, bool) {
+	b, ok := r.Lookup(name)
+	return string(b.Descriptor.ID), ok && b.Discovery != nil
 }

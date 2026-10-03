@@ -111,6 +111,20 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		})
 	}
 	archive.ResolveSlashCommands(view.Turns)
+	for _, turn := range view.Turns {
+		if turn.Kind != archive.TurnKindHumanPrompt {
+			continue
+		}
+		title := turn.Text
+		if agent == profileCursor {
+			title = stripCursorWrapper(title)
+		}
+		if title = archive.CollapseSessionTitle(title); title != "" {
+			analysis.Facts.TextTitle = title
+			break
+		}
+	}
+
 	view.ToolCalls = archive.FinalizeToolCalls(candidates, view.ToolResults)
 	view.Tokens, view.ModelTokens = tokens.Usage()
 	view.HookFinals = archive.ReconcileHookFinals(bundle, view.Turns)
@@ -173,6 +187,7 @@ func setAvailability(a *archive.Analysis, b archive.SourceBundle, agent nativePr
 	}
 	if len(b.NativeText) > 0 {
 		a.Facts.Text = true
+		a.Facts.TextOnly = len(b.NativeRecords) == 0
 		a.Observability.StructuredCounts = archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonText}
 	}
 }

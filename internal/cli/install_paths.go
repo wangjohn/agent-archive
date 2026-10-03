@@ -154,8 +154,12 @@ func (e Env) hookFiles(userHome string) hooks.Files {
 
 // legacyHookFiles are the fixed paths every release before hook_files
 // installed into, whatever CLAUDE_CONFIG_DIR or CODEX_HOME said.
-func legacyHookFiles(userHome string) hooks.Files {
-	return hooks.ResolveFiles(userHome, func(string) (string, bool) { return "", false }, productionAgents)
+func legacyHookFiles(userHome string, lookups ...agentapi.HooksLookup) hooks.Files {
+	ports := agentapi.HooksLookup(productionAgents)
+	if len(lookups) > 0 {
+		ports = lookups[0]
+	}
+	return hooks.ResolveFiles(userHome, func(string) (string, bool) { return "", false }, ports)
 }
 
 // installedHookFiles is where setup installed each app's hooks: the paths it
@@ -164,7 +168,7 @@ func legacyHookFiles(userHome string) hooks.Files {
 // entry for was installed at its legacy path, never where the current
 // environment points.
 func (e Env) installedHookFiles(userHome string, cfg config.Config) hooks.Files {
-	files := legacyHookFiles(userHome)
+	files := legacyHookFiles(userHome, e.agentRegistry())
 	for app, path := range cfg.HookFiles {
 		if filepath.IsAbs(path) {
 			files[app] = path

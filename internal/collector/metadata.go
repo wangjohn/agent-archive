@@ -264,6 +264,11 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	}
 	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
+		// Native input is optional for a retained-source refresh, but an owned
+		// resource that could not be released must remain visible to the caller.
+		if agentapi.HasFailure(err, agentapi.Cleanup) {
+			s.warn(err)
+		}
 		return false
 	}
 	// Normal capture reads this same source next unless the refresh ends the

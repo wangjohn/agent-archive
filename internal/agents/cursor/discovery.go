@@ -19,7 +19,7 @@ type Discovery struct{}
 
 // Discover emits import candidates directly, retaining workspace slug evidence.
 func (Discovery) Discover(ctx context.Context, r agentapi.DiscoveryRequest, emit func(agentapi.DiscoveryCandidate) error) (out agentapi.DiscoveryReport, err error) {
-	if r.Purpose == agentapi.DiscoveryProjects {
+	if r.Purpose == agentapi.DiscoveryProjects || r.Purpose == agentapi.DiscoveryBoundedProjects {
 		return out, nil
 	}
 	if r.Purpose != agentapi.DiscoveryImport {

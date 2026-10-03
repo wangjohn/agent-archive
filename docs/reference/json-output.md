@@ -153,6 +153,10 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
+From parser `0.19.0` a Cursor session's `title` leaves out the
+`<timestamp>` line and `<user_query>` tags Cursor wraps a prompt in, as
+handoff already did.
+
 From parser `0.17.0` a sidecar may also carry three optional fields that
 say what to call the session:
 
@@ -343,6 +347,12 @@ at the top level. Read the rules below before using a number:
   prints a document with zero sessions. Usage errors (exit 2) print no JSON.
   `--json` is never paged.
 
+Stats `coverage.first_recorded_day` is the earliest available session day,
+clamped to the requested window start if earlier history exists. Charts omit
+preceding days; `daily` retains the full requested window, with leading zero
+placeholders that do not establish measured inactivity. `mcp.servers[].name`
+remains the recorded ID; optional `display_name` supplies a friendly label.
+
 ## `status --json`
 
 Top-level fields (versioned by `schema_version`, currently `3`):
@@ -412,3 +422,32 @@ The document has `schema_version: 1` and contains `records` (each with `schema_v
 records and partial listings exit with code 1 while preserving readable records.
 Records are untrusted bucket claims. Heartbeats are at most daily, not current
 activity; credential kinds do not establish provider-verified ownership.
+
+`machines --verify --json` adds a `verification` object: `checked_at`,
+`pagination_complete`, `account_inventory_complete` (currently always false),
+`visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
+`observations` and optional `claim_not_observed` token IDs. Observations contain
+`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+is true only when pagination and all observed checks complete without partial
+results; it never asserts ownership, account completeness or revocation.
+States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
+`scope_unknown_or_mismatch`, `provider_key_not_active`,
+`issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
+`local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
+`local_committed_binding`. Failures return available observations and exit 1.
+
+`machines --json` additionally includes optional `pairing_warnings`, an array of
+secret-free local pending, uncertain-delivery or expired pairing descriptions.
+These warnings require no conversation scan or provider-management credential.
+An observed matching bucket claim does not prove machine ownership or revocation.
+
+`machines revoke --json` writes schema-1 revocation operation metadata and its
+exact selected `keys`, whose outcomes are `pending`, `confirmed` or
+`failed-or-unknown`. `publication_pending` describes the distinct bucket write,
+not provider success. `account_inventory_complete` is always false;
+`request_only` means no verified deletion selection. The optional
+`requested_selector` retains the explicitly **unverified** caller request as a
+bounded `kind` (`name`, `machine_id`, `recipient_id`, or `pairing_id`) and `value`.
+It is informational, never deletion authority; request-only operations cannot
+be retried as verified selections. Provider success confirms
+only the selected set, never all possible shared/legacy/creator-hidden access.

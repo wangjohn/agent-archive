@@ -18,42 +18,47 @@ const maxLifecycleBytes = 16 << 20
 // validateBatch checks every decoded fact and filters every evidence candidate
 // before configuration diagnostics, queued intent or archive writes can occur.
 func validateBatch(harness string, in []agentapi.LifecycleEvent, now time.Time) ([]agentapi.LifecycleEvent, error) {
+	if err := validateBatchStructure(harness, in, now); err != nil {
+		return nil, err
+	}
+	return filterBatchEvidence(in)
+}
+
+// validateBatchStructure checks the entire input without copying or filtering.
+// Read-only capture gates may follow it; every effect still requires filtering.
+func validateBatchStructure(harness string, in []agentapi.LifecycleEvent, now time.Time) error {
 	if len(in) > 0 && now.IsZero() {
-		return nil, errors.New("lifecycle observation time required")
+		return errors.New("lifecycle observation time required")
 	}
 	if len(in) > maxLifecycleEvents {
-		return nil, errors.New("lifecycle batch count exceeded")
+		return errors.New("lifecycle batch count exceeded")
 	}
-	out := make([]agentapi.LifecycleEvent, len(in))
-	copy(out, in)
 	var identity agentmeta.SessionKey
 	budget := maxLifecycleBytes
-	for i, event := range out {
+	for i, event := range in {
 		key, err := agentmeta.NewSessionKey(string(event.Session.Agent), event.Session.NativeID)
 		if err != nil {
-			return nil, fmt.Errorf("invalid lifecycle identity: %w", err)
+			return fmt.Errorf("invalid lifecycle identity: %w", err)
 		}
 		if string(key.Agent) != archive.CanonicalHarness(harness) || key.Agent != event.Session.Agent {
-			return nil, errors.New("lifecycle agent mismatch")
+			return errors.New("lifecycle agent mismatch")
 		}
 		if i == 0 {
 			identity = key
-		} else if key != identity || event.ProjectRoot != out[0].ProjectRoot {
-			return nil, errors.New("inconsistent lifecycle batch identity")
+		} else if key != identity || event.ProjectRoot != in[0].ProjectRoot {
+			return errors.New("inconsistent lifecycle batch identity")
 		}
 		if err := validateEventShape(event); err != nil {
-			return nil, err
+			return err
 		}
 		if err := validateEventFields(event, &budget); err != nil {
-			return nil, err
+			return err
 		}
-		retained, err := validateEventEvidence(event, now, &budget)
-		if err != nil {
-			return nil, err
+		if err := validateEventEvidence(event, now, &budget); err != nil {
+			return err
 		}
-		out[i].Evidence = retained
 	}
-	return out, nil
+	return nil
 }
 
 func validateEventShape(event agentapi.LifecycleEvent) error {
@@ -117,35 +122,45 @@ func validateEventFields(event agentapi.LifecycleEvent, budget *int) error {
 	return nil
 }
 
-func validateEventEvidence(event agentapi.LifecycleEvent, now time.Time, budget *int) ([]archive.SupplementalEvidence, error) {
+func validateEventEvidence(event agentapi.LifecycleEvent, now time.Time, budget *int) error {
 	if len(event.Evidence) > 16 {
-		return nil, errors.New("lifecycle evidence count exceeded")
+		return errors.New("lifecycle evidence count exceeded")
 	}
-	var retained []archive.SupplementalEvidence
 	for _, candidate := range event.Evidence {
 		if candidate.Kind != archive.EvidenceKindLifecycleHook && candidate.Kind != archive.EvidenceKindFinalResponse {
-			return nil, errors.New("invalid lifecycle evidence kind")
+			return errors.New("invalid lifecycle evidence kind")
 		}
 		if !candidate.ObservedAt.Equal(now) {
-			return nil, errors.New("inconsistent lifecycle observation time")
+			return errors.New("inconsistent lifecycle observation time")
 		}
-		if !utf8.ValidString(candidate.Provenance) || strings.ContainsAny(candidate.Provenance, "\x00\r\n") {
-			return nil, errors.New("invalid lifecycle provenance")
+		if strings.TrimSpace(candidate.Provenance) == "" || !utf8.ValidString(candidate.Provenance) || strings.ContainsAny(candidate.Provenance, "\x00\r\n") {
+			return errors.New("invalid lifecycle provenance")
 		}
 		*budget -= len(candidate.Provenance)
 		if !boundedEvidence(candidate.Payload, budget, 0) {
-			return nil, errors.New("lifecycle evidence limit exceeded")
-		}
-		filtered, gaps, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{candidate})
-		if err != nil {
-			return nil, err
-		}
-		for _, safe := range filtered {
-			archive.AnnotateSupplementalGaps(safe.Payload, gaps)
-			retained = append(retained, safe)
+			return errors.New("lifecycle evidence limit exceeded")
 		}
 	}
-	return retained, nil
+	return nil
+}
+
+func filterBatchEvidence(in []agentapi.LifecycleEvent) ([]agentapi.LifecycleEvent, error) {
+	out := append([]agentapi.LifecycleEvent(nil), in...)
+	for i, event := range in {
+		var retained []archive.SupplementalEvidence
+		for _, candidate := range event.Evidence {
+			filtered, gaps, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{candidate})
+			if err != nil {
+				return nil, err
+			}
+			for _, safe := range filtered {
+				archive.AnnotateSupplementalGaps(safe.Payload, gaps)
+				retained = append(retained, safe)
+			}
+		}
+		out[i].Evidence = retained
+	}
+	return out, nil
 }
 
 func boundedEvidence(value any, budget *int, depth int) bool {

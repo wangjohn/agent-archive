@@ -570,9 +570,13 @@ func harnessAdapterVersion(sources agentapi.SourcesLookup, harness string) (stri
 // countRefreshSkips matches the parser actually bound to each registration.
 func (p *pass) countRefreshSkips() int {
 	n := 0
+	skips := p.local.RefreshSkips()
+	if len(skips) == 0 {
+		return 0
+	}
 	for _, reg := range p.registrations {
-		skipped, found, err := p.local.LoadRefreshSkip(reg.ArchiveSessionID)
-		if err == nil && found && skipped.ParserVersion == p.opts.parserVersionFor(reg.Harness.Name) {
+		skipped, found := skips[reg.ArchiveSessionID]
+		if found && skipped.ParserVersion == p.opts.parserVersionFor(reg.Harness.Name) {
 			n++
 		}
 	}
