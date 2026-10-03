@@ -751,21 +751,24 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 		hasStart = hasStart || effect.Kind == agentapi.EventStart && declinedStart(cfg, owner.Root, now, effect.Start) == ""
 		hasStop = hasStop || effect.Kind == agentapi.EventStop
 	}
-	var out gitLookups
 	if !registered && hasStart {
+		var startHead *archive.GitHead
 		done := make(chan struct{})
-		go func() { defer close(done); out.startHead = boundedGitHead(o.gitHead, event.ProjectRoot, true, now) }()
-		out.repoKey = boundedRepoKey(o.repoKey, owner.Root)
+		go func() { defer close(done); startHead = boundedGitHead(o.gitHead, event.ProjectRoot, true, now) }()
+		repoKey := boundedRepoKey(o.repoKey, owner.Root)
 		<-done
 		// A stop in the same observation batch sees the same HEAD; do not run git twice.
-		if hasStop && out.startHead.Valid() {
-			out.lastHead = &archive.GitHead{SHA: out.startHead.SHA, ObservedAt: now}
+		var lastHead *archive.GitHead
+		if hasStop && startHead.Valid() {
+			lastHead = &archive.GitHead{SHA: startHead.SHA, ObservedAt: now}
 		}
-	} else if registered && hasStop {
+		return gitLookups{repoKey: repoKey, startHead: startHead, lastHead: lastHead}
+	}
+	if registered && hasStop {
 		reg, found, err := store.LoadRegistration(id)
 		if err == nil && found && cfg.AcceptSession(reg) && reg.ParentSessionID == "" && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root) {
-			out.lastHead = boundedGitHead(o.gitHead, event.ProjectRoot, false, now)
+			return gitLookups{lastHead: boundedGitHead(o.gitHead, event.ProjectRoot, false, now)}
 		}
 	}
-	return out
+	return gitLookups{}
 }
