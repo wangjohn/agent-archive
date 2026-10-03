@@ -10,10 +10,28 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+type floorScopeChange string
+
+const (
+	floorScopeInitial     floorScopeChange = "initial"
+	floorScopeEnable      floorScopeChange = "enable"
+	floorScopeDestination floorScopeChange = "destination"
+	floorScopeProject     floorScopeChange = "project"
+	floorScopeHomes       floorScopeChange = "homes"
+)
+
+type floorPermissionBoundary string
+
+const (
+	floorBoundaryReconciliation floorPermissionBoundary = "reconciliation"
+	floorBoundaryActivation     floorPermissionBoundary = "activation"
+	floorBoundaryDestination    floorPermissionBoundary = "destination"
+)
+
 func TestPausedGenerationRetainsNativeStartFloorAcrossScopeChanges(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"initial", "enable", "destination", "project", "homes"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []floorScopeChange{floorScopeInitial, floorScopeEnable, floorScopeDestination, floorScopeProject, floorScopeHomes} {
+		t.Run(string(change), func(t *testing.T) {
 			t.Parallel()
 			previous, at := discoveryConfig(t)
 			previous.Paused = true
@@ -24,18 +42,18 @@ func TestPausedGenerationRetainsNativeStartFloorAcrossScopeChanges(t *testing.T)
 			floor := at.Add(2 * time.Hour)
 			root := "/included"
 			switch change {
-			case "initial":
+			case floorScopeInitial:
 				previous = Config{}
-			case "enable":
+			case floorScopeEnable:
 				previous.Discovery = &DiscoveryConfig{Enabled: false}
 				next.Discovery.Enabled = true
-			case "destination":
+			case floorScopeDestination:
 				next.Storage.Bucket = "replacement"
 				next.DestinationSince = floor
-			case "project":
+			case floorScopeProject:
 				root = "/new-project"
 				next.Archive.Projects = append(append([]archive.ProjectActivation(nil), next.Archive.Projects...), archive.ProjectActivation{Root: root, Included: true, ActivatedAt: floor})
-			case "homes":
+			case floorScopeHomes:
 				next.Discovery.CodexHomes = []string{"/new-codex-home"}
 			}
 			if err := ReconcileDiscovery(&next, previous, floor); err != nil {
@@ -247,21 +265,21 @@ func TestDiscoveryHistoryCompactionPreservesImmutableFloor(t *testing.T) {
 
 func TestPausedDiscoveryFloorUsesLatestPermissionBoundary(t *testing.T) {
 	t.Parallel()
-	for _, boundary := range []string{"reconciliation", "activation", "destination"} {
-		t.Run(boundary, func(t *testing.T) {
+	for _, boundary := range []floorPermissionBoundary{floorBoundaryReconciliation, floorBoundaryActivation, floorBoundaryDestination} {
+		t.Run(string(boundary), func(t *testing.T) {
 			t.Parallel()
 			cfg, at := discoveryConfig(t)
 			cfg.Paused = true
 			cfg.Discovery.Authorizations = nil
 			now, floor := at, at
 			switch boundary {
-			case "reconciliation":
+			case floorBoundaryReconciliation:
 				now = at.Add(time.Hour)
 				floor = now
-			case "activation":
+			case floorBoundaryActivation:
 				cfg.Archive.Projects[0].ActivatedAt = at.Add(time.Hour)
 				floor = cfg.Archive.Projects[0].ActivatedAt
-			case "destination":
+			case floorBoundaryDestination:
 				cfg.DestinationSince = at.Add(time.Hour)
 				floor = cfg.DestinationSince
 			}

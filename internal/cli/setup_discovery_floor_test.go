@@ -15,16 +15,25 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
+type floorSetupChange string
+
+const (
+	floorSetupEnable      floorSetupChange = "enable"
+	floorSetupDestination floorSetupChange = "destination"
+	floorSetupHomes       floorSetupChange = "homes"
+	floorSetupProject     floorSetupChange = "project"
+)
+
 func TestPausedSetupKeepsNativeConsentFloorThroughLockedResume(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"enable", "destination", "homes", "project"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []floorSetupChange{floorSetupEnable, floorSetupDestination, floorSetupHomes, floorSetupProject} {
+		t.Run(string(change), func(t *testing.T) {
 			t.Parallel()
 			home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("original", "us-east-1", "profile", true, false, false, t.TempDir()))
 			at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 			env.Now = func() time.Time { return at }
 			old := mustLoadConfig(t, home)
-			if change != "enable" {
+			if change != floorSetupEnable {
 				old.Discovery = &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{"/synthetic/codex"}}
 				must(t, config.ReconcileDiscovery(&old, config.Config{}, at.Add(-2*time.Hour)))
 				must(t, config.Save(home, old))
@@ -37,15 +46,15 @@ func TestPausedSetupKeepsNativeConsentFloorThroughLockedResume(t *testing.T) {
 			next := old
 			var changedRoot string
 			switch change {
-			case "enable":
+			case floorSetupEnable:
 				next.Discovery = &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{"/synthetic/codex"}}
-			case "destination":
+			case floorSetupDestination:
 				next.Storage.Bucket = "replacement"
-			case "homes":
+			case floorSetupHomes:
 				d := *old.Discovery
 				next.Discovery = &d
 				next.Discovery.CodexHomes = []string{"/synthetic/new-codex"}
-			case "project":
+			case floorSetupProject:
 				changedRoot = t.TempDir()
 				next.Archive.Projects = append(append([]archive.ProjectActivation(nil), old.Archive.Projects...), archive.ProjectActivation{Root: changedRoot, ProjectID: archive.ProjectID(changedRoot), Included: true, ActivatedAt: at})
 			}
@@ -60,7 +69,7 @@ func TestPausedSetupKeepsNativeConsentFloorThroughLockedResume(t *testing.T) {
 			for _, a := range cfg.Discovery.Authorizations {
 				// Query the committed canonical root so the assertion cannot pass
 				// merely because a temporary path had a different spelling.
-				if (change != "project" || filepath.Base(a.ProjectRoot) == filepath.Base(changedRoot)) && a.NativeStartFloor.Equal(at) {
+				if (change != floorSetupProject || filepath.Base(a.ProjectRoot) == filepath.Base(changedRoot)) && a.NativeStartFloor.Equal(at) {
 					root = a.ProjectRoot
 					if len(a.Intervals) != 0 {
 						t.Fatalf("paused setup granted an interval: %+v", a)
