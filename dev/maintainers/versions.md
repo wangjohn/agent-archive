@@ -10,7 +10,7 @@ affects.
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
 | Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 15 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
 | Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.15.0 | An adapter's output changes (bumped with the filter in practice). |
-| Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.19.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
+| Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.20.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -47,3 +47,20 @@ is re-uploaded unless it changed.
   change, and a reader that still reads what earlier versions wrote, or a
   clear refusal.
 - Update the version line in this file.
+
+Discovery authorization uses an incompatible schema-version object
+`{version: 2, writer: discovery-floor-v2}`. It retains an immutable
+`native_start_floor` for each permission generation, including generations
+created while paused. The earlier `discovery-v2` writer cannot preserve this
+boundary and must refuse the new fence. Hook-only configuration retains numeric
+version 1; the current decoder reads both protected writer identities and
+refuses unknown fences. Every save and nested setup snapshot writes the current
+fence; identity writing upgrades an earlier protected fence first.
+
+An older nonempty history migrates conservatively from its earliest retained
+interval. An older empty history has no recoverable consent boundary: it may
+be preserved and fenced, but cannot resume or authorize starts. Setup
+reconciliation renews it as a fresh generation at the latest of reconciliation,
+project activation, and destination activation. It does not reconstruct old
+consent from activation alone. Future scope-policy schemas must preserve these
+floors and the stronger writer fence through all saves and rollback snapshots.
