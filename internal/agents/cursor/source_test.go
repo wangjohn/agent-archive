@@ -103,6 +103,42 @@ func TestTextFallbackRetainsReadFailure(t *testing.T) {
 	}
 }
 
+func TestAdmissionThenInvalidComposerPreservesReadFailure(t *testing.T) {
+	cursorstore.SnapshotTempDirForTesting = t.TempDir()
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(t.Context(), `PRAGMA journal_mode=WAL; CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"lastUpdatedAt":1,"conversation":[]}')`); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Database: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	ref := agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: "c"}
+	if _, err := pass.Signature(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	// Admission and the owned read observe separate states. A writer can
+	// replace a valid composer with an invalid oversized value between them.
+	if _, err := db.ExecContext(t.Context(), `UPDATE cursorDiskKV SET value='{"lastUpdatedAt":"invalid","conversation":[]}'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pass.Read(t.Context(), ref, agentapi.ReadLimits{RawBytes: 1024, RecordBytes: 1})
+	if err == nil || cursorstore.ReasonOf(err) != cursorstore.UnknownFormat || agentapi.HasFailure(err, agentapi.Limit) || agentapi.Deterministic(err) {
+		t.Fatalf("invalid read became a settled size refusal: %v", err)
+	}
+}
+
 type textFailedReadInput struct {
 	agentapi.FileInput
 	fault  error
