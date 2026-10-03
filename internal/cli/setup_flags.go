@@ -173,7 +173,7 @@ func (o setupOptions) given() bool {
 // check and the same transaction as interactive setup, and refuses before
 // changing anything when an answer is missing.
 func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
-	opts, err := readProjectScopeInput(opts, stdin, env)
+	opts, err := readProjectScopeInput(opts, stdin)
 	if err != nil {
 		return err
 	}

@@ -107,7 +107,7 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 }
 
 // readProjectScopeInput reads only an explicitly selected file or stdin stream.
-func readProjectScopeInput(opts setupOptions, stdin io.Reader, env Env) (setupOptions, error) {
+func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, error) {
 	if opts.projectScopeFile == "" {
 		return opts, nil
 	}

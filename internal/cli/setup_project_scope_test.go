@@ -69,7 +69,7 @@ func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
 			if !ok || opts.projectScopeFile != "-" || !opts.given() {
 				t.Fatalf("receiving flags dropped scope: %+v", opts)
 			}
-			opts, err = readProjectScopeInput(opts, strings.NewReader(encoded), env)
+			opts, err = readProjectScopeInput(opts, strings.NewReader(encoded))
 			must(t, err)
 			cfg := config.Config{}
 			if problems := setupProjectScope(&cfg, opts.projectScope, destinationHome, env); len(problems) > 0 {
