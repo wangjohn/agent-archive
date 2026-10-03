@@ -88,7 +88,7 @@
         },
         "last": {
           "description": "Replaced only when a stop hook finds HEAD at a different commit, so observed_at is the first stop that saw this commit. Carries no dirty flag.",
-          "$ref": "#/$defs/git_head_observation"
+          "$ref": "#/$defs/git_head_last_observation"
         }
       }
     },
@@ -659,6 +659,26 @@
         "dirty": {
           "description": "Whether the working tree had staged, unstaged, or untracked (not ignored) changes against sha. A submodule counts when its checked-out commit differs, not for changes inside it. Absent when unknown.",
           "type": "boolean"
+        },
+        "observed_at": {
+          "description": "The time of the hook event that saw it.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "git_head_last_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "observed_at"
+      ],
+      "properties": {
+        "sha": {
+          "description": "HEAD's full object name: 40 hex digits (SHA-1) or 64 (SHA-256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
         },
         "observed_at": {
           "description": "The time of the hook event that saw it.",

@@ -273,10 +273,9 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 // publishRecordedGitHead updates hook observations even when a stop brought
 // no new transcript bytes. It reuses retained metadata and source, preserving
 // capture time and parser output; it never runs git or re-derives metadata.
+// It needs no request: the scan signature's PublishedLastHead brings a
+// session whose registration has moved past it back for a scan.
 func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (sessionOutcome, bool, error) {
-	if s.req.Token == "" {
-		return outcomeSkipped, false, nil
-	}
 	next := last.metadata
 	next.ApplyGitHead(s.reg)
 	oldHead, err := json.Marshal(last.metadata.GitHead)
@@ -317,7 +316,39 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 		return outcomeSkipped, false, err
 	}
 	outcome, err := s.publishPending(pending)
-	return outcome, true, err
+	if err != nil {
+		return outcome, true, err
+	}
+	// The scan ends here, before it would record a signature: note the
+	// published commit on the one standing, so the next pass can skip.
+	if signature, found, err := s.local.LoadScanSignature(s.id()); err != nil || !found {
+		return outcome, true, err
+	} else if next.GitHead != nil && next.GitHead.Last != nil {
+		signature.PublishedLastHead = next.GitHead.Last.SHA
+		return outcome, true, s.local.SaveScanSignature(s.id(), signature)
+	}
+	return outcome, true, nil
+}
+
+// publishedLastHead is the commit the session's published metadata names as
+// its last HEAD, for the scan signature. With no metadata cached there is
+// nothing to compare against, and the registration's own commit is taken as
+// settled: the next publication carries it.
+func (s *sessionScan) publishedLastHead() string {
+	encoded := s.published.Metadata()
+	if len(encoded) == 0 {
+		if s.reg.LastHead.Valid() {
+			return s.reg.LastHead.SHA
+		}
+		return ""
+	}
+	var published struct {
+		GitHead *archive.SessionGitHead `json:"git_head"`
+	}
+	if err := json.Unmarshal(encoded, &published); err != nil || published.GitHead == nil || published.GitHead.Last == nil {
+		return ""
+	}
+	return published.GitHead.Last.SHA
 }
 
 // requestAddsEvidence reports whether the request carries hook evidence the
