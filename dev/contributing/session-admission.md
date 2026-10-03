@@ -86,18 +86,24 @@ The scheduled application allowance is at most four seconds and starts after
 complete registration validation and fingerprinting. One deadline charges all
 application phases, including later phase inventories and checkpoints. The
 caller context bounds the entire stage separately; if complete validation
-cannot finish within it, recovery stays uncertified. The CLI reserves checkpoint
-time and publication time within its existing soft/hard budgets. Complete
+cannot finish within it, recovery stays uncertified. The CLI gives complete
+validation up to half of its remaining soft budget,
+reserves checkpoint time within the separate application allowance, and leaves
+time for publication within its existing soft/hard budgets. Complete
 inventory reads and one in-flight atomic operation can exceed an allowance on
 slow storage, so this is a measured scheduling target rather than an arbitrary
 host IO deadline. Local recovery/discovery still precedes credentials/storage,
 and publication of already admitted sessions can proceed while recovery is
-pending. The CLI avoids a second recovery slice inside the collector. Synthetic fixtures exhaust the same scheduled engine within their contexts;
+pending. The CLI avoids a second recovery slice inside the collector. Synthetic
+fixtures exhaust the same scheduled engine within their contexts;
 production consumers retain bounded scheduling.
 
-Recovery health reads bounded, content-free marker/cursor/fence evidence and
-reports pending phases separately from completed coverage; missing or corrupt
-evidence is unknown. It never reads native sources, Git or storage.
+The content-free marker, cursor and membership fence distinguish pending
+application from a completed census. They are internal recovery evidence; the
+activation phase must add bounded health/status presentation of pending
+identity-recovery phases. Missing or corrupt evidence must remain unknown, and
+that health reader must not read native sources, Git or storage.
+
 
 A validated committed qualified index for the same key/archive owner is left
 unchanged after the request-lock registration check. Recovery repairs corrupt,

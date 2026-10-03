@@ -563,7 +563,7 @@ func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
 	if err != nil || complete {
 		t.Fatalf("bounded local stage: complete=%v err=%v", complete, err)
 	}
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("queued publication under pending recovery: %#v %v", result, err)
 	}
@@ -641,7 +641,7 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 				}
 				finished <- err
 			}()
-			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
+			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
 			if writeErr := <-finished; writeErr != nil {
 				t.Fatal(writeErr)
 			}

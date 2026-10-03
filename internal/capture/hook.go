@@ -685,6 +685,86 @@ func resolvedPath(path string) string {
 	return path
 }
 
+// hookProjectActivation consumes facts resolved before hooks.lock for all mode.
+func hookProjectActivation(cfg config.Config, event agentapi.LifecycleEvent, now time.Time) (archive.ProjectActivation, bool) {
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		token, ok := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
+		return archive.ProjectActivation{Root: event.CodexProjectRoot, ProjectID: archive.ProjectID(event.CodexProjectRoot), Included: ok && token == event.CodexPolicyToken}, ok
+	}
+	return ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+}
+
+func codexContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent, r archive.SessionRegistration) bool {
+	if event.CodexProjectRoot == "" || event.CodexCwd == "" || !cfg.AcceptSession(r) {
+		return false
+	}
+	if r.CodexAdmission != nil {
+		return event.CodexProjectRoot == r.ProjectRoot && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
+	}
+	return (event.CodexProjectRoot == r.ProjectRoot || local.PathWithin(event.CodexCwd, r.ProjectRoot)) && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
+}
+
+func prepareCodexFacts(harness string, batch []agentapi.LifecycleEvent, cfg config.Config, now time.Time) {
+	if harness != "codex" || cfg.CodexCapture == nil {
+		return
+	}
+	resolver := sourcefacts.NewProjectResolver()
+	for i := range batch {
+		facts, ok := resolver.Resolve(batch[i].ProjectRoot)
+		if ok {
+			batch[i].CodexProjectRoot = facts.Root
+			batch[i].CodexCwd = facts.Cwd
+			batch[i].CodexPolicyToken, _ = cfg.CodexGeneration(facts.Root, facts.Cwd, now, now)
+		}
+	}
+}
+
+func continueHookSession(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, root string, blanket bool, existingID string, after func(effectName) error) (bool, error) {
+	key, err := eventKey(event)
+	if err != nil {
+		return true, err
+	}
+
+	if event.NewOnly {
+		return true, nil
+	}
+	updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
+		if !cfg.AcceptSession(*existing) || ((blanket || existing.CodexAdmission != nil) && !codexContinuationAccepted(cfg, event, *existing)) {
+			return errContinuationDeclined
+		}
+		if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
+			return errSessionIdentityConflict
+		}
+		if blanket && root != "" && root != existing.ProjectRoot && !local.PathWithin(event.CodexCwd, existing.ProjectRoot) {
+			return errSessionIdentityConflict
+		}
+		if !blanket && existing.CodexAdmission == nil {
+			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
+				return errSessionIdentityConflict
+			}
+		}
+		applyLocator(existing, event)
+		existing.RegisteredAt = now
+		existing.HookObservedAt = now
+		applyObservation(&existing.Harness, event.Session)
+		return nil
+	})
+	if errors.Is(err, errContinuationDeclined) {
+		return true, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if updated {
+		if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
+			return true, err
+		}
+		return true, saveLifecycleEvidence(store, existingID, event, now, after)
+	}
+
+	return false, nil
+}
+
 // boundedGitHead is gitHead's answer for dir as a GitHead observed at now,
 // or nil when gitHead is nil, panics, does not return within repoKeyBudget,
 // or does not return a full object name: the commit never fails or delays a
@@ -770,9 +850,6 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	event := batch[0]
 	owner, owned := hookProjectActivation(cfg, event, now)
-	if !owned || !owner.Included {
-		return gitLookups{}
-	}
 	key, err := eventKey(event)
 	if err != nil {
 		return gitLookups{}
@@ -784,7 +861,7 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	hasStart, hasStop := false, false
 	for _, effect := range batch {
-		hasStart = hasStart || effect.Kind == agentapi.EventStart && gitStartEligible(cfg, owner.Root, now, effect)
+		hasStart = hasStart || effect.Kind == agentapi.EventStart && gitStartAllowed(cfg, effect, owner, owned, now)
 		hasStop = hasStop || effect.Kind == agentapi.EventStop
 	}
 	if !registered && hasStart {
@@ -802,108 +879,31 @@ func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time
 	}
 	if registered && hasStop {
 		reg, found, err := store.LoadRegistration(id)
-		accepted := err == nil && found && gitContinuationAccepted(cfg, event, reg)
-		if accepted && reg.ParentSessionID == "" && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root) {
+		if err == nil && found && gitStopAllowed(cfg, event, reg, owner, owned) {
 			return gitLookups{lastHead: boundedGitHead(o.gitHead, event.ProjectRoot, false, now)}
 		}
 	}
 	return gitLookups{}
 }
 
-func gitStartEligible(cfg config.Config, root string, now time.Time, event agentapi.LifecycleEvent) bool {
-	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		token, allowed := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
-		return allowed && token == event.CodexPolicyToken && event.Start.Kind == agentapi.FreshExplicit
+// gitStartAllowed shares the hook admission boundary without granting new scope.
+func gitStartAllowed(cfg config.Config, event agentapi.LifecycleEvent, owner archive.ProjectActivation, owned bool, now time.Time) bool {
+	if !owned || !owner.Included {
+		return false
 	}
-	return declinedStart(cfg, root, now, event.Start) == ""
+	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		return event.Start.Kind == agentapi.FreshExplicit
+	}
+	return declinedStart(cfg, owner.Root, now, event.Start) == ""
 }
 
-func gitContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent, reg archive.SessionRegistration) bool {
-	if !cfg.AcceptSession(reg) {
+// gitStopAllowed preserves admitted physical ownership across permission edits.
+func gitStopAllowed(cfg config.Config, event agentapi.LifecycleEvent, reg archive.SessionRegistration, owner archive.ProjectActivation, owned bool) bool {
+	if !cfg.AcceptSession(reg) || reg.ParentSessionID != "" {
 		return false
 	}
 	if string(event.Session.Agent) == "codex" && (reg.CodexAdmission != nil || cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects) {
 		return codexContinuationAccepted(cfg, event, reg)
 	}
-	return true
-}
-
-// hookProjectActivation consumes facts resolved before hooks.lock for all mode.
-func hookProjectActivation(cfg config.Config, event agentapi.LifecycleEvent, now time.Time) (archive.ProjectActivation, bool) {
-	if string(event.Session.Agent) == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		token, ok := cfg.CodexGeneration(event.CodexProjectRoot, event.CodexCwd, now, now)
-		return archive.ProjectActivation{Root: event.CodexProjectRoot, ProjectID: archive.ProjectID(event.CodexProjectRoot), Included: ok && token == event.CodexPolicyToken}, ok
-	}
-	return ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
-}
-
-func codexContinuationAccepted(cfg config.Config, event agentapi.LifecycleEvent, r archive.SessionRegistration) bool {
-	if event.CodexProjectRoot == "" || event.CodexCwd == "" || !cfg.AcceptSession(r) {
-		return false
-	}
-	if r.CodexAdmission != nil {
-		return event.CodexProjectRoot == r.ProjectRoot && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
-	}
-	return (event.CodexProjectRoot == r.ProjectRoot || local.PathWithin(event.CodexCwd, r.ProjectRoot)) && cfg.CodexContinuationAllowed(event.CodexProjectRoot, event.CodexCwd)
-}
-
-func prepareCodexFacts(harness string, batch []agentapi.LifecycleEvent, cfg config.Config, now time.Time) {
-	if harness != "codex" || cfg.CodexCapture == nil {
-		return
-	}
-	resolver := sourcefacts.NewProjectResolver()
-	for i := range batch {
-		facts, ok := resolver.Resolve(batch[i].ProjectRoot)
-		if ok {
-			batch[i].CodexProjectRoot = facts.Root
-			batch[i].CodexCwd = facts.Cwd
-			batch[i].CodexPolicyToken, _ = cfg.CodexGeneration(facts.Root, facts.Cwd, now, now)
-		}
-	}
-}
-
-func continueHookSession(store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, root string, blanket bool, existingID string, after func(effectName) error) (bool, error) {
-	key, err := eventKey(event)
-	if err != nil {
-		return true, err
-	}
-
-	if event.NewOnly {
-		return true, nil
-	}
-	updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
-		if !cfg.AcceptSession(*existing) || ((blanket || existing.CodexAdmission != nil) && !codexContinuationAccepted(cfg, event, *existing)) {
-			return errContinuationDeclined
-		}
-		if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
-			return errSessionIdentityConflict
-		}
-		if blanket && root != "" && root != existing.ProjectRoot && !local.PathWithin(event.CodexCwd, existing.ProjectRoot) {
-			return errSessionIdentityConflict
-		}
-		if !blanket && existing.CodexAdmission == nil {
-			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
-				return errSessionIdentityConflict
-			}
-		}
-		applyLocator(existing, event)
-		existing.RegisteredAt = now
-		existing.HookObservedAt = now
-		applyObservation(&existing.Harness, event.Session)
-		return nil
-	})
-	if errors.Is(err, errContinuationDeclined) {
-		return true, nil
-	}
-	if err != nil {
-		return true, err
-	}
-	if updated {
-		if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
-			return true, err
-		}
-		return true, saveLifecycleEvidence(store, existingID, event, now, after)
-	}
-
-	return false, nil
+	return owned && owner.Included && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root)
 }

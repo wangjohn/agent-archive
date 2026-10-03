@@ -32,13 +32,14 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// SkipSessionIndexRecovery is set after the CLI has already attempted its
+	// bounded local recovery stage. Direct collector callers recover once.
+	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
 	Parsers      agentapi.ParsersLookup
 	parserCache  map[string]agentapi.TranscriptParser
 	Sources      agentapi.SourcesLookup
 	sourcePasses *sourcePassSet
-	// SkipSessionIndexRecovery follows the CLI bounded local recovery stage.
-	SkipSessionIndexRecovery bool
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.

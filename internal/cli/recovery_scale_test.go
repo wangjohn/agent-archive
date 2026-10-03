@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -133,6 +135,9 @@ func TestScheduledRecoveryScalePublication(t *testing.T) {
 // Delayed filesystem input expires the child recovery context after the final
 // inventory read starts. Collection still has its independent publication time.
 func TestCollectPassRetainsRecoveryCheckpointFailure(t *testing.T) {
+	previousSoftDeadline := collectSoftDeadline
+	collectSoftDeadline = 8 * time.Second
+	t.Cleanup(func() { collectSoftDeadline = previousSoftDeadline })
 	for _, broken := range []bool{false, true} {
 		t.Run(strconv.FormatBool(broken), func(t *testing.T) {
 			now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
@@ -214,5 +219,77 @@ func TestCollectPassRetainsRecoveryCheckpointFailure(t *testing.T) {
 				t.Fatalf("timed-out recovery certified: %#v %v", marker, err)
 			}
 		})
+	}
+}
+
+// A complete census may cost more than the derived-index application allowance.
+// The real CLI must still apply owners and certify recovery before publishing.
+func TestCollectPassAdvancesRecoveryAfterSlowCompleteCensus(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	home, env, _ := collectFixture(t, now)
+	reg := theRegistration(t, home)
+	reg.ArchiveSessionID = "zz-slow-census-owner"
+	reg.NativeSessionID = "slow-census-native"
+	reg.ProjectID = "excluded-synthetic"
+	reg.ProjectRoot = "/synthetic/excluded"
+	reg.CodexAdmission = nil
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "registrations", reg.ArchiveSessionID+".json")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		var file *os.File
+		var err error
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			file, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+			if err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err != nil {
+			finished <- err
+			return
+		}
+		// Successful open proves the full census reached this authoritative record.
+		time.Sleep(state.SessionIndexRecoverySlice + 100*time.Millisecond)
+		replacement := path + ".replacement"
+		err = os.WriteFile(replacement, data, 0600)
+		if err == nil {
+			err = os.Rename(replacement, path)
+		}
+		if err == nil {
+			_, err = file.Write(data)
+		}
+		finished <- errors.Join(err, file.Close())
+	}()
+	result, err := runPass(env, false, passOptions{})
+	if writeErr := <-finished; writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("publication after slow census: %#v %v", result, err)
+	}
+	var marker struct {
+		Complete bool `json:"complete"`
+	}
+	data, err = os.ReadFile(filepath.Join(home, "session-index.json"))
+	if err != nil || json.Unmarshal(data, &marker) != nil || !marker.Complete {
+		t.Fatalf("full census repeatedly consumes recovery application time: %#v %v", marker, err)
+	}
+	store := state.OpenReadOnly(home)
+	key, err := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, found, err := store.ArchiveSessionID(key)
+	if err != nil || !found || id != reg.ArchiveSessionID {
+		t.Fatalf("slow census owner: %q %v %v", id, found, err)
 	}
 }

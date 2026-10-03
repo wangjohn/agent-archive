@@ -79,7 +79,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				delete(want, r.ProjectRoot)
 			}
 			objects := storagetest.NewMemoryStore()
-			result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
+			result, e := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 			if e != nil || len(result.Published) != 4 || len(result.Errors) != 0 {
 				t.Fatalf("publication %#v %v", result, e)
 			}
@@ -92,6 +92,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				if e = json.Unmarshal(b, &meta); e != nil {
 					t.Fatal(e)
 				}
+				assertBlanketNativeAnalysis(t, meta)
 				source, e := objects.Get(context.Background(), meta.SourceBundle.Key)
 				if e != nil || len(source) == 0 {
 					t.Fatalf("readback %v", e)
@@ -184,7 +185,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	_ = config.ReconcileDiscovery(&cfg, old, at.Add(3*time.Minute))
 	_ = config.Save(store.Home(), cfg)
 	writeRollout(t, codex, project, at.Add(4*time.Minute), 2, "sessions")
-	result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+	result, e := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 	if e != nil || len(result.Published) != 0 {
 		t.Fatalf("excluded publication %#v %v", result, e)
 	}
@@ -196,7 +197,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("lift admission %#v %v", h, e)
 	}
-	result, e = collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(7 * time.Minute) }})
+	result, e = collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(7 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("existing proof failed to resume %#v %v", result, e)
 	}
@@ -229,7 +230,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	if after.ProjectRoot != original.ProjectRoot || after.CodexAdmission.Generation != original.CodexAdmission.Generation || !after.AdmittedAt.Equal(original.AdmittedAt) {
 		t.Fatalf("scope reduction rewrote ownership %#v", after)
 	}
-	result, e = collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(12 * time.Minute) }})
+	result, e = collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(12 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("selected publication %#v %v", result, e)
 	}
@@ -239,6 +240,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	}
 	var meta archive.Metadata
 	_ = json.Unmarshal(b, &meta)
+	assertBlanketNativeAnalysis(t, meta)
 	if source, e := objects.Get(context.Background(), meta.SourceBundle.Key); e != nil || len(source) == 0 {
 		t.Fatalf("readback %v", e)
 	}
@@ -280,7 +282,7 @@ func TestBlanketLegacyOwnerPublicationHonorsStoredCwdExceptions(t *testing.T) {
 			objects := storagetest.NewMemoryStore()
 			collect := func(now time.Time) collector.Result {
 				t.Helper()
-				result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }})
+				result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }})
 				if err != nil || len(result.Errors) != 0 {
 					t.Fatalf("publication %#v %v", result, err)
 				}
@@ -410,7 +412,7 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 		t.Fatalf("physical child identity %#v", regs)
 	}
 	objects := storagetest.NewMemoryStore()
-	result, e := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+	result, e := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 	if e != nil || len(result.Published) != 1 {
 		t.Fatalf("permitted child publication %#v %v", result, e)
 	}
@@ -420,6 +422,7 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 	}
 	var meta archive.Metadata
 	_ = json.Unmarshal(b, &meta)
+	assertBlanketNativeAnalysis(t, meta)
 	if source, e := objects.Get(context.Background(), meta.SourceBundle.Key); e != nil || len(source) == 0 {
 		t.Fatalf("readback %v", e)
 	}
@@ -496,7 +499,7 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 				t.Fatalf("locator grant for %s: %q", tc.name, after.TranscriptPath)
 			}
 			objects := storagetest.NewMemoryStore()
-			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(5 * time.Minute) }})
 			expected := 0
 			if allowed {
 				expected = 1
@@ -589,7 +592,7 @@ func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExclu
 				t.Fatal("permitted legacy discovery did not replace missing locator")
 			}
 			objects := storagetest.NewMemoryStore()
-			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(8 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(8 * time.Minute) }})
 			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 				t.Fatalf("resumed publication %#v %v", result, err)
 			}
@@ -665,7 +668,7 @@ func TestBlanketPausedConsentFloorFlowsThroughHookDiscoveryAndPublication(t *tes
 				t.Fatal("lost original admission")
 			}
 			objects := storagetest.NewMemoryStore()
-			result, err := collector.Run(context.Background(), store, objects, collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return floor.Add(4 * time.Minute) }})
+			result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return floor.Add(4 * time.Minute) }})
 			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 				t.Fatalf("floor publication %#v %v", result, err)
 			}
@@ -677,11 +680,20 @@ func TestBlanketPausedConsentFloorFlowsThroughHookDiscoveryAndPublication(t *tes
 			if err := json.Unmarshal(raw, &meta); err != nil {
 				t.Fatal(err)
 			}
+			assertBlanketNativeAnalysis(t, meta)
 			source, err := objects.Get(context.Background(), meta.SourceBundle.Key)
 			if err != nil || len(source) == 0 {
 				t.Fatal("readback failed", err)
 			}
 			validatePublishedDiscovery(t, raw, source)
 		})
+	}
+}
+
+// Blanket publication must derive native facts through the injected parser port.
+func assertBlanketNativeAnalysis(t *testing.T, meta archive.Metadata) {
+	t.Helper()
+	if meta.Parser.Version != archive.DefaultParserVersion || meta.Parser.Status != archive.ParserStatusPartial || meta.Counts.Messages == nil || *meta.Counts.Messages < 1 {
+		t.Fatalf("blanket publication lacks native analysis: parser=%#v counts=%#v", meta.Parser, meta.Counts)
 	}
 }
