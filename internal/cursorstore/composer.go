@@ -576,7 +576,7 @@ func queryComposerLimited(ctx context.Context, db *sql.DB, id string, rawLimit, 
 	if err = check(observedSize.Int64); err != nil {
 		sig, sigErr := signatureOnly(ctx, db, id)
 		if sigErr != nil {
-			return Composer{}, Signature{}, err
+			return Composer{}, Signature{}, sigErr
 		}
 		return limitedFailure(sig, err)
 	}
@@ -890,6 +890,10 @@ func signatureTimestamp(kind sqliteValueKind, value any) (int64, error) {
 		if n, ok := value.(int64); ok {
 			return int64(float64(n)), nil
 		}
+		// JSON integral numbers outside SQLite's int64 range retain their
+		// integer JSON type but have a floating-point atom. Match the legacy
+		// decoder's float64 conversion, including its int64 overflow behavior.
+		fallthrough
 	case sqliteReal:
 		if n, ok := value.(float64); ok && !math.IsInf(n, 0) && !math.IsNaN(n) {
 			return int64(n), nil
