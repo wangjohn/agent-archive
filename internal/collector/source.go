@@ -10,7 +10,9 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // sourceState identifies exactly what one read of a session's source saw,
@@ -79,6 +81,18 @@ type fileReader struct {
 }
 
 func (r fileReader) Signature(context.Context) (sourceState, error) {
+	if r.reg.Origin == archive.SessionOriginDiscovery {
+		snapshot, err := transcriptio.Open(sourcefacts.RootOpener{Root: r.reg.DiscoveryRoot}, r.reg.TranscriptPath, transcriptio.OpenPolicy{Root: r.reg.DiscoveryRoot, RejectSymlinks: true})
+		if err != nil {
+			return sourceState{}, err
+		}
+		defer func() { _ = snapshot.Close() }()
+		if err := snapshot.Check(); err != nil {
+			return sourceState{}, err
+		}
+		stamp := snapshot.Stamp()
+		return sourceState{file: transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}}, nil
+	}
 	info, err := os.Stat(r.reg.TranscriptPath)
 	if err != nil {
 		return sourceState{}, err

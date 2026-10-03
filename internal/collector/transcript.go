@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -51,7 +52,13 @@ func statTranscript(info os.FileInfo) transcriptFileInfo {
 }
 
 func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	snapshot, err := transcriptio.Open(transcriptio.OS{}, reg.TranscriptPath, transcriptio.OpenPolicy{})
+	var opener transcriptio.Opener = transcriptio.OS{}
+	policy := transcriptio.OpenPolicy{}
+	if reg.Origin == archive.SessionOriginDiscovery {
+		opener = sourcefacts.RootOpener{Root: reg.DiscoveryRoot}
+		policy = transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true}
+	}
+	snapshot, err := transcriptio.Open(opener, reg.TranscriptPath, policy)
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
@@ -60,6 +67,15 @@ func filterTranscript(ctx context.Context, adapter archive.Adapter, reg archive.
 }
 
 func filterSnapshot(ctx context.Context, file *transcriptio.Snapshot, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
+	if reg.Origin == archive.SessionOriginDiscovery {
+		header := sourcefacts.ReadCodexHeader(file.Reader(ctx), reg.TranscriptPath)
+		if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) {
+			return archive.FilteredTranscript{}, transcriptFileInfo{}, errors.New("discovery source identity changed")
+		}
+		if err := file.Check(); err != nil {
+			return archive.FilteredTranscript{}, transcriptFileInfo{}, err
+		}
+	}
 	stamp := file.Stamp()
 	stat := transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}
 	boundary := stamp.Size
