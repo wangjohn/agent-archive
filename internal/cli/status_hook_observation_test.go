@@ -36,10 +36,11 @@ func TestStatusUsesHookObservationIndependentlyOfAdmissionOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			reg := archive.SessionRegistration{ArchiveSessionID: "session", NativeSessionID: "native-session", ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "codex"}, SessionStartedAt: now, AdmittedAt: now, Origin: tc.origin}
+			var hookObservedAt time.Time
 			if tc.observed {
-				reg.HookObservedAt = now
+				hookObservedAt = now
 			}
+			reg := archive.SessionRegistration{ArchiveSessionID: "session", NativeSessionID: "native-session", ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "codex"}, SessionStartedAt: now, AdmittedAt: now, Origin: tc.origin, HookObservedAt: hookObservedAt}
 			if err := store.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
