@@ -44,6 +44,7 @@ type Registry struct {
 	sourceBindings map[string]Integration
 	bindings       map[agentmeta.ID]Integration
 	supporting     map[agentmeta.Operation][]Integration
+	ordered        []Integration
 	runtime        []Integration
 	sessionKeys    []string
 }
@@ -80,6 +81,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
+		r.ordered = append(r.ordered, b)
 		r.addOperations(b)
 	}
 	var err error
@@ -150,7 +152,7 @@ func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
 
 // Launcher resolves the native launch operation without exposing other ports.
 func (r *Registry) Launcher(name string) (agentapi.Launcher, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Launcher, ok && b.Launcher != nil
 }
 
@@ -171,7 +173,7 @@ func (r *Registry) SessionEnvironmentKeys() []string { return slices.Clone(r.ses
 
 // Launchers returns the implemented launch projection in presentation order.
 func (r *Registry) Launchers() []agentapi.AgentLauncher {
-	bindings := r.Supporting(agentmeta.Launch)
+	bindings := r.supporting[agentmeta.Launch]
 	out := make([]agentapi.AgentLauncher, 0, len(bindings))
 	for _, b := range bindings {
 		out = append(out, agentapi.AgentLauncher{Agent: b.Descriptor.ID, Launcher: b.Launcher})
@@ -196,14 +198,14 @@ func (r *Registry) addOperations(b Integration) {
 
 // LookupHooks returns only the managed configuration port.
 func (r *Registry) LookupHooks(name string) (agentapi.HookConfigurator, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Hooks, ok && b.Hooks != nil
 }
 
 // HookAgents returns stable native configuration owners.
 func (r *Registry) HookAgents() []string {
 	var names []string
-	for _, b := range r.Supporting(agentmeta.ManagedHooks) {
+	for _, b := range r.supporting[agentmeta.ManagedHooks] {
 		names = append(names, string(b.Descriptor.ID))
 	}
 	return names
@@ -255,14 +257,14 @@ func boundDescriptor(b Integration, d agentmeta.Descriptor) (agentmeta.Descripto
 
 // LookupSkills resolves a native skill provider.
 func (r *Registry) LookupSkills(name string) (agentapi.SkillProvider, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Skills, ok && b.Skills != nil
 }
 
 // SkillAgents lists implemented skill providers in catalog order.
 func (r *Registry) SkillAgents() []string {
 	var out []string
-	for _, b := range r.Supporting(agentmeta.Skills) {
+	for _, b := range r.supporting[agentmeta.Skills] {
 		out = append(out, string(b.Descriptor.ID))
 	}
 	return out
@@ -270,16 +272,16 @@ func (r *Registry) SkillAgents() []string {
 
 // LookupNativeHeaders resolves bounded read-only identity interpretation.
 func (r *Registry) LookupNativeHeaders(name string) (agentapi.NativeHeaderInspector, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.NativeHeaders, ok && b.NativeHeaders != nil
 }
 
 // NativeHeaderAgents lists bound inspectors without probing the host.
 func (r *Registry) NativeHeaderAgents() []string {
 	var out []string
-	for _, d := range r.catalog.All() {
-		if _, ok := r.LookupNativeHeaders(string(d.ID)); ok {
-			out = append(out, string(d.ID))
+	for _, b := range r.ordered {
+		if b.NativeHeaders != nil {
+			out = append(out, string(b.Descriptor.ID))
 		}
 	}
 	return out
@@ -287,22 +289,22 @@ func (r *Registry) NativeHeaderAgents() []string {
 
 // LookupCapabilityEvidence resolves declared support evidence independently of health.
 func (r *Registry) LookupCapabilityEvidence(name string) (agentapi.CapabilityEvidenceProvider, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Evidence, ok && b.Evidence != nil
 }
 
 // LookupVersionInspector resolves native installed-version observation.
 func (r *Registry) LookupVersionInspector(name string) (agentapi.VersionInspector, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Version, ok && b.Version != nil
 }
 
 // VersionAgents lists bound inspectors without eager probes.
 func (r *Registry) VersionAgents() []string {
 	var names []string
-	for _, d := range r.catalog.All() {
-		if _, ok := r.LookupVersionInspector(string(d.ID)); ok {
-			names = append(names, string(d.ID))
+	for _, b := range r.ordered {
+		if b.Version != nil {
+			names = append(names, string(b.Descriptor.ID))
 		}
 	}
 	return names
@@ -310,16 +312,16 @@ func (r *Registry) VersionAgents() []string {
 
 // LookupDiscovery resolves native read-only discovery.
 func (r *Registry) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Discovery, ok && b.Discovery != nil
 }
 
 // DiscoveryAgents lists actual discovery bindings in catalog order.
 func (r *Registry) DiscoveryAgents() []string {
 	var names []string
-	for _, d := range r.catalog.All() {
-		if _, ok := r.LookupDiscovery(string(d.ID)); ok {
-			names = append(names, string(d.ID))
+	for _, b := range r.ordered {
+		if b.Discovery != nil {
+			names = append(names, string(b.Descriptor.ID))
 		}
 	}
 	return names
@@ -327,22 +329,22 @@ func (r *Registry) DiscoveryAgents() []string {
 
 // LookupDatabaseCatalog resolves native compact catalog interpretation without opening a database.
 func (r *Registry) LookupDatabaseCatalog(name string) (agentapi.DatabaseCatalogInspector, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.DatabaseCatalog, ok && b.DatabaseCatalog != nil
 }
 
 // LookupNativePaths resolves native path declarations without probing the host.
 func (r *Registry) LookupNativePaths(name string) (agentapi.NativePathsProvider, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.NativePaths, ok && b.NativePaths != nil
 }
 
 // NativePathAgents lists implemented native path providers in catalog order.
 func (r *Registry) NativePathAgents() []string {
 	var out []string
-	for _, d := range r.catalog.All() {
-		if r.bindings[d.ID].NativePaths != nil {
-			out = append(out, string(d.ID))
+	for _, b := range r.ordered {
+		if b.NativePaths != nil {
+			out = append(out, string(b.Descriptor.ID))
 		}
 	}
 	return out
@@ -351,8 +353,8 @@ func (r *Registry) NativePathAgents() []string {
 // WorktreeResolvers lists implemented native missing-worktree conventions in catalog order.
 func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 	var out []agentapi.MissingWorktreeResolver
-	for _, d := range r.catalog.All() {
-		if p := r.bindings[d.ID].Worktrees; p != nil {
+	for _, b := range r.ordered {
+		if p := b.Worktrees; p != nil {
 			out = append(out, p)
 		}
 	}
@@ -361,19 +363,19 @@ func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
 
 // LookupWorkspace resolves a native workspace metadata interpreter.
 func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Workspace, ok && b.Workspace != nil
 }
 
 // LookupChildren resolves native child discovery without admitting registrations.
 func (r *Registry) LookupChildren(name string) (agentapi.ChildDiscoverer, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Children, ok && b.Children != nil
 }
 
 // LookupImport resolves native historical observation without admission policy.
 func (r *Registry) LookupImport(name string) (agentapi.ImportInspector, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Imports, ok && b.Imports != nil
 }
 
@@ -424,6 +426,6 @@ func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
 
 // CanonicalDiscovery normalizes a supported external name before planning.
 func (r *Registry) CanonicalDiscovery(name string) (string, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return string(b.Descriptor.ID), ok && b.Discovery != nil
 }

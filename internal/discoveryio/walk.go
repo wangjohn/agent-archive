@@ -60,7 +60,10 @@ func Walk(ctx context.Context, files DirectoryReader, root StoreRoot, maxFiles i
 			}
 			return true, nil
 		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		less := func(i, j int) bool { return entries[i].Name() < entries[j].Name() }
+		if !sort.SliceIsSorted(entries, less) {
+			sort.Slice(entries, less)
+		}
 		for _, e := range entries {
 			if err := ctx.Err(); err != nil {
 				c.Complete = false

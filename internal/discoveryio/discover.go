@@ -20,7 +20,11 @@ func Files(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, ro
 	if r.Stage == agentapi.DiscoveryIdentities && (r.HeaderBytes <= 0 || r.RecordBytes <= 0) {
 		return out, fmt.Errorf("positive discovery header bounds required")
 	}
-	seen := map[string]bool{}
+	deduplicate := deduplicateNames && r.Purpose != agentapi.DiscoveryHandoff
+	var seen map[string]bool
+	if deduplicate {
+		seen = map[string]bool{}
+	}
 	unreadActive := false
 	for _, root := range roots {
 		if e := ctx.Err(); e != nil {
@@ -35,7 +39,7 @@ func Files(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, ro
 			}
 		}
 		coverage, e := Walk(ctx, r.Files, root, remaining, func(ref Ref) (bool, error) {
-			if deduplicateNames && r.Purpose != agentapi.DiscoveryHandoff && seen[filepath.Base(ref.Path)] {
+			if deduplicate && seen[filepath.Base(ref.Path)] {
 				return true, nil
 			}
 			var c agentapi.DiscoveryCandidate
@@ -45,7 +49,9 @@ func Files(ctx context.Context, r agentapi.DiscoveryRequest, id agentmeta.ID, ro
 					return true, nil
 				}
 				c = candidate
-				seen[filepath.Base(ref.Path)] = true
+				if deduplicate {
+					seen[filepath.Base(ref.Path)] = true
+				}
 				if !candidatePresent(c) {
 					return true, nil
 				}

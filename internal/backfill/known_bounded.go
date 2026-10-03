@@ -211,7 +211,9 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]fs.DirEntry, 0, min(len(entries), 8192-p.d.entries))
+	capacity := min(len(entries), 8192-p.d.entries)
+	out := make([]fs.DirEntry, 0, capacity)
+	wrapped := make([]projectEntry, capacity)
 	for _, entry := range entries {
 		if p.d.stopped() {
 			return nil, p.d.ctx.Err()
@@ -225,7 +227,8 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 		if p.d.stopped() {
 			return nil, p.d.ctx.Err()
 		}
-		out = append(out, projectEntry{DirEntry: entry, name: name})
+		wrapped[len(out)] = projectEntry{DirEntry: entry, name: name}
+		out = append(out, &wrapped[len(out)])
 	}
 	return out, nil
 }
