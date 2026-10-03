@@ -47,6 +47,15 @@ func (c Config) EffectiveCodexCaptureScope() CodexCaptureScope {
 
 // ReconcileCodexCapture opens only locally committed forward authorization.
 func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
+	draft := *next
+	if err := reconcileCodexCapture(&draft, previous, now); err != nil {
+		return err
+	}
+	*next = draft
+	return nil
+}
+
+func reconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	if next.CodexCapture == nil && previous.CodexCapture == nil {
 		return nil
 	}
@@ -61,7 +70,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	for _, rule := range next.Archive.Projects {
 		canonical, e := filepath.EvalSymlinks(rule.Root)
 		if e != nil {
-			canonical = filepath.Clean(rule.Root)
+			canonical = canonicalRuleRoot(rule.Root)
 		}
 		p.RuleRoots[rule.Root] = canonical
 	}
@@ -70,12 +79,13 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	}
 	old := previous.CodexCapture
 	active := p.Scope == CodexAllProjects && next.Archive.Enabled && slices.Contains(next.Harnesses, "codex")
-	keep := active && old != nil && old.Authorization != nil && old.Scope == CodexAllProjects && previous.Archive.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.DestinationID() == next.DestinationID()
+	keep := active && old != nil && old.Authorization != nil && !discoveryNativeStartFloor(*old.Authorization).IsZero() && old.Scope == CodexAllProjects && previous.Archive.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.DestinationID() == next.DestinationID()
 	if keep {
-		a := *old.Authorization
-		a.Intervals = slices.Clone(a.Intervals)
-		p.Authorization = &a
+		p.Authorization = normalizedAuthorization(old.Authorization)
 		if next.Paused != previous.Paused {
+			if err := validateIntervalTransition(*p.Authorization, next.Paused, now.UTC()); err != nil {
+				return err
+			}
 			transitionIntervals(p.Authorization, next.Paused, now.UTC())
 		}
 	} else if active {
@@ -91,7 +101,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 		if !next.Paused {
 			intervals = []DiscoveryInterval{{Start: start}}
 		}
-		a := DiscoveryAuthorization{Generation: id, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
+		a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
 		p.Authorization = &a
 	}
 	if err := reconcileCodexSource(&p, *next, previous, active, keep, now); err != nil {
@@ -111,7 +121,7 @@ func (c Config) CodexGeneration(root, cwd string, started, now time.Time) (strin
 		return "", false
 	}
 	a := c.CodexCapture.Authorization
-	if a == nil || a.DestinationID != c.DestinationID() || !c.CodexProjectAllowed(root, cwd, started) {
+	if a == nil || discoveryNativeStartFloor(*a).IsZero() || started.Before(discoveryNativeStartFloor(*a)) || a.DestinationID != c.DestinationID() || !c.CodexProjectAllowed(root, cwd, started) {
 		return "", false
 	}
 	for _, v := range a.Intervals {
@@ -175,7 +185,7 @@ func (c Config) CodexDiscoveryGeneration(root, cwd string, started, now time.Tim
 		return "", false
 	}
 	a := c.CodexCapture.SourceAuthorization
-	if a == nil || a.DestinationID != c.DestinationID() {
+	if a == nil || discoveryNativeStartFloor(*a).IsZero() || started.Before(discoveryNativeStartFloor(*a)) || a.DestinationID != c.DestinationID() {
 		return "", false
 	}
 	for _, v := range a.Intervals {
@@ -244,12 +254,13 @@ func (c Config) CodexContinuationAllowed(root, cwd string) bool {
 func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, keep bool, now time.Time) error {
 	old := previous.CodexCapture
 	if active && next.Discovery != nil && next.Discovery.Enabled {
-		sourceKeep := keep && old.SourceAuthorization != nil && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
+		sourceKeep := keep && old.SourceAuthorization != nil && !discoveryNativeStartFloor(*old.SourceAuthorization).IsZero() && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
 		if sourceKeep {
-			a := *old.SourceAuthorization
-			a.Intervals = slices.Clone(a.Intervals)
-			p.SourceAuthorization = &a
+			p.SourceAuthorization = normalizedAuthorization(old.SourceAuthorization)
 			if next.Paused != previous.Paused {
+				if err := validateIntervalTransition(*p.SourceAuthorization, next.Paused, now.UTC()); err != nil {
+					return err
+				}
 				transitionIntervals(p.SourceAuthorization, next.Paused, now.UTC())
 			}
 		} else {
@@ -257,11 +268,15 @@ func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, 
 			if err != nil {
 				return err
 			}
+			start := now.UTC()
+			if next.DestinationSince.After(start) {
+				start = next.DestinationSince
+			}
 			var intervals []DiscoveryInterval
 			if !next.Paused {
-				intervals = []DiscoveryInterval{{Start: now.UTC()}}
+				intervals = []DiscoveryInterval{{Start: start}}
 			}
-			a := DiscoveryAuthorization{Generation: id, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
+			a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
 			p.SourceAuthorization = &a
 		}
 	}
@@ -283,13 +298,32 @@ func reconcileCodexBarriers(p *CodexCaptureConfig, previous, next Config, now ti
 			found := false
 			for i := range p.Barriers {
 				if p.Barriers[i].Root == previous.codexRuleRoot(before.Root) {
-					p.Barriers[i].Since = now.UTC()
+					if now.After(p.Barriers[i].Since) {
+						p.Barriers[i].Since = now.UTC()
+					}
 					found = true
 				}
 			}
 			if !found {
 				p.Barriers = append(p.Barriers, CodexRuleBarrier{Root: previous.codexRuleRoot(before.Root), Since: now.UTC()})
 			}
+		}
+	}
+}
+
+// Canonicalize the existing ancestor of a removed rule root. Exceptions still
+// apply to retained physical facts when the leaf is temporarily unavailable.
+func canonicalRuleRoot(root string) string {
+	root = filepath.Clean(root)
+	for parent := filepath.Dir(root); ; parent = filepath.Dir(parent) {
+		if canonical, err := filepath.EvalSymlinks(parent); err == nil {
+			relative, err := filepath.Rel(parent, root)
+			if err == nil {
+				return filepath.Join(canonical, relative)
+			}
+		}
+		if filepath.Dir(parent) == parent {
+			return root
 		}
 	}
 }

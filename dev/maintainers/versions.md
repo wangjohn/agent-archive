@@ -66,7 +66,7 @@ consent from activation alone. Future scope-policy schemas must preserve these
 floors and the stronger writer fence through all saves and rollback snapshots.
 
 Codex capture scope and local admission proof use the stronger incompatible
-`{version: 3, writer: codex-scope-v3}` configuration fence. It remains installed
+`{version: 3, writer: codex-scope-floor-v3}` configuration fence. It remains installed
 when scope is reduced or discovery disabled, and on rollback over protected
 history. New readers retain numeric/v2 included-project consent without
 opening blanket windows. This changes session consent and physical project

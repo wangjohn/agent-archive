@@ -116,8 +116,9 @@ func TestNoDestinationTimeComparisonOutsideInCurrentDestination(t *testing.T) {
 var destinationComparisonAllowed = map[string]bool{
 	"config.InCurrentDestination": true,
 	// Discovery opens fresh-start permissions, not publication permission.
-	"config.ReconcileDiscovery":    true,
-	"config.ReconcileCodexCapture": true,
+	"config.reconcileDiscovery":    true,
+	"config.reconcileCodexCapture": true,
+	"config.reconcileCodexSource":  true,
 	"backfill.CheckClock":          true,
 }
 

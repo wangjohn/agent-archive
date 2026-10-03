@@ -41,7 +41,13 @@ type DiscoveryInterval struct {
 }
 
 func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
-	return SkillEvidence(strings.TrimSuffix(strings.TrimSuffix(string(mode), codexWriterMarker), discoveryWriterMarker))
+	for {
+		clean := strings.TrimSuffix(strings.TrimSuffix(string(mode), codexWriterMarker), discoveryWriterMarker)
+		if clean == string(mode) {
+			return mode
+		}
+		mode = SkillEvidence(clean)
+	}
 }
 
 func prepareDiscoveryConfig(c *Config) error {
@@ -49,7 +55,7 @@ func prepareDiscoveryConfig(c *Config) error {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
-		// Migrate only provable retained permission, on a private value copy.
+		// Migrate only provable retained permission, on a private value retained.
 		// Empty old histories have no recoverable floor and remain fail closed.
 		d := *c.Discovery
 		d.Authorizations = slices.Clone(d.Authorizations)
@@ -64,6 +70,10 @@ func prepareDiscoveryConfig(c *Config) error {
 		c.SchemaVersion = 2
 	}
 	if c.CodexCapture != nil {
+		p := *c.CodexCapture
+		p.Authorization = normalizedAuthorization(p.Authorization)
+		p.SourceAuthorization = normalizedAuthorization(p.SourceAuthorization)
+		c.CodexCapture = &p
 		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + codexWriterMarker)
 		c.SchemaVersion = 3
 	}
@@ -72,36 +82,7 @@ func prepareDiscoveryConfig(c *Config) error {
 
 func validateDiscoveryConfig(c Config) error {
 	if c.CodexCapture != nil {
-		if c.SchemaVersion != 3 || !strings.HasSuffix(string(c.SkillEvidence), codexWriterMarker) {
-			return errors.New("codex scope requires protected schema 3")
-		}
-		if c.CodexCapture.Scope != CodexIncludedProjects && c.CodexCapture.Scope != CodexAllProjects {
-			return errors.New("invalid Codex scope")
-		}
-		if len(c.CodexCapture.Barriers) > 4096 || len(c.CodexCapture.RuleRoots) > 4096 || len(c.Archive.Projects) > 4096 {
-			return errors.New("codex exception history limit exceeded")
-		}
-		for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
-			if a == nil {
-				continue
-			}
-			if a.Generation == "" || a.Agent != "codex" || a.ProjectRoot != "" || a.DestinationID == "" || len(a.Intervals) > 256 {
-				return errors.New("invalid Codex authorization")
-			}
-			var prior time.Time
-			for i, v := range a.Intervals {
-				if v.Start.IsZero() || (!v.End.IsZero() && !v.End.After(v.Start)) || (i > 0 && (prior.IsZero() || v.Start.Before(prior))) {
-					return errors.New("invalid Codex authorization intervals")
-				}
-				prior = v.End
-			}
-		}
-		for _, b := range c.CodexCapture.Barriers {
-			if b.Root == "" || b.Since.IsZero() {
-				return errors.New("invalid Codex subtree barrier")
-			}
-		}
-		return validateDiscoveryPayload(c.Discovery)
+		return validateCodexConfig(c)
 	}
 	marked := strings.HasSuffix(string(c.SkillEvidence), discoveryWriterMarker)
 	if marked != (c.Discovery != nil) {
@@ -119,9 +100,52 @@ func validateDiscoveryConfig(c Config) error {
 	return validateDiscoveryPayload(c.Discovery)
 }
 
+func validateCodexConfig(c Config) error {
+	if c.SchemaVersion != 3 || !strings.HasSuffix(string(c.SkillEvidence), codexWriterMarker) {
+		return errors.New("codex scope requires protected schema 3")
+	}
+	if c.CodexCapture.Scope != CodexIncludedProjects && c.CodexCapture.Scope != CodexAllProjects {
+		return errors.New("invalid Codex scope")
+	}
+	if len(c.CodexCapture.Barriers) > 4096 || len(c.CodexCapture.RuleRoots) > 4096 || len(c.Archive.Projects) > 4096 {
+		return errors.New("codex exception history limit exceeded")
+	}
+	for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+		if a == nil {
+			continue
+		}
+		if a.Generation == "" || a.Agent != "codex" || a.ProjectRoot != "" || a.DestinationID == "" || len(a.Intervals) > 256 {
+			return errors.New("invalid Codex authorization")
+		}
+		var prior time.Time
+		for i, v := range a.Intervals {
+			if v.Start.IsZero() || (!a.NativeStartFloor.IsZero() && v.Start.Before(a.NativeStartFloor)) || (!v.End.IsZero() && !v.End.After(v.Start)) || (i > 0 && (prior.IsZero() || v.Start.Before(prior))) {
+				return errors.New("invalid Codex authorization intervals")
+			}
+			prior = v.End
+		}
+	}
+	for _, b := range c.CodexCapture.Barriers {
+		if b.Root == "" || b.Since.IsZero() {
+			return errors.New("invalid Codex subtree barrier")
+		}
+	}
+	return validateDiscoveryPayload(c.Discovery)
+
+}
+
 // ReconcileDiscovery creates new generations when effective scope changes.
 // Setup calls it before its journal commits the config and all permissions.
 func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
+	draft := *next
+	if err := reconcileDiscovery(&draft, previous, now); err != nil {
+		return err
+	}
+	*next = draft
+	return nil
+}
+
+func reconcileDiscovery(next *Config, previous Config, now time.Time) error {
 	if err := ReconcileCodexCapture(next, previous, now); err != nil {
 		return err
 	}
@@ -176,51 +200,86 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 }
 
 func transitionDiscoveryPause(c *Config, paused bool, now time.Time) error {
-	if c.CodexCapture != nil && c.Paused != paused {
-		for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+	if c.Paused == paused {
+		return nil
+	}
+	var scopes []*DiscoveryAuthorization
+	if c.CodexCapture != nil {
+		scopes = append(scopes, c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization)
+	}
+	if c.Discovery != nil {
+		for i := range c.Discovery.Authorizations {
+			scopes = append(scopes, &c.Discovery.Authorizations[i])
+		}
+	}
+	for _, a := range scopes {
+		if a != nil {
+			if err := validateIntervalTransition(*a, paused, now); err != nil {
+				return err
+			}
+		}
+	}
+	// Preflight the complete policy, source and project set before copying or
+	// changing any shared snapshot. Refusal leaves callers and disk unchanged.
+	if c.CodexCapture != nil {
+		p := *c.CodexCapture
+		p.Authorization = normalizedAuthorization(p.Authorization)
+		p.SourceAuthorization = normalizedAuthorization(p.SourceAuthorization)
+		c.CodexCapture = &p
+		for _, a := range []*DiscoveryAuthorization{p.Authorization, p.SourceAuthorization} {
 			if a != nil {
-				a.Intervals = slices.Clone(a.Intervals)
 				transitionIntervals(a, paused, now)
 			}
 		}
 	}
-
-	if c.Discovery == nil || c.Paused == paused {
-		return nil
-	}
-	// Check every scope before mutating shared slices. Closing at or before
-	// an open interval's start would erase its durable consent boundary.
-	for _, a := range c.Discovery.Authorizations {
-		if !paused {
-			floor := discoveryNativeStartFloor(a)
-			if floor.IsZero() {
-				return errors.New("discovery consent boundary is unavailable; run setup to renew authorization before resuming")
-			}
-			if now.Before(floor) {
-				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
-			}
+	if c.Discovery != nil {
+		d := *c.Discovery
+		d.Authorizations = slices.Clone(d.Authorizations)
+		for i := range d.Authorizations {
+			d.Authorizations[i].Intervals = slices.Clone(d.Authorizations[i].Intervals)
+			transitionIntervals(&d.Authorizations[i], paused, now)
 		}
-		if n := len(a.Intervals); n > 0 {
-			last := a.Intervals[n-1]
-			if (paused && last.End.IsZero() && !now.After(last.Start)) || (!paused && (last.End.IsZero() || now.Before(last.End))) {
-				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
-			}
-		}
-	}
-	for i := range c.Discovery.Authorizations {
-		transitionIntervals(&c.Discovery.Authorizations[i], paused, now)
+		c.Discovery = &d
 	}
 	return nil
 }
 
+func normalizedAuthorization(a *DiscoveryAuthorization) *DiscoveryAuthorization {
+	if a == nil {
+		return nil
+	}
+	retained := *a
+	retained.Intervals = slices.Clone(a.Intervals)
+	if retained.NativeStartFloor.IsZero() && len(retained.Intervals) > 0 {
+		retained.NativeStartFloor = retained.Intervals[0].Start
+	}
+	return &retained
+}
+
+func validateIntervalTransition(a DiscoveryAuthorization, paused bool, now time.Time) error {
+	if !paused {
+		floor := discoveryNativeStartFloor(a)
+		if floor.IsZero() {
+			return errors.New("discovery consent boundary is unavailable; run setup to renew authorization before resuming")
+		}
+		if now.Before(floor) {
+			return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+		}
+	}
+	if n := len(a.Intervals); n > 0 {
+		last := a.Intervals[n-1]
+		if (paused && last.End.IsZero() && !now.After(last.Start)) || (!paused && (last.End.IsZero() || now.Before(last.End))) {
+			return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+		}
+	}
+	return nil
+}
+
+// transitionIntervals requires the caller to preflight every affected scope.
 func transitionIntervals(a *DiscoveryAuthorization, paused bool, now time.Time) {
 	if paused {
 		if n := len(a.Intervals); n > 0 && a.Intervals[n-1].End.IsZero() {
-			if now.After(a.Intervals[n-1].Start) {
-				a.Intervals[n-1].End = now
-			} else {
-				a.Intervals = a.Intervals[:n-1]
-			}
+			a.Intervals[n-1].End = now
 		}
 	} else {
 		if len(a.Intervals) >= 256 {
@@ -228,7 +287,6 @@ func transitionIntervals(a *DiscoveryAuthorization, paused bool, now time.Time) 
 		}
 		a.Intervals = append(a.Intervals, DiscoveryInterval{Start: now})
 	}
-
 }
 
 // DiscoveryGeneration authorizes native start evidence under the current
@@ -313,7 +371,7 @@ func validateDiscoveryPayload(d *DiscoveryConfig) error {
 		}
 		var prior time.Time
 		for i, v := range a.Intervals {
-			if v.Start.IsZero() || (!v.End.IsZero() && !v.End.After(v.Start)) || (i > 0 && (prior.IsZero() || v.Start.Before(prior))) {
+			if v.Start.IsZero() || (!a.NativeStartFloor.IsZero() && v.Start.Before(a.NativeStartFloor)) || (!v.End.IsZero() && !v.End.After(v.Start)) || (i > 0 && (prior.IsZero() || v.Start.Before(prior))) {
 				return errors.New("invalid discovery intervals")
 			}
 			prior = v.End

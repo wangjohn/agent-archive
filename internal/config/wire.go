@@ -17,7 +17,9 @@ const (
 	discoveryWriter       configWriter = "discovery-floor-v2"
 )
 
-const codexWriter configWriter = "codex-scope-v3"
+const legacyCodexWriter configWriter = "codex-scope-v3"
+
+const codexWriter configWriter = "codex-scope-floor-v3"
 
 type writerVersion struct {
 	Version int          `json:"version"`
@@ -72,7 +74,7 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		if err := json.Unmarshal(raw, &version); err != nil {
 			return false, err
 		}
-		if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || version.Writer != codexWriter) {
+		if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) {
 			return false, errors.New("configuration requires a supported writer fence")
 		}
 		if version.Version == 3 {
@@ -89,9 +91,23 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 				}
 			}
 		}
+		if version.Writer == codexWriter {
+			var scopes []*DiscoveryAuthorization
+			scopes = append(scopes, plain.CodexCapture.Authorization, plain.CodexCapture.SourceAuthorization)
+			if plain.Discovery != nil {
+				for i := range plain.Discovery.Authorizations {
+					scopes = append(scopes, &plain.Discovery.Authorizations[i])
+				}
+			}
+			for _, a := range scopes {
+				if a != nil && len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
+					return false, errors.New("codex permission history requires its native start floor")
+				}
+			}
+		}
 		// Prior protected writers also need canonical migration before identity
 		// mutation: they do not understand immutable generation floors.
-		fenced = version.Writer == discoveryWriter
+		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter
 		plain.SchemaVersion = version.Version
 	} else if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
