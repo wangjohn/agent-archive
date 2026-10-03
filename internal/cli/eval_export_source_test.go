@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -144,4 +146,95 @@ func TestEvalExportLocalIdentityComesFromFilteredRecords(t *testing.T) {
 	if code != 0 || len(records) != 1 || strings.Contains(records[0]["session_id"].(string), "sk-abcdefghijklmnopqrstuv") {
 		t.Fatalf("code %d records %v stderr %s", code, records, stderr)
 	}
+}
+
+// Output failure cancels an already-running filter and releases each worker's
+// separately owned snapshot and pass before the pool returns.
+func TestEvalExportOutputFailureClosesActiveNativeSources(t *testing.T) {
+	t.Parallel()
+	f := localEvalFixture(t)
+	path := filepath.Join(f.userHome, ".claude", "projects", "slug-c-lev-1", "c-lev-1.jsonl")
+	p, filter, _ := productionAgents.LookupSources("claude")
+	tracked := &evalLifetimeProvider{SourceProvider: p}
+	blocking := &evalConcurrentFilter{TranscriptFilter: filter, entered: make(chan struct{})}
+	f.env.Agents = evalSourceRegistry(t, "claude", tracked, blocking)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	x := evalExporter{ctx: ctx, env: f.env, opts: evalExportOptions{workers: 2, detail: archive.EvalExportDetailFull}}
+	inputs := make([]evalInput, 20)
+	for i := range inputs {
+		inputs[i] = evalInput{path: path, harness: "claude", given: path}
+	}
+	if _, err := x.run(inputs, &evalFailWriter{}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("output error %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("active filter required external cancellation")
+	}
+	if !blocking.canceled.Load() || tracked.opens.Load() != 2 || tracked.passesClosed.Load() != 2 || tracked.snapshotsClosed.Load() != 2 {
+		t.Fatalf("canceled %v, opens %d, closed passes %d, closed snapshots %d", blocking.canceled.Load(), tracked.opens.Load(), tracked.passesClosed.Load(), tracked.snapshotsClosed.Load())
+	}
+}
+
+type evalConcurrentFilter struct {
+	agentapi.TranscriptFilter
+	entered  chan struct{}
+	calls    atomic.Int32
+	canceled atomic.Bool
+}
+
+func (f *evalConcurrentFilter) Filter(ctx context.Context, input agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
+	if f.calls.Add(1) == 1 {
+		select {
+		case <-f.entered:
+		case <-ctx.Done():
+			return archive.FilteredTranscript{}, ctx.Err()
+		}
+		return f.TranscriptFilter.Filter(ctx, input, c)
+	}
+	close(f.entered)
+	<-ctx.Done()
+	f.canceled.Store(true)
+	return archive.FilteredTranscript{}, ctx.Err()
+}
+
+type evalLifetimeProvider struct {
+	agentapi.SourceProvider
+	opens           atomic.Int32
+	passesClosed    atomic.Int32
+	snapshotsClosed atomic.Int32
+}
+
+func (p *evalLifetimeProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	pass, err := p.SourceProvider.OpenPass(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	p.opens.Add(1)
+	return &evalLifetimePass{SourcePass: pass, provider: p}, nil
+}
+
+type evalLifetimePass struct {
+	agentapi.SourcePass
+	provider *evalLifetimeProvider
+}
+
+func (p *evalLifetimePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	snapshot, err := p.SourcePass.Read(ctx, ref, limits)
+	if err != nil {
+		return nil, err
+	}
+	return &evalLifetimeSnapshot{SourceSnapshot: snapshot, provider: p.provider}, nil
+}
+
+func (p *evalLifetimePass) Close() error { p.provider.passesClosed.Add(1); return p.SourcePass.Close() }
+
+type evalLifetimeSnapshot struct {
+	agentapi.SourceSnapshot
+	provider *evalLifetimeProvider
+}
+
+func (s *evalLifetimeSnapshot) Close() error {
+	s.provider.snapshotsClosed.Add(1)
+	return s.SourceSnapshot.Close()
 }
