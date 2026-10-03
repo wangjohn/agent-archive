@@ -440,7 +440,10 @@ func TestPrintedScopeKeepsDistinctClonesWithDifferentExclusions(t *testing.T) {
 		t.Fatal(problems)
 	}
 	for _, name := range []string{"first", "second"} {
-		for _, sample := range []struct{ path string; included bool }{{"ordinary", true}, {name+"-private/chat", false}} {
+		for _, sample := range []struct {
+			path     string
+			included bool
+		}{{"ordinary", true}, {name + "-private/chat", false}} {
 			activation, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(destinationHome, name, sample.path))
 			if !found || activation.Included != sample.included {
 				t.Fatalf("lost %s clone scope for %s: %+v", name, sample.path, activation)

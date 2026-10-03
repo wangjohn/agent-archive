@@ -178,6 +178,11 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		seen[root] = true
 		resolved = append(resolved, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: *rule.Included})
 	}
+	return applyResolvedProjectScope(cfg, resolved)
+}
+
+// applyResolvedProjectScope checks destination consent before applying resolved rules.
+func applyResolvedProjectScope(cfg *config.Config, resolved []archive.ProjectActivation) []error {
 	saved := make([]archive.ProjectActivation, len(cfg.Archive.Projects))
 	copy(saved, cfg.Archive.Projects)
 	for i := range saved {
