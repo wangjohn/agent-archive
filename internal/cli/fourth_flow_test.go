@@ -523,14 +523,16 @@ func TestFourthAliasOrdinaryBackfill(t *testing.T) {
 				Harnesses []string `json:"harnesses"`
 			} `json:"filters"`
 			Projects []struct {
-				Sessions int `json:"sessions"`
+				Sessions map[string]int `json:"sessions"`
 			} `json:"projects"`
 			Skipped map[string]int `json:"skipped"`
 		}
 		must(t, json.Unmarshal(out.Bytes(), &summary))
 		total := 0
 		for _, p := range summary.Projects {
-			total += p.Sessions
+			for _, n := range p.Sessions {
+				total += n
+			}
 		}
 		if code != 0 || total != 1 || strings.Join(summary.Filters.Harnesses, ",") != "orbifold" || summary.Skipped["filtered_out"] != 0 {
 			t.Fatalf("--harness %q: code=%d summary=%+v stderr=%s", spelling, code, summary, stderr.String())
