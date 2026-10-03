@@ -30,6 +30,7 @@ const (
 	catalogVersion = 2
 	maxCatalog     = 8192
 	maxDirectories = 4096
+	maxRetries     = 256
 )
 
 // Health separates scan coverage from upload and hook health. Codes never
@@ -66,12 +67,13 @@ type cached struct {
 }
 
 type catalog struct {
-	Version  int               `json:"version"`
-	Roots    []string          `json:"roots"`
-	Queue    []directory       `json:"queue"`
-	Cache    map[string]cached `json:"cache"`
-	Health   Health            `json:"health"`
-	Priority map[string]int64  `json:"priority,omitempty"`
+	Version  int                `json:"version"`
+	Roots    []string           `json:"roots"`
+	Queue    []directory        `json:"queue"`
+	Cache    map[string]cached  `json:"cache"`
+	Health   Health             `json:"health"`
+	Priority map[string]int64   `json:"priority,omitempty"`
+	Retries  []SourceDescriptor `json:"retries,omitempty"`
 }
 
 // Options contains injectable clocks and stop signals; it never enables an
@@ -129,6 +131,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	priority := scan{store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
 	priority.observeIndexHints(ctx, o, roots, deadline)
 	priority.observeActiveHints(ctx, o, roots, deadline)
+	priority.observeRetries(o)
 
 	for len(c.Queue) > 0 && h.Probes < HeaderProbes && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(ctx, o) {
@@ -168,7 +171,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			c.Queue = append(c.Queue, d)
 		}
 	}
-	h.Pending = len(c.Queue) > 0
+	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
@@ -181,7 +184,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 }
 
 func catalogNeedsReset(c catalog, roots []string) bool {
-	return c.Version != catalogVersion || len(c.Cache) > maxCatalog || len(c.Queue) > maxDirectories || len(c.Priority) > 64 || !slices.Equal(c.Roots, roots)
+	return c.Version != catalogVersion || len(c.Cache) > maxCatalog || len(c.Queue) > maxDirectories || len(c.Priority) > 64 || len(c.Retries) > maxRetries || !slices.Equal(c.Roots, roots)
 }
 
 func validSource(source SourceDescriptor, root string) bool {
@@ -512,12 +515,48 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if e != nil {
 		h.Outcomes["admission_retry"]++
 		delete(c.Cache, loc)
-		return true, false
+		s.retainRetry(candidate.Source)
+		return false, false
 	}
 	if created {
 		h.Registered++
 	}
 	return false, false
+}
+
+// Retained admission retries rotate separately from directory enumeration.
+// One conflicting or contended source must not pin a directory's coverage.
+func (s scan) retainRetry(source SourceDescriptor) {
+	for _, prior := range s.catalog.Retries {
+		if prior.Locator == source.Locator {
+			return
+		}
+	}
+	if len(s.catalog.Retries) == maxRetries {
+		s.health.Errors = appendUnique(s.health.Errors, "retry_limit")
+		return // Full filesystem reconciliation will revisit overflow sources.
+	}
+	s.catalog.Retries = append(s.catalog.Retries, source)
+}
+
+func (s scan) observeRetries(o Options) {
+	worker := s
+	worker.priority = false
+	// Process only the initial queue once and reserve half the probes for
+	// forward coverage, even when all retained retries remain conflicting.
+	for remaining := min(len(s.catalog.Retries), 64); remaining > 0 && s.health.Probes < HeaderProbes/2 && !scanStopped(s.ctx, o); remaining-- {
+		source := s.catalog.Retries[0]
+		s.catalog.Retries = s.catalog.Retries[1:]
+		if !slices.Contains(s.catalog.Roots, source.Root) || !validSource(source, source.Root) {
+			continue
+		}
+		path, err := filepath.Rel(source.Root, filepath.Dir(source.Locator))
+		if err != nil {
+			continue
+		}
+		entry := s.adapter.Describe(source.Root, path, filepath.Base(source.Locator))
+		worker.visitEntry(directory{Root: source.Root, Path: path}, entry)
+	}
 }
 
 func (s scan) enqueueDirectory(d directory, path string) {

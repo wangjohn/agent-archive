@@ -7,6 +7,10 @@ available capture paths until the activation phase.
 A scheduled collector observes approved active and archived rollout roots before
 opening remote storage. A source scan has a five-second budget and at most 256 metadata
 probes, with durable enumeration cursors and a bounded 8,192-entry metadata cache.
+Up to 256 admission retries are retained separately from enumeration, with at
+most 64 revisited per pass and half the probe budget reserved for forward
+coverage. A conflicting source cannot pin a directory cursor; retry overflow
+is reported and revisited by filesystem reconciliation.
 Native date directories and compatible settled SQLite indexes prioritize work;
 those hints never establish native creation time or authorize capture. Live WAL
 indexes fall back to filesystem enumeration without creating native side files.
