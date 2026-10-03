@@ -95,9 +95,10 @@ and publication of already admitted sessions can proceed while recovery is
 pending. The CLI avoids a second recovery slice inside the collector. Synthetic fixtures exhaust the same scheduled engine within their contexts;
 production consumers retain bounded scheduling.
 
-Recovery health reads bounded, content-free marker/cursor/fence evidence and
-reports pending phases separately from completed coverage; missing or corrupt
-evidence is unknown. It never reads native sources, Git or storage.
+The activation phase must add recovery health that reads bounded, content-free
+marker/cursor/fence evidence and reports pending phases separately from completed
+coverage. Missing or corrupt evidence must remain unknown, and that health reader
+must not read native sources, Git or storage.
 
 A validated committed qualified index for the same key/archive owner is left
 unchanged after the request-lock registration check. Recovery repairs corrupt,
