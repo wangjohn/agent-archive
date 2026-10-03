@@ -248,9 +248,9 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := archive.NewAdapter("claude")
-	if err != nil {
-		t.Fatal(err)
+	_, adapter, ok := productionAgents.LookupSources("claude")
+	if !ok {
+		t.Fatal("fixture source filter missing")
 	}
 	filtered, err := adapter.FilterJSONL(bytes.NewReader(raw))
 	if err != nil {

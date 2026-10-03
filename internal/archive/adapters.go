@@ -66,20 +66,6 @@ const maxOmittedKeyNames = 64
 // a given native format more completely.
 const DefaultParserVersion = "0.20.0"
 
-// NewAdapter returns a privacy-first adapter by canonical harness name.
-func NewAdapter(name string) (Adapter, error) {
-	switch CanonicalHarness(name) {
-	case HarnessCodex:
-		return CodexAdapter{}, nil
-	case HarnessClaude:
-		return ClaudeAdapter{}, nil
-	case HarnessCursor:
-		return CursorAdapter{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported archive adapter %q", name)
-	}
-}
-
 // CodexAdapter supports the conservative JSONL shapes observed by this
 // foundation. Unsupported Codex record types are gaps, never pass-through.
 type CodexAdapter struct{}
