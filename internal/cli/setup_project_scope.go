@@ -51,10 +51,22 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-			if key := env.projectRepoKey(child, project.Root); archive.IsRepoKey(key) {
+			key, top, known := env.projectRepository(child, project.Root)
+			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
 				anchors[project.Root] = key
 			}
 			cancel()
+		}
+	}
+	// Distinct configured clones cannot share one relocation identity: their
+	// root rules would collapse to the same path and their exclusions may differ.
+	counts := map[string]int{}
+	for _, key := range anchors {
+		counts[key]++
+	}
+	for root, key := range anchors {
+		if counts[key] > 1 {
+			delete(anchors, root)
 		}
 	}
 	rules := make([]portableProjectRule, 0, len(projects))
@@ -140,14 +152,15 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		} else if !filepath.IsAbs(path) {
 			return []error{errors.New("--project-scope paths without a repository key must be absolute or start with ~/")}
 		}
-		root := local.CanonicalPath(path)
+		root, err := resolveProjectScopePath(path)
+		if err != nil {
+			return []error{fmt.Errorf("--project-scope cannot resolve path safely: %w", err)}
+		}
 		if anchor != "" && !local.PathWithin(root, anchor) {
 			return []error{errors.New("--project-scope path resolves outside its repository checkout")}
 		}
 		if *rule.Included {
-			var err error
-			root, err = projectDir(path, home)
-			if err != nil {
+			if _, err := projectDir(root, home); err != nil {
 				return []error{fmt.Errorf("--project-scope: %w", err)}
 			}
 		}
@@ -170,4 +183,36 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		}
 	}
 	return nil
+}
+
+// resolveProjectScopePath permits absent directories, but an existing symlink
+// must resolve before its missing descendants can authorize a scope rule.
+func resolveProjectScopePath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	ancestor := path
+	for {
+		if _, err = os.Lstat(ancestor); err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		next := filepath.Dir(ancestor)
+		if next == ancestor {
+			return "", err
+		}
+		ancestor = next
+	}
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(ancestor, path)
+	if err != nil {
+		return "", err
+	}
+	return local.CanonicalPath(filepath.Join(resolved, rel)), nil
 }

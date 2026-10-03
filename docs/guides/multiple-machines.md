@@ -187,6 +187,8 @@ repository-relative rules also have `repo_key`. Exclusions and reincluded
 subtrees follow the matched checkout, even if its destination path changes.
 When a checkout lies inside a configured path-based ancestor, its rules stay
 relative to that ancestor instead of relocating independently.
+Distinct configured clones of the same repository keep their paths so their
+separate exclusions cannot collapse onto one checkout.
 Paths outside a configured repository use the destination home for `~/`.
 Missing excluded folders remain excluded if created later. Setup refuses the
 whole transfer when a repository is missing, ambiguous, blocked by saved
@@ -194,6 +196,7 @@ scope, or incompletely discovered, or a subtree resolves outside its checkout.
 No inclusion is applied without its associated exclusions. Inspect these
 rules before running the command; update non-home absolute paths for the
 new machine if necessary.
+Pairing receives scope from its encrypted bundle and refuses `--project-scope`.
 
 `setup --yes --project-repo REPO_KEY` includes only a unique, eligible clone.
 It establishes each keyed candidate’s full checkout root with Git, so running

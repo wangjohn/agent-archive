@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -172,6 +173,109 @@ func TestScopeKeepsNestedCheckoutAttachedToPathBasedAncestor(t *testing.T) {
 		}
 		if _, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(relocatedRepo, "chat")); found {
 			t.Fatal("scope rule moved independently of its ancestor")
+		}
+	}
+}
+
+func TestScopeTransferRejectsUnresolvedSymlinkBeforeInclusion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.Mkdir(root, 0700))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	env := Env{LookupEnv: noEnv, repoKeyContext: func(context.Context, string) string { return key }, WorkingDir: func() (string, error) { return root, nil }}
+	for _, target := range []string{filepath.Join(t.TempDir(), "not-created"), "unresolved"} {
+		link := filepath.Join(root, "unresolved")
+		must(t, os.Symlink(target, link))
+		for _, keyed := range []bool{false, true} {
+			cfg := config.Config{}
+			rules := []portableProjectRule{{Path: root, Included: true}, {Path: filepath.Join(link, "private"), Included: false}}
+			if keyed {
+				rules = []portableProjectRule{{RepoKey: key, Path: ".", Included: true}, {RepoKey: key, Path: "unresolved/private", Included: false}}
+			}
+			encoded, err := json.Marshal(rules)
+			must(t, err)
+			if problems := setupProjectScope(&cfg, string(encoded), home, env); len(problems) == 0 {
+				t.Fatalf("accepted unresolved link %q (keyed=%t)", target, keyed)
+			}
+			if len(cfg.Archive.Projects) != 0 {
+				t.Fatalf("applied inclusion without resolved exclusion: %+v", cfg.Archive.Projects)
+			}
+		}
+		must(t, os.Remove(link))
+	}
+}
+
+func TestPrintedScopeRequiresActualRepositoryTopLevel(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	top := filepath.Join(home, "repo")
+	child := filepath.Join(top, "pkg")
+	must(t, os.MkdirAll(filepath.Join(child, ".git"), 0700))
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("Git is unavailable")
+	}
+	gitHome := t.TempDir()
+	runGit := func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + gitHome, "GIT_CONFIG_NOSYSTEM=1"}
+		return cmd.Output()
+	}
+	for _, args := range [][]string{{"init", "-q", top}, {"-C", top, "config", "remote.origin.url", "https://example.test/team/repo.git"}} {
+		output, err := runGit(t.Context(), "", args...)
+		if err != nil {
+			t.Fatalf("synthetic repository: %v: %s", err, output)
+		}
+	}
+	env := Env{projectGitRunner: runGit}
+	projects := []archive.ProjectActivation{{Root: child, Included: true}, {Root: filepath.Join(child, "private"), Included: false}}
+	encoded := portableProjectScope(projects, home, env, t.Context())
+	if strings.Contains(encoded, "repo_key") {
+		t.Fatalf("inherited origin widened subtree to full repository: %s", encoded)
+	}
+	var rules []portableProjectRule
+	must(t, json.Unmarshal([]byte(encoded), &rules))
+	if rules[0].Path != "~/repo/pkg" || rules[1].Path != "~/repo/pkg/private" {
+		t.Fatalf("changed subtree scope: %+v", rules)
+	}
+}
+
+func TestPairingRefusesProjectScopeBeforeReadingBundle(t *testing.T) {
+	t.Parallel()
+	env := Env{LookupEnv: noEnv, Home: func() (string, error) { t.Fatal("read home"); return "", nil }, PairingCode: func() (string, error) { t.Fatal("read pairing code"); return "", nil }}
+	var out bytes.Buffer
+	if code := Run([]string{"setup", "--pair-file", "-", "--yes", "--project-scope", `[{"path":"~/private","included":false}]`}, strings.NewReader("malformed bundle"), &out, &out, env); code != 2 || !strings.Contains(out.String(), "pairing accepts") {
+		t.Fatalf("scope was silently ignored by pairing: exit %d, %s", code, &out)
+	}
+}
+
+func TestPrintedScopeKeepsDistinctClonesWithDifferentExclusions(t *testing.T) {
+	t.Parallel()
+	sourceHome, destinationHome := t.TempDir(), t.TempDir()
+	var projects []archive.ProjectActivation
+	for _, name := range []string{"first", "second"} {
+		for _, home := range []string{sourceHome, destinationHome} {
+			must(t, os.MkdirAll(filepath.Join(home, name, ".git"), 0700))
+		}
+		root := filepath.Join(sourceHome, name)
+		projects = append(projects, archive.ProjectActivation{Root: root, Included: true}, archive.ProjectActivation{Root: filepath.Join(root, name+"-private"), Included: false})
+	}
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	env := Env{LookupEnv: noEnv, repoKeyContext: func(context.Context, string) string { return key }}
+	encoded := portableProjectScope(projects, sourceHome, env, t.Context())
+	if strings.Contains(encoded, "repo_key") {
+		t.Fatalf("collapsed distinct clone scopes onto one identity: %s", encoded)
+	}
+	cfg := config.Config{}
+	if problems := setupProjectScope(&cfg, encoded, destinationHome, env); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	for _, name := range []string{"first", "second"} {
+		for _, sample := range []struct{ path string; included bool }{{"ordinary", true}, {name+"-private/chat", false}} {
+			activation, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(destinationHome, name, sample.path))
+			if !found || activation.Included != sample.included {
+				t.Fatalf("lost %s clone scope for %s: %+v", name, sample.path, activation)
+			}
 		}
 	}
 }

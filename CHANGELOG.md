@@ -145,6 +145,8 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Second-machine setup commands preserve excluded folders and reincluded
   subtrees, including when a repository checkout moves to another path.
   Scope transfer resolves all rules before applying any inclusion.
+  Distinct clones retain separate scopes, unresolved symlinks are refused,
+  and pairing rejects ordinary scope-transfer flags.
 
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.
