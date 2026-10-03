@@ -46,7 +46,7 @@ var subagentMetaKeys = map[string]bool{"type": true, subagentDescriptionKey: tru
 // directory. ok is false for any other file name, which is not a subagent
 // transcript.
 func SubagentMetaPath(transcriptPath string) (path string, ok bool) {
-	dir, name := filepath.Split(transcriptPath)
+	_, name := filepath.Split(transcriptPath)
 	id, found := strings.CutPrefix(name, "agent-")
 	if !found {
 		return "", false
@@ -55,7 +55,9 @@ func SubagentMetaPath(transcriptPath string) (path string, ok bool) {
 	if !found || id == "" {
 		return "", false
 	}
-	return filepath.Join(dir, "agent-"+id+".meta.json"), true
+	// Preserve directory spelling: cleaning a symlink/.. traversal can select
+	// a different directory from the transcript opened by the filesystem.
+	return strings.TrimSuffix(transcriptPath, ".jsonl") + ".meta.json", true
 }
 
 // subagentMetaLead is the raw record FilterSubagentJSONL feeds the filter for
