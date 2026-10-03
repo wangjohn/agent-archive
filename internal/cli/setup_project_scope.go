@@ -34,6 +34,14 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 }
 
 func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+	// Capture compares resolved locations, so aliases must share an anchor.
+	canonical := make([]archive.ProjectActivation, len(projects))
+	copy(canonical, projects)
+	for i := range canonical {
+		canonical[i].Root = local.CanonicalPath(canonical[i].Root)
+	}
+	projects = canonical
+	home = local.CanonicalPath(home)
 	anchors := map[string]string{}
 	for _, project := range projects {
 		// A checkout inside a path-based rule must move with that rule.
@@ -170,10 +178,33 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		seen[root] = true
 		resolved = append(resolved, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: *rule.Included})
 	}
+	saved := make([]archive.ProjectActivation, len(cfg.Archive.Projects))
+	copy(saved, cfg.Archive.Projects)
+	for i := range saved {
+		saved[i].Root = local.CanonicalPath(saved[i].Root)
+	}
+	// Saved reinclusions must not defeat a transferred exclusion. Refuse
+	// before writing anything, while keeping explicitly transferred reinclusions.
+	for _, existing := range saved {
+		root := existing.Root
+		owner, found := nearestScopeRule(resolved, root)
+		if existing.Included && found && !owner.Included && owner.Root != root {
+			return []error{fmt.Errorf("--project-scope saved inclusion %s conflicts with transferred exclusion %s; review the saved capture scope first", existing.Root, owner.Root)}
+		}
+	}
+	// An explicit transfer cannot silently override destination exclusions.
+	for _, project := range resolved {
+		if owner, found := nearestScopeRule(saved, project.Root); project.Included && found && !owner.Included {
+			return []error{fmt.Errorf("--project-scope inclusion %s is blocked by saved exclusion %s; review the saved capture scope first", project.Root, owner.Root)}
+		}
+	}
+	// Keep the original saved slice separate from candidate changes, including
+	// when a caller passes a value copy of a config.
+	cfg.Archive.Projects = append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
 	for _, project := range resolved {
 		updated := false
-		for i := range cfg.Archive.Projects {
-			if cfg.Archive.Projects[i].Root == project.Root {
+		for i, existing := range saved {
+			if existing.Root == project.Root {
 				cfg.Archive.Projects[i].Included = project.Included
 				updated = true
 			}
@@ -183,6 +214,19 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		}
 	}
 	return nil
+}
+
+// nearestScopeRule uses the same nearest-ancestor decision as capture, with
+// paths canonicalized by the caller.
+func nearestScopeRule(projects []archive.ProjectActivation, root string) (archive.ProjectActivation, bool) {
+	var owner archive.ProjectActivation
+	found := false
+	for _, project := range projects {
+		if local.PathWithin(root, project.Root) && (!found || len(project.Root) > len(owner.Root)) {
+			owner, found = project, true
+		}
+	}
+	return owner, found
 }
 
 // resolveProjectScopePath permits absent directories, but an existing symlink
