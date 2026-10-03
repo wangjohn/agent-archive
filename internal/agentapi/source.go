@@ -112,11 +112,19 @@ type FilterContext struct {
 	Limits    ReadLimits
 }
 
-// TranscriptFilter interprets bounded native input. Adapter methods are temporary retained-bundle compatibility.
+// TranscriptFilter owns native filtering and retained evidence interpretation.
 type TranscriptFilter interface {
 	archive.Adapter
+	RetainedComparator
 	Filter(context.Context, NativeInput, FilterContext) (archive.FilteredTranscript, error)
 	Refilter(context.Context, archive.SourceBundle, time.Time) (archive.FilteredTranscript, error)
+}
+
+// LocalIdentityResolver owns native filename conventions and identity preference.
+// filename is an observation only; implementations must not open it or inspect
+// raw ownership SessionIDs. The returned identity must come from safe facts.
+type LocalIdentityResolver interface {
+	LocalIdentity(archive.FilteredTranscript, string) archive.NativeSessionIdentity
 }
 
 // SourcesLookup is the narrow source/filter binding injected into shared readers.

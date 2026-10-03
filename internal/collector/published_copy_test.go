@@ -26,7 +26,7 @@ func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
 		delete(state, "metadata_bytes")
 	})
 	now := t0.Add(time.Hour)
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", ParserVersion: "upgraded", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "upgraded", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("scan: %#v %v", result, err)
 	}

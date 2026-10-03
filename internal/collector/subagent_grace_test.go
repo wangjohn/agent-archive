@@ -56,7 +56,7 @@ func writeChildTranscript(t *testing.T, path string) {
 
 func runPassAt(t *testing.T, local *state.Store, remote storage.ObjectStore, at time.Time) Result {
 	t.Helper()
-	result, err := Run(context.Background(), local, remote, Options{Sources: testSources, MachineID: "machine", Now: func() time.Time { return at }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+	result, err := Run(context.Background(), local, remote, Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return at }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}

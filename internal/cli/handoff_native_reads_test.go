@@ -182,7 +182,7 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _, _, _ := meter.counts()
-	n := &nativePreviewCatalog{sources: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: nativeReadBudget - 1, stderr: io.Discard, now: f.at}
+	n := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: nativeReadBudget - 1, stderr: io.Discard, now: f.at}
 	more, err := n.load()
 	after, _, active, full := meter.counts()
 	if err != nil || more || !n.exhausted || n.next != 0 || len(n.rows) != 53 || before != after || active != 0 || full != 0 {
@@ -203,7 +203,7 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 	for _, c := range r.Candidates[:50] {
 		allowance += c.Stamp.Size
 	}
-	n = &nativePreviewCatalog{sources: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: nativeReadBudget - allowance, stderr: io.Discard, now: f.at}
+	n = &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: meter, candidates: r.Candidates, reserved: nativeReadBudget - allowance, stderr: io.Discard, now: f.at}
 	more, err = n.load()
 	if err != nil || !more || n.next != 50 {
 		t.Fatalf("initial batch %v %v next=%d", more, err, n.next)
@@ -227,7 +227,7 @@ func TestNativeCanceledPreviewQueueClosesAllHandles(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	n := &nativePreviewCatalog{sources: productionAgents, ctx: ctx, files: meter, candidates: r.Candidates, stderr: io.Discard, now: f.at}
+	n := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: ctx, files: meter, candidates: r.Candidates, stderr: io.Discard, now: f.at}
 	_, err = n.load()
 	_, _, active, _ := meter.counts()
 	if !errors.Is(err, context.Canceled) || active != 0 {

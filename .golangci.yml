@@ -45,6 +45,50 @@ linters:
               desc: only builtin composes concrete integrations
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
               desc: only builtin composes concrete integrations
+        native-codec-composition-belongs-to-integrations:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/agents/*/*.go"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/nativecodec
+              desc: core consumers receive narrow ports and cannot interpret native records
+        archive-never-selects-native-integrations:
+          files:
+            - "**/internal/archive/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/agentapi
+              desc: pure archive facts cannot depend on operational ports
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/nativecodec
+              desc: native integrations derive facts; archive builders consume them
+        native-codecs-are-pure:
+          files:
+            - "**/internal/agents/nativecodec/*.go"
+            - "!$test"
+          deny:
+            - pkg: os$
+              desc: native codecs interpret borrowed input without filesystem or environment I/O
+            - pkg: os/exec
+              desc: native codecs never run programs
+            - pkg: net$
+              desc: native codecs never access the network
+            - pkg: net/http
+              desc: native codecs never access the network
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: native parsing cannot depend on CLI orchestration
+            - pkg: github.com/wangjohn/agent-archive/internal/capture
+              desc: native parsing cannot capture live state
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: native parsing cannot depend on publication orchestration
+            - pkg: github.com/wangjohn/agent-archive/internal/backfill
+              desc: native parsing cannot discover or import files
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: native codecs cannot persist state
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: native codecs cannot read archive storage
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: native codecs cannot open credentials
         identity-is-standard-library-only:
           files:
             - "**/internal/agentmeta/*.go"

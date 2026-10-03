@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,8 +32,7 @@ func newNamedSubagentFixture(t *testing.T) *resumedSubagentFixture {
 
 func (f *resumedSubagentFixture) writeMeta(content string) {
 	f.t.Helper()
-	path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
-	ok := strings.HasSuffix(f.childPath, ".jsonl")
+	path, ok := nativecodec.SubagentMetaPath(f.childPath)
 	if !ok {
 		f.t.Fatalf("%s is not named like a subagent transcript", f.childPath)
 	}
@@ -109,16 +109,16 @@ func TestSubagentWithoutAUsableMetaFileIsPublishedAsBefore(t *testing.T) {
 			f.writeMeta(`{"description":["SYNTHETIC-LIST"]}`)
 		},
 		"oversized": func(f *resumedSubagentFixture) {
-			f.writeMeta(`{"description":"Too big","pad":"` + strings.Repeat("x", archive.MaxSubagentMetaBytes) + `"}`)
+			f.writeMeta(`{"description":"Too big","pad":"` + strings.Repeat("x", nativecodec.MaxSubagentMetaBytes) + `"}`)
 		},
 		"a directory": func(f *resumedSubagentFixture) {
-			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
+			path, _ := nativecodec.SubagentMetaPath(f.childPath)
 			if err := os.Mkdir(path, 0o700); err != nil {
 				f.t.Fatal(err)
 			}
 		},
 		"a pipe": func(f *resumedSubagentFixture) {
-			path := strings.TrimSuffix(f.childPath, ".jsonl") + ".meta.json"
+			path, _ := nativecodec.SubagentMetaPath(f.childPath)
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				f.t.Skipf("no named pipes here: %v", err)
 			}
@@ -397,7 +397,7 @@ func TestNativeEvidenceExtendsIgnoresTheSubagentDescription(t *testing.T) {
 		"record replaced":       {bundle(named, first), bundle(named, second), false},
 		"description not first": {bundle(first, named), bundle(first, renamed), false},
 	} {
-		if got := nativeEvidenceExtends(c.previous, c.candidate); got != c.want {
+		if got := nativeEvidenceExtends(claude.Filter{}, c.previous, c.candidate); got != c.want {
 			t.Errorf("%s: extends = %v, want %v", name, got, c.want)
 		}
 	}

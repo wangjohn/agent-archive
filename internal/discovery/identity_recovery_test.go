@@ -209,7 +209,7 @@ func TestDiscoveryCannotSupplyUnconfinedLocatorToPathlessHook(t *testing.T) {
 	native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
 	// Actual shipped decoding and capture create the pathless hook owner.
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": project}
-	if err := handleCodexHook(store.Home(), "codex", payload, at.Add(time.Minute)); err != nil {
+	if err := handleCodexHook(store.Home(), payload, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := store.LoadRegistrations()
