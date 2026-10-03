@@ -67,6 +67,16 @@ class RealSystemdJobTest(unittest.TestCase):
         self.assertIn(f'`{runs_on}`', TESTING_MD.read_text(), f'dev/contributing/testing.md should name {runs_on}')
 
 
+class PublishedWriterJobTest(unittest.TestCase):
+    def test_published_writer_runs_only_on_native_macos(self):
+        found = jobs(EXTENDED_YML.read_text())
+        self.assertIn('bash scripts/test_published_writer.sh', found['macos-full'])
+        self.assertRegex(job_key(found['macos-full'], 'runs-on'), r'^macos-')
+        for name, text in found.items():
+            if name != 'macos-full':
+                self.assertNotIn('test_published_writer.sh', text)
+
+
 class JobsParserTest(unittest.TestCase):
     def test_finds_each_job_and_its_own_keys(self):
         workflow = (

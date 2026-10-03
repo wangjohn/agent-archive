@@ -462,6 +462,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 			}
 			applyLocator(existing, event)
 			existing.RegisteredAt = now
+			existing.HookObservedAt = now
 			applyObservation(&existing.Harness, event.Session)
 			return nil
 		})
@@ -486,8 +487,8 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, even
 	}
 	harness := archive.Harness{Name: string(key.Agent)}
 	applyObservation(&harness, event.Session)
-	reg, err := store.RegisterNewSession(key, func(id string) archive.SessionRegistration {
-		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: repoKey, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
+	reg, err := store.RegisterOrMerge(key, func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: repoKey, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, HookObservedAt: now, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
 	})
 	if err != nil {
 		return fmt.Errorf("register session: %w", err)
@@ -522,7 +523,7 @@ func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
 }
 
 func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEvent) {
-	if event.Source.Path == "" || !reg.ReadsTranscriptFile() {
+	if event.Source.Path == "" || !reg.ReadsTranscriptFile() || reg.Origin == archive.SessionOriginDiscovery {
 		return
 	}
 	if event.Locator == agentapi.LocatorReplaceFile || event.Locator == agentapi.LocatorFillFile && reg.TranscriptPath == "" {
@@ -578,6 +579,9 @@ func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, no
 }
 
 func saveLifecycleEvidence(store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
+	if err := store.RecordHookObservation(id, now); err != nil {
+		return err
+	}
 	for _, evidence := range event.Evidence {
 		if err := store.SaveEvidence(id, event.Reason, now, evidence); err != nil {
 			return err
@@ -606,6 +610,12 @@ func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now ti
 		return errSessionIdentityConflict
 	}
 	if err := adoptLocator(store, &reg, event, after); err != nil {
+		return err
+	}
+	if _, err := store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = now
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := store.SaveRequest(id, event.Reason, now, event.Evidence...); err != nil {
