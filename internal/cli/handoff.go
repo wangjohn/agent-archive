@@ -323,7 +323,7 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	filtered, adapter, err := collector.FilterTranscriptFile(harness, abs, info.ModTime())
+	filtered, adapter, err := collector.FilterTranscriptFile(harness, abs, info.ModTime(), registryFor(env))
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("filter %s: %w", path, err)
 	}
@@ -373,11 +373,11 @@ func handoffSessionKey(harness, nativeID string) agentmeta.SessionKey {
 
 // localTarget builds a handoff target from a registration's transcript.
 func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTarget, error) {
-	bundle, err := collector.ReadLocalBundle(r.ctx, r.home, reg, r.env.now().UTC(), r.env.cursorDatabase())
+	bundle, err := collector.ReadLocalBundle(r.ctx, r.home, reg, r.env.now().UTC(), r.env.cursorDatabase(), registryFor(r.env))
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase())
+	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase(), registryFor(r.env))
 	return handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt}, nil
 }
 
@@ -559,7 +559,7 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 			continue
 		}
 		active := reg.RegisteredAt
-		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
+		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase(), registryFor(r.env)); ok {
 			active = at
 		}
 		c := localHandoffCandidate{reg: reg, active: active, byRepo: byRepo}

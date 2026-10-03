@@ -18,6 +18,9 @@ import (
 // ErrNotRegularFile rejects sources that could block or read without end.
 var ErrNotRegularFile = errors.New("transcript is not a regular file")
 
+// ErrCleanup means an owned descriptor could not be released during failed open.
+var ErrCleanup = errors.New("transcript cleanup failed")
+
 // ErrChanged indicates that a source was replaced or rewritten during a read.
 var ErrChanged = errors.New("transcript changed while reading; try again")
 
@@ -68,7 +71,9 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 		err = ErrChanged
 	}
 	if err != nil {
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: %w", ErrCleanup, closeErr))
+		}
 		return nil, err
 	}
 	return f, nil
@@ -99,8 +104,10 @@ type OpenPolicy struct {
 
 // Snapshot owns one descriptor and its fixed initial size boundary.
 type Snapshot struct {
-	file  File
-	stamp Stamp
+	file     File
+	stamp    Stamp
+	closed   bool
+	closeErr error
 }
 
 // Open verifies the path and descriptor, closing the descriptor on any failure.
@@ -140,7 +147,9 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			err = ErrChanged
 		}
 		if err != nil {
-			_ = f.Close()
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("%w: %w", ErrCleanup, closeErr))
+			}
 			return nil, err
 		}
 		return &Snapshot{file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
@@ -154,20 +163,32 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 		err = ErrNotRegularFile
 	}
 	if err != nil {
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: %w", ErrCleanup, closeErr))
+		}
 		return nil, err
 	}
 	return &Snapshot{file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
 }
 
 // Close releases the snapshot descriptor.
-func (s *Snapshot) Close() error { return s.file.Close() }
+func (s *Snapshot) Close() error {
+	if s.closed {
+		return s.closeErr
+	}
+	s.closed = true
+	s.closeErr = s.file.Close()
+	return s.closeErr
+}
 
 // Stamp returns the initial identity and boundary.
 func (s *Snapshot) Stamp() Stamp { return s.stamp }
 
 // ReadAt reads only within the captured boundary.
 func (s *Snapshot) ReadAt(p []byte, off int64) (int, error) {
+	if s.closed {
+		return 0, errors.New("transcript snapshot is closed")
+	}
 	if off < 0 {
 		return 0, errors.New("negative transcript offset")
 	}
@@ -186,6 +207,9 @@ func (s *Snapshot) ReadAt(p []byte, off int64) (int, error) {
 
 // Check rejects any observable write during the read; reopen to include later appends.
 func (s *Snapshot) Check() error {
+	if s.closed {
+		return errors.New("transcript snapshot is closed")
+	}
 	info, err := s.file.Stat()
 	if err != nil {
 		return err
@@ -212,3 +236,15 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	}
 	return r.r.Read(p)
 }
+
+// Input is a narrow verified borrowed file view shared by bounded native consumers.
+type Input interface {
+	io.ReaderAt
+	Length() int64
+	Stamp() Stamp
+	Check() error
+	Records(context.Context, bool, int64, int64, func([]byte) bool) (RecordWindow, error)
+}
+
+// Length returns the captured boundary without another stat.
+func (s *Snapshot) Length() int64 { return s.stamp.Size }
