@@ -1,5 +1,7 @@
 package archive
 
+import "time"
+
 // Analysis is one pure derivation of retained evidence for all shared builders.
 // It is never a second persisted transcript and owns no source handles.
 type Analysis struct {
@@ -51,9 +53,15 @@ type NativeFacts struct {
 	Name          string
 	TextTitle     string
 	WorkspaceRoot string
-	Branch        string
-	PullRequests  []PullRequestLink
-	TurnEnd       NativeTurnEnd
+	// FirstBranch is the initial retained branch, excluding inlined child evidence.
+	FirstBranch string
+	// NativeStartedAt is the original session start recorded by the integration.
+	NativeStartedAt time.Time
+	// EarliestRecordAt includes native bookkeeping timestamps.
+	EarliestRecordAt time.Time
+	Branch           string
+	PullRequests     []PullRequestLink
+	TurnEnd          NativeTurnEnd
 	// Text preserves the historical text-only prompt eligibility policy.
 	Text bool
 	// TextOnly selects rendering when there is no retained structured evidence.

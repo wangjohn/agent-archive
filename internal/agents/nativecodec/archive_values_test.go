@@ -697,3 +697,6 @@ func NewAdapter(name string) (Adapter, error) {
 		return nil, fmt.Errorf("unsupported archive adapter %q", name)
 	}
 }
+
+type GitHead = archive.GitHead
+type Replay = archive.Replay

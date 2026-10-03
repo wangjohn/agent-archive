@@ -367,7 +367,7 @@ func (x *evalExporter) write(w io.Writer, record any) {
 // export is one input's record.
 func (x *evalExporter) export(input evalInput) any {
 	if input.archiveID != "" {
-		return exportArchivedSession(x.ctx, x.store, input.archiveID, x.opts)
+		return exportArchivedSession(x.ctx, x.env.agentRegistry(), x.store, input.archiveID, x.opts)
 	}
 	return x.exportLocal(input)
 }
@@ -378,7 +378,7 @@ func (x *evalExporter) export(input evalInput) any {
 // export is always of exactly the session named. At metadata detail only the
 // sidecar is read; at full detail the source bundle is read and verified
 // against it, as show --transcript does.
-func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id string, opts evalExportOptions) any {
+func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, store storage.ObjectStore, id string, opts evalExportOptions) any {
 	fail := func(code archive.EvalErrorCode, message string) any {
 		record := archive.NewEvalExportError(archive.EvalExportSourceArchive, id, code, message)
 		if isArchiveSessionID(id) {
@@ -422,7 +422,11 @@ func exportArchivedSession(ctx context.Context, store storage.ObjectStore, id st
 	if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
 		return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 	}
-	record, err := archive.BuildEvalExport(bundle, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
+	analysis, err := analyzeSource(ctx, parsers, bundle)
+	if err != nil {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	record, err := archive.BuildEvalExportWithAnalysis(bundle, analysis, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}
@@ -495,7 +499,13 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	if !filtered.NativeStartAt.IsZero() {
 		startedAt = filtered.NativeStartAt
 	}
-	record, err := archive.BuildLocalEvalExport(bundle, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail)
+	parser, _ := x.env.agentRegistry().LookupParser(bundle.Capture.Harness.Name)
+	analysis, parseErr := agentapi.Analyze(x.ctx, parser, bundle)
+	parserInfo := archive.ParserInfo{}
+	if parser != nil {
+		parserInfo.Version = parser.Version()
+	}
+	record, err := archive.BuildLocalEvalExportWithAnalysis(bundle, analysis, parseErr, archive.LocalTranscript{Path: path, ProjectRoot: root, StartedAt: startedAt, Now: now}, x.opts.detail, parserInfo)
 	if err != nil {
 		return fail(path, archive.EvalErrorParseFailed, "the filtered transcript could not be parsed")
 	}

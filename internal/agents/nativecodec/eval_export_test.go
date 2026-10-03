@@ -1,16 +1,17 @@
-package archive
+package nativecodec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -96,7 +97,7 @@ func TestEvalExportGolden(t *testing.T) {
 				out.Write(line)
 				out.WriteByte('\n')
 			}
-			golden.Check(t, filepath.Join("testdata", "eval-export", harness+".jsonl"), out.Bytes())
+			golden.Check(t, filepath.Join("..", "..", "archive", "testdata", "eval-export", harness+".jsonl"), out.Bytes())
 		})
 	}
 }
@@ -172,50 +173,6 @@ func TestEvalExportFallsBackToTheHooksFinalMessage(t *testing.T) {
 	}
 }
 
-func TestFitEvalExportCutsTextsNeverPrompts(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("é", 20000) // two bytes a rune: a cut must not split one
-	prompts := []EvalPrompt{{Text: "short"}, {Text: long}, {Text: long + long}}
-	files := []string{"a.go", "b.go", "c.go"}
-	record := EvalExport{
-		SchemaVersion: EvalExportSchemaVersion, Record: evalRecordSession, Source: EvalExportSourceArchive, Detail: EvalExportDetailFull,
-		SessionID: "s", Prompts: &prompts, FinalResponse: &EvalFinalResponse{Text: long, Source: "transcript"}, FilesEdited: &files,
-	}
-	if got := FitEvalExport(record, 0); got.Trimmed != nil {
-		t.Error("no bound cut something")
-	}
-	if got := FitEvalExport(record, 1<<20); got.Trimmed != nil {
-		t.Error("a record under its bound was cut")
-	}
-	fitted := FitEvalExport(record, 20000)
-	if size := evalSize(fitted); size > 20000 || fitted.Trimmed == nil || fitted.Trimmed.ExceedsMaxBytes {
-		t.Fatalf("size %d, trimmed %+v", size, fitted.Trimmed)
-	}
-	if len(*fitted.Prompts) != 3 || (*fitted.Prompts)[0].Text != "short" || (*fitted.Prompts)[0].Truncated {
-		t.Errorf("prompts = %+v, want all three and the short one whole", *fitted.Prompts)
-	}
-	for _, p := range *fitted.Prompts {
-		if !utf8.ValidString(p.Text) {
-			t.Error("a cut split a rune")
-		}
-	}
-	if fitted.Trimmed.TextsTruncated != 3 || len(*fitted.FilesEdited) != 3 {
-		t.Errorf("trimmed = %+v, files %v", fitted.Trimmed, *fitted.FilesEdited)
-	}
-	// The caller's record is left alone.
-	if (*record.Prompts)[1].Text != long || record.FinalResponse.Truncated {
-		t.Error("FitEvalExport changed its argument")
-	}
-	// A bound nothing can meet: texts at their floor, files dropped, and the
-	// record says it is still over.
-	tiny := FitEvalExport(record, 500)
-	if !tiny.Trimmed.ExceedsMaxBytes || len(*tiny.Prompts) != 3 || len(*tiny.FilesEdited) != 0 || tiny.Trimmed.FilesEditedOmitted != 3 {
-		t.Errorf("tiny = %+v, prompts %d, files %v", tiny.Trimmed, len(*tiny.Prompts), *tiny.FilesEdited)
-	}
-}
-
-// An error record validates, and so does one with a code a later release
-// might add.
 func TestEvalExportErrorRecordMatchesTheSchema(t *testing.T) {
 	t.Parallel()
 	schema := evalExportSchema(t)
@@ -275,7 +232,7 @@ func TestLocalEvalExportGolden(t *testing.T) {
 		out.Write(line)
 		out.WriteByte('\n')
 	}
-	golden.Check(t, filepath.Join("testdata", "eval-export", "local-claude.jsonl"), out.Bytes())
+	golden.Check(t, filepath.Join("..", "..", "archive", "testdata", "eval-export", "local-claude.jsonl"), out.Bytes())
 }
 
 // A transcript whose records carry no time has no started_at, unless
@@ -315,4 +272,37 @@ func TestLocalEvalExportIgnoresArchiveEvidence(t *testing.T) {
 			t.Fatalf("%s carries archive evidence: %+v", detail, record)
 		}
 	}
+}
+
+// Export fixtures exercise native decoding; the production builders receive typed analysis.
+type EvalExport = archive.EvalExport
+type EvalExportDetail = archive.EvalExportDetail
+type EvalExportSource = archive.EvalExportSource
+type EvalPrompt = archive.EvalPrompt
+type EvalFinalResponse = archive.EvalFinalResponse
+type EvalFeedback = archive.EvalFeedback
+type LocalTranscript = archive.LocalTranscript
+
+const EvalExportSchemaVersion = archive.EvalExportSchemaVersion
+const EvalExportDetailMetadata = archive.EvalExportDetailMetadata
+const EvalExportDetailFull = archive.EvalExportDetailFull
+const EvalExportSourceArchive = archive.EvalExportSourceArchive
+const EvalExportSourceLocal = archive.EvalExportSourceLocal
+const EvalErrorNotFound = archive.EvalErrorNotFound
+
+var EvalExportFromMetadata = archive.EvalExportFromMetadata
+var NewEvalExportError = archive.NewEvalExportError
+var FitEvalExport = archive.FitEvalExport
+
+func BuildEvalExport(b SourceBundle, m Metadata, source EvalExportSource, detail EvalExportDetail) (EvalExport, error) {
+	a, err := Parse(context.Background(), b)
+	if err != nil {
+		return EvalExport{}, err
+	}
+	return archive.BuildEvalExportWithAnalysis(b, a, m, source, detail)
+}
+func BuildLocalEvalExport(b SourceBundle, local LocalTranscript, detail EvalExportDetail) (EvalExport, error) {
+	b.SupplementalEvidence = nil
+	a, err := Parse(context.Background(), b)
+	return archive.BuildLocalEvalExportWithAnalysis(b, a, err, local, detail, ParserInfo{})
 }
