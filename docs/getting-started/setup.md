@@ -657,6 +657,10 @@ permission window; another machine's live authorization intervals are never impo
 Use the review’s **Edit a setting → Codex project exceptions** to exclude a
 directory or explicitly include a child beneath an excluded parent. The nearest
 explicit rule wins; lifting an exclusion admits only eligible future starts.
+Project exception rules are shared. If Claude Code or Cursor is also selected,
+setup asks for separate confirmation naming those apps before changing their
+capture permission. The default is No; declining leaves the rule and capture
+permissions unchanged. Codex-only setup does not need that additional choice.
 The final review separates capture mechanism, scope, exceptions, approved Codex
 homes, destination, start boundary, history, copies and optional hooks.
 

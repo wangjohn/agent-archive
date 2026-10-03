@@ -459,6 +459,9 @@ last-attempt diagnostics). Discovery-origin sessions do not imply `hook_observed
 only an actual durable hook observation does. Imported sessions retain import
 counts even when a later hook is observed. Found/pending tasks, filtered local
 capture, publication and read-back verification remain distinct states.
+In all-projects scope, import-only project rows do not require a fresh automatic
+capture before the app can be read-back verified. Included-project scope keeps
+its configured project capture checklist.
 
 Discovery status reads the atomically written, versioned health summary (at most
 16 KiB), independently of the full source catalog. Missing, corrupt or stale

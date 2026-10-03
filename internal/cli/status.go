@@ -162,6 +162,8 @@ type projectCaptureStatus struct {
 	sessions  int
 	imported  int
 	uploading int
+	// Imports can appear in a project row without requiring a fresh capture.
+	automaticCapture bool
 }
 
 type statusView struct {
@@ -336,13 +338,17 @@ func readBackProgress(app appStatus) string {
 	if len(app.Projects) == 0 {
 		return fmt.Sprintf("%d of %d sessions verified", app.VerifiedSessions, app.PublishedSessions)
 	}
-	verified := 0
+	verified, required := 0, 0
 	for _, pair := range app.Projects {
+		if !requiresAutomaticCapture(app, pair) {
+			continue
+		}
+		required++
 		if pair.ReadBackVerified {
 			verified++
 		}
 	}
-	return fmt.Sprintf("%d of %d projects verified", verified, len(app.Projects))
+	return fmt.Sprintf("%d of %d projects verified", verified, required)
 }
 
 func readStatus(env Env) (view statusView, err error) {
@@ -756,6 +762,9 @@ func sortUploading(sessions []uploadingSession) {
 // whose files cannot be read is skipped where it fails.
 func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, issues map[string]string, readBackIssue *verificationOutcome) {
 	app.Sessions++
+	if pair != nil {
+		pair.automaticCapture = true
+	}
 	if registrationHookObserved(reg) {
 		app.HookObserved = true
 	}
@@ -873,9 +882,9 @@ func (s statusSessions) addPublication(app *appStatus, pair *projectCaptureStatu
 // app's projects and the app as a whole are read-back verified.
 func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 	app.ReadBackVerified = len(app.Projects) > 0
-	if len(app.Projects) == 0 {
-		// Nothing to require per pair (legacy configuration without
-		// projects): the sessions themselves are the evidence.
+	if len(app.Projects) == 0 || (app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects)) {
+		// Legacy configuration and all-mode require actual automatic
+		// publication evidence, never verification of an import-only root.
 		app.ReadBackVerified = app.PublishedSessions > 0 && app.VerifiedSessions == app.PublishedSessions
 	}
 	for i := range app.Projects {
@@ -893,7 +902,7 @@ func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 		default:
 			pair.VerificationState = "not_verified"
 		}
-		if !pair.ReadBackVerified {
+		if requiresAutomaticCapture(*app, *pair) && !pair.ReadBackVerified {
 			app.ReadBackVerified = false
 		}
 	}
@@ -909,6 +918,12 @@ func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 			// A verified session is not a read-back issue.
 		}
 	}
+}
+
+// Included-project mode keeps its configured capture checklist. In all-mode,
+// historical imports alone never add a requirement to start a fresh task there.
+func requiresAutomaticCapture(app appStatus, pair projectCaptureStatus) bool {
+	return app.Name != "codex" || app.CodexCaptureScope != string(config.CodexAllProjects) || pair.automaticCapture
 }
 
 // readInstalledApps fills in each app's installed version, support, and
@@ -1158,7 +1173,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 // capture is not yet read-back verified, if any.
 func chooseCaptureStep(view *statusView) {
 	for _, app := range view.Apps {
-		if app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects) && app.Sessions == 0 && len(app.Projects) == 0 {
+		if app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects) && app.Sessions == 0 {
 			view.State = "Waiting for capture"
 			view.problem = "Waiting for the first Codex task"
 			if discoveryEnabled(app) {
@@ -1169,7 +1184,7 @@ func chooseCaptureStep(view *statusView) {
 			break
 		}
 		for _, pair := range app.Projects {
-			if pair.ReadBackVerified {
+			if pair.ReadBackVerified || !requiresAutomaticCapture(app, pair) {
 				continue
 			}
 			view.State = "Waiting for capture"
