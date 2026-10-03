@@ -18,9 +18,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
@@ -61,7 +60,7 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 
 // Config is this machine's complete archive configuration. It contains no
 // secrets: R2 secrets live in the credential store (the Keychain on macOS, a
-// private file elsewhere; see credentials.Config.R2CredentialRef)
+// private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
 	CodexCapture *CodexCaptureConfig `json:"codex_capture,omitempty"`
@@ -76,19 +75,18 @@ type Config struct {
 	// MachineName is a chosen label, never a detected hostname.
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
-	MachineAssignment *MachineAssignment `json:"machine_assignment,omitempty"`
+	MachineAssignment     *MachineAssignment         `json:"machine_assignment,omitempty"`
+	BucketPrivacy         *destination.PrivacyReport `json:"bucket_privacy,omitempty"`
+	RetiredCredentialRefs []string                   `json:"retired_credential_refs,omitempty"`
+	StorageVerifiedAt     time.Time                  `json:"storage_verified_at,omitempty"`
+	DestinationSince      time.Time                  `json:"destination_since,omitempty"`
+	PreviousDestinations  []destination.Config       `json:"previous_destinations,omitempty"`
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
-	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
-	RetiredCredentialRefs []string               `json:"retired_credential_refs,omitempty"`
-	StorageVerifiedAt     time.Time              `json:"storage_verified_at,omitempty"`
-	DestinationSince      time.Time              `json:"destination_since,omitempty"`
-	PreviousDestinations  []credentials.Config   `json:"previous_destinations,omitempty"`
-
 	SchemaVersion int                `json:"schema_version"`
 	MachineID     string             `json:"machine_id"`
-	Storage       credentials.Config `json:"storage"`
+	Storage       destination.Config `json:"storage"`
 	Archive       archive.Config     `json:"archive"`
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
@@ -345,7 +343,7 @@ func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
 // DestinationID identifies a storage destination by its provider, endpoint,
 // bucket, and prefix. It never covers credentials or their references. It
 // lives here rather than in package archive, which imports no other internal
-// package: taking a credentials.Config would pull the AWS SDK and cgo into
+// package: taking a destination.Config would pull the AWS SDK and cgo into
 // archive.
 //
 // Registrations and batch files store this value, and it decides which bucket
@@ -353,13 +351,13 @@ func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
 // normalisation, the join, nor the prefix trimming, without a migration of
 // every stored ID: otherwise every registration silently belongs to no
 // destination. TestDestinationIDIsPinned holds it fixed.
-func DestinationID(c credentials.Config) string {
+func DestinationID(c destination.Config) string {
 	// The provider is compared as storage compares it, case- and
 	// space-insensitively; setup always writes it lowercase.
 	provider := strings.ToLower(strings.TrimSpace(c.Provider))
 	endpoint := ""
-	if provider == credentials.ProviderR2 {
-		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
+	if provider == destination.ProviderR2 {
+		endpoint, _ = destination.R2Endpoint(c.R2Endpoint, c.R2AccountID)
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
 	return hex.EncodeToString(sum[:])

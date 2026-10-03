@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/testutil/agenttest"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"os"
 	"path/filepath"
@@ -83,6 +84,21 @@ func TestReadReusesOnlySuccessfulLiveAdmissionProbe(t *testing.T) {
 	if _, err = pass.Read(ctx, ref, agentapi.ReadLimits{}); !errors.Is(err, context.Canceled) || probes != 2 {
 		t.Fatalf("cancellation=%v probes=%d", err, probes)
 	}
+}
+
+func TestCursorRecordSourceConformance(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"lastUpdatedAt":1,"fullConversationHeadersOnly":[{"bubbleId":"b","type":2}]}'),('bubbleId:c:b','{"type":2,"text":"synthetic visible"}')`)
+	closeErr := db.Close()
+	if err != nil || closeErr != nil {
+		t.Fatalf("database fixture: %v %v", err, closeErr)
+	}
+	agenttest.RecordSource(t, SourceProvider{}, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: "c"}, agentapi.SourceEnvironment{Database: path})
 }
 
 func TestTextFallbackRetainsReadFailure(t *testing.T) {

@@ -254,8 +254,8 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	app := strings.ToLower(appArg)
-	if appArg != "" && !slices.Contains(allHarnesses, app) {
-		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(allHarnesses, ", "))
+	if appArg != "" && !slices.Contains(env.setupNames(), app) {
+		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(env.setupNames(), ", "))
 	}
 	if app != "" && *jsonOut {
 		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")
@@ -486,7 +486,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	view.Paused = cfg.Paused
 	if userHome, err := env.userHomeDir(); err == nil {
 		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
-		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
+		view.AgentSkills = agentskills.Installed(env.agentRegistry(), userHome, claudeDir, dataHome)
 		if cfg.NoSkills {
 			// Setup removes a file of its own here rather than refreshing it,
 			// so it is left over (a restored backup, an interrupted removal),
@@ -495,7 +495,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
 			}
 		} else {
-			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			view.AgentSkillsOutOfDate = agentskills.Stale(env.agentRegistry(), userHome, claudeDir, cfg.InstalledExecutable, dataHome)
 			for _, path := range view.AgentSkillsOutOfDate {
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup --refresh to refresh it.", skillLabel(path), path))
 			}
@@ -912,7 +912,7 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		view.Apps[i].VersionObservedAt = appDiscovery.ObservedAt
 		view.Apps[i].VersionKind = appDiscovery.VersionKind
 		view.Apps[i].VersionState = appDiscovery.VersionState
-		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
+		view.Apps[i].Capabilities = captureCapabilityProfile(env.agentRegistry(), view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
 		in := env.installation(home, userHome)
 		installed, e := hooks.Installed(hookFiles, in.hook(executable), view.Apps[i].Name)

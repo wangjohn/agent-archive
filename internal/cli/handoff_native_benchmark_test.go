@@ -34,12 +34,12 @@ func BenchmarkNativeFirstPreview(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			roots := []nativesessions.StoreRoot{{Harness: "claude", Path: root}}
+			roots := []nativesessions.StoreRoot{{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
 				files := &nativeReadMeter{}
-				result, err := nativesessions.Discover(context.Background(), files, roots, nativesessions.Scope{Directories: []string{cwd}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+				result, err := nativesessions.Discover(context.Background(), productionAgents, files, roots, nativesessions.Scope{Directories: []string{cwd}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 				if err != nil {
 					b.Fatal(err)
 				}

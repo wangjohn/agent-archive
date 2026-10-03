@@ -48,20 +48,17 @@ func (e Env) nativeRoots(harness string) ([]nativesessions.StoreRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	claude, codex := e.appSessionDirs(home, config.Config{})
+	locations := e.nativeSessionDirectories(home, config.Config{})
 	var roots []nativesessions.StoreRoot
-	if harness == "" || harness == archive.HarnessClaude {
-		for _, dir := range claude {
-			roots = append(roots, nativesessions.StoreRoot{Harness: archive.HarnessClaude, Path: filepath.Join(dir, "projects")})
+	for _, name := range e.agentRegistry().NativeHeaderAgents() {
+		if harness != "" && harness != name {
+			continue
 		}
+		provider, _ := e.agentRegistry().LookupNativeHeaders(name)
+		dirs := locations[name]
+		roots = append(roots, provider.Roots(agentapi.NativeLocations{UserHome: home, Directories: dirs}, agentapi.DiscoveryHandoff)...)
 	}
-	if harness == "" || harness == archive.HarnessCodex {
-		for _, dir := range codex {
-			for _, sub := range []string{"sessions", "archived_sessions"} {
-				roots = append(roots, nativesessions.StoreRoot{Harness: archive.HarnessCodex, Path: filepath.Join(dir, sub), Recursive: true})
-			}
-		}
-	}
+
 	return roots, nil
 }
 
@@ -319,7 +316,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 	}
 
 	terminal.Printf(stderr, "handoff: local source; automatic archiving is not configured. Searching %s native stores.\n", apps)
-	result, err := nativesessions.Discover(ctx, env.nativeFiles(), roots, nativesessions.Scope{Directories: []string{dir}, All: opts.allProjects}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	result, err := nativesessions.Discover(ctx, registryFor(env), env.nativeFiles(), roots, nativesessions.Scope{Directories: []string{dir}, All: opts.allProjects}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 	if err != nil {
 		return fail(err)
 	}
@@ -394,7 +391,7 @@ func handoffFromNative(ctx context.Context, c nativesessions.Candidate, files na
 	if !c.Stamp.SameFile(s.Stamp()) {
 		return handoffTarget{}, transcriptio.ErrChanged
 	}
-	h, _, err := nativesessions.InspectNative(ctx, s, c.Ref, nativeWindowBytes, nativeWindowBytes)
+	h, _, err := nativesessions.InspectNative(ctx, registryFor(clock), s, c.Ref, nativeWindowBytes, nativeWindowBytes)
 	if err != nil {
 		return handoffTarget{}, err
 	}

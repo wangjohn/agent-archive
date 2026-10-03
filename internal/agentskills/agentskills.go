@@ -11,7 +11,11 @@
 package agentskills
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/skillownership"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,10 +34,10 @@ type File struct {
 	Harnesses []string
 	Path      string
 	Content   []byte
+	Boundary  string
 }
 
-// allHarnesses is every harness a skill file is written for.
-var allHarnesses = []string{"codex", "claude", "cursor"}
+// ports.SkillAgents() is every harness a skill file is written for.
 
 // Files is the skill files of every skill in Registry for harnesses, in
 // Registry order (each skill's Claude Code file, then its shared one),
@@ -43,34 +47,89 @@ var allHarnesses = []string{"codex", "claude", "cursor"}
 // configuration directory claudeDir (~/.claude, or $CLAUDE_CONFIG_DIR);
 // Codex and Cursor both read ~/.agents/skills (Cursor reads ~/.claude/skills
 // too, so the instructions suit any of the three).
-func Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
-	return skillFiles(Registry, userHome, claudeDir, harnesses, executable, dataHome)
+func Files(ports agentapi.SkillsLookup, userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
+	return skillFiles(ports, Registry, userHome, claudeDir, harnesses, executable, dataHome)
 }
 
 // skillFiles is Files for the skills in registry.
-func skillFiles(registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
+func skillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
+	files, _ := renderedSkillFiles(ports, registry, userHome, claudeDir, harnesses, executable, dataHome)
+	return files
+}
+
+type skillDestination struct {
+	name        string
+	destination agentapi.SkillDestination
+}
+
+func destinations(ports agentapi.SkillsLookup, userHome, claudeDir string, harnesses []string) []skillDestination {
+	var out []skillDestination
+	for _, name := range ports.SkillAgents() {
+		if harnesses != nil && !contains(harnesses, name) {
+			continue
+		}
+		if provider, ok := ports.LookupSkills(name); ok {
+			out = append(out, skillDestination{name: name, destination: provider.Destination(agentapi.SkillLocations{UserHome: userHome, ClaudeDirectory: claudeDir})})
+		}
+	}
+	return out
+}
+
+func renderedSkillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome string) ([]File, error) {
+	// An empty selection differs from inventorying every optional provider.
+	if len(harnesses) == 0 {
+		return nil, nil
+	}
+	return renderDestinations(registry, destinations(ports, userHome, claudeDir, harnesses), executable, dataHome, true)
+}
+
+// renderDestinations renders each template once while keeping every inventory
+// ownership alternative. Selected providers alone must agree at shared paths.
+func renderDestinations(registry []Skill, providers []skillDestination, executable, dataHome string, merge bool) ([]File, error) {
 	var files []File
-	var shared []string
-	for _, h := range []string{"codex", "cursor"} {
-		if slices.Contains(harnesses, h) {
-			shared = append(shared, h)
+	for _, skill := range registry {
+		indexes := map[string]int{}
+		var rendered [2][]byte
+		var ready [2]bool
+		for _, provider := range providers {
+			d := provider.destination
+			path := filepath.Join(d.Directory, skill.Name, "SKILL.md")
+			dest := Shared
+			if d.ClaudeFrontmatter {
+				dest = Claude
+			}
+			if !ready[dest] {
+				rendered[dest], ready[dest] = skill.Render(dest, executable, dataHome), true
+			}
+			content := rendered[dest]
+			if merge {
+				if i, ok := indexes[path]; ok {
+					if !bytes.Equal(files[i].Content, content) {
+						return nil, fmt.Errorf("skill %s has conflicting content at %s", skill.Name, path)
+					}
+					files[i].Harnesses = append(files[i].Harnesses, provider.name)
+					continue
+				}
+				indexes[path] = len(files)
+			}
+			files = append(files, File{Skill: skill.Name, Harnesses: []string{provider.name}, Path: path, Content: bytes.Clone(content), Boundary: d.Boundary})
 		}
 	}
-	for _, s := range registry {
-		if slices.Contains(harnesses, "claude") {
-			files = append(files, File{Skill: s.Name, Harnesses: []string{"claude"}, Path: filepath.Join(claudeDir, "skills", s.Name, "SKILL.md"), Content: s.Render(Claude, executable, dataHome)})
-		}
-		if len(shared) > 0 {
-			files = append(files, File{Skill: s.Name, Harnesses: shared, Path: filepath.Join(userHome, ".agents", "skills", s.Name, "SKILL.md"), Content: s.Render(Shared, executable, dataHome)})
-		}
-	}
+	return files, nil
+}
+
+// inventorySkillFiles retains each provider's alternative template and ownership
+// policy. Different templates at the same path are only a conflict when selected
+// together for installation; inventory must still find and remove either one.
+func inventorySkillFiles(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, executable, dataHome string) []File {
+	files, _ := renderDestinations(registry, destinations(ports, userHome, claudeDir, nil), executable, dataHome, false)
 	return files
 }
 
 // marker is the line every skill file carries. A file with it is setup's,
 // whichever release or executable path wrote it; the person keeps a file of
 // their own by deleting the line.
-const marker = "<!-- Written by agent-archive setup, which replaces this file; agent-archive uninstall removes it. Delete this line to keep your own version. -->"
+const marker = skillownership.Marker
 
 // dataHomeVariable begins a command line naming a relocated data directory.
 const dataHomeVariable = "AGENT_ARCHIVE_HOME="
@@ -96,15 +155,7 @@ func shellQuote(s string) string {
 // does, and its command names dataHome, or no data directory for the
 // default installation: another installation sharing this HOME, with hook
 // files of its own, keeps its file.
-func owned(content []byte, dataHome string) bool {
-	if !slices.Contains(strings.Split(string(content), "\n"), marker) {
-		return false
-	}
-	if dataHome == "" {
-		return !strings.Contains(string(content), dataHomeVariable)
-	}
-	return strings.Contains(string(content), dataHomeVariable+shellQuote(dataHome)+" ")
-}
+func contains(names []string, name string) bool { return slices.Contains(names, name) }
 
 // PlanInstall plans the skill files for harnesses, running executable:
 // each is written where there is none and replaced only while it is setup's
@@ -113,39 +164,55 @@ func owned(content []byte, dataHome string) bool {
 // configuration was when setup last ran. Any other file, links and
 // directories included, is left alone; a wanted path holding one is
 // returned in foreign.
-func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
-	return planInstall(Registry, userHome, claudeDir, harnesses, executable, dataHome, previousClaudeDir)
+func PlanInstall(ports agentapi.SkillsLookup, userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
+	return planInstall(ports, Registry, userHome, claudeDir, harnesses, executable, dataHome, previousClaudeDir)
 }
 
 // planInstall is PlanInstall for the skills in registry.
-func planInstall(registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
+func planInstall(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
 	wanted := map[string]bool{}
-	for _, f := range skillFiles(registry, userHome, claudeDir, harnesses, executable, dataHome) {
+	observations := skillObservations{}
+	files, err := renderedSkillFiles(ports, registry, userHome, claudeDir, harnesses, executable, dataHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range files {
 		wanted[f.Path] = true
-		current, state, err := read(f.Path)
+		observed := observations.file(f.Path, true)
+		if observed.ReadError != nil {
+			return nil, nil, observed.ReadError
+		}
+		provider, _ := ports.LookupSkills(f.Harnesses[0])
+		inspection, err := provider.Inspect(agentapi.SkillInspectionRequest{File: observed, Content: f.Content, DataHome: dataHome})
 		if err != nil {
 			return nil, nil, err
 		}
-		switch {
-		case state == missing:
-			changes = append(changes, hooks.Change{Path: f.Path, After: f.Content, Mode: 0600})
-		case state == regular && string(current) == string(f.Content):
-		case state == regular && owned(current, dataHome):
-			changes = append(changes, hooks.Change{Path: f.Path, Before: current, After: f.Content, Existed: true, Mode: mode(f.Path)})
-		default:
+		if inspection.State == agentapi.HookForeign {
 			foreign = append(foreign, f.Path)
+			continue
 		}
+		planned, err := provider.Plan(agentapi.SkillPlanRequest{Action: agentapi.SkillInstall, File: observed, Content: f.Content, DataHome: dataHome})
+		if err != nil {
+			return nil, nil, err
+		}
+		changes = append(changes, planned...)
+
 	}
-	for _, f := range append(skillFiles(registry, userHome, claudeDir, allHarnesses, "", ""), skillFiles(registry, userHome, previousClaudeDir, []string{"claude"}, "", "")...) {
+	currentFiles := inventorySkillFiles(ports, registry, userHome, claudeDir, "", "")
+	previousFiles := currentFiles
+	if previousClaudeDir != claudeDir {
+		previousFiles = inventorySkillFiles(ports, registry, userHome, previousClaudeDir, "", "")
+	}
+	for _, f := range append(currentFiles, previousFiles...) {
 		if wanted[f.Path] {
 			continue
 		}
-		wanted[f.Path] = true // planned once, if both Claude Code paths are one
-		change, found, err := planRemoval(f.Path, dataHome)
+		change, found, err := planRemoval(ports, f, dataHome, observations)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
+			wanted[f.Path] = true // remove each path once, using a provider that owns it
 			changes = append(changes, change)
 		}
 	}
@@ -155,45 +222,66 @@ func planInstall(registry []Skill, userHome, claudeDir string, harnesses []strin
 // PlanRemoval plans removing every skill file of setup's, for uninstall. A
 // file at one of their paths that is not setup's is returned in kept and
 // left alone.
-func PlanRemoval(userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
-	return planRemovalOf(Registry, userHome, claudeDir, dataHome)
+func PlanRemoval(ports agentapi.SkillsLookup, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	return planRemovalOf(ports, Registry, userHome, claudeDir, dataHome)
 }
 
 // planRemovalOf is PlanRemoval for the skills in registry.
-func planRemovalOf(registry []Skill, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
-	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
-		change, found, err := planRemoval(f.Path, dataHome)
+func planRemovalOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	files := inventorySkillFiles(ports, registry, userHome, claudeDir, "", "")
+	removed := map[string]bool{}
+	observations := skillObservations{}
+	for _, f := range files {
+		if removed[f.Path] {
+			continue
+		}
+		change, found, err := planRemoval(ports, f, dataHome, observations)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
+			removed[f.Path] = true
 			changes = append(changes, change)
-		} else if _, state, _ := read(f.Path); state != missing {
-			kept = append(kept, f.Path)
+		}
+	}
+	for _, f := range files {
+		if !removed[f.Path] && !slices.Contains(kept, f.Path) {
+			if observations.file(f.Path, false).Present {
+				kept = append(kept, f.Path)
+			}
 		}
 	}
 	return changes, kept, nil
 }
 
 // planRemoval is the Change deleting path, when it is setup's.
-func planRemoval(path, dataHome string) (hooks.Change, bool, error) {
-	current, state, err := read(path)
-	if err != nil || state != regular || !owned(current, dataHome) {
+func planRemoval(ports agentapi.SkillsLookup, f File, dataHome string, observations skillObservations) (hooks.Change, bool, error) {
+	observed := observations.file(f.Path, true)
+	if observed.ReadError != nil {
+		return hooks.Change{}, false, observed.ReadError
+	}
+	provider, ok := ports.LookupSkills(f.Harnesses[0])
+	if !ok {
+		return hooks.Change{}, false, nil
+	}
+	planned, err := provider.Plan(agentapi.SkillPlanRequest{Action: agentapi.SkillRemove, File: observed, DataHome: dataHome})
+	if err != nil || len(planned) == 0 {
 		return hooks.Change{}, false, err
 	}
-	return hooks.Change{Path: path, Before: current, Existed: true, Mode: mode(path), Delete: true}, true, nil
+	return planned[0], true, nil
 }
 
 // Installed is the skill files of setup's that are there now, for status.
-func Installed(userHome, claudeDir, dataHome string) []string {
-	return installedOf(Registry, userHome, claudeDir, dataHome)
+func Installed(ports agentapi.SkillsLookup, userHome, claudeDir, dataHome string) []string {
+	return installedOf(ports, Registry, userHome, claudeDir, dataHome)
 }
 
 // installedOf is Installed for the skills in registry.
-func installedOf(registry []Skill, userHome, claudeDir, dataHome string) []string {
+func installedOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, dataHome string) []string {
 	var paths []string
-	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
-		if current, state, err := read(f.Path); err == nil && state == regular && owned(current, dataHome) {
+	observations := skillObservations{}
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, "", "") {
+		if inspection, err := inspectFile(ports, f, dataHome, observations); err == nil && inspection.State == agentapi.HookOwned && !slices.Contains(paths, f.Path) {
 			paths = append(paths, f.Path)
 		}
 	}
@@ -205,21 +293,30 @@ func installedOf(registry []Skill, userHome, claudeDir, dataHome string) []strin
 // executable, so setup (which replaces a file it owns) refreshes them. It
 // is a subset of Installed, for status. With no executable recorded there
 // is nothing to compare with, and it reports none.
-func Stale(userHome, claudeDir, executable, dataHome string) []string {
-	return staleOf(Registry, userHome, claudeDir, executable, dataHome)
+func Stale(ports agentapi.SkillsLookup, userHome, claudeDir, executable, dataHome string) []string {
+	return staleOf(ports, Registry, userHome, claudeDir, executable, dataHome)
 }
 
 // staleOf is Stale for the skills in registry.
-func staleOf(registry []Skill, userHome, claudeDir, executable, dataHome string) []string {
+func staleOf(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir, executable, dataHome string) []string {
 	if executable == "" {
 		return nil
 	}
 	var paths []string
-	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, executable, dataHome) {
-		if current, state, err := read(f.Path); err == nil && state == regular && owned(current, dataHome) && string(current) != string(f.Content) {
-			paths = append(paths, f.Path)
+	fresh := map[string]bool{}
+	observations := skillObservations{}
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, executable, dataHome) {
+		if inspection, err := inspectFile(ports, f, dataHome, observations); err == nil && inspection.State == agentapi.HookOwned {
+			if inspection.Stale {
+				if !slices.Contains(paths, f.Path) {
+					paths = append(paths, f.Path)
+				}
+			} else {
+				fresh[f.Path] = true
+			}
 		}
 	}
+	paths = slices.DeleteFunc(paths, func(path string) bool { return fresh[path] })
 	return paths
 }
 
@@ -229,17 +326,14 @@ func staleOf(registry []Skill, userHome, claudeDir, executable, dataHome string)
 // configuration directory claudeDir; a directory holding anything is kept,
 // with every one above it. A link is never removed: os.Remove would unlink
 // it whatever it names.
-func RemoveEmptyDirs(userHome, claudeDir string) {
-	removeEmptyDirs(Registry, userHome, claudeDir)
+func RemoveEmptyDirs(ports agentapi.SkillsLookup, userHome, claudeDir string) {
+	removeEmptyDirs(ports, Registry, userHome, claudeDir)
 }
 
 // removeEmptyDirs is RemoveEmptyDirs for the skills in registry.
-func removeEmptyDirs(registry []Skill, userHome, claudeDir string) {
-	for _, f := range skillFiles(registry, userHome, claudeDir, allHarnesses, "", "") {
-		stop := userHome
-		if slices.Contains(f.Harnesses, "claude") {
-			stop = claudeDir
-		}
+func removeEmptyDirs(ports agentapi.SkillsLookup, registry []Skill, userHome, claudeDir string) {
+	for _, f := range inventorySkillFiles(ports, registry, userHome, claudeDir, "", "") {
+		stop := f.Boundary
 		for dir := filepath.Dir(f.Path); dir != filepath.Clean(stop) && local.PathWithin(dir, stop); dir = filepath.Dir(dir) {
 			if info, err := os.Lstat(dir); err != nil || !info.IsDir() || os.Remove(dir) != nil {
 				break
@@ -288,4 +382,37 @@ func read(path string) ([]byte, fileState, error) {
 		return nil, other, err
 	}
 	return data, regular, nil
+}
+
+func inspectFile(ports agentapi.SkillsLookup, f File, dataHome string, observations skillObservations) (agentapi.SkillInspection, error) {
+	observed := observations.file(f.Path, false)
+	provider, _ := ports.LookupSkills(f.Harnesses[0])
+	return provider.Inspect(agentapi.SkillInspectionRequest{File: observed, Content: f.Content, DataHome: dataHome})
+}
+
+// skillObservations shares a read within one pure planning or inspection
+// operation, while every alternative provider still validates its own policy.
+type skillObservations map[string]skillObservation
+
+type skillObservation struct {
+	file     agentapi.HookFile
+	modeRead bool
+}
+
+func (observations skillObservations) file(path string, withMode bool) agentapi.HookFile {
+	observation, ok := observations[path]
+	if !ok {
+		content, state, err := read(path)
+		observation.file = agentapi.HookFile{Path: path, Bytes: content, Present: state != missing, Regular: state == regular, ReadError: err}
+	}
+	if withMode && !observation.modeRead && observation.file.ReadError == nil {
+		observation.file.Mode = mode(path)
+		observation.modeRead = true
+	}
+	observations[path] = observation
+	file := observation.file
+	if !withMode {
+		file.Mode = 0
+	}
+	return file
 }

@@ -45,6 +45,49 @@ linters:
               desc: only builtin composes concrete integrations
             - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
               desc: only builtin composes concrete integrations
+        concrete-integrations-only-at-builtin:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/internal/agents/builtin/*.go"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/claude
+              desc: builtin is the sole native composition root
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/codex
+              desc: builtin is the sole native composition root
+            - pkg: github.com/wangjohn/agent-archive/internal/agents/cursor
+              desc: builtin is the sole native composition root
+        integrations-never-import-orchestration:
+          files:
+            - "**/internal/agents/**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: host composition adapts integrations
+            - pkg: github.com/wangjohn/agent-archive/internal/capture
+              desc: native integrations emit typed effects without shared capture
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: native integrations supply sources and facts without publication
+            - pkg: github.com/wangjohn/agent-archive/internal/backfill
+              desc: native discovery supplies candidates without shared admission
+        ports-and-values-have-no-process-or-network:
+          files:
+            - "**/internal/agentapi/*.go"
+            - "**/internal/archive/*.go"
+            - "**/internal/destination/*.go"
+            - "**/internal/sourceidentity/*.go"
+            - "!$test"
+          deny:
+            - pkg: os/exec
+              desc: ports and facts never execute programs
+            - pkg: net$
+              desc: ports and facts have no network capability
+            - pkg: net/http
+              desc: ports and facts have no network client
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: pure values cannot reach credential clients
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: pure values cannot reach storage clients
         native-codec-composition-belongs-to-integrations:
           files:
             - "$all"

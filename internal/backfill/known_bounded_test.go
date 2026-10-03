@@ -208,3 +208,42 @@ func TestBoundedProjectsRecordsCancellationAfterLastEmptyDirectoryRead(t *testin
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestBoundedProjectsKeepsSameNamedNativeCopiesAcrossStores(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	a, b := tr.repo("home/a"), tr.repo("home/b")
+	record := func(cwd string) string {
+		raw, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]string{"cwd": cwd}})
+		return string(raw) + "\n"
+	}
+	tr.write("home/.codex/sessions/day/rollout-same.jsonl", record(a))
+	tr.write("home/.codex/archived_sessions/rollout-same.jsonl", record(b))
+	got := KnownProjectsBounded(t.Context(), tr.env(), config.Config{}, 128)
+	if got.Incomplete() || len(got.Projects) != 2 {
+		t.Fatalf("native copies hid repository roots: %+v", got)
+	}
+}
+
+func TestBoundedProjectsEntryCapKeepsEarlierRoot(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	root := tr.repo("home/repo")
+	raw, _ := json.Marshal(map[string]string{"cwd": root})
+	tr.write("home/.claude/projects/0.jsonl", string(raw)+"\n")
+	env := tr.env()
+	env.ReadDir = func(path string) ([]fs.DirEntry, error) {
+		entries, err := os.ReadDir(path)
+		if err != nil || filepath.Base(path) != "projects" {
+			return entries, err
+		}
+		for range 8193 {
+			entries = append(entries, projectNonTranscriptEntry{name: "z-ignored"})
+		}
+		return entries, nil
+	}
+	got := KnownProjectsBounded(t.Context(), env, config.Config{}, 128)
+	if !got.Capped || len(got.Projects) != 1 || got.Projects[0].Root != root {
+		t.Fatalf("entry cap discarded usable prefix: %+v", got)
+	}
+}

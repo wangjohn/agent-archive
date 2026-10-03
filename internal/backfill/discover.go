@@ -1,26 +1,22 @@
 package backfill
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"errors"
 	"io"
 	"io/fs"
-	"path/filepath"
 	"sort"
-	"strings"
-	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/nativesessions"
+	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
 // transcript is one native transcript file found on disk, before resolution.
 type transcript struct {
-	harness harness
-	path    string
-	size    int64
+	sourcePriority int
+	harness        harness
+	path           string
+	size           int64
 	// nativeID is the ID the session is registered under: the Claude Code
 	// file stem, Codex's session_meta.payload.id, or the Cursor chat folder.
 	nativeID string
@@ -51,55 +47,6 @@ type unreadable struct {
 	cursorIncomplete bool
 }
 
-// discover lists every transcript file in the three apps' default stores. It
-// only lists directories; nothing is opened here. A folder that cannot be
-// listed is passed over and recorded in u, so one bad folder never stops the
-// plan, and its path is never shown.
-func discover(ctx context.Context, env Environment) (found []*transcript, u unreadable, err error) {
-	u.stores = map[string]bool{}
-	found = append(found, discoverClaude(ctx, env, &u)...)
-	if err := ctx.Err(); err != nil {
-		return found, u, err
-	}
-	found = append(found, discoverCodex(ctx, env, &u)...)
-	if err := ctx.Err(); err != nil {
-		return found, u, err
-	}
-	found = append(found, discoverCursor(env, &u)...)
-	return found, u, ctx.Err()
-}
-
-// listDir lists a folder inside an app's store. A missing folder, or a path
-// that is not a folder, is empty; one that cannot be read is counted and
-// treated as empty.
-func listDir(env Environment, dir string, u *unreadable) []dirEntry {
-	entries, ok := tryList(env, dir)
-	if !ok {
-		u.folders++
-	}
-	return entries
-}
-
-// listStore lists the root of app's store, recording app when it cannot be
-// read: then none of the sessions below it are found.
-func listStore(env Environment, dir, app string, u *unreadable) []dirEntry {
-	entries, ok := tryList(env, dir)
-	if !ok {
-		u.stores[app] = true
-	}
-	return entries
-}
-
-// tryList lists dir; ok is false only when it exists as a folder and cannot
-// be read.
-func tryList(env Environment, dir string) ([]dirEntry, bool) {
-	entries, err := readDirIfExists(env, dir)
-	if err != nil {
-		return nil, errors.Is(err, syscall.ENOTDIR)
-	}
-	return entries, true
-}
-
 // readDirIfExists lists dir, treating a missing directory as empty.
 func readDirIfExists(env Environment, dir string) ([]dirEntry, error) {
 	entries, err := env.readDir(dir)
@@ -123,202 +70,43 @@ type dirEntry struct {
 	regular bool
 }
 
-// fileSize stats a regular file without following symlinks; ok is false when
-// it is gone or is not one. A symlinked transcript is skipped: discovery
-// never follows a link out of an app's store.
-func fileSize(env Environment, path string) (int64, bool) {
-	info, err := env.lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return 0, false
-	}
-	return info.Size(), true
-}
-
-// discoverClaude finds <dir>/projects/*/*.jsonl in each of Claude Code's
-// folders (~/.claude, and $CLAUDE_CONFIG_DIR). The file stem is the native
-// session ID; a session found in two folders is a duplicate_session.
-func discoverClaude(ctx context.Context, env Environment, u *unreadable) []*transcript {
-	var found []*transcript
-	for _, dir := range env.claudeDirs() {
-		found = append(found, discoverClaudeIn(ctx, env, filepath.Join(dir, "projects"), u)...)
-	}
-	return found
-}
-
-type nativeDirectories struct{ env Environment }
-
-func (n nativeDirectories) ReadDir(path string) ([]fs.DirEntry, error) { return n.env.readDir(path) }
-
-func discoverClaudeIn(ctx context.Context, env Environment, root string, u *unreadable) []*transcript {
-	var found []*transcript
-	coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "claude", Path: root}, 0, func(ref nativesessions.Ref) (bool, error) {
-		size, ok := fileSize(env, ref.Path)
-		if ok {
-			found = append(found, &transcript{harness: harnessClaude, path: ref.Path, size: size, nativeID: strings.TrimSuffix(filepath.Base(ref.Path), ".jsonl")})
-		}
-		return true, nil
-	})
-	u.folders += coverage.UnreadableFolders
-	if coverage.RootUnreadable {
-		u.stores["claude"] = true
-	}
-	return found
-}
-
-// discoverCodex finds <dir>/sessions/**/rollout-*.jsonl and
-// <dir>/archived_sessions/rollout-*.jsonl in each of Codex's folders
-// (~/.codex, and $CODEX_HOME). A file in both is taken from sessions/.
-func discoverCodex(ctx context.Context, env Environment, u *unreadable) []*transcript {
-	var found []*transcript
-	seen := map[string]bool{}
-	// Each folder is judged on its own; the plan then says whether any
-	// sessions folder, or only archived ones, could not be read.
-	storeUnread, sessionsUnread := false, false
-	for _, dir := range env.codexDirs() {
-		u.stores["codex"], u.codexArchivedOnly = false, false
-		found = append(found, discoverCodexIn(ctx, env, dir, seen, u)...)
-		if u.stores["codex"] {
-			storeUnread = true
-			sessionsUnread = sessionsUnread || !u.codexArchivedOnly
-		}
-	}
-	u.stores["codex"] = storeUnread
-	u.codexArchivedOnly = storeUnread && !sessionsUnread
-	return found
-}
-
-func discoverCodexIn(ctx context.Context, env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
-	var found []*transcript
-	for index, store := range []string{"sessions", "archived_sessions"} {
-		coverage, _ := nativesessions.Walk(ctx, nativeDirectories{env}, nativesessions.StoreRoot{Harness: "codex", Path: filepath.Join(codexDir, store), Recursive: index == 0}, 0, func(ref nativesessions.Ref) (bool, error) {
-			name := filepath.Base(ref.Path)
-			if seen[name] {
-				return true, nil
-			}
-			size, ok := fileSize(env, ref.Path)
-			if ok {
-				seen[name] = true
-				found = append(found, &transcript{harness: harnessCodex, path: ref.Path, size: size})
-			}
-			return true, nil
-		})
-		u.folders += coverage.UnreadableFolders
-		if coverage.RootUnreadable {
-			if index == 1 {
-				u.codexArchivedOnly = !u.stores["codex"]
-			}
-			u.stores["codex"] = true
-		}
-	}
-	return found
-}
-
-// discoverCursor finds ~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl,
-// plus the text form older Cursor versions wrote beside them,
-// agent-transcripts/<id>.txt. The collector's Cursor filter reads either
-// (collector.FilterTranscriptFile falls back to the text filter). The folder
-// name is the chat ID hooks register; the JSONL file wins when a chat has
-// both.
-func discoverCursor(env Environment, u *unreadable) []*transcript {
-	root := filepath.Join(env.Home, ".cursor", "projects")
-	var found []*transcript
-	unreadBefore := u.folders
-	defer func() { u.cursorIncomplete = u.stores["cursor"] || u.folders > unreadBefore }()
-	for _, slug := range listStore(env, root, "cursor", u) {
-		if !slug.dir {
-			continue
-		}
-		dir := filepath.Join(root, slug.name, "agent-transcripts")
-		chats := map[string]*transcript{}
-		var order []string
-		for _, e := range listDir(env, dir, u) {
-			var id, path string
-			switch {
-			case e.dir:
-				id, path = e.name, filepath.Join(dir, e.name, e.name+".jsonl")
-			case e.regular && strings.HasSuffix(e.name, ".txt"):
-				id, path = strings.TrimSuffix(e.name, ".txt"), filepath.Join(dir, e.name)
-			default:
-				continue
-			}
-			if id == "" {
-				continue
-			}
-			size, ok := fileSize(env, path)
-			if !ok {
-				continue
-			}
-			if existing, dup := chats[id]; dup {
-				if strings.HasSuffix(existing.path, ".jsonl") {
-					continue
-				}
-			} else {
-				order = append(order, id)
-			}
-			chats[id] = &transcript{harness: harnessCursor, path: path, size: size, nativeID: id, cursorSlug: slug.name}
-		}
-		for _, id := range order {
-			found = append(found, chats[id])
-		}
-	}
-	return found
-}
-
-// readHead preserves import's 8 MiB scan and 16-record Codex rule.
-func readHead(env Environment, t *transcript) error {
-	if t.harness == harnessCursor {
-		return nil
-	}
-	h, err := nativesessions.Inspect(string(t.harness), t.path, func(visit func([]byte) bool) error { return scanRecords(env, t.path, visit) })
-	t.cwd = h.Directory
-	t.nativeID = h.NativeID
-	t.metaStart = h.StartedAt
-	t.identityMismatch = h.IdentityMismatch
-	return err
-}
-
-// headLineLimit is the longest line the header scan decodes; a longer one is
-// passed over, since it cannot be a header. headScanLimit bounds how far into
-// a file the scan reads. Both keep header reads small, since they run outside
-// the filter's byte budget.
+// Import compatibility header bounds are distinct from native preview framing.
 const (
 	headLineLimit = 1 << 20
 	headScanLimit = 8 << 20
 )
 
-// scanRecords calls visit with each non-blank line until it returns false,
-// reading at most headScanLimit bytes. Lines over headLineLimit are skipped
-// without being held in memory.
-func scanRecords(env Environment, path string, visit func([]byte) bool) error {
-	f, err := env.open(path)
-	if err != nil {
-		return err
+// discoveryFiles adapts the read-only host port without exposing archive state.
+type discoveryFiles struct{ env Environment }
+
+func (d discoveryFiles) ReadDir(path string) ([]fs.DirEntry, error) { return d.env.readDir(path) }
+
+func (d discoveryFiles) Lstat(path string) (fs.FileInfo, error) { return d.env.lstat(path) }
+
+func (d discoveryFiles) Open(path string) (io.ReadCloser, error) { return d.env.open(path) }
+
+func enumerateDiscovery(ctx context.Context, env Environment, purpose agentapi.DiscoveryPurpose, emit func(agentapi.DiscoveryCandidate) error) (unread unreadable, err error) {
+	unread.stores = map[string]bool{}
+	if env.Discovery == nil {
+		return unread, fmt.Errorf("native discovery lookup required")
 	}
-	defer func() { _ = f.Close() }()
-	reader := bufio.NewReaderSize(io.LimitReader(f, headScanLimit), 64*1024)
-	var line []byte
-	tooLong := false
-	for {
-		chunk, err := reader.ReadSlice('\n')
-		if !tooLong {
-			if len(line)+len(chunk) > headLineLimit {
-				tooLong, line = true, line[:0]
-			} else {
-				line = append(line, chunk...)
-			}
+	for _, name := range env.Discovery.DiscoveryAgents() {
+		provider, _ := env.Discovery.LookupDiscovery(name)
+		dirs := env.nativeDirectories(name)
+		report, e := provider.Discover(ctx, agentapi.DiscoveryRequest{Purpose: purpose, Stage: agentapi.DiscoveryIdentities, Locations: agentapi.NativeLocations{UserHome: env.Home, Directories: dirs}, Files: discoveryFiles{env}, HeaderBytes: headScanLimit, RecordBytes: headLineLimit}, emit)
+		if e != nil {
+			return unread, e
 		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
+		unread.folders += report.UnreadableFolders
+		if report.StoreUnreadable {
+			unread.stores[name] = true
 		}
-		if trimmed := bytes.TrimSpace(line); !tooLong && len(trimmed) > 0 && !visit(trimmed) {
-			return nil
+		if name == "codex" {
+			unread.codexArchivedOnly = report.HistoricalOnly
 		}
-		line, tooLong = line[:0], false
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
+		if name == "cursor" {
+			unread.cursorIncomplete = report.Incomplete
 		}
 	}
+	return unread, nil
 }

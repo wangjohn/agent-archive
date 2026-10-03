@@ -177,7 +177,7 @@ func TestNativePreviewBudgetIsCumulativeAcrossExplicitBatches(t *testing.T) {
 		f.add(t, "claude", strings.Repeat("a", i+1), "Widget work", 0)
 	}
 	meter := &nativeReadMeter{}
-	r, err := nativesessions.Discover(context.Background(), meter, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	r, err := nativesessions.Discover(context.Background(), productionAgents, meter, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestNativeCanceledPreviewQueueClosesAllHandles(t *testing.T) {
 	f := newNativeFixture(t)
 	f.add(t, "claude", "native-source", "Widget work", 0)
 	meter := &nativeReadMeter{}
-	r, err := nativesessions.Discover(context.Background(), meter, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+	r, err := nativesessions.Discover(context.Background(), productionAgents, meter, f.env.nativeStoreRoots, nativesessions.Scope{Directories: []string{f.cwd}}, nativesessions.Limits{Files: 100, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

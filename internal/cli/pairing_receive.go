@@ -307,7 +307,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 				break
 			}
 			draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2}
-			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), func(config.Config) []backfill.KnownProject { return nil }); err != nil {
+			if err = editSetupReview(env.setupNames(), p, &draft, userHome, backfilledProjects(env), func(config.Config) []backfill.KnownProject { return nil }); err != nil {
 				return cfg, err
 			}
 			cfg = draft.Config

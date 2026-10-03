@@ -48,12 +48,12 @@ flowchart LR
 | Package | Owns |
 | --- | --- |
 | `agentmeta` | Standard-library-only canonical identities, aliases and immutable catalogs; unknown archive names remain representable. |
-| `agentapi` | Narrow launch and runtime ports. Native argv and environment observations are pure; shared CLI owns executable resolution, selection policy, environment cleanup, file lifetime and execution. |
-| `agents/claude`, `agents/codex`, `agents/cursor` | Native executable preferences, argv rules, exact-session or project-presence detection and explicit session environment cleanup keys. Cleanup keys do not imply runtime presence. |
+| `agentapi` | Pure narrow operation contracts for launch/runtime, lifecycle, hooks, source/filter/parser/preview, purpose-specific discovery, native projects/catalogs and read-only transcript-path recognition, skills and capability/version evidence. Shared consumers request only their operation. |
+| `agents/claude`, `agents/codex`, `agents/cursor` | Native vocabulary, formats, argv/environment, locations, ownership and bounded interpretation. Pure codecs and planners never perform shared capture/publication or apply setup transactions. Source implementations own serial native reads. |
 | `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |
 | `testutil/agenttest` | Launch and runtime conformance suites called by each native integration's tests. |
-| `archive` | The privacy filter and adapters (one per app), source bundles, metadata derivation, the normalized view, and handoff rendering. No filesystem, network, or CLI dependencies, so it is fully testable on fixtures. |
-| `nativesessions` | Read-only Claude/Codex layouts, bounded identity discovery, checkout scoping, coverage and deterministic modification-time catalog ordering. No config, state, storage, collector or CLI dependency. |
+| `archive` | Pure shared privacy policy, source envelope, normalized Analysis values and metadata/transcript/handoff builders. Native filtering and semantic parsing live in integration codecs; builders consume one caller-owned Analysis. |
+| `nativesessions` | Shared bounded no-setup discovery orchestration, header reservations, symlink/scope/cancellation policy and coverage. Injected native providers own purpose-specific roots and header interpretation. Import keeps its separate compatibility bounds. |
 | `transcriptio` | Verified regular-file snapshots, captured read boundaries and complete-record bounded head/tail windows. No native discovery or archive policy. |
 | `collector` | The scan, build, publish loop; change detection; subagent capture. |
 | `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
@@ -61,23 +61,24 @@ flowchart LR
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection, and `Diagnose`, which names a storage failure's cause in plain words. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
 | `cloudflare` | Cloudflare's management API, only what guided R2 setup needs: list accounts, create a bucket, create and revoke a bucket-scoped API token, read public-access settings. Used at setup time with a pasted bootstrap token that is never stored; `cloudflare/cloudflaretest` is the fake tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
+| `destination`, `sourceidentity` | Pure persisted destination/privacy values and legacy source signature values. Public host-package aliases preserve schemas while config/state avoid credential, network and database client dependencies. |
 | `config` | `config.json`: the one record of how this machine is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
-| `platform` | The one place that knows the operating system: `platform.OS` (`Darwin`, `Linux`, and an `Unknown` that fails closed), `platform.Current` (the only non-test reader of `runtime.GOOS`, `TestOnlyPlatformReadsRuntimeGOOS`), and `Locations`, where the OS keeps Cursor's data, the desktop apps' folders, temporary directories, privacy-protected folders and the Cursor snapshot root. Pure: it runs no program and opens no file (the two inputs that need the system come in as `LocationDeps`), and imports no `credentials` or `hooks` (depguard and `TestPlatformImportBoundary`). |
+| `platform` | The one place that knows the operating system: `platform.OS` (`Darwin`, `Linux`, and an `Unknown` that fails closed), `platform.Current` (the only non-test reader of `runtime.GOOS`, `TestOnlyPlatformReadsRuntimeGOOS`), and `Locations`, shared temporary directories, privacy-protected folders and the Cursor snapshot root; native providers declare application and desktop workspace locations. Pure: it runs no program and opens no file (the two inputs that need the system come in as `LocationDeps`), and imports no `credentials` or `hooks` (depguard and `TestPlatformImportBoundary`). |
 | `hooks` | Checking, planning, installing, and removing the hook entries in the apps' hook files. |
 | `scheduler` | The port to whatever runs the background collector: `Ref`, `Site`, `JobState` (the words `status` reports), the desired state of a job (`Installation`, `JobSpec`, and `Plan`, a pure rendering of a definition as file `Artifact`s), what a scheduler reports (`Status`, with the `Problem` facts and `Words` nouns the commands' messages are filled from), the `Scheduler` interface (`Definer`, `Inspector`, whose `Installed` lists an installation's own job and its aliases, and `Controller`), `Retiree`, the job setup retires, the `NotOwnedError` and `IndeterminateError` an `Unload` refuses with, and the `Runner` an adapter runs its tool through. Pure: it runs no program and imports no `credentials` or `hooks` (depguard and `TestSchedulerImportBoundary`). |
 | `scheduler/launchd` | The macOS adapter: the LaunchAgent plist (planning it and reading its program, environment and data directory back), the collector's labels and every earlier one (`Installed`: the labels earlier releases gave the collector, and the prototype's upload job), and the `launchctl` calls that ask about, load and stop a job, all through the `Runner` it is given. |
 | `scheduler/systemd` | The Linux adapter: the collector as two user unit files, a oneshot service and a timer (planning them and reading the program, environment and data directory back from the service), the unit names that are its refs, and the `systemctl --user` calls that ask about, load and stop a job, all through the `Runner` it is given. |
 | `testutil/schedulertest` | Test helpers for the port: `Model`, a scheduler that is not launchd, and `RunConformance`, the suite every adapter passes over a fake `Runner`. |
 | `scheduler/host` | Chooses the adapter for the system (launchd on macOS, systemd on Linux; on another system, a scheduler called `none` that says every job is unknown and refuses changes) or by the name `config.json` records (`background_backend`; `Lookup`), and owns the real `Runner`: the program in a process group of its own, output combined, with the variables that reach the user's systemd manager for `systemctl` and `loginctl`. Only `host` imports an adapter (depguard and `TestOnlyHostImportsAdapters`); running a program is limited to a listed set of packages (`TestOnlyListedPackagesRunPrograms`). |
-| `agentskills` | The skills setup installs into Claude Code, Codex, and Cursor (`/handoff`): the `Registry`, each skill's text as an embedded template rendered per destination, and planning their install, removal, and refresh as setup-journal changes. A file is setup's by a marker line and this installation's data directory; `Stale` names the files an upgrade has outdated. |
-| `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (`credentials` and `storage` come in only through `config`, for their types); depguard and `TestCaptureImportBoundary` enforce this. The one program a hook does run is `git`, for the repository key and the checked-out commit: `cli` passes in the lookups, which run before `hooks.lock` is taken, at the same time as each other, only for a new session in an archived project (and, for HEAD alone, at a stop of a registered one), and are abandoned after 600 ms. |
+| `agentskills` | Shared rendered skill templates, path/content deduplication, ownership, refresh/removal and setup-journal plans. Injected native skill providers declare installation and evidence roots separately and inspect/plan observed bytes. |
+| `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (config uses pure destination values); depguard and `TestCaptureImportBoundary` enforce this. The one program a hook does run is `git`, for the repository key and the checked-out commit: `cli` passes in the lookups, which run before `hooks.lock` is taken, at the same time as each other, only for a new session in an archived project (and, for HEAD alone, at a stop of a registered one), and are abandoned after 600 ms. |
 | `gitremote` | The only place the program runs `git`: reads a project's `origin` with a 500 ms timeout and returns `archive.RepoKey` of it, and reads the commit a working directory has checked out and whether its tree is dirty (`Head`, `Dirty`, `HeadState`; see [the commit a session started on](../specs/git-head.md)), each "" or nil on any failure. It runs git itself (one of the packages `TestOnlyListedPackagesRunPrograms` allows), behind its own injectable `Runner`, not a `scheduler.Runner`. `capture` may not run programs, so `cli` hands the hook these lookups (`capture.WithRepoKey`, `capture.WithGitHead`). |
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and recording the prototype's job and the collectors installed under earlier labels that setup retires (which jobs those are is the scheduler's to say). A scheduler is reached only through the `Backends` its caller passes (cli's `Env`), which resolve the backend name each journal records, so every job is driven through the backend that made it. Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
-| `backfill` | Import policy, the complete import plan, registration, and undo; Cursor discovery stays here. |
-| `nativesessions` | Shared read-only Claude/Codex store layouts and identity/cwd header facts. No configured archive, collector, network, program, or UI dependencies. |
+| `backfill` | Shared import budgets, project policy, plan, registration and undo. Native integrations stream discovery candidates and interpret filtered admission facts; Cursor declares its compact database catalog through borrowed row callbacks. |
+| `nativesessions` | Shared bounded no-setup discovery orchestration, header reservations, symlink/scope/cancellation policy and coverage. Injected native providers own purpose-specific roots and header interpretation. Import keeps its separate compatibility bounds. |
 | `transcriptio` | Verified regular-file snapshots with private file identity and a fixed read boundary, context-aware reads, and complete JSONL boundaries. Discovered files can require store containment; explicit inputs keep symlink compatibility. No archive policy, network, program, or UI dependencies. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
 | `trace` | `AGENT_ARCHIVE_TRACE`'s recorder: process-wide, so `storage` (each request), `reader`, `state`, `collector` and `config` record spans without a context threaded through every command. Spans carry fixed names, durations and counts only. Standard library only. |
@@ -105,9 +106,10 @@ flowchart TD
   retention --> reader & state & storage
   collector --> transcriptio & state & storage & cursorstore
   reader --> storage
-  config --> credentials & storage
-  state --> cursorstore
-  storage --> credentials
+  config --> destination & agentmeta
+  state --> sourceidentity
+  credentials --> destination
+  storage --> credentials & destination
 ```
 
 ## Invariants worth knowing before you change anything
@@ -127,3 +129,9 @@ flowchart TD
   `_hook` command exits 0 whatever happens.
 - Every side effect in `cli` goes through `Env`, so tests never touch the real
   home, launchd, Keychain, or a bucket.
+
+The test-only Orbifold integration uses its own record framing, field vocabulary and
+retained format through the normal registry and shared consumer pipeline. Its
+synthetic success establishes extension coverage only; it creates no production
+agent or installed-version verification. The contributor recipe identifies the
+ports and capability-specific checks required for a new implementation.
