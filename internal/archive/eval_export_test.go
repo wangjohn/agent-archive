@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,9 @@ func TestEvalExportGolden(t *testing.T) {
 					t.Fatal(err)
 				}
 				validateAgainst(t, schema, harness+" "+string(detail), line)
+				if err := ValidateEvalExport(record); err != nil {
+					t.Errorf("%s %s: ValidateEvalExport rejects a valid record: %v", harness, detail, err)
+				}
 				out.Write(line)
 				out.WriteByte('\n')
 			}
@@ -313,6 +317,130 @@ func TestLocalEvalExportIgnoresArchiveEvidence(t *testing.T) {
 		}
 		if (record.Counts.ExplicitFeedback != nil && *record.Counts.ExplicitFeedback != 0) || len(record.Feedback) != 0 || record.Replay != nil || record.GitHead != nil {
 			t.Fatalf("%s carries archive evidence: %+v", detail, record)
+		}
+	}
+}
+
+// A sidecar that decodes can still break the schema (a hand-edited or
+// corrupted one): ValidateEvalExport rejects each such record the schema
+// rejects, so eval export turns it into an error record instead.
+func TestValidateEvalExportRejectsWhatTheSchemaRejects(t *testing.T) {
+	t.Parallel()
+	schema := evalExportSchema(t)
+	bundle, metadata := evalExportFixture(t, "claude")
+	valid, err := BuildEvalExport(bundle, metadata, EvalExportSourceArchive, EvalExportDetailFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each case edits the record's JSON, as a hand-edited sidecar would be.
+	for name, corrupt := range map[string]func(map[string]any){
+		"negative count":       func(r map[string]any) { r["counts"].(map[string]any)["turns"] = -1 },
+		"unknown parser state": func(r map[string]any) { r["parser"].(map[string]any)["status"] = "bogus" },
+		"unknown state":        func(r map[string]any) { r["state"] = "bogus" },
+		"unknown turn outcome": func(r map[string]any) { r["turn_outcome"] = "bogus" },
+		"zero tool count":      func(r map[string]any) { r["tools_used"] = []any{map[string]any{"name": "Bash", "count": 0}} },
+		"bad repo key":         func(r map[string]any) { r["project"].(map[string]any)["repo_key"] = "github.com/acme/widget" },
+		"dirty last commit":    func(r map[string]any) { r["git_head"].(map[string]any)["last"].(map[string]any)["dirty"] = true },
+		"bad replay run":       func(r map[string]any) { r["replay"] = map[string]any{"run_id": "has space"} },
+		"bad git source": func(r map[string]any) {
+			r["git_activity"] = []any{map[string]any{"kind": "commit", "source": "editor"}}
+		},
+		"negative model turns": func(r map[string]any) { r["models"].([]any)[0].(map[string]any)["turn_count"] = -2 },
+	} {
+		var raw map[string]any
+		if err := json.Unmarshal(encoded, &raw); err != nil {
+			t.Fatal(err)
+		}
+		corrupt(raw)
+		line, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if schema.Validate(instance) == nil {
+			t.Errorf("%s: the schema accepts it, so this case tests nothing", name)
+		}
+		var record EvalExport
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		if ValidateEvalExport(record) == nil {
+			t.Errorf("%s: ValidateEvalExport accepts a record the schema rejects", name)
+		}
+	}
+}
+
+// A sidecar written by an older parser does not lend its counts and parser
+// to a full record whose prompts come from this build's parse: both halves
+// describe the same parse. What the hooks recorded stays the sidecar's.
+func TestEvalExportFullRecordUsesOneParser(t *testing.T) {
+	t.Parallel()
+	bundle, current := evalExportFixture(t, "claude")
+	old := current
+	old.Parser = ParserInfo{Name: current.Parser.Name, Version: "0.1.0", Status: ParserStatusPartial}
+	old.Counts.Turns, old.ToolsUsed = new(99), nil
+	record, err := BuildEvalExport(bundle, old, EvalExportSourceArchive, EvalExportDetailFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Parser != current.Parser || *record.Counts.Turns != *current.Counts.Turns || !slices.Equal(record.ToolsUsed, current.ToolsUsed) {
+		t.Errorf("parser %+v, turns %d, tools %v; want this build's %+v, %d, %v", record.Parser, *record.Counts.Turns, record.ToolsUsed, current.Parser, *current.Counts.Turns, current.ToolsUsed)
+	}
+	if record.GitHead != old.GitHead || record.Replay != old.Replay || record.Project.RepoKey != old.RepoKey {
+		t.Error("re-deriving dropped what the hooks recorded")
+	}
+	// The metadata record is the sidecar's alone, old parser and all.
+	if meta := EvalExportFromMetadata(old, EvalExportSourceArchive); meta.Parser.Version != "0.1.0" {
+		t.Errorf("metadata record parser = %+v", meta.Parser)
+	}
+}
+
+// A subagent's final message in its parent's bundle is never the parent's
+// final response.
+func TestEvalExportIgnoresASubagentsHookFinal(t *testing.T) {
+	t.Parallel()
+	bundle, metadata := evalExportFixture(t, "claude")
+	var kept []map[string]any
+	for _, record := range bundle.NativeRecords {
+		if record["type"] != "assistant" {
+			kept = append(kept, record)
+		}
+	}
+	bundle.NativeRecords = kept
+	bundle.SupplementalEvidence = append(bundle.SupplementalEvidence, SupplementalEvidence{
+		Kind: EvidenceKindFinalResponse, ObservedAt: time.Date(2026, 9, 22, 12, 30, 0, 0, time.UTC), Provenance: "hook:claude:SubagentStop",
+		Payload: map[string]any{"text": "The subagent's answer.", "agent_id": "agent-1"},
+	})
+	record, err := BuildEvalExport(bundle, metadata, EvalExportSourceArchive, EvalExportDetailFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FinalResponse == nil || record.FinalResponse.Text != "Final message the stop hook saw." {
+		t.Errorf("final response = %+v, want the parent's own", record.FinalResponse)
+	}
+}
+
+// A session started on a detached checkout, or with a malformed branch,
+// exports no starting branch rather than a made-up one.
+func TestEvalExportStartingBranchIsValidated(t *testing.T) {
+	t.Parallel()
+	bundle, metadata := evalExportFixture(t, "claude")
+	for recorded, want := range map[string]string{"HEAD": "", "bad branch name": "", "fix/widget-test": "fix/widget-test"} {
+		b := bundle
+		b.NativeRecords = append([]map[string]any{{"type": "system", "gitBranch": recorded}}, bundle.NativeRecords...)
+		record, err := BuildEvalExport(b, metadata, EvalExportSourceArchive, EvalExportDetailMetadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Branch != want {
+			t.Errorf("recorded %q: branch %q, want %q", recorded, record.Branch, want)
 		}
 	}
 }

@@ -13,7 +13,9 @@ import (
 // overrides) and keeps the JSON's meaning.
 func TestDisplayJSONEscapesControlsLosslessly(t *testing.T) {
 	t.Parallel()
-	value := map[string]string{"a": "x\u009b31m\x7f\u202e\u2066y\u00e9\t\x1b", "b": "plain"}
+	// "c" holds supplementary-plane characters (a tag, a variation
+	// selector, an emoji): none is escaped, so none can be mis-escaped.
+	value := map[string]string{"a": "x\u009b31m\x7f\u202e\u2066y\u00e9\t\x1b", "b": "plain", "c": "\U000E0041\U000E0100\U0001F600"}
 	data, _ := json.Marshal(value)
 	out := DisplayJSON(data)
 	for _, r := range string(out) {

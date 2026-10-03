@@ -230,6 +230,9 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 	if err != nil {
 		return EvalExport{}, err
 	}
+	if err := e.rederive(bundle, m); err != nil {
+		return EvalExport{}, err
+	}
 	prompts := []EvalPrompt{}
 	var last *EvalFinalResponse
 	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
@@ -256,7 +259,7 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 		}
 	}
 	if last == nil {
-		last = lastHookFinal(bundle.SupplementalEvidence)
+		last = lastHookFinal(bundle)
 	}
 	files := []string{}
 	if len(bundle.NativeRecords) > 0 {
@@ -267,14 +270,49 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 	return e, nil
 }
 
+// rederive replaces what a parser derives with this build's parse of the
+// bundle when the sidecar was written by another parser version, so the
+// record's counts, tools, and parser describe the same parse as its
+// prompts and edited files. What the registration contributed (identity,
+// project, commits, replay, an import's gap) stays the sidecar's.
+func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
+	if m.Parser.Version == DefaultParserVersion {
+		return nil
+	}
+	derived, err := BuildMetadata(bundle, m.MachineID, m.StartedAt, m.MetadataDerivedAt, m.SourceBundle, ParserInfo{})
+	if err != nil && !IsParseError(err) {
+		// Inputs an old sidecar lacks (a derivation time, say): keep
+		// what it says rather than fail a record whose source parses.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	e.EndedAt, e.State, e.TurnOutcome, e.Parser = derived.EndedAt, derived.State, derived.TurnOutcome, derived.Parser
+	e.Models, e.Counts, e.ModelTokens, e.ToolsUsed, e.MCPCalls = derived.Models, derived.Counts, derived.ModelTokens, derived.ToolsUsed, derived.MCPCalls
+	e.SkillsUsed, e.GitActivity, e.CaptureGaps = derived.SkillsUsed, derived.GitActivity, derived.CaptureGaps
+	for _, gap := range m.CaptureGaps {
+		if gap.Code == CaptureGapImportedWithoutHookEvidence && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
+			e.CaptureGaps = append(e.CaptureGaps, gap)
+		}
+	}
+	return nil
+}
+
 // firstBranch is the first git branch a retained record names (Claude Code's
-// gitBranch): the branch the session started on. "" when none does.
+// gitBranch): the branch the session started on. "" when none does, and
+// when the first is malformed or HEAD (a detached checkout names no branch),
+// as the metadata's branch is: a later record's branch is not the one the
+// session started on.
 func firstBranch(bundle SourceBundle) string {
 	for _, record := range bundle.NativeRecords {
 		if bundle.ParentSessionID == "" && isSidechainRecord(record) {
 			continue
 		}
 		if branch := firstStringDeep(record, "gitBranch"); branch != "" {
+			if branch = validBranch(branch); branch == "HEAD" {
+				return ""
+			}
 			return branch
 		}
 	}
@@ -282,10 +320,15 @@ func firstBranch(bundle SourceBundle) string {
 }
 
 // lastHookFinal is the text of the last final message a stop hook reported,
-// or nil.
-func lastHookFinal(evidence []SupplementalEvidence) *EvalFinalResponse {
+// or nil. In a parent session's bundle, a final carrying an agent_id is a
+// subagent's (HookFinalStatusSeparateSubagent), not the session's answer.
+func lastHookFinal(bundle SourceBundle) *EvalFinalResponse {
+	evidence := bundle.SupplementalEvidence
 	for i := len(evidence) - 1; i >= 0; i-- {
 		if evidence[i].Kind != EvidenceKindFinalResponse {
+			continue
+		}
+		if bundle.ParentSessionID == "" && firstString(evidence[i].Payload, "agent_id") != "" {
 			continue
 		}
 		if text, _ := evidence[i].Payload["text"].(string); text != "" {

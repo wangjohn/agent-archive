@@ -53,14 +53,18 @@ not the person's own work, and must not appear as such in `list`, `stats`, or
   for a replay. An object leaves room for more fields (the original session a
   run replays, say) without another schema change.
 - **Hidden by default where a person reads their history.** `list` (and its
-  browser), `stats`, the bare `show` and `handoff` pickers, `handoff`'s title
-  search, and `handoff --latest` (local registrations and the archive) leave
+  browser), `stats`, the bare `show` and `handoff` pickers, `show`'s and
+  `handoff`'s title search, and `handoff --latest` (local registrations and the archive) leave
   replays out. `list` and `stats` take `--replays hide|include|only`, applied
   in `reader.Filter` so the indexed `list --limit N` still returns N matches.
   `reader.Filter`'s zero value includes replays, so a caller that does not ask
   (`show ID`, retention, the collector) sees every session. `show ID` and
   `handoff ID` open a replay by its ID as usual. `list --json` consumers that
-  pass `--replays include` tell them apart by the `replay` key.
+  pass `--replays include` tell them apart by the `replay` key; the table
+  marks them `[replay]` in the title, and `--verbose` keeps their real origin
+  (`hook` or `imported`) in its ORIGIN column. `stats` names a
+  `--replays include|only` filter on its screen and its `--html` page, as it
+  names the others.
 - **Retention treats them like any other session.** A replay is removed with
   the rest when it expires. A runner that wants its runs kept longer, or
   shorter, has to arrange that itself; a per-session retention is out of
@@ -108,6 +112,6 @@ Nothing else from the environment is read.
 - `internal/reader/matches_test.go` (`TestMatchesReplays`): the filter and its
   zero value.
 - `internal/cli/replay_test.go`: `list` (with and without the indexed limit),
-  the table's mark, `stats`, the hook command reading the variable,
+  the table's mark, `stats` and the filter it names, `show`'s title search, the hook command reading the variable,
   `handoff --latest` from the archive and from local registrations, and
   status's wording.
