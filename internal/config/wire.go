@@ -22,7 +22,11 @@ type writerVersion struct {
 // MarshalJSON keeps legacy configuration numeric and fences protected writers
 // through the known schema_version field. Published older integer decoders
 // reject this object before they can discard unknown authorization fields.
+// Normalize a value copy so edited nested setup drafts retain that fence.
 func (c Config) MarshalJSON() ([]byte, error) {
+	if err := prepareDiscoveryConfig(&c); err != nil {
+		return nil, err
+	}
 	plain := configJSON(c)
 	if c.Discovery == nil {
 		return json.Marshal(plain)

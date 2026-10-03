@@ -105,3 +105,22 @@ func TestUnknownOrMalformedWriterFenceFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedWireEncodingCannotDowngradeFutureSchema(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{true, false} {
+		cfg, _ := discoveryConfig(t)
+		cfg.Discovery.Enabled = enabled
+		cfg.SchemaVersion = 3
+		cfg.SkillEvidence = SkillEvidenceNone
+		if _, err := json.Marshal(cfg); err == nil {
+			t.Fatal("protected encoding downgraded a newer schema")
+		}
+		if err := Save(t.TempDir(), cfg); err == nil {
+			t.Fatal("protected save downgraded a newer schema")
+		}
+		if cfg.SchemaVersion != 3 || cfg.SkillEvidence != SkillEvidenceNone {
+			t.Fatal("failed wire encoding changed caller")
+		}
+	}
+}

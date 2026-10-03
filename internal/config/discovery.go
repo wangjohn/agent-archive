@@ -40,6 +40,9 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
+	if c.SchemaVersion > 2 {
+		return errors.New("configuration requires a newer agent-archive writer")
+	}
 	if c.Discovery != nil {
 		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + discoveryWriterMarker)
 		c.SchemaVersion = 2

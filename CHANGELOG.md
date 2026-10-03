@@ -23,6 +23,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   refuse rather than discard authorization; existing hook-only configs retain
   their numeric schema and behavior. Status uses actual hook observation,
   including hooks that resume imported sessions, with legacy hook-origin fallback.
+  Setup drafts preserve protected authorization while changing skill evidence;
+  start hooks avoid synchronizing an already persisted observation twice.
 
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
