@@ -404,3 +404,39 @@ func TestOlderStopCannotReplaceALaterRepeatedCommit(t *testing.T) {
 		t.Fatalf("older stop replaced latest repeated commit: %+v", got)
 	}
 }
+
+// A stop that finds hooks.lock busy is replayed from its queued intent, and
+// the replay records the commit the hook saw before it queued.
+func TestContendedStopKeepsTheCommitItSaw(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	conversation := "5f3c2a10-0000-4000-8000-00000000c456"
+	git := &headLookup{sha: startCommit, dirty: new(false)}
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
+		t.Fatal(err)
+	}
+	git.mu.Lock()
+	git.sha = laterCommit
+	git.mu.Unlock()
+	stopAt := at.Add(time.Minute)
+	batch, err := testBatch("cursor", cursorDesktopPayload("stop", conversation, project, cursorTranscriptLocation(t, conversation)), stopAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
+	if err := handleBatch(home, "cursor", batch, stopAt, busy, nil, eventOptions{decoders: testDecoders, gitHead: git.lookup}); err != nil {
+		t.Fatalf("contended stop was not queued: %v", err)
+	}
+	if reg := onlyRegistration(t, home); reg.LastHead != nil && reg.LastHead.SHA == laterCommit {
+		t.Fatalf("the contended stop wrote without the lock: %+v", reg.LastHead)
+	}
+	if err := ReplayAdmissionIntents(home, stopAt.Add(time.Second), testDecoders); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyRegistration(t, home)
+	if reg.LastHead == nil || reg.LastHead.SHA != laterCommit || !reg.LastHead.ObservedAt.Equal(stopAt) {
+		t.Errorf("LastHead after replay = %+v, want %s seen at %s", reg.LastHead, laterCommit, stopAt)
+	}
+}

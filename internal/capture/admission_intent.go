@@ -123,12 +123,12 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 // queueEventBatchInGeneration binds a contended event to the capture
 // window observed before its lock wait, rather than whichever window is active
 // after that wait. A complete pause/resume cycle must not admit the old start.
-func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func(), replay ...*archive.Replay) (bool, error) {
-	path, err := persistEventBatchInGeneration(home, batch, now, generation, afterStage, replay...)
+func queueEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, lastHead *archive.GitHead, afterStage func(), replay ...*archive.Replay) (bool, error) {
+	path, err := persistEventBatchInGeneration(home, batch, now, generation, lastHead, afterStage, replay...)
 	return path != "", err
 }
 
-func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, afterStage func(), replay ...*archive.Replay) (string, error) {
+func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent, now time.Time, generation string, lastHead *archive.GitHead, afterStage func(), replay ...*archive.Replay) (string, error) {
 	intent, queued, err := eventAdmissionIntent(home, batch, now)
 	if err != nil || !queued {
 		return "", err
@@ -140,6 +140,11 @@ func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent,
 				break
 			}
 		}
+	}
+	// The hook asked git before it found hooks.lock busy; replay records that
+	// observation instead of losing it.
+	if lastHead.Valid() {
+		intent.LastHead = lastHead
 	}
 	if intent.PauseGeneration != generation {
 		return "", nil
@@ -518,7 +523,7 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 			}
 			continue
 		}
-		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{}, after, intent.Replay); err != nil {
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{lastHead: intent.LastHead}, after, intent.Replay); err != nil {
 			return err
 		}
 		// Complete earlier waiting effects immediately after the admitting
@@ -584,7 +589,7 @@ func applyWaitingReplayEffects(home string, store *state.Store, cfg config.Confi
 		if !found {
 			return state.ErrSessionNotRegistered
 		}
-		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{}, after, intent.Replay); err != nil {
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{lastHead: intent.LastHead}, after, intent.Replay); err != nil {
 			return err
 		}
 	}
