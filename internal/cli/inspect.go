@@ -542,9 +542,7 @@ func sessionOrigin(m archive.Metadata) string {
 	if m.Origin == archive.SessionOriginImport {
 		return "imported"
 	}
-	if m.IsReplay() {
-		return "replay"
-	}
+	// A replay is hook-captured too; its [replay] title mark says it is one.
 	return "hook"
 }
 
