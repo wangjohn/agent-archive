@@ -480,7 +480,7 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 			// an actual hook before discovery evaluates the same continuation.
 			if tc.allowed {
 				path := filepath.Join(codex, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
-				if err := handleCodexHook(store.Home(), map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": native, "cwd": child, "transcript_path": path}, at.Add(3*time.Minute)); err != nil {
+				if err := handleCodexHook(store.Home(), map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": native, "cwd": child, "transcript_path": path}, at.Add(3*time.Minute)); err != nil {
 					t.Fatal(err)
 				}
 			}
