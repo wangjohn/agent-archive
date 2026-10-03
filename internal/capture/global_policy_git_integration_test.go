@@ -56,7 +56,7 @@ func TestGlobalPolicyQueuedHeadReplayIntegration(t *testing.T) {
 	home, root, _, at := blanketHookFixture(t)
 	observed := at.Add(time.Minute)
 	git := &headLookup{sha: startCommit, dirty: new(false)}
-	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "global-queued", "cwd": root}
+	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "global-queued", "cwd": root, "transcript_path": filepath.Join(root, "queued.jsonl")}
 	batch, err := testBatch("codex", start, observed)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestGlobalPolicyQueuedHeadReplayIntegration(t *testing.T) {
 	}
 	// A queued stop retains its live HEAD observation, while replay performs no git lookup.
 	stopAt := observed.Add(2 * time.Minute)
-	stop := map[string]any{"hook_event_name": "Stop", "session_id": "global-queued", "cwd": root}
+	stop := map[string]any{"hook_event_name": "Stop", "session_id": "global-queued", "cwd": root, "transcript_path": filepath.Join(root, "queued.jsonl")}
 	batch, err = testBatch("codex", stop, stopAt)
 	if err != nil {
 		t.Fatal(err)
