@@ -98,8 +98,9 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	}
 	if sameParser {
 		// The same parser over the same retained source yields the same
-		// result, including a failed parse: nothing to rebuild.
-		return outcomeSkipped, false, nil
+		// result, including a failed parse: nothing to rebuild. A commit the
+		// hooks recorded since is still published, as for cached metadata.
+		return s.publishRecordedGitHead(last, key)
 	}
 	if s.liveTranscriptChanged(last.bundle) {
 		// Normal capture is about to publish current-parser metadata with
@@ -341,17 +342,24 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	if s.liveTranscriptChanged(last.bundle) || s.requestAddsEvidence(last.bundle) {
 		return outcomeSkipped, false, nil
 	}
+	uploaded, known := s.published.LastPublishedSource()
+	if known && uploaded != next.SourceBundle {
+		return outcomeSkipped, false, nil
+	}
+	// Carry the retained source's bytes when this build can rebuild them, as
+	// a metadata refresh does, so a source missing from storage is repaired
+	// instead of failing this publication on every pass.
+	source := refreshSource{ref: next.SourceBundle}
+	if rebuilt, ok := chooseRefreshSource(last.bundle, uploaded, known); ok && rebuilt.bytes != nil {
+		source = rebuilt
+	}
+	next.SourceBundle = source.ref
 	next.MetadataDerivedAt = s.now
 	encoded, err := json.Marshal(next)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	source := next.SourceBundle
-	uploaded, known := s.published.LastPublishedSource()
-	if known && uploaded != source {
-		return outcomeSkipped, false, nil
-	}
-	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.Key, MetadataKey: key, SourceSHA256: source.SHA256, SourceSize: source.CompressedBytes, MetadataBytes: encoded, ReadyAt: s.now, Attempted: true}
+	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: encoded, ReadyAt: s.now, Attempted: true}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}

@@ -125,6 +125,7 @@ In the sidecar:
 | `GIT_DIR` and friends in the hook's environment | Stripped before git runs (`gitremote.environment`), as for the repository key, so git answers for the reported directory and not another repository. |
 | A continuation (resume, `/clear`, compact) | `start_head` is never replaced; the stop that follows updates `last_head`. |
 | A start that found `hooks.lock` busy and was admitted later from its queued intent | No `start`: the collector admits it after the fact, when HEAD may have moved. Its stops still record `last`. |
+| A stop that found `hooks.lock` busy and was queued (Cursor's stop with a transcript path) | The commit the hook saw before queueing is kept on the queued intent (`last_head`) and recorded when it is replayed, under the same delayed-observation rules. |
 | A subagent | No `git_head`: its start is not its parent's, and no hook reports one. |
 | An imported session | No `start`; later live stops can record `last`. See the heuristic below. |
 
@@ -176,11 +177,14 @@ never in `start`.
 - `internal/capture/hook_git_head_test.go`: the commit and dirty flag on a new
   registration (including a worktree and Cursor's first prompt), nothing for a
   declined, resumed, or already registered start, the stop's HEAD-only lookup
-  and its first-seen timestamp and delayed-observation rules, nothing at the stop of a session that is
+  and its first-seen timestamp and delayed-observation rules, a contended stop
+  replayed from its queued intent, nothing at the stop of a session that is
   not archived, the lookups running together and before `hooks.lock`, and a
   hung lookup.
 - `internal/archive/git_head_test.go` and `schema_test.go`: what
   `ApplyGitHead` publishes and drops, and a schema that accepts only full
   commit names and no other keys.
 - `internal/collector/git_head_test.go`, `internal/cli/hook_git_head_test.go`,
-  and `TestSummaryCommit`: the sidecar, the command wiring, and `show`'s row.
+  and `TestSummaryCommit`: the sidecar (including a stop-only commit change on
+  a publication without cached metadata, with new hook evidence, and with its
+  source missing from storage), the command wiring, and `show`'s row.
