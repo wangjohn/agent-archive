@@ -173,7 +173,8 @@ In all mode, legacy registrations also obey current exceptions at their stored
 working directory; retaining an included parent does not override an excluded
 child. Historical hooks without a stored cwd keep their recorded project root.
 
-Removing or lifting an exclusion records a forward subtree barrier. Unknown starts
+Removing or lifting an exclusion records a forward subtree barrier. Retargeting
+an excluded path records the same barrier at its previous physical root. Unknown starts
 from its excluded period remain ineligible, while unrelated projects retain
 their consent window. The policy stores canonical rule roots and at most 4,096
 user-edited barriers/rules. Exhausting history fails closed; discovered

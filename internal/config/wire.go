@@ -78,7 +78,7 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, errors.New("configuration requires a supported writer fence")
 		}
 		if version.Version == 3 {
-			if plain.CodexCapture == nil || (!strings.HasSuffix(string(plain.SkillEvidence), codexWriterMarker) && (version.Writer != legacyCodexWriter || !strings.HasSuffix(string(plain.SkillEvidence), legacyCodexWriterMarker))) {
+			if plain.CodexCapture == nil || !codexMarkerMatches(plain.SkillEvidence, version.Writer) {
 				return false, errors.New("writer fence requires Codex policy")
 			}
 		} else if plain.Discovery == nil || !strings.HasSuffix(string(plain.SkillEvidence), discoveryWriterMarker) {
@@ -116,4 +116,8 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	}
 	*c = Config(plain)
 	return fenced, nil
+}
+
+func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
+	return strings.HasSuffix(string(mode), codexWriterMarker) || (writer == legacyCodexWriter && strings.HasSuffix(string(mode), legacyCodexWriterMarker))
 }

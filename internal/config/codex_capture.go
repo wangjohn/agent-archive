@@ -287,9 +287,10 @@ func reconcileCodexBarriers(p *CodexCaptureConfig, previous, next Config, now ti
 		if before.Included {
 			continue
 		}
+		// A retargeted path lifts its prior physical exclusion as well.
 		unchanged := false
 		for _, after := range next.Archive.Projects {
-			if after.Root == before.Root && !after.Included {
+			if after.Root == before.Root && !after.Included && p.RuleRoots[after.Root] == previous.codexRuleRoot(before.Root) {
 				unchanged = true
 			}
 		}
