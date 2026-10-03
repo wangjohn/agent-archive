@@ -23,6 +23,9 @@ validate against a fixed version.
   and 16 lowercase hex digits (a hash of the normalized git `origin`; never
   the address). It is absent when the project had no `origin` or was gone
   when the metadata was derived. See [privacy](../security/privacy.md).
+  `git_head` is another: the commit the session started on (with a dirty
+  flag) and the last one a stop hook saw, as full object names; absent
+  when no hook recorded them ([JSON output](json-output.md#show)).
 
 ## How they are kept honest
 

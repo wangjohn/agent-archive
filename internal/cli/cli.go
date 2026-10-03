@@ -114,6 +114,9 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// gitHead, set only by tests, replaces the git lookup of the commit a
+	// session's working directory has checked out (see gitHeadResolver).
+	gitHead func(dir string, withDirty bool) (string, *bool)
 	// projectGitRunner replaces bounded Git operations in setup tests.
 	projectGitRunner gitremote.Runner
 	// repoKeyContext replaces bounded setup lookups in tests.

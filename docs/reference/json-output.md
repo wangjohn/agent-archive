@@ -153,6 +153,32 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
+A sidecar may also carry `git_head`, the commit the session's working
+directory had checked out, as the session's own hooks recorded it:
+
+```json
+"git_head": {
+  "start": {"sha": "<40 or 64 hex digits>", "dirty": true, "observed_at": "2026-09-30T09:00:00Z"},
+  "last":  {"sha": "<40 or 64 hex digits>", "observed_at": "2026-09-30T09:41:12Z"}
+}
+```
+
+- `start` is HEAD when the hook that registered the session ran, and
+  `dirty` whether the working tree then had staged, unstaged, or untracked
+  (not ignored) changes against it; `dirty` is absent when git could not
+  tell in time.
+- `last` is HEAD at the most recent stop hook that could read it;
+  `observed_at` is the first stop that saw that commit. It has no `dirty`.
+- `sha` is always a full object name. HEAD is asked of the directory the
+  hook reported, so a Claude Code worktree has its own, and a session
+  started inside a submodule has the submodule's.
+- Either half, or the whole field, is absent when no hook could tell (not a
+  repository, git not installed, a branch with no commits, git slower than
+  the hook's budget), and for subagents. Sessions registered before the field
+  existed and imported
+  sessions have no `start`; a later live stop can record `last`. Neither is
+  inferred afterwards; a metadata refresh copies only recorded observations.
+
 From parser `0.19.0` a Cursor session's `title` leaves out the
 `<timestamp>` line and `<user_query>` tags Cursor wraps a prompt in, as
 handoff already did.

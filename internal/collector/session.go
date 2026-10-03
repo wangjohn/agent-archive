@@ -284,7 +284,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, ""); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", s.publishedLastHead()); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
@@ -607,6 +607,7 @@ func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegist
 	metadata.ApplyRegistrationProvenance(reg)
 	metadata.ApplyProjectName(reg.ProjectRoot)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
+	metadata.ApplyGitHead(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return renderedPublication{}, fmt.Errorf("derive metadata: %w", buildErr)
 	}
