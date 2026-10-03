@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -126,4 +128,91 @@ func TestScheduledRecoveryScalePublication(t *testing.T) {
 		t.Fatalf("pending cursor: %#v %v", cursor, err)
 	}
 	t.Logf("actual-cli elapsed=%s pending-phase=%d sampled-peak-heap=%d stage-total-alloc=%d", elapsed, cursor.Phase, peak, after.TotalAlloc-before.TotalAlloc)
+}
+
+// Delayed filesystem input expires the child recovery context after the final
+// inventory read starts. Collection still has its independent publication time.
+func TestCollectPassRetainsRecoveryCheckpointFailure(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(strconv.FormatBool(broken), func(t *testing.T) {
+			now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+			home, env, _ := collectFixture(t, now)
+			reg := theRegistration(t, home)
+			reg.ArchiveSessionID = "zz-delayed-owner"
+			reg.NativeSessionID = "delayed-native"
+			reg.ProjectID = "excluded-synthetic"
+			reg.ProjectRoot = "/synthetic/excluded"
+			reg.CodexAdmission = nil
+			data, err := json.Marshal(reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "registrations", reg.ArchiveSessionID+".json")
+			if err := syscall.Mkfifo(path, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if err := os.Mkdir(filepath.Join(home, "session-index-recovery.json"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			finished := make(chan error, 1)
+			go func() {
+				var file *os.File
+				var err error
+				deadline := time.Now().Add(15 * time.Second)
+				for time.Now().Before(deadline) {
+					file, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+					if err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if err != nil {
+					finished <- err
+					return
+				}
+				// The writer's successful open proves recovery is reading the FIFO.
+				time.Sleep(state.SessionIndexRecoverySlice + 100*time.Millisecond)
+				replacement := path + ".replacement"
+				err = os.WriteFile(replacement, data, 0600)
+				if err == nil {
+					err = os.Rename(replacement, path)
+				}
+				if err == nil {
+					_, err = file.Write(data)
+				}
+				closeErr := file.Close()
+				if err == nil {
+					err = closeErr
+				}
+				finished <- err
+			}()
+			result, err := runPass(env, false, passOptions{})
+			if writeErr := <-finished; writeErr != nil {
+				t.Fatal(writeErr)
+			}
+			if err != nil || len(result.Published) != 1 {
+				t.Fatalf("admitted publication: %#v %v", result, err)
+			}
+			status, err := state.OpenReadOnly(home).LoadStatus()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if !strings.Contains(strings.Join(status.LastErrors, "\n"), "session-index-recovery.json") {
+					t.Fatalf("checkpoint IO diagnostic lost: %q", status.LastErrors)
+				}
+			} else if len(status.LastErrors) != 0 {
+				t.Fatalf("ordinary pending warned: %q", status.LastErrors)
+			}
+			var marker struct {
+				Complete bool `json:"complete"`
+			}
+			data, err = os.ReadFile(filepath.Join(home, "session-index.json"))
+			if err != nil || json.Unmarshal(data, &marker) != nil || marker.Complete {
+				t.Fatalf("timed-out recovery certified: %#v %v", marker, err)
+			}
+		})
+	}
 }

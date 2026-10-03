@@ -201,7 +201,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
 		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
-	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
 	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)

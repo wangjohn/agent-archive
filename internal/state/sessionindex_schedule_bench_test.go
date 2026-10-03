@@ -58,6 +58,7 @@ func benchmarkScheduledRecovery100k(b *testing.B, candidateCount int) {
 	b.ResetTimer()
 	var maxSlice time.Duration
 	var slices int
+	var pendingPhases [3]int
 	var peak uint64
 	var peakRSS uint64
 	for range b.N {
@@ -101,11 +102,27 @@ func benchmarkScheduledRecovery100k(b *testing.B, candidateCount int) {
 				samples.Wait()
 				b.Fatal(err)
 			}
+			if !complete {
+				var cursor sessionRecoveryCursor
+				if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || !cursor.validChecksum() || cursor.Phase < 0 || cursor.Phase >= len(pendingPhases) {
+					close(done)
+					samples.Wait()
+					b.Fatalf("pending recovery phase evidence invalid: %v", err)
+				}
+				pendingPhases[cursor.Phase]++
+			}
 		}
 		close(done)
 		samples.Wait()
 		if !complete {
 			b.Fatal("recovery did not converge in twenty slices")
+		}
+		var marker sessionIndexMarker
+		if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Version != 1 || !marker.Complete || !safeFileComponent(marker.Generation) || !marker.MembershipFenced {
+			b.Fatalf("durable recovery certificate invalid: %v", err)
+		}
+		if revision, err := s.sessionMembershipRevision(); err != nil || revision == "" {
+			b.Fatalf("completed recovery membership evidence invalid: %v", err)
 		}
 	}
 	b.StopTimer()
@@ -121,6 +138,9 @@ func benchmarkScheduledRecovery100k(b *testing.B, candidateCount int) {
 	b.ReportMetric(float64(maxRSS), "process-maxrss-KiB")
 	b.ReportMetric(maxSlice.Seconds(), "max-slice-sec")
 	b.ReportMetric(float64(slices)/float64(b.N), "slices/op")
+	for phase, count := range pendingPhases {
+		b.ReportMetric(float64(count)/float64(b.N), fmt.Sprintf("pending-phase-%d-slices/op", phase))
+	}
 	b.ReportMetric(float64(peak), "sampled-peak-heap-B")
 	b.ReportMetric(float64(peakRSS), "sampled-peak-rss-B")
 }

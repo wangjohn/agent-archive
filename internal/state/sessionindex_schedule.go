@@ -21,6 +21,34 @@ const sessionRecoveryCursorFile = "session-index-recovery.json"
 // remains complete on each slice; the expensive derived-index application resumes.
 const SessionIndexRecoverySlice = 4 * time.Second
 
+// SessionIndexRecoveryInterrupted reports ordinary cancellation or expiry,
+// including wrappers, only when no checkpoint or other failure is joined to it.
+func SessionIndexRecoveryInterrupted(err error) bool {
+	return sessionIndexRecoveryInterrupted(err, 0)
+}
+
+func sessionIndexRecoveryInterrupted(err error, depth int) bool {
+	if err == nil || depth >= 32 {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !sessionIndexRecoveryInterrupted(cause, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return sessionIndexRecoveryInterrupted(cause, depth+1)
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 type sessionRecoveryCursor struct {
 	Checksum       string `json:"checksum"`
 	Version        int    `json:"version"`
@@ -210,7 +238,10 @@ func (s *Store) applyRecoveryPhase(ctx context.Context, cursor *sessionRecoveryC
 			return false, s.saveRecoveryCursor(cursor)
 		}
 		if err := ctx.Err(); err != nil {
-			return false, errors.Join(err, s.saveRecoveryCursor(cursor))
+			if checkpointErr := s.saveRecoveryCursor(cursor); checkpointErr != nil {
+				return false, errors.Join(err, checkpointErr)
+			}
+			return false, err
 		}
 		if err := apply(cursor.Offset); err != nil {
 			return false, err

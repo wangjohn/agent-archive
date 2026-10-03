@@ -678,3 +678,67 @@ func TestCompletedScheduledRecoveryRequiresRecordedMembership(t *testing.T) {
 		})
 	}
 }
+
+// Cancellation is ordinary pending only when its durable checkpoint succeeds.
+func TestCanceledRecoveryRetainsCheckpointFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires ordinary filesystem permissions")
+	}
+	for _, writable := range []bool{true, false} {
+		t.Run(strconv.FormatBool(writable), func(t *testing.T) {
+			s := newTestStore(t)
+			seedRecoveryInventory(t, s, 2)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-entry" {
+					cancel()
+					if !writable {
+						return os.Chmod(s.home, 0500)
+					}
+				}
+				return nil
+			}
+			defer func() { _ = os.Chmod(s.home, 0700) }()
+			complete, err := s.RecoverSessionIndexScheduled(ctx, SessionIndexRecoverySlice)
+			if restoreErr := os.Chmod(s.home, 0700); restoreErr != nil {
+				t.Fatal(restoreErr)
+			}
+			if complete || !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled recovery: %v %v", complete, err)
+			}
+			if writable {
+				if !SessionIndexRecoveryInterrupted(err) || errors.Unwrap(err) != nil {
+					t.Fatalf("ordinary cancellation wrapped: %v", err)
+				}
+			} else if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("checkpoint IO failure lost: %v", err)
+			}
+			var marker sessionIndexMarker
+			if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Complete {
+				t.Fatalf("canceled recovery certified: %#v %v", marker, err)
+			}
+		})
+	}
+}
+
+func TestRecoveryInterruptionKeepsJoinedFilesystemFailure(t *testing.T) {
+	t.Parallel()
+	_, ioErr := os.Open(filepath.Join(t.TempDir(), "missing-checkpoint"))
+	if ioErr == nil {
+		t.Fatal("filesystem failure control succeeded")
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		wrapped := fmt.Errorf("recovery interrupted: %w", cause)
+		if !SessionIndexRecoveryInterrupted(wrapped) || !SessionIndexRecoveryInterrupted(errors.Join(wrapped, cause)) {
+			t.Fatal("pure wrapped interruption reported as IO failure")
+		}
+		mixed := fmt.Errorf("checkpoint: %w", errors.Join(wrapped, ioErr))
+		if SessionIndexRecoveryInterrupted(mixed) || !errors.Is(mixed, os.ErrNotExist) {
+			t.Fatal("real joined filesystem failure suppressed")
+		}
+	}
+	if SessionIndexRecoveryInterrupted(nil) {
+		t.Fatal("nil error classified as interruption")
+	}
+}

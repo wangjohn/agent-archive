@@ -156,7 +156,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
 	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, recoveryBudget*3/4))
-	if errors.Is(recoveryErr, context.DeadlineExceeded) && ctx.Err() == nil {
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
 		recoveryErr = nil
 	}
 	if recoveryErr != nil {
