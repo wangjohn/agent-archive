@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please don't paste transcript content, bucket names you'd rather keep private, access keys, or anything from your Keychain. For a security problem (for example, a secret that got past redaction), don't open an issue: follow SECURITY.md, or use the **Security contact request** template if private reporting isn't available.
+        Thanks for reporting. Please don't paste transcript content, bucket names you'd rather keep private, access keys, or anything from your Keychain or credentials file. For a security problem (for example, a secret that got past redaction), don't open an issue: follow SECURITY.md, or use the **Security contact request** template if private reporting isn't available.
         If a session wasn't archived or its counts look wrong, use the **Capture gap** template.
   - type: input
     id: version
@@ -15,10 +15,11 @@ body:
     validations:
       required: true
   - type: input
-    id: macos
+    id: os
     attributes:
-      label: macOS version
-      placeholder: "e.g. 15.5 (Apple silicon)"
+      label: Operating system
+      description: On Linux, add the distribution and the output of `systemctl --version`.
+      placeholder: "e.g. macOS 15.5 (Apple silicon), or Ubuntu 24.04 (arm64), systemd 255"
     validations:
       required: true
   - type: textarea

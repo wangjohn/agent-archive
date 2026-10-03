@@ -1,0 +1,16 @@
+goos: linux
+goarch: amd64
+pkg: github.com/wangjohn/agent-archive/internal/collector
+cpu: INTEL(R) XEON(R) PLATINUM 8573C
+BenchmarkScanChangedCursorChats-5    	       5	 296943288 ns/op	         1.000 snapshot-copies/op	123168454 B/op	  204785 allocs/op
+BenchmarkScanChangedCursorChats-5    	       5	 310324373 ns/op	         1.000 snapshot-copies/op	122999616 B/op	  204501 allocs/op
+BenchmarkScanChangedCursorChats-5    	       5	 338655060 ns/op	         1.000 snapshot-copies/op	123189006 B/op	  204777 allocs/op
+BenchmarkScanChangedCursorChats-5    	       5	 373859690 ns/op	         1.000 snapshot-copies/op	123238283 B/op	  204908 allocs/op
+BenchmarkScanChangedCursorChats-5    	       5	 341593571 ns/op	         1.000 snapshot-copies/op	123143534 B/op	  204653 allocs/op
+BenchmarkScanLargeGrowingSession-5   	       5	 358014770 ns/op	70387979 B/op	  295924 allocs/op
+BenchmarkScanLargeGrowingSession-5   	       5	 336616293 ns/op	71009784 B/op	  295891 allocs/op
+BenchmarkScanLargeGrowingSession-5   	       5	 350458598 ns/op	70415611 B/op	  295949 allocs/op
+BenchmarkScanLargeGrowingSession-5   	       5	 355914108 ns/op	74937425 B/op	  295935 allocs/op
+BenchmarkScanLargeGrowingSession-5   	       5	 340276207 ns/op	75284108 B/op	  295920 allocs/op
+PASS
+ok  	github.com/wangjohn/agent-archive/internal/collector	27.545s

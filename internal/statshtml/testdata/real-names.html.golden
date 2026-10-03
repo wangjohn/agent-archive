@@ -444,11 +444,14 @@ ul.alerts li::before {
 <p class="note">MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.</p>
 </section>
 <section class="card" aria-labelledby="h-heads">
-<h2 id="h-heads">Heads up</h2>
+<h2 id="h-heads">Findings</h2>
 <ul class="alerts">
 <li>Costliest session $65.10 · proj-api · long context, 2 subagents</li>
-<li>3 sessions have no token data (Cursor 3)</li>
 </ul>
+</section>
+<section class="card" aria-labelledby="h-coverage">
+<h2 id="h-coverage">Coverage</h2>
+<p class="note">3 sessions have no token data (Cursor 3)</p>
 </section>
 <h2 class="divider" id="h-detail">Details</h2>
 <section class="card" aria-labelledby="h-agents">

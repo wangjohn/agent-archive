@@ -159,7 +159,7 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 	for _, leaked := range []string{
 		"CONTEXT-SENTINEL", "THINKING-SENTINEL", "sk-SYNTHETIC", "hunter2", "SYNTHETIC-TOKEN-VALUE",
 		"INJECTED-SENTINEL", "system-reminder", "UNKNOWN-TYPE-SENTINEL", "SYNTHETIC-HASH",
-		"SYNTHETIC-ENCRYPTION-KEY", "SYNTHETIC-CHAT-TITLE", "/Users/synthetic", "synthetic-model-current",
+		"SYNTHETIC-ENCRYPTION-KEY", "/Users/synthetic", "synthetic-model-current",
 		"TOOL-ADDITIONAL-SENTINEL", "TOOLRESULT-EXTRA-SENTINEL", "PROVIDER-SENTINEL", "costInCents", "richText",
 		"TOOLBINARY-SENTINEL", "USERDECISION-SENTINEL", "NESTED-SENTINEL", "ERROR-SECRET-SENTINEL", "RESULT-BESIDE-ERROR-SENTINEL",
 	} {
@@ -180,6 +180,13 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 	}
 	if records[0]["type"] != "session" || records[0]["session_id"] != "c0ffee00-0000-4000-8000-000000000001" || records[0]["timestamp"] != "2026-09-21T14:13:20Z" {
 		t.Fatalf("session record = %#v", records[0])
+	}
+	// Filter 13 keeps the chat's name on the session record, redacted like text.
+	if records[0]["name"] != "Fix the widget test password=[REDACTED]" {
+		t.Fatalf("session record name = %#v", records[0]["name"])
+	}
+	if strings.Contains(gapDetail(filtered.Gaps, "unknown_field_omitted"), "chat.name") {
+		t.Errorf("the chat name is still reported as omitted: %q", gapDetail(filtered.Gaps, "unknown_field_omitted"))
 	}
 	var ids []string
 	for _, record := range records[1:] {

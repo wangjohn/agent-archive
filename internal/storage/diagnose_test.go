@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // s3Reply is a canned S3 response: a status, headers, and an XML error body
@@ -359,6 +360,83 @@ func TestDiagnoseCredentialsFileFailures(t *testing.T) {
 	}
 	if got := Diagnose(insecure); !strings.Contains(got.Fix, "chmod 600") || !strings.Contains(got.Fix, "chmod 700") {
 		t.Errorf("insecure fix does not say how to fix it: %+v", got)
+	}
+}
+
+// Linux's real credential store (the credentials file, with the environment
+// behind it) never fails with a bare ErrMissingCredential or ErrUnavailable,
+// whose diagnosis and recovery advice name the Keychain: each way it can
+// fail to give an R2 key is told apart as the credentials file's.
+func TestDiagnoseLinuxCredentialStoreNeverNamesTheKeychain(t *testing.T) {
+	const ref = "setup-abc"
+	cfg := credentials.Config{Provider: "r2", Bucket: "b", R2CredentialRef: ref, R2AccountID: "acct123"}
+	for name, tc := range map[string]struct {
+		prepare func(t *testing.T, dir string)
+		env     map[string]string
+		want    string
+	}{
+		"no folder":        {func(*testing.T, string) {}, nil, "isn't in the credentials file"},
+		"no file":          {mkdir(0o700), nil, "isn't in the credentials file"},
+		"half the env key": {mkdir(0o700), map[string]string{credentials.EnvR2AccessKeyID: "id"}, "isn't in the credentials file"},
+		"open folder":      {mkdir(0o755), nil, "won't read the credentials file"},
+		"open file":        {writeCredential(0o644, `{"AccessKeyID":"a","SecretAccessKey":"b"}`), nil, "won't read the credentials file"},
+		"not a key":        {writeCredential(0o600, `{"AccessKeyID":"a"}`), nil, "couldn't be read from the credentials file"},
+		"not JSON":         {writeCredential(0o600, `garbage`), nil, "couldn't be read from the credentials file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), credentials.CredentialsDirName)
+			tc.prepare(t, dir)
+			store, err := credentials.OpenDefault(credentials.OpenOptions{
+				OS:        platform.Linux,
+				Dir:       func() (string, error) { return dir, nil },
+				LookupEnv: func(name string) (string, bool) { v, ok := tc.env[name]; return v, ok },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = NewConfiguredStore(context.Background(), cfg, store)
+			if err == nil {
+				t.Fatal("NewConfiguredStore succeeded; want an error")
+			}
+			got := Diagnose(err)
+			if got.Cause != CauseNoCredentials || !strings.Contains(got.Explanation, tc.want) {
+				t.Errorf("Diagnose(%v) = %+v, want no_credentials saying %q", err, got, tc.want)
+			}
+			for _, words := range []string{got.Explanation, got.Fix, credentials.RecoveryAction(err), credentials.RecoveryActionForMessage(err.Error())} {
+				if strings.Contains(words, "Keychain") {
+					t.Errorf("%v: names the Keychain: %q", err, words)
+				}
+			}
+		})
+	}
+}
+
+// mkdir makes the credentials folder with mode.
+func mkdir(mode os.FileMode) func(*testing.T, string) {
+	return func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.Mkdir(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// writeCredential makes a private credentials folder holding setup-abc's
+// file with content and mode.
+func writeCredential(mode os.FileMode, content string) func(*testing.T, string) {
+	return func(t *testing.T, dir string) {
+		t.Helper()
+		mkdir(0o700)(t, dir)
+		path := filepath.Join(dir, "setup-abc.json")
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 12). The user-facing summary is
+> **Status: implemented** (filter 15). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -15,6 +15,85 @@ Every retained string, at every depth, passes injected-instruction
 stripping, value-level redaction, and the 64 KB cap. Tool-argument subtrees
 (`input`, `arguments`, `tool_input`) keep every argument name, because the
 names belong to the tool, subject to the deny list below.
+
+### Session names and linked pull requests
+
+Two record types that only name a session are kept (filter 13), each rebuilt
+from typed values rather than passed through the key allowlist, so the keys
+below are admitted on those records only:
+
+- Claude Code `custom-title`: `type`, `customTitle`, and `sessionId` and
+  `timestamp` when they are strings. `customTitle` must be a string with
+  something in it and passes the value rules like a prompt. Any other key is
+  dropped (named in the `unknown_field_omitted` gap); a record without a
+  usable title is dropped with an `unsupported_value_omitted` gap. Claude
+  Code appends a record for each name a session is given, and every one is
+  kept, so a renamed session keeps its earlier names too.
+- Claude Code `pr-link`: `type`, `prNumber`, `prRepository`, `prUrl`, and
+  `sessionId` and `timestamp` when they are strings. `prRepository` is
+  `owner/name` with each part matching `git_activity`'s repository pattern;
+  `prNumber` is a whole number from 1 to 2^30, read from a string of digits
+  or a number and written as a JSON integer; `prUrl` is kept only when it is
+  `https://github.com/<prRepository>/pull/<prNumber>`, else dropped with
+  its name listed in `unknown_field_omitted`. A record whose repository or
+  number is missing or out of shape, or whose repository the value rules
+  rewrite, is dropped whole with an `unsupported_value_omitted` gap.
+- Cursor chats read from its database: the composer's chat-level `name`,
+  written as `name` on the first record, the `session` record:
+  `{"type":"session","session_id":…,"timestamp":…,"name":…}`. A name that is
+  a string passes the value rules like a prompt and is kept when something is
+  left of it; an absent, null, or empty one leaves `name` out; one that is
+  not a string is reported as the omitted key `chat.name`.
+
+Claude Code's `agent-name` and `last-prompt` records are still dropped as
+unknown record types.
+
+### A subagent's description
+
+A Claude Code subagent's transcript, `subagents/agent-<id>.jsonl`, has a
+sibling `agent-<id>.meta.json` holding the name the parent gave the task. It
+is not part of the transcript, so it is not filtered as one: the collector
+reads it when it filters the transcript of a registered subagent (a
+registration with a parent session, whose transcript file is named
+`agent-<id>.jsonl`) and passes its bytes to
+`ClaudeAdapter.FilterSubagentJSONL`, which writes one record before the
+transcript's own (filter 14):
+
+```json
+{"type":"subagent-meta","description":"…"}
+```
+
+- Only `description` is read, and only when it is a string with something in
+  it. Every other key of the file (`worktreePath`, a path on this machine;
+  `agentType`; anything else) is never read, never kept, and not reported.
+- The text passes the value rules like a prompt, applied to the whole text,
+  and is then cut to 512 bytes on a character boundary (a `content_truncated`
+  gap records a cut) and checked again, so a secret is redacted before any
+  cut falls in it.
+- The file is optional. One that is missing, unreadable, a symbolic link
+  (never followed, so no file elsewhere is read in its place) or otherwise not
+  a regular file, over 16 KB, not a JSON object, or without a usable
+  description changes nothing and records no gap.
+- The record, and any gap about it (including the names of keys dropped
+  from a description that is JSON text, filtered as a prompt's is), is
+  written only when the transcript has records of its own: it does not make
+  an empty or unrecognized transcript look captured, and it carries no
+  timestamp, session, or agent identity, so it changes none of the
+  transcript's.
+- A transcript holds one. A `subagent-meta` record in the transcript itself
+  (the one a retained snapshot carries when it is filtered again) is rebuilt
+  from its `description` alone, other keys named in `unknown_field_omitted`;
+  when the file supplies one, or an earlier record already was one, a later
+  record is dropped with an `unsupported_value_omitted` gap.
+- A transcript that is not a Claude Code subagent's never reads a
+  `.meta.json`.
+- The collector leaves the record out when it checks that a new snapshot
+  extends the last one, since the description is a label the latest read of
+  the file replaces, not evidence of the transcript. The file is read when
+  the transcript is, so a `.meta.json` that appears or changes beside a
+  transcript that does not change is picked up when the transcript next
+  changes, or when a new filter or adapter version re-reads the session (a
+  new parser version alone re-derives metadata from the retained snapshot).
 
 ### Tool-argument deny list
 
@@ -148,6 +227,17 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   secret` line), XML elements and attributes (`<password>…</password>`,
   `<add key="ApiKey" value="…"/>`), and URL query parameters whose names are
   not credential words (`?key=`, `&sig=`, `X-Amz-Signature=`) (filter 11).
+- Machine pairing bundles (filter 15): a word-boundary `aa-pair1:` prefix,
+  case-insensitive, followed by one or more ASCII letters, digits, `_`, `-`,
+  `+`, `/`, or `=`. The prefix and entire contiguous payload are replaced,
+  even when short, truncated, padded, or standard base64 instead of base64url;
+  there is no decoding or cryptographic validation. Quotes, backslashes,
+  whitespace, and other punctuation stop the match. A bare prefix, a prefix
+  inside an ASCII word (`xaa-pair1:abc`, `_aa-pair1:abc`), other versions
+  (`aa-pair2:abc`), and an unprefixed ordinary-word pairing code are kept.
+  A payload split by whitespace or punctuation is recognized only through
+  its first contiguous run; text after that boundary is not inferred to be
+  part of the bundle.
 - AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials),
   Anthropic/OpenAI style `sk-` keys, and, since filter 11, the prefixed
   tokens of Stripe (`sk_live_`, `rk_live_`, `whsec_`), GitLab (`glpat-` and

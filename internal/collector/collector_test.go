@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,7 @@ func (s *metadataFailStore) Put(ctx context.Context, key string, data []byte) er
 }
 
 func TestRunPublishesNewSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -118,6 +120,7 @@ func TestRunPublishesNewSession(t *testing.T) {
 }
 
 func TestRunSkipsUnchangedSessionAndReusesCapturedAt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -150,6 +153,7 @@ func TestRunSkipsUnchangedSessionAndReusesCapturedAt(t *testing.T) {
 }
 
 func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -202,13 +206,14 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 }
 
 func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
 	// A transcript with no recognized safe records fails the filter on every
 	// pass. (A missing transcript used to stand in here; it is now a recorded
 	// capture gap instead of an error, see TestMissingTranscript*.)
 	badReg := registration(t, writeTranscript(t, dir, "unsafe.jsonl", `{"type":"unrecognized_record"}`+"\n"))
-	badReg.ArchiveSessionID = "bad-session"
+	badReg.ArchiveSessionID, badReg.NativeSessionID = "bad-session", "bad-native"
 	if err := local.SaveRegistration(badReg); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +247,7 @@ func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T
 }
 
 func TestRunFoldsHookEvidenceAndCompletesRequest(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -280,6 +286,7 @@ func TestRunFoldsHookEvidenceAndCompletesRequest(t *testing.T) {
 }
 
 func TestRunUnsafeTranscriptNeverPublishes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// A record with no recognized type and no role is an unknown record;
 	// combined with nothing else retainable, NewSourceBundle refuses it.
@@ -306,6 +313,7 @@ func TestRunUnsafeTranscriptNeverPublishes(t *testing.T) {
 }
 
 func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
@@ -351,6 +359,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 }
 
 func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
@@ -418,6 +427,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 }
 
 func TestStopRequestFlushesRateLimitAndPreservesEarlierHookEvidence(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -456,6 +466,7 @@ func TestStopRequestFlushesRateLimitAndPreservesEarlierHookEvidence(t *testing.T
 // A session that is being used generates a lifecycle event on every prompt.
 // That evidence must ride the normal debounce, not force an upload each time.
 func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -509,6 +520,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 // A stop after prompt evidence is still the debounce flush it always was, and
 // the prompt evidence it follows is published with it.
 func TestStopAfterPromptEvidenceFlushesImmediately(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -556,6 +568,7 @@ func lifecycleEvidence(at time.Time, name string) archive.SupplementalEvidence {
 }
 
 func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -640,6 +653,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 //
 // Regression: 2026-09 pre-release review, collector bug 3.
 func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	store := newTestStore(t)
@@ -716,7 +730,12 @@ func TestNativeEvidenceExtendsYieldsToVersionChange(t *testing.T) {
 // transcript again as it does after a real upgrade.
 func simulateFilterUpgrade(t *testing.T, store *state.Store) {
 	t.Helper()
-	const id = "session-1"
+	simulateFilterUpgradeOf(t, store, "session-1")
+}
+
+// simulateFilterUpgradeOf is simulateFilterUpgrade for the session id.
+func simulateFilterUpgradeOf(t *testing.T, store *state.Store, id string) {
+	t.Helper()
 	var file publishedFile
 	if err := local.Read(publishedPath(store, id), &file); err != nil {
 		t.Fatal(err)
@@ -746,6 +765,7 @@ func simulateFilterUpgrade(t *testing.T, store *state.Store) {
 //
 // Regression: 2026-09 pre-release review, collector bug 1.
 func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	store := newTestStore(t)
@@ -916,6 +936,7 @@ func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
 }
 
 func TestStableSupplementalObservationDoesNotRepublish(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -945,6 +966,7 @@ func TestStableSupplementalObservationDoesNotRepublish(t *testing.T) {
 }
 
 func TestChangedSupplementalInventoryPreservesEarlierObservation(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	first := archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillInventory, ObservedAt: t0, Provenance: "filesystem", Payload: map[string]any{"coverage": "installed_only", "skills": []any{map[string]any{"name": "one"}}}}
 	second := archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillInventory, ObservedAt: t0.Add(time.Hour), Provenance: "filesystem", Payload: map[string]any{"coverage": "installed_only", "skills": []any{map[string]any{"name": "two"}}}}
@@ -955,6 +977,7 @@ func TestChangedSupplementalInventoryPreservesEarlierObservation(t *testing.T) {
 }
 
 func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	store := newTestStore(t)
@@ -978,6 +1001,7 @@ func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
 // A raw transcript past the raw ceiling is refused on its size alone, without
 // being read.
 func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "large.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
@@ -1013,6 +1037,7 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 }
 
 func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -1096,6 +1121,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 }
 
 func TestForgetSessionRemovesRequestLock(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t)
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if err := store.SaveRegistration(registration(t, "/unused")); err != nil {
@@ -1108,18 +1134,19 @@ func TestForgetSessionRemovesRequestLock(t *testing.T) {
 	if _, err := os.Stat(lock); err != nil {
 		t.Fatalf("request lock was not created: %v", err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("request lock leaked after ForgetSession: %v", err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatalf("forgetting twice must be a no-op: %v", err)
 	}
 }
 
 func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t)
 	dir := store.SessionDir("session-1")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -1128,7 +1155,7 @@ func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "verification.json"), []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
+	if err := store.ForgetSession("session-1", agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -1142,7 +1169,7 @@ func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(other, "notes.txt"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ForgetSession("session-2", ""); err != nil {
+	if err := store.ForgetSession("session-2", agentmeta.SessionKey{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(other, "notes.txt")); err != nil {
@@ -1151,6 +1178,7 @@ func TestForgetSessionRemovesVerificationRecordAndEmptyDirectory(t *testing.T) {
 }
 
 func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -1184,6 +1212,7 @@ func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
 }
 
 func TestSaveRequestCoalescesReasonsAndEvidence(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, "/unused")
 	reg.ArchiveSessionID = "s1"
@@ -1218,6 +1247,7 @@ func TestSaveRequestCoalescesReasonsAndEvidence(t *testing.T) {
 // overlapping collector process from acting on the same home concurrently.
 // Locking itself is internal/local's responsibility and is tested there.
 func TestRunComposesWithLocalLock(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	unlock, err := local.Lock(home)
 	if err != nil {
@@ -1239,22 +1269,23 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 }
 
 func TestEnsureArchiveSessionIDPersistsAndReuses(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
-	id1, created1, err := local.EnsureArchiveSessionID("native-abc")
+	id1, created1, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !created1 || id1 == "" {
 		t.Fatalf("id1=%q created1=%v", id1, created1)
 	}
-	id2, created2, err := local.EnsureArchiveSessionID("native-abc")
+	id2, created2, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created2 || id2 != id1 {
 		t.Fatalf("expected reuse: id1=%q id2=%q created2=%v", id1, id2, created2)
 	}
-	id3, created3, err := local.EnsureArchiveSessionID("native-xyz")
+	id3, created3, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "native-xyz"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1264,6 +1295,7 @@ func TestEnsureArchiveSessionIDPersistsAndReuses(t *testing.T) {
 }
 
 func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {
@@ -1272,7 +1304,7 @@ func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
 	// A native session ID is harness-controlled input; it must not be usable
 	// to escape the sessions/ directory even though it is only ever hashed,
 	// not used directly as a path component.
-	id, _, err := local.EnsureArchiveSessionID("../../etc/passwd")
+	id, _, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("codex")), NativeID: "../../etc/passwd"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1288,6 +1320,7 @@ func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
 }
 
 func TestRunDeclinesPublishWhenSkillUseRequiredAndAbsent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -1327,6 +1360,7 @@ func TestRunDeclinesPublishWhenSkillUseRequiredAndAbsent(t *testing.T) {
 // window) must not be mistaken for a retry of a real publish and withheld;
 // it should be evaluated (and, here, declined again) immediately.
 func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -1362,6 +1396,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 }
 
 func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -1407,6 +1442,7 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 // depending on version; a text one must still publish, not be silently
 // dropped just because it isn't JSONL.
 func TestRunFallsBackToCursorTextWhenJSONLIsUnrecognized(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	textTranscript := "user: hello\nassistant: hi there\n"
 	path := writeTranscript(t, dir, "cursor.txt", textTranscript)
@@ -1433,6 +1469,7 @@ func TestRunFallsBackToCursorTextWhenJSONLIsUnrecognized(t *testing.T) {
 }
 
 func TestRecordSupersededMovesRepeatedKeyToEnd(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	// A -> B -> A -> C: A is superseded twice, B once in between.

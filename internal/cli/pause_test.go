@@ -72,6 +72,7 @@ func TestPauseBlocksSyncAndResumeUnblocksIt(t *testing.T) {
 }
 
 func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
@@ -80,7 +81,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "queued-before-pause", "cwd": project}
-	if err := capture.HandleEvent(home, "claude", payload, at); err != nil {
+	if err := handleTestHookEvent(home, "claude", payload, at); err != nil {
 		release()
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 	if code := runPauseCommand(&out, &errOut, env, false); code != 0 {
 		t.Fatalf("resume: code=%d stderr=%s", code, errOut.String())
 	}
-	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute)); err != nil {
+	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute), productionAgents); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()

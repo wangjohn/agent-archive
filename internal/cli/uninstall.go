@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -13,11 +15,14 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -31,6 +36,7 @@ import (
 func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("uninstall", stderr)
 	purge := fs.Bool("delete-local-data", false, "also delete owned local files and stored credentials")
+	skipScheduler := fs.Bool("skip-scheduler", false, "go on when the background scheduler cannot be reached, without verifying the job stopped")
 	yes := fs.Bool("yes", false, "skip the confirmations")
 	if !fs.parseFlagsOnly(args) {
 		return 2
@@ -39,14 +45,14 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking."+env.overrideHint(stdin))
 		return 1
 	}
-	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
+	if err := uninstall(*purge, *yes, *skipScheduler, stdin, stdout, env); err != nil {
 		terminal.Printf(stderr, "Uninstall incomplete: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
+func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, env Env) error {
 	// Resolved without creating it: the data directory of a stale
 	// installation (a test one whose temporary folder is gone) may no
 	// longer exist, and uninstalling it must not bring it back.
@@ -77,6 +83,14 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	// release is idempotent so the deferred calls cannot unlock twice.
 	release = releaseOnce(release)
 	defer release()
+	// Issuance takes issued.lock before the collector lock. A purge follows
+	// that order and refuses before changing hooks, credentials or lineage.
+	// Ordinary uninstall keeps issuance state and does not need this lock.
+	releaseIssued, err := lockUninstallIssuance(home, purge)
+	if err != nil {
+		return err
+	}
+	defer releaseIssued()
 	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
@@ -115,17 +129,17 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found))
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports))
 	if err != nil {
 		return err
 	}
 	// Another installation's hooks stay; say so, so nobody expects them gone.
-	for _, problem := range in.otherInstallationProblems(hookFiles, allHarnesses) {
+	for _, problem := range in.otherInstallationProblems(hookFiles, uninstallHookApps(in.owner().Ports, hookFiles, nil, nil)) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
-	remove, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env)
+	remove, unverified, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env, skipScheduler)
 	if err != nil {
 		return err
 	}
@@ -161,12 +175,34 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		releaseAdmission = releaseOnce(releaseAdmission)
 		defer releaseAdmission()
 		// The purge releases the locks once their files are gone.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); release() }); err != nil {
+		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); releaseIssued(); release() }); err != nil {
 			return err
 		}
 	}
-	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
+	printUninstallSummary(out, unverified)
 	return nil
+}
+
+// lockUninstallIssuance excludes key creation only when its lineage will be purged.
+func lockUninstallIssuance(home string, purge bool) (func(), error) {
+	if !purge {
+		return func() {}, nil
+	}
+	release, err := local.NamedLock(home, "issued.lock")
+	if err != nil {
+		return nil, fmt.Errorf("key issuance is running; retry local-data purge when it finishes: %w", err)
+	}
+	return releaseOnce(release), nil
+}
+
+func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
+	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
+	if len(unverified) > 0 {
+		printUnverifiedJobs(out, unverified)
+		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
+		return
+	}
+	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 }
 
 // confirmUninstall says what uninstall is about to do and asks, twice for a
@@ -175,7 +211,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 // be checked again under the locks. Declining is not an error: confirmed is
 // false and nothing was changed.
 func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, previewFound bool, stdin io.Reader, out io.Writer) (previewPending int, confirmed bool, err error) {
-	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
+	terminal.Println(out, "Remove the archive's hooks and background collector from this machine. Remote archives are kept.")
 	if purge {
 		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {
@@ -224,30 +260,132 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 	return refs
 }
 
+// unverifiedJob is a background job uninstall went on without verifying it
+// stopped, because the scheduler could not be reached (--skip-scheduler).
+type unverifiedJob struct {
+	ref scheduler.Ref
+	// words are the nouns of the scheduler that could not be reached, kept here
+	// because the summary is printed after a purge has deleted the
+	// configuration that names the scheduler.
+	words scheduler.Words
+	// why is what stopped the scheduler from answering or stopping the job.
+	why string
+	// manual is the command that stops the job by hand, "" when the
+	// scheduler names none.
+	manual string
+}
+
 // stopCollectors stops the background collectors the jobs ref name, and
 // returns the files of their definitions to remove once the rest of uninstall
 // is done. A job the scheduler runs from another installation's definition
 // stays, and so do its files: removing them would leave this installation with
 // nothing to reinstall from.
-func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env) (remove []string, err error) {
+//
+// A job the scheduler cannot be asked about refuses uninstall, with the
+// scheduler's own next step and the command that stops the job by hand; with
+// skipScheduler it goes on: the stop is tried, the definition's files are
+// removed all the same, and the job is returned unverified, for the summary to
+// say it was not verified stopped.
+func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env, skipScheduler bool) (remove []string, unverified []unverifiedJob, err error) {
 	words := env.scheduler().Words()
 	for _, ref := range refs {
 		status := env.jobStatus(userHome, ref)
 		if status.State == scheduler.Unknown {
-			return nil, fmt.Errorf("cannot determine background job state; restore access to %s and retry", words.Tool)
+			problem := problemOf(status)
+			if !skipScheduler {
+				return nil, nil, errors.New(uninstallUnknownMessage(words, problem))
+			}
+			// The scheduler said it cannot tell; asking it to stop the job
+			// is the attempt, and whether it worked is the answer. One it
+			// answers the second time is another installation's is left.
+			err := env.unloadJob(userHome, ref)
+			if notOwned(err) {
+				leftAnotherInstallation(out, words, ref, status)
+				continue
+			}
+			if err != nil {
+				unverified = append(unverified, unverifiedJob{ref: ref, words: words, why: cmp.Or(problem.Reason, words.Tool+" did not say whether the job is loaded"), manual: problem.Manual})
+			}
+			remove = append(remove, status.Paths...)
+			continue
 		}
 		if status.State == scheduler.AnotherInstallation {
-			terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+			leftAnotherInstallation(out, words, ref, status)
 			continue
 		}
 		if jobActive(status.State) {
 			if err = env.unloadJob(userHome, ref); err != nil {
-				return nil, fmt.Errorf("stop collector: %w", err)
+				if !skipScheduler {
+					return nil, nil, fmt.Errorf("stop collector: %w", err)
+				}
+				if notOwned(err) {
+					leftAnotherInstallation(out, words, ref, status)
+					continue
+				}
+				unverified = append(unverified, failedStop(ref, words, err))
 			}
 		}
 		remove = append(remove, status.Paths...)
 	}
-	return remove, nil
+	return remove, unverified, nil
+}
+
+// failedStop is the loaded job ref names, whose stop failed with err, as
+// uninstall --skip-scheduler reports it. A manager that could no longer be
+// asked about the job when the stop came (Unload's *IndeterminateError) says
+// what is wrong and the command that stops the job by hand, as for a job it
+// could not describe in the first place.
+func failedStop(ref scheduler.Ref, words scheduler.Words, err error) unverifiedJob {
+	job := unverifiedJob{ref: ref, words: words, why: err.Error()}
+	var indeterminate *scheduler.IndeterminateError
+	if errors.As(err, &indeterminate) {
+		job.why = cmp.Or(indeterminate.Problem.Reason, job.why)
+		job.manual = indeterminate.Problem.Manual
+	}
+	return job
+}
+
+// leftAnotherInstallation says that the job ref names was left running, with
+// its definition, because the scheduler runs it from another installation's.
+func leftAnotherInstallation(out io.Writer, words scheduler.Words, ref scheduler.Ref, status scheduler.Status) {
+	terminal.Printf(out, "Left %s's %s job running: it was loaded from another %s, so it belongs to another installation. %s was kept.\n", words.Manager, ref, words.Definition, definitionPath(status))
+}
+
+// notOwned reports whether err is the scheduler's refusal to stop a job it
+// runs from another installation's definition.
+func notOwned(err error) bool {
+	var notOwned *scheduler.NotOwnedError
+	return errors.As(err, &notOwned)
+}
+
+// uninstallUnknownMessage says that uninstall stops because the scheduler
+// cannot say whether the job is loaded. An adapter that says what is wrong has
+// it said, with its next step, the command that stops the job by hand, and the
+// way to go on without the scheduler; otherwise it is the words it always was.
+func uninstallUnknownMessage(words scheduler.Words, problem scheduler.Problem) string {
+	if problem.Reason == "" {
+		return fmt.Sprintf("cannot determine background job state; restore access to %s and retry", words.Tool)
+	}
+	message := fmt.Sprintf("cannot determine background job state: %s. %s.", problem.Reason, problem.Fix)
+	if problem.Manual != "" {
+		message += fmt.Sprintf(" To stop the job by hand, run this from a session that can reach %s: %s.", words.Manager, problem.Manual)
+	}
+	return message + " To uninstall anyway, without verifying the job stopped, run agent-archive uninstall --skip-scheduler."
+}
+
+// printUnverifiedJobs says which background jobs uninstall went on without
+// verifying stopped, why, and the command that stops each by hand: deleting a
+// definition under a job that is still loaded leaves it running.
+func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
+	for _, job := range jobs {
+		words := job.words
+		terminal.Printf(out, "Not verified stopped: %s's %s job may still be running, because %s.\n", words.Manager, job.ref, job.why)
+		if job.manual != "" {
+			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
+		} else {
+			terminal.Printf(out, "To stop it, use %s from a session that can reach %s.\n", words.Tool, words.Manager)
+		}
+	}
 }
 
 // purgeLocalData runs once hooks and the LaunchAgent are gone. It deletes
@@ -257,6 +395,16 @@ func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env En
 // remains in it.
 func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, releaseLocks func()) error {
 	refs := map[string]bool{}
+	if slots, err := issuance.List(home); err == nil {
+		for _, slot := range slots {
+			refs[slot.SecretRef] = true
+		}
+	} else {
+		terminal.Println(out, "Issuance ledger unreadable; additional credential references may remain in the credential store.")
+	}
+	for _, ref := range cfg.SpareCredentialRefs {
+		refs[ref] = true
+	}
 	for _, ref := range cfg.RetiredCredentialRefs {
 		refs[ref] = true
 	}
@@ -365,11 +513,44 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 // installedApps is the apps whose hooks setup installed, per the committed
 // configuration. An empty list in a configuration means every app (see
 // config.Config.Harnesses); with no configuration at all, none is known.
-func installedApps(cfg config.Config, found bool) []string {
+func installedApps(cfg config.Config, found bool, lookups ...agentapi.HooksLookup) []string {
 	if found && len(cfg.Harnesses) == 0 {
+		if len(lookups) > 0 {
+			return uninstallHookApps(lookups[0], hooks.Files(cfg.HookFiles), nil, nil)
+		}
 		return allHarnesses
 	}
 	return cfg.Harnesses
+}
+
+// uninstallHookApps starts with injected managed-hook owners and then includes
+// recorded paths and installed owners. Codex keeps its established first position.
+func uninstallHookApps(ports agentapi.HooksLookup, files, legacy hooks.Files, installed []string) []string {
+	if ports == nil {
+		ports = productionAgents
+	}
+	apps := append([]string(nil), ports.HookAgents()...)
+	for i, app := range apps {
+		if app == string(agentmeta.Codex) {
+			copy(apps[1:i+1], apps[:i])
+			apps[0] = app
+			break
+		}
+	}
+	var recorded []string
+	for app := range files {
+		recorded = append(recorded, app)
+	}
+	for app := range legacy {
+		recorded = append(recorded, app)
+	}
+	sort.Strings(recorded)
+	for _, app := range append(recorded, installed...) {
+		if !containsString(apps, app) {
+			apps = append(apps, app)
+		}
+	}
+	return apps
 }
 
 // planUninstallHooks plans removing owner's handlers (see hooks.Hook) from
@@ -381,9 +562,15 @@ func installedApps(cfg config.Config, found bool) []string {
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
 func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	for _, app := range allHarnesses {
+	for _, app := range uninstallHookApps(owner.Ports, files, legacy, installed) {
 		for i, set := range []hooks.Files{files, legacy} {
-			if i == 1 && legacy[app] == files[app] {
+			if set[app] == "" {
+				if i == 0 && containsString(installed, app) {
+					return nil, nil, fmt.Errorf("missing installed hook settings path for %s", app)
+				}
+				continue
+			}
+			if i == 1 && local.CanonicalPath(legacy[app]) == local.CanonicalPath(files[app]) {
 				continue
 			}
 			change, found, err := hooks.PlanRemovalOf(set, owner, app)
@@ -395,7 +582,23 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 				continue
 			}
 			if found {
-				changes = append(changes, change)
+				duplicate := false
+				for _, prior := range changes {
+					// Hardlinks remain separate atomic-replacement destinations.
+					if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+						continue
+					}
+					// Distinct owners may select one file only when their complete plans
+					// agree. Otherwise refuse rather than lose handlers or apply stale bytes.
+					if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.After, change.After) || !bytes.Equal(prior.Before, change.Before) {
+						return nil, nil, fmt.Errorf("hook owners have conflicting removal plans for %s", change.Path)
+					}
+					duplicate = true
+					break
+				}
+				if !duplicate {
+					changes = append(changes, change)
+				}
 			}
 		}
 	}
@@ -407,7 +610,7 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 // agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
 func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
-	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
+	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome, in.owner().Ports), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
 	removals, kept, err := agentskills.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
@@ -453,7 +656,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "setup.lock"}
+var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -529,11 +732,11 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"config.json", "setup-draft.json", "setup-transaction.json", "imports",
+	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
-	"cache", handoffDir, "purge-plans",
+	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
 	credentials.CredentialsDirName,
 }
@@ -559,7 +762,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" {
+		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {

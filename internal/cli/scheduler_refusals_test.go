@@ -19,7 +19,8 @@ import (
 // from setup's commit and from uninstall).
 //
 // The refusals go through the launchctl seam: r.answers scripts what launchctl
-// print says for a label, one answer per call, the last one repeated.
+// print says for a label, one answer per call, the last one repeated. None of
+// these tests is parallel: newSchedRun replaces launchctl.
 
 // refusedStates are the two job states setup and uninstall refuse to act on.
 var refusedStates = []launchdAnswer{answerUnknown, answerAnotherInstallation}

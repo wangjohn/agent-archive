@@ -12,7 +12,7 @@ import (
 
 // storageClockFollows makes the retention sweep's storage clock read now()
 // and drops its check against the previous pass, for a test that moves time
-// forward by changing Env.Now. Without it the sweep sees only this Mac's
+// forward by changing Env.Now. Without it the sweep sees only this machine's
 // clock jump ahead of a MemoryStore's real one and, rightly, deletes nothing.
 func storageClockFollows(t *testing.T, env *Env, now func() time.Time) {
 	t.Helper()
@@ -40,8 +40,26 @@ func TestPassWithAClockAheadOfStorageDeletesNothingAndSaysWhy(t *testing.T) {
 		t.Fatal("a clock three months ahead expired the session")
 	}
 	after, err := bucket.List(context.Background(), "")
-	if err != nil || len(after) != len(before) {
-		t.Fatalf("objects before=%d after=%d (%v)", len(before), len(after), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registry heartbeat publication is independent of retention's clock guard.
+	// Every preexisting object must remain; the only permitted addition is this
+	// machine's informational record, never another session or listing object.
+	keys := map[string]bool{}
+	for _, object := range after {
+		keys[object.Key] = true
+	}
+	for _, object := range before {
+		if !keys[object.Key] {
+			t.Fatalf("clock guard removed %s", object.Key)
+		}
+		delete(keys, object.Key)
+	}
+	for key := range keys {
+		if !strings.HasPrefix(key, "machines/") {
+			t.Fatalf("unexpected object after clock guard: %s", key)
+		}
 	}
 	status, err := state.OpenReadOnly(home).LoadStatus()
 	if err != nil || !strings.Contains(status.LastError, "clock is ahead") {

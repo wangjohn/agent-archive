@@ -15,6 +15,12 @@ import (
 
 // The environments an agent's shell runs commands in. Each variable alone
 // must switch interaction off.
+const cursorAgentEnv = "CURSOR_AGENT"
+
+var handoffSessionEnv = launchEnvironmentKeys(Env{})
+
+func agentShellEnv() []string { return slices.Clone(agentVariables) }
+
 var agentVariables = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_AGENT"}
 
 func TestParseSwitchAcceptsOneSetOfSpellings(t *testing.T) {

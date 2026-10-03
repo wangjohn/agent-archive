@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -57,8 +57,8 @@ func removalHarness(harness string) string {
 // RecordRemoval writes forgotten/<sha256(harness + "\x00" + nativeSessionID)>.json.
 // A later removal of the same session replaces the earlier record.
 func (s *Store) RecordRemoval(harness, nativeSessionID string, reason RemovalReason, at time.Time) error {
-	if strings.TrimSpace(harness) == "" || strings.TrimSpace(nativeSessionID) == "" {
-		return errors.New("app and native session ID are required")
+	if _, err := agentmeta.NewSessionKey(harness, nativeSessionID); err != nil {
+		return err
 	}
 	if reason != RemovalReasonRetention && reason != RemovalReasonUndo {
 		return fmt.Errorf("unknown removal reason %q", reason)
@@ -103,8 +103,8 @@ func (s *Store) recordRemovalRevocably(harness, nativeSessionID string, reason R
 
 // Removal reports the record for a native session, if any.
 func (s *Store) Removal(harness, nativeSessionID string) (RemovalRecord, bool, error) {
-	if strings.TrimSpace(harness) == "" || strings.TrimSpace(nativeSessionID) == "" {
-		return RemovalRecord{}, false, errors.New("app and native session ID are required")
+	if _, err := agentmeta.NewSessionKey(harness, nativeSessionID); err != nil {
+		return RemovalRecord{}, false, err
 	}
 	var record RemovalRecord
 	err := local.Read(removalPath(s.home, harness, nativeSessionID), &record)

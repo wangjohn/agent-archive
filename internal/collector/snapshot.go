@@ -10,6 +10,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // ErrNoTranscript means a registration names no transcript file yet, or the
@@ -27,6 +29,7 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // (empty means the one under the user's home), through a snapshot of its
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string) (archive.SourceBundle, error) {
+	defer trace.Start("read local transcript").End()
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase})
 	if !ok {
 		return archive.SourceBundle{}, ErrNoTranscript
@@ -84,6 +87,9 @@ var readCursorLastUpdated = cursorstore.ReadLastUpdated
 // session ID, reading the Cursor database once for all of its chats rather
 // than once each. A registration whose activity can't be read is left out.
 func LastActivities(ctx context.Context, regs []archive.SessionRegistration, cursorDatabase string) map[string]time.Time {
+	span := trace.Start("local activity")
+	span.Count("sessions", len(regs))
+	defer span.End()
 	out := make(map[string]time.Time, len(regs))
 	// sessions maps each Cursor chat to the archive sessions reading it.
 	sessions := map[string][]string{}
@@ -129,8 +135,23 @@ func FilterTranscriptFile(harness, path string, startedAt time.Time) (archive.Fi
 	if err != nil {
 		return archive.FilteredTranscript{}, nil, err
 	}
-	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: path, SessionStartedAt: startedAt}
-	filtered, _, err := filterTranscript(adapter, reg, DefaultMaxTranscriptBytes)
+	snapshot, err := transcriptio.Open(transcriptio.OS{}, path, transcriptio.OpenPolicy{})
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, err
+	}
+	defer func() { _ = snapshot.Close() }()
+	return FilterTranscriptSnapshot(context.Background(), snapshot, adapter.Name(), startedAt, DefaultMaxTranscriptBytes)
+}
+
+// FilterTranscriptSnapshot filters the verified handle without reopening its path.
+// The caller owns the handle and must close it, including on cancellation.
+func FilterTranscriptSnapshot(ctx context.Context, snapshot *transcriptio.Snapshot, harness string, startedAt time.Time, maxBytes int64) (archive.FilteredTranscript, archive.Adapter, error) {
+	adapter, err := archive.NewAdapter(harness)
+	if err != nil {
+		return archive.FilteredTranscript{}, nil, err
+	}
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, SessionStartedAt: startedAt}
+	filtered, _, err := filterSnapshot(ctx, snapshot, adapter, reg, maxBytes)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
 		return archive.FilteredTranscript{}, nil, fmt.Errorf("%w: %w", archive.ErrRecordTooLarge, err)
 	}

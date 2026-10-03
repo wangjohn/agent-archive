@@ -4,9 +4,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -73,7 +75,7 @@ func TestHookRecordsTheStartingCommitOfTheSessionsWorkingDirectory(t *testing.T)
 	git := &headLookup{sha: startCommit, dirty: new(true)}
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	worktree := "/work/widget/.claude/worktrees/fix-login"
-	if err := HandleEvent(home, "claude", startPayload(worktree), at, WithGitHead(git.lookup)); err != nil {
+	if err := HandleEvent(home, "claude", startPayload(worktree), at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 		t.Fatal(err)
 	}
 	reg := onlyRegistration(t, home)
@@ -99,7 +101,7 @@ func TestHookRecordsTheStartingCommitOfACursorChatAtItsFirstPrompt(t *testing.T)
 		"hook_event_name": "beforeSubmitPrompt", "conversation_id": "chat-1", "session_id": "chat-1",
 		"workspace_roots": []any{"/work/widget"}, "transcript_path": nil,
 	}
-	if err := HandleEvent(home, "cursor", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithGitHead(git.lookup)); err != nil {
+	if err := HandleEvent(home, "cursor", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyRegistration(t, home); reg.StartHead == nil || reg.StartHead.SHA != startCommit || reg.StartHead.Dirty == nil || *reg.StartHead.Dirty {
@@ -123,7 +125,7 @@ func TestHookRegistersWithoutAStartingCommitWhenGitCannotTell(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithGitHead(lookup)); err != nil {
+			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithDecoders(testDecoders), WithGitHead(lookup)); err != nil {
 				t.Fatal(err)
 			}
 			if reg := onlyRegistration(t, home); reg.StartHead != nil {
@@ -139,7 +141,7 @@ func TestHookRecordsTheStartingCommitWithoutADirtyFlagGitCouldNotGive(t *testing
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	git := &headLookup{sha: startCommit}
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithGitHead(git.lookup)); err != nil {
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyRegistration(t, home); reg.StartHead == nil || reg.StartHead.SHA != startCommit || reg.StartHead.Dirty != nil {
@@ -157,7 +159,7 @@ func TestHookDoesNotAskForACommitForAStartItDeclinesOrAlreadyRegistered(t *testi
 	resumed := startPayload("/work/widget")
 	resumed["source"] = "resume"
 	for _, payload := range []map[string]any{outside, resumed} {
-		if err := HandleEvent(home, "codex", payload, at, WithGitHead(git.lookup)); err != nil {
+		if err := HandleEvent(home, "codex", payload, at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -165,7 +167,7 @@ func TestHookDoesNotAskForACommitForAStartItDeclinesOrAlreadyRegistered(t *testi
 		t.Fatalf("git was asked %v for starts that were declined", got)
 	}
 	for range 2 {
-		if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithGitHead(git.lookup)); err != nil {
+		if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -182,12 +184,12 @@ func TestHookRecordsTheLastCommitAStopSees(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	git := &headLookup{sha: startCommit, dirty: new(false)}
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), start, WithGitHead(git.lookup)); err != nil {
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), start, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 		t.Fatal(err)
 	}
 	stop := func(at time.Time) archive.SessionRegistration {
 		t.Helper()
-		if err := HandleEvent(home, "codex", stopPayload("/work/widget/src"), at, WithGitHead(git.lookup)); err != nil {
+		if err := HandleEvent(home, "codex", stopPayload("/work/widget/src"), at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 			t.Fatal(err)
 		}
 		return onlyRegistration(t, home)
@@ -231,7 +233,7 @@ func TestHookDoesNotAskForACommitAtTheStopOfASessionItDoesNotArchive(t *testing.
 	git := &headLookup{sha: startCommit}
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	for _, payload := range []map[string]any{stopPayload("/work/widget"), stopPayload("/elsewhere/other")} {
-		if err := HandleEvent(home, "codex", payload, at, WithGitHead(git.lookup)); err != nil {
+		if err := HandleEvent(home, "codex", payload, at, WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -279,7 +281,7 @@ func TestHookAsksForTheCommitAndTheRepoKeyAtOnceBeforeTakingTheLock(t *testing.T
 		}
 		return archive.RepoKey("https://example.test/acme/widget.git")
 	})
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), head, key); err != nil {
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithDecoders(testDecoders), head, key); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyRegistration(t, home); reg.StartHead == nil || reg.RepoKey == "" {
@@ -289,23 +291,84 @@ func TestHookAsksForTheCommitAndTheRepoKeyAtOnceBeforeTakingTheLock(t *testing.T
 
 // A lookup that hangs costs the hook the budget, not the hang.
 func TestHookGivesUpOnACommitLookupThatHangs(t *testing.T) {
+	wall := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(time.Until(wall))
+		home := t.TempDir()
+		at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+		setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+		release := make(chan struct{})
+		answer := time.AfterFunc(time.Minute, func() { close(release) })
+		t.Cleanup(func() {
+			if answer.Stop() {
+				close(release)
+			}
+		})
+		lookup := WithGitHead(func(string, bool) (string, *bool) { <-release; return startCommit, nil })
+		start := time.Now()
+		if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithDecoders(testDecoders), lookup); err != nil {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(start); elapsed != repoKeyBudget {
+			t.Errorf("hung lookup spent %v, want %v", elapsed, repoKeyBudget)
+		}
+		if reg := onlyRegistration(t, home); reg.StartHead != nil {
+			t.Errorf("late lookup recorded: %+v", reg.StartHead)
+		}
+	})
+}
+
+func TestStopCommitLookupRequiresTheRegisteredAgentAndProject(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	release := make(chan struct{})
-	defer close(release)
-	hang := WithGitHead(func(string, bool) (string, *bool) {
-		<-release
-		return startCommit, nil
-	})
-	start := time.Now()
-	if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), hang); err != nil {
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	if err := HandleEvent(home, "claude", startPayload("/work/widget"), at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if elapsed, limit := time.Since(start), repoKeyBudget+3*time.Second; elapsed > limit {
-		t.Errorf("the hook took %v with a hung lookup, want under %v", elapsed, limit)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if reg := onlyRegistration(t, home); reg.StartHead != nil {
-		t.Errorf("StartHead = %+v from a lookup that never answered", reg.StartHead)
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: "/work/other", Included: true, ActivatedAt: at.Add(-time.Hour)})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	git := &headLookup{sha: laterCommit}
+	for _, tc := range []struct{ agent, root string }{{"codex", "/work/widget"}, {"claude", "/work/other"}} {
+		if err := HandleEvent(home, tc.agent, stopPayload(tc.root), at.Add(time.Minute), WithDecoders(testDecoders), WithGitHead(git.lookup)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := git.questions(); len(got) != 0 {
+		t.Errorf("git asked for another agent or project: %v", got)
+	}
+	if reg := onlyRegistration(t, home); reg.LastHead != nil {
+		t.Errorf("last HEAD changed: %+v", reg.LastHead)
+	}
+}
+
+func TestOlderStopCommitCannotReplaceANewerObservation(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyRegistration(t, home)
+	store := state.OpenReadOnly(home)
+	newer := &archive.GitHead{SHA: laterCommit, ObservedAt: at.Add(2 * time.Minute)}
+	older := &archive.GitHead{SHA: startCommit, ObservedAt: at.Add(time.Minute)}
+	if err := recordLastHead(store, reg, newer); err != nil {
+		t.Fatal(err)
+	}
+	// Model a concurrent hook whose lookup started earlier but acquired the
+	// shared lock after the newer hook. Its cached registration is also stale.
+	if err := recordLastHead(store, reg, older); err != nil {
+		t.Fatal(err)
+	}
+	if got := onlyRegistration(t, home).LastHead; got == nil || got.SHA != laterCommit || !got.ObservedAt.Equal(newer.ObservedAt) {
+		t.Fatalf("newer observation replaced: %+v", got)
 	}
 }

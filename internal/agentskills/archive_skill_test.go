@@ -152,7 +152,7 @@ func TestArchiveDescriptionCoversHowPeopleAsk(t *testing.T) {
 		"continue where my last session left off":              {"continue", "session"},
 		"look at the session where we fixed the login":         {"look at", "session"},
 		"is that session still in the archive":                 {"archive", "session"},
-		"use the earlier session on this Mac as context":       {"earlier session", "this mac"},
+		"use the earlier session on this machine as context":   {"earlier session", "this machine"},
 		"review an old Codex session":                          {"review", "codex"},
 		"what happened in the other agent":                     {"another agent", "session"},
 		"what did I do in that Cursor chat about auth":         {"chat", "conversation", "cursor"},

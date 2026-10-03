@@ -18,7 +18,7 @@ import (
 // setupImportAnswers set Claude Code up in ~/src/web-app, storing in S3,
 // and answer the import offer with importAnswer.
 func setupImportAnswers(importAnswer string) string {
-	return strings.Join([]string{"", "2", "work", "2", "", importAnswer}, "\n") + "\n"
+	return strings.Join([]string{"", "s3-existing", "work", "2", "", importAnswer}, "\n") + "\n"
 }
 
 // newImportOfferFixture is a Mac with Claude Code, run from ~/src/web-app,
@@ -169,9 +169,9 @@ func TestSetupYesPointsAtBackfill(t *testing.T) {
 	}
 }
 
-// The line for another Mac names the R2 key only by its environment
+// The line for another machine names the R2 key only by its environment
 // variables, never by value, whether setup asked for it or read it.
-func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
+func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 	t.Parallel()
 	const secret, keyID = "private-secret-value", "PRIVATEKEYID"
 	check := func(t *testing.T, out string) {
@@ -179,7 +179,7 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 		if strings.Contains(out, secret) || strings.Contains(out, keyID) {
 			t.Fatalf("output carries the key:\n%s", out)
 		}
-		want := "To set up another Mac with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --project "
+		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project "
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
@@ -188,7 +188,7 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {
@@ -203,9 +203,9 @@ func TestAnotherMacCommandNeverCarriesTheR2Secret(t *testing.T) {
 	})
 }
 
-// The command for another Mac writes projects in the home folder from ~, and
+// The command for another machine writes projects in the home folder from ~, and
 // quotes what the shell would split.
-func TestAnotherMacCommand(t *testing.T) {
+func TestAnotherMachineCommand(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{
 		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "team-archive", AWSProfile: "work", Region: "us-east-1"},
@@ -217,8 +217,8 @@ func TestAnotherMacCommand(t *testing.T) {
 			{Root: "/Users/alex", Included: true},
 		}},
 	}
-	got := anotherMacCommand(cfg, "/Users/alex")
-	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
+	got := anotherMachineCommand(cfg, "/Users/alex")
+	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -226,7 +226,7 @@ func TestAnotherMacCommand(t *testing.T) {
 
 // A project in the home folder is written from ~ even when the home folder's
 // path runs through a symlink, as project roots are saved resolved.
-func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
+func TestAnotherMachineCommandResolvesTheHomeFolder(t *testing.T) {
 	t.Parallel()
 	target := t.TempDir()
 	link := filepath.Join(t.TempDir(), "home")
@@ -238,7 +238,7 @@ func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
 		Harnesses: []string{"claude"},
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(resolved, "src", "app"), Included: true}}},
 	}
-	if got := anotherMacCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
+	if got := anotherMachineCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
 		t.Fatalf("got %s", got)
 	}
 }
@@ -303,10 +303,10 @@ func TestSetupImportUploadFailureNamesNoRetry(t *testing.T) {
 	}
 }
 
-// The command for another Mac names an R2 bucket on a custom endpoint by
+// The command for another machine names an R2 bucket on a custom endpoint by
 // that endpoint, and says how to set a folder inside the bucket, which
 // setup --yes cannot.
-func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
+func TestAnotherMachineCommandCustomEndpointAndFolder(t *testing.T) {
 	t.Parallel()
 	endpoint := "https://" + testR2Account + ".eu.r2.cloudflarestorage.com"
 	cfg := config.Config{
@@ -318,13 +318,26 @@ func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
 		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: "/Users/alex/src/app", Included: true}}},
 	}
 	var out bytes.Buffer
-	printAnotherMac(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
+	printAnotherMachine(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex")
 	got := out.String()
-	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --project ~/src/app\nThen run agent-archive setup there and set the folder inside the bucket to team/.\n"
+	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --prefix team/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project ~/src/app\n"
 	if !strings.HasSuffix(got, want) || strings.Contains(got, "ref-123") {
 		t.Fatalf("got:\n%s", got)
 	}
 	if loc, err := credentials.ParseR2Location(endpoint); err != nil || loc.Endpoint != endpoint {
 		t.Fatalf("the endpoint does not read back: %+v %v", loc, err)
+	}
+}
+
+func TestAnotherMachineCommandCarriesCapturePolicies(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		Storage:       credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", Prefix: "private/", AWSProfile: "p"},
+		RetentionDays: 14, RequireSkillUse: true, SkillEvidence: config.SkillEvidenceNone, NoSkills: true,
+	}
+	got := anotherMachineCommand(cfg, "")
+	want := "--prefix private/ --retention-days 14 --require-skill-use --skill-evidence none --no-skills"
+	if !strings.Contains(got, want) {
+		t.Fatalf("capture policy missing: %s", got)
 	}
 }

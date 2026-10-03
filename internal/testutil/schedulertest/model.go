@@ -54,7 +54,7 @@ func (*Model) Name() string { return "model" }
 
 // Words are the model's nouns.
 func (*Model) Words() scheduler.Words {
-	return scheduler.Words{Manager: "the model", Job: "model job", Definition: "job file", Tool: "modelctl"}
+	return scheduler.Words{Manager: "the model", Job: "model job", Definition: "job file", Tool: "modelctl", Name: "job name"}
 }
 
 // DefaultPATH is the PATH the model gives a job whose definition sets none.

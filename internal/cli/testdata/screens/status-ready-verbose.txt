@@ -29,7 +29,7 @@ Details
   Last publish:  2026-09-25T12:00:00Z
   Skill evidence: metadata
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
-    Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.
+    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.
     Installed version: unknown; support unknown.
     Project /Users/alex/src/web-app: verified_at_recorded_time.
     Read-back verified: 2026-09-25T12:00:00Z; evidence is for that publication.

@@ -1,0 +1,96 @@
+agent-archive stats · detail · last 30 days · 3 agents
+
+OVERVIEW     last 30d
+Est. spend    ~$3,989
+Sessions           93
+Prompts           673
+Tokens            10B
+Active days   3 of 30
+97% of tokens were served from cache.
+
+AGENTS         sessions  share   tokens  est. cost
+● Claude Code        84    90%     9.9B     $3,940
+● Cursor              8     9%  unknown        n/a
+● Codex               1     1%     100M        $49
+
+DAILY SPEND                           peak ~$2,910 · Sep 27
+                                                      █
+                                                      █
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁█▁▁▁▇
+Aug 31                                               Sep 29
+
+WHAT USED YOUR TOKENS
+████████████████████████ █ █ █
+● Cache read    97%  9.7B
+● Cache write    2%  200M
+● Fresh input   <1%  30M
+● Output         1%  70M
+Subagents  77% of tokens (7.7B) in 497 runs
+
+HIGHLIGHTS
+Streak          none now (best 1 day)
+Busiest day     Sep 27 (70 sessions)
+Favorite model  opus
+This month      the heaviest of the last 6 months, by tokens
+                so far
+Tool errors     5.0% of 4,200 tool results flagged as
+                errors, 70 sessions measured (13 do not
+                record them)
+Costliest       ~$564 · styleprofile · long context, 38
+                subagents
+
+SKILLS AND MCP
+Skills  code-review 100 · review-pr 99 · docs 98 ·
+        cursor-guide 97 · skill-04 96 · skill-05 95 ·
+        skill-06 94 · skill-07 93 · skill-08 92 ·
+        skill-09 91 · skill-10 90 · skill-11 89 ·
+        skill-12 88 · skill-13 87 · skill-14 86 ·
+        skill-15 85 · skill-16 84 · skill-17 83 ·
+        skill-18 82 · skill-19 81 · skill-20 80 ·
+        skill-21 79 · skill-22 78 · skill-23 77 ·
+        skill-24 76 · skill-25 75 · skill-26 74 ·
+        skill-27 73 · skill-28 72 · skill-29 71 ·
+        skill-30 70 · skill-31 69 · skill-32 68 ·
+        skill-33 67 · skill-34 66 · skill-35 65 ·
+        skill-36 64 · skill-37 63 · skill-38 62 ·
+        skill-39 61 sessions, + 5 more (all in --json --all)
+MCP     github 5,000 · linear 4,993 · server-02 4,986 ·
+        server-03 4,979 · server-04 4,972 ·
+        server-05 4,965 · server-06 4,958 ·
+        server-07 4,951 · server-08 4,944 ·
+        server-09 4,937 · server-10 4,930 ·
+        server-11 4,923 · server-12 4,916 ·
+        server-13 4,909 · server-14 4,902 ·
+        server-15 4,895 · server-16 4,888 ·
+        server-17 4,881 · server-18 4,874 ·
+        server-19 4,867 · server-20 4,860 ·
+        server-21 4,853 · server-22 4,846 ·
+        server-23 4,839 · server-24 4,832 ·
+        server-25 4,825 · server-26 4,818 ·
+        server-27 4,811 · server-28 4,804 ·
+        server-29 4,797 · server-30 4,790 ·
+        server-31 4,783 · server-32 4,776 ·
+        server-33 4,769 · server-34 4,762 ·
+        server-35 4,755 · server-36 4,748 ·
+        server-37 4,741 · server-38 4,734 · server-39 4,727
+        calls (Claude Code and Cursor only), + 5 more (all
+        in --json --all)
+Skills count the sessions that used each one; MCP counts
+calls.
+
+FINDINGS
+● 77% of tokens came from subagents (497 runs)
+● Costliest session ~$564 · styleprofile · long context, 38
+  subagents
+
+NOTES
+Scope: this archive only.
+83 of 93 sessions report token counts.
+Sessions with no token data are left out of token and cost
+totals (Claude Code: 2, Cursor: 8).
+Prices 2026-09-29, as of 2026-09-29.
+~ marks an estimate at list price.
+MCP: Claude Code and Cursor only; Codex MCP calls are not
+recorded.
+
+Estimated at list price, not a bill.   --view overview

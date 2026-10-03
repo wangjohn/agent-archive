@@ -53,7 +53,16 @@ func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 		t.Fatal(err)
 	}
 	defer func() { _ = file.Close() }()
-	filtered, err := adapterForFixture(t, name).FilterJSONL(file)
+	adapter := adapterForFixture(t, name)
+	filtered, err := adapter.FilterJSONL(file)
+	// A fixture with a .meta.json beside it is a Claude Code subagent
+	// transcript (filter 14), filtered with that file's contents.
+	if meta, readErr := os.ReadFile(filepath.Join("testdata", strings.TrimSuffix(name, ".jsonl")+".meta.json")); readErr == nil {
+		if _, err := file.Seek(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		filtered, err = adapter.(ClaudeAdapter).FilterSubagentJSONL(file, meta)
+	}
 	if err != nil {
 		return filterGoldenEntry{Error: true}
 	}

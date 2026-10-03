@@ -74,6 +74,7 @@ func removeRemoteSource(t *testing.T, remote *storagetest.MemoryStore, id string
 }
 
 func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	remote := storagetest.NewMemoryStore()
@@ -120,6 +121,7 @@ func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
 }
 
 func TestExcludedCurrentDestinationPublicationCanBeVerifiedForPrivacyCleanup(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	remote := storagetest.NewMemoryStore()

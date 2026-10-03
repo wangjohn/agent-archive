@@ -1,18 +1,17 @@
 name: Test
 on:
   pull_request:
-  push:
-    branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: test-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14]
-    runs-on: ${{ matrix.os }}
+  linux-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,7 +27,9 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
-      - run: go test -race ./...
+      # internal/cli takes 275 to 427 seconds under the race detector on CI
+      # runners, too close to go test's default of 10 minutes a package.
+      - run: go test -race -timeout 20m ./...
       # The run above uses the race detector, under which the wall-clock
       # assertions of the performance tests are skipped (the detector slows
       # filtering by an order of magnitude). This plain run makes them count,
@@ -43,15 +44,39 @@ jobs:
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+      # Extended's real-systemd backstop keeps its name and validated image.
+      - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_measure_hook.py
+      # Static and fake-Docker checks of the Linux live acceptance scripts;
+      # the live run itself needs privileged Docker and is not run in CI.
+      - run: python3 scripts/test_linux_acceptance.py
+
+  macos-smoke:
+    # Compile every Darwin/cgo package, then exercise the native Keychain,
+    # launchd, terminal, and setup paths before merging. The full race suite
+    # runs on main and nightly in extended.yml.
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Darwin build and focused race tests
+        run: ./scripts/test_macos_smoke.sh
 
   cross-build:
-    # What the two platform legs above cannot see: the ubuntu leg builds only
-    # linux/amd64, and the macOS leg builds only darwin with cgo (the release
-    # configuration). This job, on Linux, builds and vets the other targets,
-    # so a change that breaks one fails here, not on release day. The macOS
-    # legs and the lint job already vet darwin with cgo natively, which no
-    # Linux runner can do (cgo needs Apple's SDK).
+    # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.
+    # Build and vet the other release targets before a change reaches main.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,8 +98,8 @@ jobs:
           go build ./...
           go vet ./...
       # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which the macOS legs
-      # (cgo on) never compile.
+      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
+      # (cgo on) never compiles.
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
@@ -91,39 +116,11 @@ jobs:
           ./scripts/build-release.sh linux
           ./scripts/verify-linux-release.sh
 
-  fuzz:
-    # Every parser, redaction, and hook fuzz target, briefly, so a change that
-    # breaks one of their properties fails before merge
-    # (dev/contributing/testing.md). The failure message quotes the input;
-    # reproduce it locally and keep it as a seed.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: go.sum
-      - name: Fuzz each target for 30 seconds
-        run: |
-          found=0
-          for pkg in $(go list ./...); do
-            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
-              found=$((found + 1))
-              echo "::group::$pkg $target"
-              go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
-              echo "::endgroup::"
-            done
-          done
-          # Guard against a listing that silently finds nothing: internal/archive
-          # has ten targets, internal/hooks two, and internal/cli one.
-          test "$found" -ge 13
-
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
     # linted too.
     runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,18 +156,16 @@ jobs:
       # and run as a binary, since `go run` would try to execute a tool
       # cross-built for GOOS=linux.
       # Listed exceptions: the test helper packages, a cgo probe (test files
-      # cannot use cgo), a load counter other packages' cost tests read, and
+      # cannot use cgo), a load counter other packages' cost tests read, the
+      # redacting String methods of cloudflare.S3Credentials (only fmt calls
+      # them, and only if someone formats the key), and
       # the terminal UI layer in internal/cli/ui.go, whose parts the
       # onboarding screens adopt one PR at a time (they are listed by name:
       # remove each as it gains a caller, and the exception once none is left).
-      # internal/scheduler/systemd is the Linux scheduler adapter, which no
-      # production code constructs yet (5b-1 adds the package; 5b-2 has
-      # internal/scheduler/host choose it on Linux): the whole package is
-      # excepted until then. Remove that exception in 5b-2, when host reaches it.
       - name: No unreachable production code
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
-          shared='^internal/(state/statetest|storage/storagetest|testutil)/|^internal/scheduler/systemd/[a-z_]+\.go:[0-9]+:[0-9]+: unreachable func: |^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$'
+          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.

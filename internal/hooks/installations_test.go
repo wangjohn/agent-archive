@@ -15,8 +15,8 @@ func TestTwoInstallationsNeverTouchEachOther(t *testing.T) {
 	for _, app := range []string{"claude", "codex", "cursor"} {
 		t.Run(app, func(t *testing.T) {
 			files := testFiles(t.TempDir())
-			primary := Hook{Executable: exe, DefaultDataHome: "/Users/u/.local/share/agent-archive"}
-			secondary := Hook{Executable: exe, DataHome: "/tmp/aa-test", DefaultDataHome: primary.DefaultDataHome}
+			primary := Hook{Ports: testPorts, Executable: exe, DefaultDataHome: "/Users/u/.local/share/agent-archive"}
+			secondary := Hook{Ports: testPorts, Executable: exe, DataHome: "/tmp/aa-test", DefaultDataHome: primary.DefaultDataHome}
 			install := func(h Hook) {
 				t.Helper()
 				changes, err := Plan(files, h, []string{app})
@@ -89,16 +89,16 @@ func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 		dataHome string
 		want     bool
 	}{
-		{"default, implicit", Hook{DefaultDataHome: defaultHome}, "", true},
-		{"default, named", Hook{DataHome: defaultHome, DefaultDataHome: defaultHome}, "", true},
-		{"default, handler names it", Hook{DefaultDataHome: defaultHome}, defaultHome, true},
-		{"default unknown", Hook{}, "", true},
-		{"other directory", Hook{DefaultDataHome: defaultHome}, realDir, false},
-		{"default versus other", Hook{DataHome: realDir, DefaultDataHome: defaultHome}, "", false},
-		{"through a symlink", Hook{DataHome: link}, realDir, true},
-		{"sibling prefix", Hook{DataHome: realDir}, realDir + "2", false},
-		{"trailing slash", Hook{DataHome: realDir}, realDir + "/", true},
-		{"missing directory", Hook{DataHome: filepath.Join(root, "gone")}, filepath.Join(root, "gone"), true},
+		{"default, implicit", Hook{Ports: testPorts, DefaultDataHome: defaultHome}, "", true},
+		{"default, named", Hook{Ports: testPorts, DataHome: defaultHome, DefaultDataHome: defaultHome}, "", true},
+		{"default, handler names it", Hook{Ports: testPorts, DefaultDataHome: defaultHome}, defaultHome, true},
+		{"default unknown", Hook{Ports: testPorts}, "", true},
+		{"other directory", Hook{Ports: testPorts, DefaultDataHome: defaultHome}, realDir, false},
+		{"default versus other", Hook{Ports: testPorts, DataHome: realDir, DefaultDataHome: defaultHome}, "", false},
+		{"through a symlink", Hook{Ports: testPorts, DataHome: link}, realDir, true},
+		{"sibling prefix", Hook{Ports: testPorts, DataHome: realDir}, realDir + "2", false},
+		{"trailing slash", Hook{Ports: testPorts, DataHome: realDir}, realDir + "/", true},
+		{"missing directory", Hook{Ports: testPorts, DataHome: filepath.Join(root, "gone")}, filepath.Join(root, "gone"), true},
 	}
 	// On a case-insensitive volume (macOS's default), a spelling that differs
 	// only in case is the same directory, so the same installation.
@@ -108,7 +108,7 @@ func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 			hook     Hook
 			dataHome string
 			want     bool
-		}{"another case", Hook{DataHome: realDir}, filepath.Join(root, "REALDIR"), true})
+		}{"another case", Hook{Ports: testPorts, DataHome: realDir}, filepath.Join(root, "REALDIR"), true})
 	}
 	for _, c := range cases {
 		if got := c.hook.sameInstallation(c.dataHome); got != c.want {
@@ -121,7 +121,7 @@ func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 // characters it holds, and refuses anything Command never writes.
 func TestCommandDataHomeRoundTrips(t *testing.T) {
 	for _, dir := range []string{"", "/tmp/aa-test", "/Users/o'brien/data", "/Volumes/My Disk/a b", `/x/$HOME/"q"/;rm -rf`, "/it's/''/end'"} {
-		command, err := Hook{Executable: "/bin/agent-archive", DataHome: dir}.Command("claude")
+		command, err := Hook{Ports: testPorts, Executable: "/bin/agent-archive", DataHome: dir}.Command("claude")
 		must(t, err)
 		got, ok := CommandDataHome(command)
 		if !ok || got != dir {
@@ -145,7 +145,7 @@ func FuzzCommandDataHome(f *testing.F) {
 	f.Add("/tmp/aa-test")
 	f.Add("/it's/''/end'")
 	f.Fuzz(func(t *testing.T, dir string) {
-		command, err := Hook{Executable: "/bin/agent-archive", DataHome: dir}.Command("cursor")
+		command, err := Hook{Ports: testPorts, Executable: "/bin/agent-archive", DataHome: dir}.Command("cursor")
 		if err != nil {
 			return
 		}
@@ -163,12 +163,12 @@ func TestUnreadableHandlerIsReportedNotRemoved(t *testing.T) {
 	edited := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"AGENT_ARCHIVE_HOME=$X '/bin/agent-archive' _hook --harness claude # agent-archive lifecycle capture","statusMessage":"agent-archive lifecycle capture"}]}]}}`
 	must(t, os.MkdirAll(filepath.Dir(files["claude"]), 0o700))
 	must(t, os.WriteFile(files["claude"], []byte(edited), 0o600))
-	others, err := OtherInstallations(files, Hook{}, "claude")
+	others, err := OtherInstallations(files, Hook{Ports: testPorts}, "claude")
 	must(t, err)
 	if len(others) != 1 || others[0].Command == "" {
 		t.Fatalf("others = %+v", others)
 	}
-	if _, found, err := PlanRemovalOf(files, Hook{}, "claude"); err != nil || found {
+	if _, found, err := PlanRemovalOf(files, Hook{Ports: testPorts}, "claude"); err != nil || found {
 		t.Fatalf("removal planned: found=%v err=%v", found, err)
 	}
 }

@@ -124,6 +124,9 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 			exercised["reasoning_tokens"] = exercised["reasoning_tokens"] || (metadata.Counts.ReasoningTokens != nil && *metadata.Counts.ReasoningTokens > 0)
 			exercised["tool_errors"] = exercised["tool_errors"] || (metadata.Counts.ToolErrors != nil && *metadata.Counts.ToolErrors > 0)
 			exercised["git_activity"] = exercised["git_activity"] || len(metadata.GitActivity) > 0
+			exercised["name"] = exercised["name"] || metadata.Name != ""
+			exercised["branch"] = exercised["branch"] || metadata.Branch != ""
+			exercised["pull_requests"] = exercised["pull_requests"] || len(metadata.PullRequests) > 0
 			for _, gap := range metadata.CaptureGaps {
 				if !slices.Contains(CaptureGapCodes, gap.Code) {
 					t.Errorf("%s: gap code %q is not in CaptureGapCodes", name, gap.Code)
@@ -138,7 +141,7 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 // arrays, which would leave that part of the schema untested.
 func checkExercised(t *testing.T, exercised map[string]bool) {
 	t.Helper()
-	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source", "ended_at", "tools_used", "files_touched", "model_tokens", "mcp_calls", "reasoning_tokens", "tool_errors", "git_activity", "repo_key", "git_head"} {
+	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source", "ended_at", "tools_used", "files_touched", "model_tokens", "mcp_calls", "reasoning_tokens", "tool_errors", "git_activity", "repo_key", "git_head", "name", "branch", "pull_requests"} {
 		if !exercised[field] {
 			t.Errorf("no fixture metadata has %s, so its schema is untested", field)
 		}

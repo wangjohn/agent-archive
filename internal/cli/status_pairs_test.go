@@ -250,7 +250,7 @@ func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...s
 	t.Helper()
 	executable := "/opt/agent-archive/bin/agent-archive"
 	env := testEnv(t, home, now)
-	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), env.installation(home, userHome).hook(executable), apps)
+	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv, productionAgents), env.installation(home, userHome).hook(executable), apps)
 	if err != nil {
 		t.Fatal(err)
 	}

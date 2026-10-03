@@ -11,6 +11,7 @@ import (
 // With several publications held for the interval, NextReadyAt is the
 // earliest due time, whatever order the sessions are scanned in.
 func TestRunReportsEarliestDueTimeAmongWaitingSessions(t *testing.T) {
+	t.Parallel()
 	for _, laterFirst := range []bool{false, true} {
 		dir := t.TempDir()
 		local := newTestStore(t)

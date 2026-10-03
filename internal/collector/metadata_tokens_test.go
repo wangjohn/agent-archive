@@ -17,6 +17,7 @@ import (
 // nothing but the metadata, from the retained source, even after the native
 // log is gone, and the new per-model token fields are in it.
 func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "archive", "testdata", "codex-model-switch.jsonl"))
 	if err != nil {
 		t.Fatal(err)

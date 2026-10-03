@@ -14,7 +14,7 @@ import (
 const storageClockFile = "storage-clock.json"
 
 // StorageClockReading is one reading of the storage service's clock: this
-// Mac's time when it was taken, and the service's time then, or why it could
+// machine's time when it was taken, and the service's time then, or why it could
 // not be read. It is a cache; retention decides how long one may stand in
 // for a new reading.
 type StorageClockReading struct {

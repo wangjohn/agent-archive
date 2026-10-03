@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // RecentResult is a bounded newest-first view. Complete means every matching
@@ -21,16 +22,22 @@ type RecentResult struct {
 
 // ListRecent uses a completed immutable index when the store supports pages.
 // Old buckets and stores without paging use the authoritative full scan.
+// Every writer to an indexed destination must publish a hint before its
+// metadata, as the collector does. The ready marker records a completed
+// rebuild, not compatibility with writers that do not maintain the index.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
 	pager, canPage := store.(storage.PageLister)
 	if !canPage || limit == 0 {
 		return listRecentFull(ctx, store, prefix, filter, limit, opts)
 	}
+	span := trace.Start("indexed listing")
+	defer span.End()
 	ready, err := listingindex.Ready(ctx, store)
 	if err != nil {
 		return RecentResult{}, err
 	}
 	if !ready {
+		span.Count("index not ready", 1)
 		return listRecentFull(ctx, store, prefix, filter, limit, opts)
 	}
 	result := RecentResult{Complete: true}
@@ -41,6 +48,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		if err != nil {
 			return RecentResult{}, err
 		}
+		span.Count("index pages", 1)
 		for _, obj := range page.Objects {
 			entry, err := listingindex.Parse(obj.Key)
 			if err != nil {
@@ -57,6 +65,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 				// revision was already verified at a newer position.
 				continue
 			}
+			span.Count("sidecar reads", 1)
 			data, err := store.Get(ctx, entry.MetadataKey)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue

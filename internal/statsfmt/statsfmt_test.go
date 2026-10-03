@@ -123,17 +123,20 @@ func TestMoneyCleansAndShortensTheCurrency(t *testing.T) {
 	}
 }
 
-// The formatters are pure: they import only the archive's cleaner.
+// The formatters are pure: they import only the archive's cleaner, which
+// transitively reaches pure agent identity metadata.
 func TestFormattersImportBoundary(t *testing.T) {
 	t.Parallel()
 	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/statsfmt")
 	importgraph.Forbid(t, "internal/statsfmt", direct,
-		"os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2", "time", "golang.org/x/term")
+		"os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2", "time", "golang.org/x/term",
+		"github.com/wangjohn/agent-archive/internal/agentmeta")
 	importgraph.Forbid(t, "internal/statsfmt (transitively)", all, "net/http", "os/exec")
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
-			path != "github.com/wangjohn/agent-archive/internal/archive" {
-			t.Errorf("internal/statsfmt reaches %s; only internal/archive is allowed", path)
+			path != "github.com/wangjohn/agent-archive/internal/archive" &&
+			path != "github.com/wangjohn/agent-archive/internal/agentmeta" {
+			t.Errorf("internal/statsfmt reaches %s; only internal/archive and its pure agentmeta dependency are allowed", path)
 		}
 	}
 }

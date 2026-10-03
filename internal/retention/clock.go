@@ -11,7 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// Every time retention compares was stamped by this Mac's clock: a capture's
+// Every time retention compares was stamped by this machine's clock: a capture's
 // CapturedAt, a ledger entry's SupersededAt, a registration's admission, and
 // Now itself. The remote metadata offers no second opinion, since the same
 // clock stamped its CapturedAt, and storage refuses nothing either: the AWS
@@ -25,7 +25,7 @@ import (
 //     MaxClockSkew behind Now; and
 //   - Now is no more than MaxPassGap past the previous collector pass
 //     (Options.PreviousScanAt). This one holds for a single pass only, and
-//     is there for a storage service that shares this Mac's clock (MinIO
+//     is there for a storage service that shares this machine's clock (MinIO
 //     on the same machine), which the first check cannot catch.
 //
 // When either disagrees the sweep holds every such deletion (Result.Held) and
@@ -42,15 +42,15 @@ import (
 // deleted early.
 
 var (
-	// ErrClockAhead holds age-driven deletion while this Mac's clock is ahead
+	// ErrClockAhead holds age-driven deletion while this machine's clock is ahead
 	// of the storage service's by more than MaxClockSkew.
-	ErrClockAhead = errors.New("this Mac's clock is ahead of the storage service's; retention deletes nothing until it is corrected")
+	ErrClockAhead = errors.New("this machine's clock is ahead of the storage service's; retention deletes nothing until it is corrected")
 	// ErrClockUnverified holds age-driven deletion when the storage service's
 	// clock could not be read.
-	ErrClockUnverified = errors.New("the storage service's clock could not be read to confirm this Mac's; retention deletes nothing until it can be")
+	ErrClockUnverified = errors.New("the storage service's clock could not be read to confirm this machine's; retention deletes nothing until it can be")
 	// ErrClockJumped holds age-driven deletion for one pass when the clock is
-	// far past the previous collector pass: it jumped, or the Mac was off.
-	ErrClockJumped = errors.New("this Mac's clock moved far past the previous collector pass; retention waits one pass")
+	// far past the previous collector pass: it jumped, or the machine was off.
+	ErrClockJumped = errors.New("this machine's clock moved far past the previous collector pass; retention waits one pass")
 )
 
 const (
@@ -165,13 +165,13 @@ func (s *sweeper) supersededLedger(id string) ([]state.SupersededSource, error) 
 const (
 	// agreeingReadingReuse is how long a reading that let deletion through
 	// stands in for a new one. The estimate it gives (the reading's server
-	// time plus the time this Mac says has passed) misses a forward jump of
-	// this Mac's clock inside the window, so the window is far shorter than
+	// time plus the time this machine says has passed) misses a forward jump of
+	// this machine's clock inside the window, so the window is far shorter than
 	// MaxClockSkew: a jump it can miss is too small to matter. A jump past
 	// the window, or any jump backward, reads the clock again.
 	agreeingReadingReuse = 10 * time.Minute
 	// holdingReadingReuse is how long a reading that holds deletion (the
-	// probe failed, or this Mac was ahead) stands in for a new one. Reusing
+	// probe failed, or this machine was ahead) stands in for a new one. Reusing
 	// it can only hold deletion longer, never allow one, so it may stand
 	// longer: a clock that stays wrong costs a probe an hour, not one a pass.
 	holdingReadingReuse = time.Hour
@@ -209,7 +209,7 @@ func (s *sweeper) cachedProbe(ctx context.Context) (time.Time, error) {
 func reuseReading(reading state.StorageClockReading, now time.Time) (serverNow time.Time, ok bool, err error) {
 	elapsed := now.Sub(reading.CheckedAt)
 	if elapsed < 0 {
-		// This Mac's clock went back since: read again.
+		// This machine's clock went back since: read again.
 		return time.Time{}, false, nil
 	}
 	if reading.Error != "" {

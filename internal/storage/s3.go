@@ -98,7 +98,7 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
-		options.HTTPClient = withTimeouts(options.HTTPClient)
+		options.HTTPClient = tracedClient{inner: withTimeouts(options.HTTPClient)}
 		options.Logger = logging.Nop{}
 		options.UsePathStyle = pathStyle
 		options.Retryer = awsretry.NewStandard(func(retryOptions *awsretry.StandardOptions) {
@@ -175,6 +175,16 @@ func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 // ErrObjectTooLarge. A 403 is ErrNotFound only when a listing confirms the
 // key is absent (see confirmedAbsent); otherwise it is returned as is.
 func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
+	return s.GetLimited(ctx, relative, s.maxGetBytes)
+}
+
+// GetLimited reads an object with a caller's allocation limit, also honoring
+// the store's own maximum. It never reads more than limit plus one bytes.
+func (s *S3Store) GetLimited(ctx context.Context, relative string, limit int64) ([]byte, error) {
+	if limit < 1 {
+		return nil, errors.New("object read limit must be positive")
+	}
+	limit = min(limit, s.maxGetBytes)
 	key, err := s.key(relative)
 	if err != nil {
 		return nil, err
@@ -187,13 +197,13 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = output.Body.Close() }()
-	limited := io.LimitReader(output.Body, s.maxGetBytes+1)
+	limited := io.LimitReader(output.Body, limit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > s.maxGetBytes {
-		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, s.maxGetBytes)
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
 	}
 	return data, nil
 }
@@ -305,6 +315,62 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 		}
 	}
 	return page, nil
+}
+
+// ListRange lists the objects under relativePrefix in the key range (after,
+// through] (see RangeLister). The provider starts at after through
+// ListObjectsV2's StartAfter, sent on the first request only (later pages
+// carry just the continuation token, since not every S3-compatible provider
+// is known to accept both), and paging stops at the first page that passes
+// through. The range is also enforced here, key by key, so a provider that
+// ignored StartAfter (or a start key it could not be given) would cost extra
+// pages but never return a key twice across ranges.
+func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through string) ([]Object, error) {
+	prefix, err := s.keyForList(relativePrefix)
+	if err != nil {
+		return nil, err
+	}
+	// A start key the prefix rules refuse (a boundary a newer release would
+	// no longer write, say) only costs the provider's head start: the range
+	// is still enforced below, key by key.
+	var start *string
+	if key, err := s.key(after); after != "" && err == nil {
+		start = aws.String(key)
+	}
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), StartAfter: start}
+	var objects []Object
+	for {
+		page, pageErr := s.client.ListObjectsV2(ctx, input)
+		if pageErr != nil {
+			return nil, pageErr
+		}
+		for _, item := range page.Contents {
+			if item.Key == nil {
+				continue
+			}
+			key := trimStorePrefix(*item.Key, s.prefix)
+			if key <= after {
+				continue
+			}
+			if through != "" && key > through {
+				return objects, nil
+			}
+			objects = append(objects, Object{
+				Key:          key,
+				Size:         aws.ToInt64(item.Size),
+				ETag:         strings.Trim(aws.ToString(item.ETag), "\""),
+				LastModified: aws.ToTime(item.LastModified),
+			})
+		}
+		if !aws.ToBool(page.IsTruncated) {
+			return objects, nil
+		}
+		token := aws.ToString(page.NextContinuationToken)
+		if token == "" {
+			return nil, errors.New("list page is truncated without continuation token")
+		}
+		input = &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), ContinuationToken: aws.String(token)}
+	}
 }
 
 func (s *S3Store) keyForList(relativePrefix string) (string, error) {

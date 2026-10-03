@@ -62,8 +62,9 @@ working directory at the moment a session starts is the hook.
   registration holds into the sidecar's `git_head` at every publication. It
   never runs git for a commit itself: HEAD at publish time is not HEAD at the
   start, and a sidecar that looked authoritative would be worse than none.
-  Sessions registered before this change, imported by `backfill`, or captured
-  as subagents have no `git_head`.
+  Sessions registered before this change or imported by `backfill` have no
+  starting observation. Later live stops can record `last`. Subagents have
+  neither observation.
 - **No parser bump.** `git_head` comes from the registration, not from the
   source bundle, and nothing can derive it for a session that was published
   before the hooks recorded it. Bumping `DefaultParserVersion` would make every
@@ -121,7 +122,7 @@ In the sidecar:
 | A continuation (resume, `/clear`, compact) | `start_head` is never replaced; the stop that follows updates `last_head`. |
 | A start that found `hooks.lock` busy and was admitted later from its queued intent | No `start`: the collector admits it after the fact, when HEAD may have moved. Its stops still record `last`. |
 | A subagent | No `git_head`: its start is not its parent's, and no hook reports one. |
-| An imported session | No `git_head`; see the heuristic below. |
+| An imported session | No `start`; later live stops can record `last`. See the heuristic below. |
 
 ## Privacy
 
@@ -138,7 +139,7 @@ metadata makes no claim that it is reachable anywhere else.
 ## Not done here: inferring a start for older sessions
 
 Sessions captured before this change, and every imported session, have no
-recorded commit. A consumer that wants one anyway can infer a candidate
+recorded starting commit. A consumer that wants one anyway can infer a candidate
 outside agent-archive, and must label it as inferred:
 
 1. Take the session's branch from its retained transcript (Claude Code's

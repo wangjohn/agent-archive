@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"path/filepath"
 	"slices"
@@ -775,7 +776,7 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 		// deferForWork is off: undo removes the session whatever a hook
 		// queued for it meanwhile. ForgetSession also drops the parent's
 		// subagent candidates that were never registered.
-		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, false, &state.RemovalRecord{
+		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, false, &state.RemovalRecord{
 			Harness: app, Reason: state.RemovalReasonUndo, At: now,
 		}); err != nil {
 			result.Failed[reg.ArchiveSessionID] = fmt.Errorf("forget locally: %w", err)
@@ -851,9 +852,9 @@ func renderUndoSessions(w io.Writer, p UndoPlan, c UndoCounts, bullet func(strin
 		bullet("%s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
 	case c.Deleted > 0:
 		bullet("%s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
-		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
+		bullet("%s from a previous storage destination %s forgotten on this machine\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
 	case c.Forgotten > 0:
-		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
+		bullet("%s from a previous storage destination %s forgotten on this machine\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
 	}
 	if c.Resumed > 0 {
 		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))

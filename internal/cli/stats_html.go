@@ -151,6 +151,12 @@ func renderStatsHTML(computed stats.Stats, filters statsFilters, now time.Time, 
 // the temporary file and moving it (the write and one sync, so a moment) leaves
 // a hidden file named .agent-archive-stats-*.tmp behind, at mode 0600.
 func writeStatsHTMLFile(path string, page []byte, force bool) error {
+	return writeStatsHTMLFileWithLink(path, page, force, os.Link)
+}
+
+// writeStatsHTMLFileWithLink permits testing a failed atomic create without
+// relying on a particular filesystem or changing process-wide dependencies.
+func writeStatsHTMLFileWithLink(path string, page []byte, force bool, link func(string, string) error) error {
 	dir, _ := filepath.Split(path)
 	if dir == "" {
 		dir = "."
@@ -185,17 +191,20 @@ func writeStatsHTMLFile(path string, page []byte, force bool) error {
 		case !force:
 			return fmt.Errorf("%s already exists; pass --force to replace it", path)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	if force {
 		return os.Rename(tmpPath, path)
 	}
 	// os.Link fails if path exists, which makes "create only if absent" one
-	// step; a file system without hard links falls back to the look above.
-	if err := os.Link(tmpPath, path); err != nil {
+	// step. A replacing rename cannot safely substitute for a failed link:
+	// another writer may have created path since the existence check.
+	if err := link(tmpPath, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%s already exists; pass --force to replace it", path)
 		}
-		return os.Rename(tmpPath, path)
+		return fmt.Errorf("create %s without replacing it: %w", path, err)
 	}
 	return nil
 }

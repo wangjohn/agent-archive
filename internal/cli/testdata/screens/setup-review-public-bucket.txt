@@ -2,7 +2,7 @@ $ agent-archive setup
 Checking installed applications...
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 Step 1 of 3 · Choose what to capture
 
@@ -13,11 +13,11 @@ On the review screen: Edit a setting adds projects, drops apps, and changes how 
 
 Step 2 of 3 · Connect storage
 
-Where should sessions be stored?
+Where should your archive live?
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [1]: 2
+[h] Setup instructions
+Choose [1]: s3-existing
 
 AWS profile: work
 
@@ -46,13 +46,15 @@ Step 3 of 3 · Ready to start
 
   Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Fix what is marked ✗ above first.
   1) Check again
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [1]: 3
+  4) Name this machine (optional)
+Enter 1-4 [1]: 3
 
 Cancelled. Active settings are unchanged; your setup draft is saved.
 [exit 0]

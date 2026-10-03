@@ -4,7 +4,7 @@ What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
 ```sh
-go test -race ./...
+go test -race -timeout 20m ./...                         # internal/cli alone takes 4.5 to 7 minutes in CI
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
@@ -16,14 +16,30 @@ python3 scripts/test_release_assets.py
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
+python3 scripts/test_ci_workflow.py                      # Extended keeps the validated systemd image
+python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
+./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
-CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
-1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
-first run blocks, and revive's doc-comment rule runs only on code a pull
-request adds or changes. The Keychain code needs cgo and Xcode's command
-line tools on macOS; elsewhere a stub is built. `go test ./...` also checks the docs:
+CI's [Test workflow](../../.github/workflows/test.yml) runs the full race
+suite, performance assertions, vet, and script tests on Ubuntu for each pull
+request. On macOS it builds all production packages with cgo and runs the
+focused Keychain, launchd, terminal, and CLI smoke suite above. macOS
+golangci-lint also runs on each pull request: the first pass blocks, and
+revive's doc-comment rule checks only code the pull request adds or changes.
+All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
+pull request cancels that pull request's older Test and Levenshtein runs.
+
+The [Extended workflow](../../.github/workflows/extended.yml) runs the full
+Linux and macOS race suites after a merge to `main`; it keeps only the newest
+main run during a burst of merges. Nightly it reruns the full macOS suite and
+runs the fuzz and real-systemd jobs. Dispatch it manually on a selected ref
+to run all jobs or one suite before merging a change to those paths. The
+Keychain code needs cgo and Xcode's command line tools on macOS; elsewhere a
+stub is built. The `real-systemd` job runs the Linux scheduler against a real
+systemd user manager on Ubuntu (see [below](#never-test-against-your-real-machine)).
+It is not a required pull-request check. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -37,6 +53,13 @@ only at full size in a plain build, which CI does in a step of its own:
 ```sh
 AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
 ```
+
+A test of a timeout or budget doesn't time the whole call: `-race` on a
+loaded runner stretches the file writes around the wait by seconds. It
+checks the deadline a stub sees against clock readings taken in the stub
+(`TestOriginURLGivesGitAtMostTheTimeout`), or runs the code in a
+`testing/synctest` bubble, whose clock moves only while every goroutine in
+it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
 
 ## Levenshtein checks
 
@@ -72,12 +95,13 @@ a `//lint:ignore nilerr` directive never works (restructure the code
 instead), and terminal output goes through `internal/terminal` rather than
 `_, _ = fmt.Fprintf`.
 
-## Never test against your real Mac
+## Never test against your real machine
 
 Tests and hand-run experiments must not touch your real home directory, your
-apps' real hook files, the real LaunchAgent, your Keychain, Cursor's real
-database, or a real bucket. The live collector on your Mac is
-`com.agent-archive.collector`.
+apps' real hook files, the real LaunchAgent or systemd user units, your
+Keychain, Cursor's real database, or a real bucket. The live collector on your
+machine is `com.agent-archive.collector` (launchd) or
+`agent-archive-collector.timer` (systemd).
 
 In Go tests, everything goes through injection:
 
@@ -131,13 +155,57 @@ In Go tests, everything goes through injection:
   set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
   imports an adapter; depguard says the same in
   `.golangci.yml`.
-- `internal/scheduler/systemd` (the Linux adapter, not wired into any command
-  yet) is tested the same way: a recording or fake `Runner` and no `systemctl`.
-  It passes `schedulertest.RunConformance` for systemd 239, 245, 252 and 255
+- `internal/scheduler/systemd` (the Linux adapter) is tested the same way: a
+  recording or fake `Runner` and no `systemctl`. It passes `schedulertest.RunConformance` for systemd 239, 245, 252 and 255
   over a fake `systemctl` that answers `show` from the fixtures in
   `internal/scheduler/systemd/testdata/systemctl` (captured from real user
   managers in disposable containers; the README there says how), and the
-  state map is pinned over the same fixtures.
+  state map is pinned over the same fixtures. `internal/cli`'s Linux tests
+  drive the real commands over it with `fakeUserManager`, a user manager that
+  keeps each job's state, answers `show` and enables a timer only when its unit
+  files are where the manager searches.
+- The same adapter also runs against a **real** systemd user manager, which no
+  fake can vouch for: `TestRealUserManagerConformance` (the conformance suite,
+  with states put in and read back by `systemctl` itself) in
+  `internal/scheduler/systemd` and `TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt`
+  (the real `setup`, the manager's timer starting the job's program, the real
+  `uninstall`) in `internal/cli`, with
+  `TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob`
+  (`uninstall --skip-scheduler` with the manager out of reach, then the command
+  it prints, which must stop the timer the manager still runs after the unit
+  files are gone). They skip unless
+  `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
+  manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
+  and the user's hook and skill files for the smoke); they refuse a machine that
+  already has such units. Extended CI runs them nightly or on demand in the
+  `real-systemd` job on `ubuntu-24.04` (a virtual machine with systemd: it
+  enables lingering for the runner user, sets `XDG_RUNTIME_DIR` and
+  `DBUS_SESSION_BUS_ADDRESS`, and
+  waits up to two and a half minutes for the timer's first run). That job is
+  a nightly or manually requested check, pinned to the image it was
+  validated on rather than `ubuntu-latest`, whose move to a new image would
+  change the systemd version and defaults. Bump the pin
+  deliberately, re-validating on the new image with
+  `scripts/acceptance/linux` first. Keep the job's name `real-systemd` for
+  consistent backstop results (`scripts/test_ci_workflow.py` fails on a
+  rename or an unpinned image). A
+  failure in it is a real finding about the adapter. To run it yourself, never
+  on your own machine or login, use a disposable Linux container with
+  systemd as PID 1 (Docker on macOS runs it in a Linux VM) and a non-root
+  user (or run
+  `scripts/acceptance/linux/host.sh`, which does all of this and more; see
+  [the Linux live acceptance run](#the-linux-live-acceptance-run)):
+
+  ```sh
+  docker run -d --name aa-systemd --privileged --cgroupns=host \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+    IMAGE /sbin/init   # Ubuntu 24.04 with systemd, dbus-user-session, sudo and Go
+  # as a user with sudo, in a checkout of the repository inside it:
+  sudo loginctl enable-linger "$USER"     # starts the user's manager
+  export XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+  AGENT_ARCHIVE_REAL_SYSTEMD=1 go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd ./internal/cli
+  docker rm -f aa-systemd                 # when done
+  ```
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
@@ -190,9 +258,20 @@ In Go tests, everything goes through injection:
   answer; `TestOnlyPlatformReadsRuntimeGOOS` fails a production file that reads
   `runtime.GOOS` itself. An unknown system fails closed (no Cursor location, no
   credential store) and each caller's choice is pinned by a test.
+- The mount table the Linux network-home check reads (`/proc/self/mountinfo`)
+  is `Env.MountTable` in `internal/cli`, and the package's isolation replaces
+  its default with one that reads nothing, so no test sees the machine's own
+  mounts: a test of a network home passes a table (`mountTableWith`), and an
+  unreadable one stops nothing. `local.FilesystemProbe` takes the same table
+  and its own symlink resolver.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
-  their `TestMain`).
+  their `TestMain`). The real root is a choice of `platform.Locations` over
+  values (macOS: the per-user temporary directory; Linux: under
+  `$XDG_CACHE_HOME` or the account's `~/.cache`), and `cursorstore`'s tests
+  make it in a temporary directory through `preparedSnapshotRoot(root,
+  cacheDir)`, so no test touches a real cache directory. The isolation
+  helpers unset `XDG_CACHE_HOME` with `XDG_CONFIG_HOME`.
 - Storage tests use `storagetest.NewMemoryStore()` (`internal/storage/storagetest`, test code only: depguard keeps it out of production code, as it does `state/statetest`).
 
 ## Running the binary by hand in a sandbox
@@ -243,9 +322,133 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE X
   run `agent-archive sync`. Never register a real transcript path.
 - `scripts/measure-hook.py BINARY` measures hook latency in its own temporary
   directory; it installs nothing.
+- **On Linux a stub `systemctl` is not enough.** `setup` asks `systemctl
+  --version` and `systemctl --user show ...` and refuses to go on when it
+  cannot get a real answer, and a sandboxed `HOME` does not stop it from
+  enabling a timer in your real user manager. Run the binary by hand only in a
+  disposable Linux container with systemd as PID 1 (the recipe under the
+  real-systemd bullet above, or [the Linux live acceptance
+  run](#the-linux-live-acceptance-run), which builds one and drives the whole
+  product in it), never in your own login.
 
 The hidden commands `_hook` (what app hooks run) and `_collect` (what the
 LaunchAgent runs) are not part of the user interface and may change.
+
+## The Linux live acceptance run
+
+The Linux adapter's unit tests run against fakes and the `real-systemd` CI job
+runs two real-manager tests; neither runs the product the way a person does.
+`scripts/acceptance/linux/host.sh` does: the real `setup`, hooks, timer, collector,
+`status`, `setup --refresh` and `uninstall`, over a real systemd 255 user manager,
+with a MinIO standing in for the bucket. Run it before a change to the Linux
+scheduler, `setup`'s rollback, `uninstall`, the collector's environment or the
+Cursor snapshot root merges, and before any claim that Linux works is published.
+
+```sh
+scripts/acceptance/linux/host.sh            # the whole run
+scripts/acceptance/linux/host.sh --dry-run  # what it would create; no Docker needed
+```
+
+It needs only Docker (colima or Docker Desktop on a Mac; with a Linux Docker the
+privileged machine shares your own kernel, so use a VM there) and Go to
+cross-build (`BUILD_IN_DOCKER=1` builds in a `golang` container instead). It builds `linux`
+binaries of your working tree, starts a privileged Ubuntu 24.04 container with
+systemd as PID 1 and a MinIO container on a network of their own, runs
+`guest.sh` in the machine as root, prints each check as `PASS` or `FAIL`, and
+removes everything it made (named `aa-accept-<random>-*`; it removes nothing
+else, such as a MinIO of your own) whether it passes, fails or is interrupted.
+Nothing runs on your Mac but Docker's client and the Go build, nothing of your
+home, Keychain or buckets is involved, the only credentials are a MinIO user and
+password made up for the run, and every transcript is synthetic (the repository's
+fixture, and a Cursor database the script writes). It takes about
+three minutes (150 to 170 seconds measured) with Docker's caches warm, most of it waiting for systemd timers (the
+collector's first run is a minute after boot). It is not in CI: a privileged
+container is not something CI should be asked for.
+`python3 scripts/test_linux_acceptance.py` is in CI and checks the scripts
+without Docker (shellcheck, `--dry-run`, and with a fake `docker` that cleanup
+removes only the run's own names, on success, failure and interruption).
+
+**What it covers**, by section of `guest.sh` (the README beside the scripts lists
+each check):
+
+- Setup and the timer: `setup --yes` to S3 from a shell with XDG variables;
+  the unit files' content and mode, the recorded `PATH` and XDG environment,
+  `append:` logging, the enable link, the timer running the collector in the
+  manager, `config.json`'s backend and `host_id`.
+- Capture: a synthetic Claude Code session through the hook command setup
+  installed, published by the **timer's** collector (not `sync`) and read back
+  with `list` and `show`; a hand-made Cursor database written the way a running
+  Cursor leaves it, imported by `backfill` through a copy under
+  `$XDG_CACHE_HOME/agent-archive/cursor-snapshots` (mode, `CACHEDIR.TAG`, the
+  copy removed, nothing under `/tmp` or the default cache).
+- `status`: the XDG-drift warnings, and the machine-ID clone warning (quiet on
+  the original; after `/etc/machine-id` changes it warns in `status`, `--json`
+  and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
+  bind-mounted over `/etc/machine-id` is not read, so it stays quiet).
+- `setup --refresh` after the binary moved, and `uninstall`.
+- The enable link on every path that removes a job: `uninstall`;
+  `uninstall --skip-scheduler` with a reachable manager and with no user bus
+  (the unit files go, no dangling link is left, the manager keeps the timer until
+  the printed stop command is run, and that command stops it); and a `setup`
+  whose start fails after `systemctl enable` made the link (a `systemctl` wrapper
+  in the user's `PATH` enables without starting, then fails): the rollback leaves
+  no files, no link and no running timer.
+- The real-manager Go tests (`AGENT_ARCHIVE_REAL_SYSTEMD=1`) as a second lingering
+  user, and `cursorstore`'s snapshot tests on a real Linux account.
+- On the container's own disk, `status` reports no network filesystem and
+  `config.json` records no `allow_network_home` opt-in. A real network home
+  remains untested live.
+
+**What it does not cover:** the real Cursor application, `cursor-agent` and the
+Cursor database layout on Linux (the database is hand-made after macOS's and VS
+Code's layout, so a real Cursor's Linux paths and its hook approval are
+unverified); the real Claude Code and Codex apps (only hand-written Claude Code
+hook payloads are exercised); any distribution other than Ubuntu 24.04 or systemd other than 255 (the fixtures cover 239, 245,
+252 and 255 for the adapter's parsing, but only 255 has run live); a manager
+without lingering over a real logout (the no-user-bus session is simulated by unsetting the bus variables); real R2 or
+AWS (MinIO stands in); WSL; Linux running as the machine's only user session
+with a desktop; and anything about upgrades from an earlier release.
+
+**Recorded runs** (record each run that follows a change to what it covers: date,
+commit, systemd, architecture, result):
+
+- 2026-09-30, the tree of the pull request that added the run (on top of 5c's
+  enable-link and clone-warning change), Ubuntu 24.04.5 LTS, systemd 255
+  (255.4-1ubuntu8.17), linux/arm64 (Docker in a colima VM on an Apple silicon
+  Mac): **88 passed, 0 failed**, 150 seconds. The run found nothing wrong with
+  the product. At that point amd64 had not been run.
+- 2026-09-30, the same pull request after review (the Go test binaries must
+  report each named test passed, a root-only `cursorstore` test added), same
+  machine: **89 passed, 0 failed**, 160 seconds. A deliberately broken build
+  (the enable link left out of uninstall's paths, and the clone warning turned
+  off) failed 8 checks, in sections 6, 9, 11 and 12.
+- 2026-10-01, the network-home guard's pull request after review (section 2
+  also checks that `status` sees no network filesystem and `config.json`
+  records no `allow_network_home` on the container's own disk), same machine:
+  **91 passed, 0 failed**, 103 seconds. A home on a real network filesystem is
+  not run live (the container cannot fake an NFS mount's type); the unit
+  tests cover it with injected mount tables.
+- 2026-10-01, clean commit `61d068b785a6d554bad8400ae8ab69023e355dad`,
+  Ubuntu 24.04.5 LTS, systemd 255 (255.4-1ubuntu8.17), linux/amd64 (Docker in
+  the x86-64 Colima `levenshtein` VM on macOS): **91 passed, 0 failed**,
+  exit 0, 341 seconds including guest image preparation. This establishes
+  live harness coverage on amd64 as well as arm64. The first attempt stopped
+  before any checks because Quay returned 401 for the default MinIO image;
+  Docker Hub images were also unavailable and official binary downloads
+  returned 410. The successful retry used `MINIO_IMAGE` and `MC_IMAGE` with
+  temporary Alpine 3.24 images built from official source pins:
+  `github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c` and
+  `github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540`, cross-built with
+  Go 1.27.1, `GOOS=linux GOARCH=amd64 CGO_ENABLED=0`. Product code and checks
+  were unchanged; the run's resources and temporary MinIO images were removed.
+  Local evidence (not committed):
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-retry.log` and
+  `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-summary.txt`.
+
+When a check fails, read it from the top (later sections build on earlier ones),
+and diagnose before changing a check: a failure is a finding about the product
+until shown to be the harness's. `KEEP=1` leaves the machine for a look; the
+README says how to get a shell as the user whose manager is running.
 
 ## Fixtures and goldens
 
@@ -294,7 +497,7 @@ LaunchAgent runs) are not part of the user interface and may change.
   ```
 
   A new screen is one more entry in `screens`: its answers, its exit code,
-  and an `arrange` function that prepares the Mac through the fixture.
+  and an `arrange` function that prepares the machine through the fixture.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
 
@@ -348,6 +551,122 @@ of a path, and macOS's per-user temporary folder can hold thousands of
 entries. (The product calls it only from setup, status and uninstall, on
 paths under your home folder, never from a hook or a collector pass.)
 
+## Live acceptance: guided R2 creation
+
+Guided R2 creation (`internal/cloudflare`, `internal/cli/setup_r2_create.go`)
+is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
+request and response shapes come from Cloudflare's API reference, read on
+2026-09-29, and the fake cannot confirm the points the documentation leaves
+open. **None of the items below has been run against a real account: the
+feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+(`experimentalR2Create` in `internal/cli/setup_r2_create.go`), until each is
+checked.** Remove the gate (that function and its one use in `storageMenuFor`,
+and the switch's mentions in the docs and CHANGELOG) once every box is ticked. Use a scratch
+Cloudflare account (never one with real archives), and the sandbox recipe
+below, so nothing touches your real Mac; create the bootstrap token with
+exactly the two permissions setup prints, then run `agent-archive setup` and
+choose "Cloudflare R2", then "Continue" (with
+`AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
+open-source acceptance record.
+
+- [ ] **Secret encoding (blocker).** The derived key
+      (`cloudflare.DeriveS3Credentials`: Access Key ID = the token's `id`,
+      Secret Access Key = lowercase hex SHA-256 of its `value`) passes the
+      storage check (probe, write, read, list, delete). Cloudflare's docs say
+      only "SHA-256 hash". If the check fails there, try the other encodings
+      (base64, raw bytes) in that one function; it is the only place to
+      change.
+- [ ] **Key activation delay.** How long after the token is created the key is
+      accepted. Setup makes up to `r2VerifyAttempts` checks, `r2VerifyPause`
+      apart; tune them to what you see.
+- [ ] **`GET /accounts` with only the two permissions.** Whether it lists the
+      account (else setup asks for the account ID, which is the fallback).
+- [ ] **Public-access reads.** Whether `GET .../domains/managed` and
+      `GET .../domains/custom` work with only Workers R2 Storage Write
+      (else setup says "couldn't check"; adjust its wording if a Read
+      permission is needed), and that `result.enabled` and
+      `result.domains[]` are the fields read, and that a bucket with no
+      custom domains answers with an empty `domains` list and not without
+      the field (setup treats a missing `enabled` or `domains`, like any
+      success without a result, as unreadable, never as "off" or "none").
+      Turn r2.dev on for a scratch
+      bucket and confirm the warning and the "What now?" menu (Enter
+      revokes the key and returns to the storage question; "Check again"
+      sees the dashboard change).
+- [ ] **Token expiry.** A token created without `expires_on` has no expiry in
+      the dashboard.
+- [ ] **Token revoke.** `DELETE /accounts/{account}/tokens/{id}` with the
+      bootstrap token revokes the key. Exercise the failure path (for
+      example a scratch build with a wrong derivation): the key is revoked,
+      and nothing is stored.
+- [ ] **Delete-token 404.** What `DELETE /accounts/{account}/tokens/{id}`
+      returns for a token that is already gone or was never created (setup
+      says "Cloudflare says that token doesn't exist" and tells the person to
+      check the dashboard, since the meaning is unconfirmed), and that a
+      second delete of the same ID behaves the same.
+- [ ] **Prefix scoping unavailable.** The runtime token reaches the whole
+      bucket, and only it: it cannot read or list another bucket, create a
+      bucket, or set a lifecycle rule. The docs describe bucket-level scope
+      only; setup treats prefix scoping as unavailable.
+- [ ] **Bucket name collision.** Creating a name that is taken returns what
+      `cloudflare.Error.AlreadyExists` expects: HTTP 409 with R2 error code
+      10073 (BucketConflict, "Bucket name already exists.", from
+      Cloudflare's R2 error-code page; an earlier plan guessed 10004, which
+      that page does not list). Any other answer is shown as Cloudflare's own
+      message and is not retried as a name collision, so confirm the real
+      status and code, and that the retry with a new name works.
+- [ ] **Jurisdictions.** For each of `eu`, `us`, and `fedramp` (the ones setup
+      offers): a bucket created with the jurisdiction, and its token resource
+      string `..._<jurisdiction>_<bucket>`, pass the storage check at
+      `<account>.<jurisdiction>.r2.cloudflarestorage.com`, and the saved
+      endpoint works after setup finishes. `fedramp-high` is documented only
+      for the create header, so setup does not offer it; add it only once its
+      resource string and endpoint are confirmed.
+- [ ] **Non-administrator member.** Token creation by a member who lacks a
+      permission is refused with a 403 that the message covers.
+- [ ] **Permission group listing.** The lookup by name returns the
+      bucket-item-write group with `is_selectable`, the paging parameter is
+      accepted (or ignored harmlessly), and the `name` filter matches the
+      exact name (setup also compares names itself, so a fuzzy filter is
+      harmless, an over-strict one is not).
+- [ ] **R2 not enabled.** On an account where R2 is not enabled (or needs a
+      payment method), what bucket creation returns. Setup maps a 403 to "needs
+      Workers R2 Storage Write" and adds a hint to enable R2; confirm the
+      status and message, and give that case its own text if it is not a 403.
+- [ ] **Public-access response shape.** `GET .../domains/managed` returns
+      `result.enabled` (Cloudflare's reference page for it was unavailable when
+      this was written; the shape comes from its summary).
+- [ ] **Rate limits.** A 429 carries `Retry-After` in whole seconds, as the
+      client reads it.
+- [ ] **Orphan token name.** The name printed before creation is the name the
+      dashboard shows for the token.
+- [ ] **No leftovers.** After a run, search the sandbox (data directory, hook
+      files, LaunchAgent plist, `setup-draft.json`) for the bootstrap token;
+      it appears nowhere. The automated search
+      (`TestGuidedR2NeverPersistsTheBootstrapToken`) covers the fake only.
+
+## Terminal tests
+
+What a real terminal does (echo, key mode, Ctrl-C, Ctrl-Z, a resize, a
+hangup) is tested under a pseudo-terminal: a Python script (`python3`, or
+the test skips) opens one, starts this test binary as a child in it, types,
+and checks the terminal's modes and the output. Run such a script with
+`runPTYScript` (`internal/cli/pty_harness_test.go`):
+
+- The script owns its deadlines (60 seconds overall, 30 for each step) and
+  says what it was waiting for when one passes; match what it waits for to
+  offsets in the output, never to sleeps.
+- `runPTYScript` is the backstop, 90 seconds and never later than 30 seconds
+  before the test binary's own `-timeout`, so a stuck harness fails its test
+  with a message instead of ending the package in a timeout panic. It stops
+  the script with SIGTERM, which raises an exception in the script so its
+  `finally` stops the child, and kills it only after ten seconds more. A
+  script killed outright leaves its child running with nobody to stop it.
+- Budget for a slow start. On macOS, `/usr/bin/python3` is Xcode's, and with
+  the fresh `HOME` that `TestMain` gives each run it compiles its library
+  into `~/Library/Caches` first: a few seconds before the script's first
+  line, more on a loaded machine.
+
 ## Fuzzing
 
 Redaction, parsing, hook-file editing and the hook itself have fuzz targets
@@ -360,11 +679,15 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
 | `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
+| `FuzzSubagentMeta` | any `.meta.json` bytes beside a subagent transcript | no failure; at most one `subagent-meta` record, first, holding only a bounded string of valid UTF-8; the transcript's own records unchanged; the output refilters unchanged |
+| `FuzzSubagentMetaDropsSecrets` | a secret in a description, among filler so the cap can fall in or beside it | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
 | `FuzzLineMatchesCoverWholeString` | any text | running each credential pattern line by line, only on lines with its needles, finds everything matching the whole string finds |
 | `FuzzGatedRedactionMatchesWhole` | any text | the redaction as it runs (line by line, gated by needles and separators) equals the same redaction run ungated over the whole string |
+| `FuzzNormalizeRemoteURL` | any remote URL or other string | no panic; repository keys have the documented shape, and normalized URLs have no edge slash, control character, or `.git` suffix |
+| `FuzzURLUserinfoMatchesReference` | any text up to 4096 bytes | the linear URL userinfo scanner agrees with the reference implementation |
 
 In `internal/hooks`:
 
@@ -393,11 +716,18 @@ In `internal/cli`:
 | --- | --- | --- |
 | `FuzzHookPayload` | an app name and up to eight hook payloads, run in turn against a fresh data directory set up for all three apps | every run exits 0 without a panic, and nothing outside the data directory (the project folder, `HOME`) changes |
 
+In `internal/termlaunch`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzShellQuote` | any shell argument without NUL | `/bin/sh` reads the quoted argument back unchanged |
+
 Their seeds come from the fixtures in `testdata/` and from
-`testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs every target
-in every package for 30 seconds on every pull request (the `fuzz` job in
-`.github/workflows/test.yml`). For a change to redaction or parsing, run the
-affected targets for a couple of minutes each, with fast minimization so a
+`testdata/fuzz/<target>/`, and plain `go test` runs them on every pull request.
+The `fuzz` job in [Extended CI](../../.github/workflows/extended.yml) mutates
+all 24 targets for 30 seconds each nightly or on demand. For a change to
+redaction or parsing, run the affected targets for a couple of minutes each,
+with fast minimization so a
 failure is reported promptly:
 
 ```sh

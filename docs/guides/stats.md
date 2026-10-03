@@ -5,7 +5,8 @@ summary of the last 30 days: what it cost, how many sessions, how many tokens,
 which agents did the work, what each day cost, where it went by project and
 model, the skills and MCP servers used most, and anything worth a second
 look. More is one flag away: `--detail` for the full breakdown, and
-`--view projects`, `models` or `agents` to list every one. On a terminal it
+`--view projects`, `models` or `agents` to list them (up to 500 projects or
+models, then `+ N more`). On a terminal it
 opens as an [interactive screen](#the-interactive-screen) with a key for each
 of these. It is read-only,
 like `list`: it reads only the metadata of your archived sessions, so it
@@ -15,13 +16,14 @@ never prompts, transcript text or file paths.
 ```sh
 agent-archive stats                        # the summary of the last 30 days
 agent-archive stats --detail               # every number, and what they rest on
-agent-archive stats --view projects        # every project, by spend (also models, agents)
+agent-archive stats --view projects        # up to 500 projects, by spend (also models, agents)
 agent-archive stats --days 7               # the last 7 days
 agent-archive stats --since 2026-09-01     # from that local day through today
 agent-archive stats --by week              # the detail screen, plus a table by week
 agent-archive stats --harness claude       # one agent only
 agent-archive stats --prices my-prices.json   # your own prices, see below
 agent-archive stats --json                 # for scripts: see JSON output
+agent-archive stats --json --all           # ... with every project, skill and MCP server
 agent-archive stats --html --output stats.html   # a web page you can share
 ```
 
@@ -66,10 +68,13 @@ MOST USED
 Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · styleprofile · long context, 38 subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Claude Code:
+2, Cursor: 8).
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html
 ```
@@ -98,11 +103,13 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   plugin's prefix is dropped, so `anthropic-skills:docs` reads `docs`) and
   MCP servers (in calls, for the agents that record them). A row appears only
   when there is data for it.
-- **Heads up** is up to three things worth a look, in this order: subagents
+- **Findings** shows usage insights from the engine’s up to three notes:
+  subagents
   using a quarter or more of your tokens (a subagent run is counted as a run,
   never as a session), one session costing a tenth or more of your spend (with
-  more than one session in the window) and what likely made it costly, sessions with no token data, and a cache hit
-  rate under 60%.
+  more than one session in the window) and what likely made it costly, and a
+  cache hit rate under 60%. Missing token data appears separately under
+  **Coverage**.
 
 The colors are the terminal's own 16 (so they follow your theme): Claude Code
 yellow, Cursor blue, Codex green; models by family (opus magenta, fable red,
@@ -110,6 +117,17 @@ sonnet cyan, haiku yellow, GPT and Codex models green); projects and the
 daily chart cyan. Color is never the only cue: every legend names what it
 colors. `NO_COLOR` turns color off, and so does anything that is not a
 terminal.
+
+The daily chart begins at the first session day in the available history when
+that is later than the requested window start. Earlier days are omitted,
+with a caption explaining why. Empty days within that history mean no archived
+sessions, not proof that the collector ran or that you did no work. The requested
+window and totals stay unchanged; retained and filtered history can be incomplete.
+
+Known MCP identifiers such as `Claude_Browser` and `Claude_Code_iOS_Simulator`
+have readable labels. To name opaque or custom servers, add exact ID-to-name
+entries in `mcp_server_names` in [configuration](../reference/configuration.md).
+Unresolved UUIDs get neutral labels; stats never guesses the service behind one.
 
 ### The detail screen (`--detail`)
 
@@ -167,10 +185,9 @@ Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
 MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 Skills count the sessions that used each one; MCP counts calls.
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · styleprofile · long context, 38 subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 NOTES
 Scope: this archive only.
@@ -241,20 +258,22 @@ Cache hit is cache reads over all input-side tokens.
 Estimated at list price, not a bill.   --view overview
 ```
 
-The projects and models screens are cut at 500 rows, and say how many more
-there are and where they all are: `+ 40 more (all in --json --by project)`
-under projects (`--json` alone keeps only the top five, so it does not have
-them), `+ 40 more (all in --json)` under models (`models` is never cut). The
-detail screen's `--by day`, `--by week` and `--by month` tables keep the
-newest 60 rows, and say `12 earlier rows not shown (all in --json --by day)`.
-Add the options it names to the command you ran, so the window and filters
-stay the same. On the interactive screen, which takes no command, the line
-says to quit first and names the window on show: `+ 40 more (quit, then run
-agent-archive stats --days 90 --json --by project)`, with `, with the same
-filters` when the screen was started with `--harness`, `--model`, `--imported`
-or `--hook-captured`. The skills and MCP servers are cut at 40 in the detail
-screen and at a few in the overview, and say `+ 3 more`; `--json` has only the
-top five of each, so past 40 no command lists every one.
+The projects and models screens list up to 500 rows, then say how many more
+there are and where they all are: `+ 40 more (all in --json --all)` under
+projects (`--json` alone keeps only the top five, so it does not have them),
+`+ 40 more (all in --json)` under models (`models` is never cut). The skills
+and MCP servers are cut at 40 in the detail screen and at a few in the
+overview, and say `+ 3 more (all in --json --all)`. The tables of the detail
+screen for `--by day`, `--by week` and `--by month` keep the newest 60 rows,
+and say `12 earlier rows not shown (all in --json --by day)`. Add the options
+a hint names to the command you ran, so the window and filters stay the same
+(and drop `--view` and `--detail`, which `--json` does not take). On the
+interactive screen, which takes no command, the line says to quit first and
+names the window on show: `+ 40 more (quit, then run agent-archive stats
+--days 90 --json --all)`, with `, with the same filters` when the screen was
+started with `--harness`, `--model`, `--imported` or `--hook-captured`. A hint
+that names a command is never broken in the middle when it fits a line, and a
+skill or server stays on a line with its count.
 
 ### Narrow terminals
 
@@ -266,12 +285,11 @@ columns:
 ```text
 agent-archive stats · last 30 days · 3 agents
 
-  ~$3,989              93 sessions   10B tokens
-  ▲ 18% vs prior 30d   673 prompts   97% served from cache
+  ~$3,989                   93 sessions               10B tokens
+  at list price             673 prompts               97% served from cache
 
-AGENTS  █████████████████████████ ██ █
-        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%
-        of sessions
+AGENTS  ███████████████████████████████████████████ ████ █
+        ● Claude Code 90%   ● Cursor 9%   ● Codex 1%   of sessions
 
 DAILY SPEND                           peak ~$2,910 · Sep 27
                                                       █
@@ -280,33 +298,26 @@ DAILY SPEND                           peak ~$2,910 · Sep 27
 Aug 31                                               Sep 29
 
 WHERE IT WENT
-By project
-agent-archive  ██████████████████████████████  $1,862
-levenshtein    ████████████                      $751
-styleprofile   █████████                         $586
-family_books   ███████                           $427
+By project                                By model
+agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
+levenshtein    ██████             $751    fable   ███                       $386
+styleprofile   █████              $586    sonnet  ██                        $320
+family_books   ███                $427    + 2 more
 + 6 more
 
-By model
-opus           ██████████████████████████████  $3,270
-fable          ████                              $386
-sonnet         ███                               $320
-+ 2 more
-
 MOST USED
-Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide
-        2 sessions
-MCP     github 41 · linear 12 calls (Claude Code and Cursor
-        only)
+Skills  code-review 10 · review-pr 4 · docs 3 · cursor-guide 2 sessions
+MCP     github 41 · linear 12 calls (Claude Code and Cursor only)
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
-● Costliest session ~$564 · styleprofile · long context, 38
-  subagents
-● 10 sessions have no token data (Cursor 8, Claude Code 2)
+● Costliest session ~$564 · styleprofile · long context, 38 subagents
 
-Estimated at list price, not a bill.
---detail for more · --by project · --html
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Claude Code:
+2, Cursor: 8).
+
+Estimated at list price, not a bill.   --detail for more · --by project · --html
 ```
 
 Printed without the [interactive screen](#the-interactive-screen), the text
@@ -336,8 +347,10 @@ A view taller than the terminal is cut to fit and scrolls (the overview can
 need over 30 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
 below), a percentage or `End` where it can. On a narrow terminal the bar shortens its
 labels and then drops keys (`q` last) rather than wrap. Resizing the window
-redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP` and
-Ctrl-Z, the terminal gets its echo, cursor and screen back.
+redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP`,
+`SIGQUIT` (a `kill -QUIT` from outside exits 131, with no goroutine dump; Ctrl-\
+is turned off while the screen reads keys) and Ctrl-Z, the terminal gets its
+echo, cursor and screen back.
 
 `--days` and `--since` set the window the screen starts in: 7, 30 and 90
 days are the usual ones, and any other window (say `--days 14`) is added to
@@ -359,7 +372,7 @@ names on, so a page saved here is safe to share; run
 `agent-archive stats --html --include-names --output FILE` for the real
 names. It never replaces a file, and refuses a folder, a symbolic link or a
 missing folder, saying why on the bottom row; the path of a saved page shows
-there and is printed again when you quit.
+there and is printed again when you quit, or when a signal ends the screen.
 
 The screen opens only when standard input and output are both terminals,
 interaction is on (`AGENT_ARCHIVE_NONINTERACTIVE` is not set, as it is inside
@@ -378,7 +391,12 @@ cache reads, and `heads_up` lists up to three things worth a second look
 or more of your spend when the window has more than one session, sessions with no token data, a low cache-hit rate) as
 data, in that order of priority. A skill that a plugin provides is listed once
 as `docs` in `display_skills` however it was recorded (`anthropic-skills:docs`),
-and `skills` keeps the recorded names. Every field, rule and threshold is in
+and `skills` keeps the recorded names. `--json` lists the top five projects,
+skills and MCP servers, with `total_projects`, `total_skills`,
+`total_display_skills` and `mcp.total_servers` counting every one; add `--all`
+(only with `--json`: the screens list what they can, and the web page keeps its
+top lists) for every row, in the same order, with the same totals and nothing
+else changed. Every field, rule and threshold is in
 [JSON output](../reference/json-output.md#stats---json).
 
 ## Share it as a web page
@@ -404,9 +422,9 @@ cache, since most tokens are cache reads). Then the agents as one bar with
 each agent's share of sessions, daily **spend** as a bar chart with its
 dearest day named (a day whose sessions could not be priced gets a short grey
 mark, not a zero), where the spend went by project and by model, the skills
-and MCP servers used most, and up to three things worth a second look ("Heads
-up": subagents using a large share of your tokens, one session costing much of
-the spend, sessions with no token data, a low cache-hit rate). Under a
+and MCP servers used most, and usage findings (subagents using a large share
+of your tokens, one session costing much of the spend, a low cache-hit rate).
+Missing token data and available-history limits appear under "Coverage". Under a
 "Details" divider come the agents' table (sessions, tokens, spend, cache-hit
 rate), what used your tokens (the donut), a few facts (days active and
 streaks, busiest day, favorite model, costliest session, tool errors, month
@@ -513,7 +531,7 @@ spend it has, marked `+`), and says how many more there are;
 - **Subagents.** A subagent's tokens and cost count with its parent session,
   which is one session; the share they used is shown separately.
 - **Scope.** This archive only: every session in your bucket, including
-  those from other Macs that share it, and nothing that was never captured.
+  those from other machines that share it, and nothing that was never captured.
 - **MCP.** Claude Code and Cursor only; Codex MCP calls are not recorded.
 - **Month rank** compares this month so far with the five months before it,
   so early in a month it reads low.
