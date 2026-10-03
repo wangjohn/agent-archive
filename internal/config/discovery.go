@@ -135,19 +135,25 @@ func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
 	return prepareDiscoveryConfig(next)
 }
 
-func transitionDiscoveryPause(c *Config, paused bool, now time.Time) {
+func transitionDiscoveryPause(c *Config, paused bool, now time.Time) error {
 	if c.Discovery == nil || c.Paused == paused {
-		return
+		return nil
+	}
+	// Check every scope before mutating shared slices. Closing at or before
+	// an open interval's start would erase its durable consent boundary.
+	for _, a := range c.Discovery.Authorizations {
+		if n := len(a.Intervals); n > 0 {
+			last := a.Intervals[n-1]
+			if (paused && last.End.IsZero() && !now.After(last.Start)) || (!paused && (last.End.IsZero() || now.Before(last.End))) {
+				return errors.New("clock precedes discovery consent boundary; correct the clock before pausing or resuming")
+			}
+		}
 	}
 	for i := range c.Discovery.Authorizations {
 		a := &c.Discovery.Authorizations[i]
 		if paused {
 			if n := len(a.Intervals); n > 0 && a.Intervals[n-1].End.IsZero() {
-				if now.After(a.Intervals[n-1].Start) {
-					a.Intervals[n-1].End = now
-				} else {
-					a.Intervals = a.Intervals[:n-1]
-				}
+				a.Intervals[n-1].End = now
 			}
 		} else {
 			// Expired interval history fails closed, never widens prior permission.
@@ -157,6 +163,7 @@ func transitionDiscoveryPause(c *Config, paused bool, now time.Time) {
 			a.Intervals = append(a.Intervals, DiscoveryInterval{Start: now})
 		}
 	}
+	return nil
 }
 
 // DiscoveryGeneration authorizes native start evidence under the current

@@ -20,6 +20,8 @@ Planned for v0.2.0. This release has not been tagged or published.
   including hooks that resume imported sessions, with legacy hook-origin fallback.
   Setup drafts preserve protected authorization while changing skill evidence;
   start hooks avoid synchronizing an already persisted observation twice.
+  Pause/resume rejects clock reversals that would erase consent boundaries;
+  shared child materialization retains native transcript start provenance.
 
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,

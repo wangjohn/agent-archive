@@ -191,3 +191,92 @@ func TestUnrelatedProjectChangePreservesDiscoveryGeneration(t *testing.T) {
 		t.Fatal("nested rule change kept broader old scope")
 	}
 }
+
+func TestDiscoveryPauseRejectsLostConsentFloor(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"before", "equal", "prior_history", "multiple_scopes"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			cfg, at := discoveryConfig(t)
+			pauseAt := at.Add(-time.Hour)
+			if mode == "equal" {
+				pauseAt = at
+			}
+			if mode == "prior_history" {
+				cfg.Discovery.Authorizations[0].Intervals = []DiscoveryInterval{{Start: at.Add(-3 * time.Hour), End: at.Add(-2 * time.Hour)}, {Start: at}}
+			}
+			if mode == "multiple_scopes" {
+				earlier := cfg.Discovery.Authorizations[0]
+				earlier.ProjectRoot = "/earlier"
+				earlier.Generation = "earlier-generation"
+				earlier.Intervals = []DiscoveryInterval{{Start: at.Add(-2 * time.Hour)}}
+				cfg.Discovery.Authorizations = append([]DiscoveryAuthorization{earlier}, cfg.Discovery.Authorizations...)
+			}
+			home := t.TempDir()
+			if err := Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "config.json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := SetPaused(home, true, pauseAt); err == nil {
+				// On the defective implementation this grants a native start before
+				// the active consent interval, including within a prior pause gap.
+				resumed, resumeErr := SetPaused(home, false, at.Add(-30*time.Minute))
+				_, allowed := resumed.DiscoveryGeneration("codex", "/included", at.Add(-15*time.Minute), at.Add(time.Hour))
+				t.Fatalf("clock-inconsistent pause accepted: resume error=%v, old native start authorized=%t", resumeErr, allowed)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("rejected pause changed committed configuration: %v", err)
+			}
+			loaded, found, err := Load(home)
+			if err != nil || !found || loaded.Paused || !strings.HasSuffix(string(loaded.SkillEvidence), discoveryWriterMarker) {
+				t.Fatalf("rejected pause changed protected state: %+v %v", loaded, err)
+			}
+			if _, allowed := loaded.DiscoveryGeneration("codex", "/included", at.Add(-15*time.Minute), at.Add(time.Hour)); allowed {
+				t.Fatal("rejected pause widened permission")
+			}
+			if err := ReconcileDiscovery(&loaded, loaded, at.Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if _, allowed := loaded.DiscoveryGeneration("codex", "/included", at.Add(-15*time.Minute), at.Add(time.Hour)); allowed {
+				t.Fatal("reconciliation widened retained permission")
+			}
+		})
+	}
+}
+
+func TestDiscoveryClockReversalDoesNotMutateSharedScopes(t *testing.T) {
+	t.Parallel()
+	for _, paused := range []bool{true, false} {
+		t.Run(map[bool]string{true: "pause", false: "resume"}[paused], func(t *testing.T) {
+			t.Parallel()
+			cfg, at := discoveryConfig(t)
+			earlier := cfg.Discovery.Authorizations[0]
+			earlier.ProjectRoot = "/earlier"
+			earlier.Generation = "earlier-generation"
+			earlier.Intervals = []DiscoveryInterval{{Start: at.Add(-2 * time.Hour)}}
+			cfg.Discovery.Authorizations = append([]DiscoveryAuthorization{earlier}, cfg.Discovery.Authorizations...)
+			cfg.Paused = !paused
+			if !paused {
+				cfg.Discovery.Authorizations[0].Intervals[0].End = at.Add(-time.Hour)
+				cfg.Discovery.Authorizations[1].Intervals[0].End = at.Add(time.Hour)
+			}
+			shared := cfg
+			before, err := json.Marshal(shared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := transitionDiscoveryPause(&cfg, paused, at.Add(-30*time.Minute)); err == nil {
+				t.Fatal("clock reversal accepted")
+			}
+			after, err := json.Marshal(shared)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("clock reversal partially mutated shared authorizations: %v", err)
+			}
+		})
+	}
+}
