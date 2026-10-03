@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -215,6 +216,26 @@ func promptCodexExceptions(p *prompter, cfg *config.Config, userHome string) err
 			continue
 		}
 		included := choice == "include"
+		var otherApps []string
+		for _, app := range cfg.Harnesses {
+			if app != "codex" {
+				otherApps = append(otherApps, app)
+			}
+		}
+		if len(otherApps) > 0 {
+			p.note("Project rules are shared with " + friendlyApps(otherApps) + ". This rule also changes their capture permission for " + root + " and its descendants.")
+			approved, err := p.yesNo("Apply this "+choice+" rule to Codex and "+friendlyApps(otherApps)+"?", false)
+			if err != nil {
+				return err
+			}
+			if !approved {
+				p.note("The rule was not applied. Capture permissions are unchanged.")
+				continue
+			}
+		}
+		// A review draft may still share the committed snapshot's slice.
+		// Copy only after approval, before editing an existing rule.
+		cfg.Archive.Projects = slices.Clone(cfg.Archive.Projects)
 		found := false
 		for i := range cfg.Archive.Projects {
 			if cfg.Archive.Projects[i].Root == root {
