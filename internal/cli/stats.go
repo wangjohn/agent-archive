@@ -78,8 +78,8 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	viewName := fs.String("view", "", "which screen to print: overview (the default), detail, projects, models, or agents")
 	detail := fs.Bool("detail", false, "print the detail screen; the same as --view detail")
 	pricesFile := fs.String("prices", "", "price the tokens from this JSON file's prices on top of the built-in table")
-	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
-	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	imported, hookCaptured := fs.Bool("imported", false, "only sessions agent-archive backfill imported"),
+		fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
 	replays := fs.String("replays", string(replaysHide), replaysFlagUsage)
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
