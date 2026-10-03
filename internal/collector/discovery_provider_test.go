@@ -132,6 +132,8 @@ func TestDiscoveryProviderRetainsConfinementAndAdmissionIdentity(t *testing.T) {
 				payload["timestamp"] = at.Add(time.Minute).Format(time.RFC3339Nano)
 			case discoverySourceChangedCWD:
 				payload["cwd"] = t.TempDir()
+			case discoverySourceIntact, discoverySourceSymlink, discoverySourceComponentSymlink:
+				// These cases retain admitted metadata and vary only the locator.
 			}
 			raw, err := json.Marshal(map[string]any{"type": "session_meta", "timestamp": payload["timestamp"], "payload": payload})
 			if err != nil {
