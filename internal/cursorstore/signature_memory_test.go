@@ -32,6 +32,8 @@ func TestOversizedInvalidSignatureFieldsAvoidRawAllocation(t *testing.T) {
 	const size = 65 << 20
 	large := strings.Repeat("x", size)
 	for name, composer := range map[string]string{
+		"header object":    `{"fullConversationHeadersOnly":{"bubbleId":"` + large + `"}}`,
+		"nested identity":  `{"conversation":[{"bubbleId":"last","unknown":{"bubbleId":"` + large + `"}}],"lastUpdatedAt":"invalid"}`,
 		"timestamp string": `{"lastUpdatedAt":"` + large + `"}`,
 		"timestamp array":  `{"lastUpdatedAt":["` + large + `"]}`,
 		"timestamp object": `{"lastUpdatedAt":{"unknown":"` + large + `"}}`,

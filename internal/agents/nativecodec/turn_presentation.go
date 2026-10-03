@@ -21,10 +21,7 @@ var (
 // <user_query>…</user_query>), and turns Claude Code's slash-command tags
 // back into the command line (/review-pr 12). Other prompts are only trimmed.
 func cleanPrompt(text string) string {
-	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
-	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
-		text = stripHarnessTag(text, "user_query")
-	}
+	text = stripCursorWrapper(text)
 	if strings.HasPrefix(strings.TrimSpace(text), "<command-") {
 		if name := slashCommandName.FindStringSubmatch(text); name != nil {
 			command := strings.TrimSpace(name[1])
@@ -113,3 +110,12 @@ func firstLine(s string, limit int) string {
 }
 
 const handoffSummaryCap = 200
+
+// stripCursorWrapper removes native Cursor query framing without interpreting slash commands.
+func stripCursorWrapper(text string) string {
+	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
+	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
+		text = stripHarnessTag(text, "user_query")
+	}
+	return text
+}

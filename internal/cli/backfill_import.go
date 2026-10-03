@@ -353,7 +353,7 @@ const uploadBusyGiveUp = 2 * time.Minute
 // the background collector.
 func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch, activity *activityStop) int {
 	sizes := map[agentmeta.SessionKey]int64{}
-	for _, c := range plan.Candidates {
+	for _, c := range plan.Imported() {
 		size := c.Bytes
 		for _, sub := range c.Subagents {
 			size += sub.Bytes

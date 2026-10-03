@@ -707,7 +707,7 @@ func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata M
 		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
-	if !analysis.Facts.Text {
+	if !analysis.Facts.TextOnly {
 		metadata.Models = models
 	}
 	deriveHookModels(bundle, &metadata)

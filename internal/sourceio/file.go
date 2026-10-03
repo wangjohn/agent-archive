@@ -180,6 +180,8 @@ func Classify(err error) error {
 		kind = agentapi.Cleanup
 	case errors.Is(err, os.ErrNotExist):
 		kind = agentapi.Missing
+	case errors.Is(err, transcriptio.ErrNotRegularFile):
+		kind = agentapi.Unsafe
 	case errors.Is(err, transcriptio.ErrChanged):
 		kind = agentapi.Changed
 	case errors.Is(err, cursorstore.ErrRecordLimit), errors.Is(err, transcriptio.ErrRecordTooLarge), errors.Is(err, archive.ErrRecordTooLarge), errors.Is(err, agentapi.ErrRawLimit):

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
@@ -197,4 +198,39 @@ func TestRefusedFilterRetainsCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || agentapi.Deterministic(err) {
 		t.Fatalf("filter refusal hid cancellation: %v", err)
 	}
+}
+
+func TestRefusedFilterRetainsReadFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pass, err := (FileProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	snap, err := pass.Read(t.Context(), agentapi.SourceRef{Path: path}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fault := errors.New("synthetic transient read fault")
+	in := snap.Input()
+	in.File = failedReadInput{FileInput: in.File, fault: fault}
+	_, err = FilterJSONL(t.Context(), in, agentapi.FilterContext{}, nativecodec.CodexAdapter{}.FilterJSONL)
+	if !errors.Is(err, fault) || !agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.Deterministic(err) {
+		t.Fatalf("filter refusal hid retryable read: %v", err)
+	}
+}
+
+type failedReadInput struct {
+	agentapi.FileInput
+	fault error
+}
+
+func (f failedReadInput) ReadAt(p []byte, off int64) (int, error) {
+	if off == 0 {
+		return 0, f.fault
+	}
+	return f.FileInput.ReadAt(p, off)
 }

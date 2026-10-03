@@ -56,6 +56,8 @@ type NativeFacts struct {
 	TurnEnd       NativeTurnEnd
 	// Text preserves the historical text-only prompt eligibility policy.
 	Text bool
+	// TextOnly selects rendering when there is no retained structured evidence.
+	TextOnly bool
 	// IdentityConflict is interpreted by the native parser against the bundle ID.
 	IdentityConflict bool
 }

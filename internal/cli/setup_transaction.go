@@ -27,6 +27,9 @@ import (
 )
 
 func discardDraft(home string, draft setupDraft, active config.Config, env Env) error {
+	if err := abandonGuidedStage(home, draft, active); err != nil {
+		return err
+	}
 	refs := append([]string{}, draft.StagedRefs...)
 	if draft.CredentialRef != "" && !containsString(refs, draft.CredentialRef) {
 		refs = append(refs, draft.CredentialRef)
@@ -316,7 +319,11 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			}
 		}
 	}
-	next.MachineID = old.MachineID
+	if old.MachineID != "" {
+		next.MachineID = old.MachineID
+	} else if !config.ValidMachineID(next.MachineID) {
+		next.MachineID = ""
+	}
 	if next.MachineID == "" {
 		next.MachineID, err = local.ID()
 		if err != nil {
@@ -331,6 +338,9 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 		if config.ValidMachineID(next.MachineID) {
 			next.MachineName = "unnamed-" + next.MachineID[:4]
 		}
+	}
+	if err := next.ValidateCloudflareTokenCommand(); err != nil {
+		return err
 	}
 	if err := next.ValidateMachine(); err != nil {
 		return err
@@ -384,23 +394,12 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
 		return setupjournal.Journal{}, &otherInstallationError{problems: problems}
 	}
-	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
+	// Compose removals and installations through native ports before journaling;
+	// shared destinations must have one original-to-final atomic change.
+	inHooks := env.installation(home, userHome)
+	changes, err := hooks.PlanReconfiguration(files, previousFiles, inHooks.hook(executable), inHooks.owner(), next.Harnesses, old.Harnesses)
 	if err != nil {
 		return setupjournal.Journal{}, err
-	}
-	// Remove our hooks from apps no longer selected, and from an app's
-	// previous file when its configuration directory has moved.
-	for _, app := range old.Harnesses {
-		if containsString(next.Harnesses, app) && previousFiles[app] == files[app] {
-			continue
-		}
-		removal, found, err := hooks.PlanRemovalOf(previousFiles, env.installation(home, userHome).owner(), app)
-		if err != nil {
-			return setupjournal.Journal{}, err
-		}
-		if found {
-			changes = append(changes, removal)
-		}
 	}
 	// The agent skills (/handoff), for the apps chosen, or none while they
 	// are turned off. Only a file setup wrote is replaced or removed.

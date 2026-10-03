@@ -42,9 +42,8 @@ Skills  review-pr 13 · create-skill 1 sessions
 MCP     github 102 · linear 12 calls (Claude Code and Cursor only)
 Skills count the sessions that used each one; MCP counts calls.
 
-HEADS UP
+FINDINGS
 ● Costliest session ~$65 · proj-api · long context, 2 subagents
-● 3 sessions have no token data (Cursor 3)
 
 BY WEEK     sessions  prompts  tokens  est. cost
 2026-08-31         4       33     13M        $24

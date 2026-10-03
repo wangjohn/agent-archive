@@ -172,7 +172,7 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 }
 
 // summaryContext is the line under the title: harness, project, and how
-// long ago the session was captured.
+// long ago the session was last active, as list's WHEN says.
 func summaryContext(m archive.Metadata, opts summaryOptions) []string {
 	var parts []string
 	if name := archive.DisplayLine(m.Harness.Name); name != "" {
@@ -185,8 +185,8 @@ func summaryContext(m archive.Metadata, opts summaryOptions) []string {
 	if project = archive.DisplayLine(project); project != "" {
 		parts = append(parts, project)
 	}
-	if !m.CapturedAt.IsZero() {
-		parts = append(parts, compactAge(opts.Now, m.CapturedAt))
+	if active := lastActivity(m); !active.IsZero() {
+		parts = append(parts, compactAge(opts.Now, active))
 	}
 	return parts
 }
@@ -226,14 +226,16 @@ func summaryStatus(m archive.Metadata, s textStyle) string {
 
 // sessionEnd is when the session's recorded activity ends, and whether
 // that is the recorded end of the session: ended_at, the latest record
-// timestamp, when the parser found one. Otherwise it is the capture time,
-// the latest activity the capture can include, shown as a span rather than
-// a duration.
+// timestamp, when the parser found one. Otherwise it is lastActivity, as
+// the header and list's WHEN say: for a hook capture the capture time, the
+// latest activity the capture can include, shown as a span rather than a
+// duration; for an import its start, since its capture time is when
+// backfill ran.
 func sessionEnd(m archive.Metadata) (end time.Time, exact bool) {
 	if m.EndedAt != nil {
 		return *m.EndedAt, true
 	}
-	return m.CapturedAt, false
+	return lastActivity(m), false
 }
 
 // summaryWhen is "Sep 29, 10:14 → 11:02 (48m span)" in opts' location.
@@ -442,20 +444,28 @@ func summaryPullRequests(events []archive.GitEvent, kind archive.GitEventKind, c
 }
 
 // wrapList joins items with sep into lines at most width columns wide,
-// breaking only between items. An item wider than width gets a line of its
-// own, which the caller cuts.
+// breaking only between items. A line that breaks ends with sep's mark (" ·"
+// ends in "·"), which counts toward its width, so no line is cut later. An
+// item too wide for a line by itself is cut to fit one of its own.
 func wrapList(items []string, sep string, width int) []string {
+	mark := strings.TrimRight(sep, " ")
 	var lines []string
 	line := ""
-	for _, item := range items {
+	for i, item := range items {
+		// The room this item leaves for the mark that follows it when the
+		// line breaks after it.
+		end := ""
+		if i < len(items)-1 {
+			end = mark
+		}
 		switch {
 		case line == "":
-			line = item
-		case visibleWidth(line+sep+item) <= width:
+			line = ellipsize(item, width-visibleWidth(end))
+		case visibleWidth(line+sep+item+end) <= width:
 			line += sep + item
 		default:
-			lines = append(lines, strings.TrimRight(line+sep, " "))
-			line = item
+			lines = append(lines, line+mark)
+			line = ellipsize(item, width-visibleWidth(end))
 		}
 	}
 	if line != "" {

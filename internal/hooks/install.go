@@ -1,12 +1,14 @@
 package hooks
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/fileapply"
 	"github.com/wangjohn/agent-archive/internal/filechange"
 	"github.com/wangjohn/agent-archive/internal/jsonedit"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"maps"
 	"os"
 	"path/filepath"
@@ -69,7 +71,21 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 		if err != nil {
 			return nil, err
 		}
-		changes = append(changes, change)
+		duplicate := false
+		for _, prior := range changes {
+			// Atomic replacement writes destinations independently, even for hardlinks.
+			if local.CanonicalPath(prior.Path) != local.CanonicalPath(change.Path) {
+				continue
+			}
+			if prior.Delete != change.Delete || prior.Mode != change.Mode || prior.Existed != change.Existed || !bytes.Equal(prior.Before, change.Before) || !bytes.Equal(prior.After, change.After) {
+				return nil, fmt.Errorf("hook owners have conflicting installation plans for %s", change.Path)
+			}
+			duplicate = true
+			break
+		}
+		if !duplicate {
+			changes = append(changes, change)
+		}
 	}
 	return changes, nil
 }
@@ -96,12 +112,15 @@ func planFile(files Files, harness string, hook Hook) (Change, error) {
 	if file.ReadError != nil {
 		return Change{}, &readError{path: file.Path, cause: file.ReadError}
 	}
-	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: file, Owner: owner})
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, File: cloneHookFile(file), Owner: owner})
 	if err != nil {
 		return Change{}, fmt.Errorf("%s: %w", file.Path, err)
 	}
 	if len(changes) != 1 {
 		return Change{}, errors.New("hook install must plan one file")
+	}
+	if err := validateHookChange(file, changes[0], agentapi.HookInstall); err != nil {
+		return Change{}, err
 	}
 	return changes[0], nil
 }
@@ -178,7 +197,7 @@ func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found
 	if err != nil {
 		return Change{}, false, err
 	}
-	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: file, Owner: owner})
+	changes, err := port.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, File: cloneHookFile(file), Owner: owner})
 	if err != nil {
 		return Change{}, false, fmt.Errorf("%s: %w", file.Path, err)
 	}
@@ -187,6 +206,9 @@ func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found
 	}
 	if len(changes) != 1 {
 		return Change{}, false, errors.New("hook remove must plan one file")
+	}
+	if err := validateHookChange(file, changes[0], agentapi.HookRemove); err != nil {
+		return Change{}, false, err
 	}
 	return changes[0], true, nil
 }
@@ -217,7 +239,7 @@ func Inspect(files Files, hook Hook, harness string) (agentapi.HookInspection, e
 	if err != nil {
 		return agentapi.HookInspection{State: agentapi.HookUnreadable, Reason: "settings_unreadable"}, err
 	}
-	return port.Inspect(agentapi.HookInspectionRequest{File: file, Owner: owner})
+	return port.Inspect(agentapi.HookInspectionRequest{File: cloneHookFile(file), Owner: owner})
 }
 
 // ErrChanged reports a concurrent edit after planning.
@@ -225,3 +247,22 @@ var ErrChanged = fileapply.ErrChanged
 
 // Apply applies generic byte plans with rollback on failure.
 func Apply(c []Change) error { return fileapply.Apply(c) }
+
+// Keep host prior facts independent of the buffers supplied to native ports.
+func cloneHookFile(file agentapi.HookFile) agentapi.HookFile {
+	file.Bytes = bytes.Clone(file.Bytes)
+	return file
+}
+
+func validateHookChange(file agentapi.HookFile, change Change, action agentapi.HookAction) error {
+	if change.Path != file.Path || change.Existed != file.Present || !bytes.Equal(change.Before, file.Bytes) {
+		return errors.New("hook plan does not match observed settings")
+	}
+	if change.Delete && (action != agentapi.HookRemove || !file.Present || !file.Regular) {
+		return errors.New("hook plan cannot delete these settings")
+	}
+	if len(change.After) > maxHookSettingsBytes || change.Mode & ^os.FileMode(0777) != 0 {
+		return errors.New("hook plan has invalid replacement facts")
+	}
+	return nil
+}

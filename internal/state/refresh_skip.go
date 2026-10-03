@@ -75,22 +75,26 @@ func (s *Store) RemoveRefreshSkip(id string) error {
 	return nil
 }
 
-// CountRefreshSkips counts the sessions whose metadata parserVersion cannot
-// refresh (see Status.UnrefreshableSummaries).
-func (s *Store) CountRefreshSkips(parserVersion string) int {
+// RefreshSkips returns readable skip records by archive ID, inspecting only existing files.
+func (s *Store) RefreshSkips() map[string]RefreshSkip {
 	entries, err := os.ReadDir(filepath.Join(s.home, refreshSkipDir))
 	if err != nil {
-		return 0
+		return nil
 	}
-	count := 0
+	var skips map[string]RefreshSkip
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".json") {
+		id, ok := strings.CutSuffix(entry.Name(), ".json")
+		if !ok || !safeFileComponent(id) {
 			continue
 		}
-		var skip RefreshSkip
-		if local.Read(filepath.Join(s.home, refreshSkipDir, entry.Name()), &skip) == nil && skip.ParserVersion == parserVersion {
-			count++
+		skip, found := readRefreshSkip(filepath.Join(s.home, refreshSkipDir, entry.Name()))
+		if !found {
+			continue
 		}
+		if skips == nil {
+			skips = make(map[string]RefreshSkip)
+		}
+		skips[id] = skip
 	}
-	return count
+	return skips
 }

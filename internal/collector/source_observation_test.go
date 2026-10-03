@@ -15,7 +15,7 @@ func TestProviderReaderRejectsIncoherentObservations(t *testing.T) {
 		{Present: false, Signature: sourceio.FileSignature(0, 0)},
 		{Present: true, Size: -1, Signature: sourceio.FileSignature(0, 0)},
 	} {
-		r := providerReader{reg: archive.SessionRegistration{Harness: archive.Harness{Name: "codex"}, TranscriptPath: "/synthetic/file"}, opts: Options{Sources: observationSources{observation}}}
+		r, _ := newSourceReader(archive.SessionRegistration{Harness: archive.Harness{Name: "codex"}, TranscriptPath: "/synthetic/file"}, Options{Sources: observationSources{observation}})
 		if _, err := r.Signature(t.Context()); err == nil {
 			t.Errorf("signature accepted incoherent observation: %+v", observation)
 		}

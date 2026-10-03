@@ -151,6 +151,11 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
+	if !opts.jsonOut {
+		// --json keeps the listing's order, newest capture first, which
+		// the index's fast path can give without reading every session.
+		sortByActivity(sessions)
+	}
 	labels := projectLabels(cfg)
 	view := listViews{sessions: sessions, listed: listed, full: full, limit: opts.limit, jsonOut: opts.jsonOut, query: q,
 		fields: func(m archive.Metadata) sessionFields { return fieldsOf(m, sessionProjectName(m, labels)) }}.view

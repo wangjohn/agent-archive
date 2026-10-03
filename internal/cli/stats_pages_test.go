@@ -571,7 +571,7 @@ func TestStatsOverviewFollowsTheSpec(t *testing.T) {
 		"MCP     github 41 · linear 12 calls (Claude Code and Cursor only)",
 		"● 77% of tokens came from subagents (497 runs)",
 		"● Costliest session ~$564 · styleprofile · long context, 38 subagents",
-		"● 10 sessions have no token data (Cursor 8, Claude Code 2)",
+		"COVERAGE", "Sessions with no token data are left out of token and cost",
 		"Estimated at list price, not a bill.   --detail for more · --by project · --html",
 	} {
 		if !strings.Contains(out, want) {
