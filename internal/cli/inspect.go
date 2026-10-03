@@ -577,13 +577,6 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if !ok {
 		return 2
 	}
-	if v.replays == "" {
-		v.replays = replaysHide
-	}
-	replays, ok := replayFilterFlag(v.replays)
-	if !ok {
-		return listOptions{}, fs.usageError("--replays must be hide, include, or only, not %q", v.replays)
-	}
 	canonical, ok := harnessFlagWithCatalog(catalogFor(env), *harness)
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))

@@ -231,8 +231,6 @@ parent's. Test for the key, not for `run_id`. `list`, `stats`, and
 `handoff --latest` leave replays out unless asked (`--replays
 include|only` on `list` and `stats`); `show ID` opens one as usual.
 
-
-
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
@@ -388,7 +386,8 @@ at the top level. Read the rules below before using a number:
   or by estimated cost for `project` (in the order of `projects`, above).
   `projects` keeps only the top few of `total_projects`, unless `--all`.
 - `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
-  (as `origin`: `hook` or `imported`) and `--replays` (as `replays`: `include` or `only`; replay sessions are hidden by default); a filter that was not given is
+  (as `origin`: `hook` or `imported`) and `--replays` (as `replays`: `include`
+  or `only`; replay sessions are hidden by default); a filter that was not given is
   absent. The document holds counts, model, project, skill and MCP server
   names, and one session ID (`highlights.costliest_session`, which `show`
   opens). It never holds prompts, transcript text or paths. An empty archive
