@@ -36,6 +36,19 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
 	anchors := map[string]string{}
 	for _, project := range projects {
+		// A checkout inside a path-based rule must move with that rule.
+		// Relocating it alone would detach exclusions from their included
+		// ancestor (or reinclusions from their excluded ancestor).
+		hasAncestor := false
+		for _, other := range projects {
+			if other.Root != project.Root && local.PathWithin(project.Root, other.Root) {
+				hasAncestor = true
+				break
+			}
+		}
+		if hasAncestor {
+			continue
+		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			if key := env.projectRepoKey(child, project.Root); archive.IsRepoKey(key) {
@@ -102,7 +115,7 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 			requests = append(requests, projectMatchRequest{RepoKey: rule.RepoKey})
 		}
 	}
-	var matched projectMatchResult
+	matched := projectMatchResult{}
 	if len(requests) > 0 {
 		matched = matchProjects(context.Background(), env, home, *cfg, requests)
 	}

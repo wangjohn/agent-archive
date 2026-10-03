@@ -20,6 +20,7 @@ func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
 	t.Parallel()
 	for _, keyed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "home paths", true: "relocated checkout"}[keyed], func(t *testing.T) {
+			t.Parallel()
 			sourceHome, destinationHome := t.TempDir(), t.TempDir()
 			sourceRoot := filepath.Join(sourceHome, "src", "repo")
 			destinationRoot := filepath.Join(destinationHome, "src", "repo")
@@ -137,6 +138,39 @@ func TestScopeTransferRefusesPartialInclusionsAndEscapingSubtrees(t *testing.T) 
 		}
 		if !reflect.DeepEqual(before, cfg.Archive.Projects) {
 			t.Fatalf("partial inclusion for %s clone", reason)
+		}
+	}
+}
+
+func TestScopeKeepsNestedCheckoutAttachedToPathBasedAncestor(t *testing.T) {
+	t.Parallel()
+	for _, ancestorIncluded := range []bool{true, false} {
+		sourceHome, destinationHome := t.TempDir(), t.TempDir()
+		sourceParent := filepath.Join(sourceHome, "src")
+		sourceRepo := filepath.Join(sourceParent, "private")
+		destinationParent := filepath.Join(destinationHome, "src")
+		destinationRepo := filepath.Join(destinationParent, "private")
+		relocatedRepo := filepath.Join(destinationHome, "relocated")
+		for _, root := range []string{sourceRepo, destinationRepo, relocatedRepo} {
+			must(t, os.MkdirAll(filepath.Join(root, ".git"), 0700))
+		}
+		key := archive.RepoKey("https://example.test/team/private.git")
+		env := Env{repoKeyContext: func(context.Context, string) string { return key }, WorkingDir: func() (string, error) { return relocatedRepo, nil }}
+		rules := []archive.ProjectActivation{{Root: sourceParent, Included: ancestorIncluded}, {Root: sourceRepo, Included: !ancestorIncluded}}
+		encoded := portableProjectScope(rules, sourceHome, env, context.Background())
+		if strings.Contains(encoded, "repo_key") {
+			t.Fatalf("detached checkout from path-based ancestor: %s", encoded)
+		}
+		cfg := config.Config{}
+		if problems := setupProjectScope(&cfg, encoded, destinationHome, env); len(problems) != 0 {
+			t.Fatal(problems)
+		}
+		activation, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(destinationRepo, "chat"))
+		if !found || activation.Included != !ancestorIncluded {
+			t.Fatalf("nested decision lost: %+v", activation)
+		}
+		if _, found := capture.ConfiguredProjectActivationFor(cfg, filepath.Join(relocatedRepo, "chat")); found {
+			t.Fatal("scope rule moved independently of its ancestor")
 		}
 	}
 }

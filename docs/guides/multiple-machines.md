@@ -185,6 +185,8 @@ When exclusions are configured, the printed command instead carries all capture
 rules together in `--project-scope JSON`. Each rule has `path` and `included`;
 repository-relative rules also have `repo_key`. Exclusions and reincluded
 subtrees follow the matched checkout, even if its destination path changes.
+When a checkout lies inside a configured path-based ancestor, its rules stay
+relative to that ancestor instead of relocating independently.
 Paths outside a configured repository use the destination home for `~/`.
 Missing excluded folders remain excluded if created later. Setup refuses the
 whole transfer when a repository is missing, ambiguous, blocked by saved
