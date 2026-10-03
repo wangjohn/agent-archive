@@ -456,7 +456,7 @@ README says how to get a shell as the user whose manager is running.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), the `stats` screens end to end at 60, 80 and 120
+  (`testdata/handoff/`), eval export records (`internal/archive/testdata/eval-export/`, each line validated against its schema), the `stats` screens end to end at 60, 80 and 120
   columns and without a terminal (`internal/cli/testdata/stats/`), every `stats`
   page (overview, detail, projects, models, agents) at 60, 80 and 120 columns
   with and without color from hand-built numbers, plus a previous period,
@@ -736,3 +736,11 @@ go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuz
 
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
 seed once it is fixed.
+
+### Published writer refusal
+
+`bash scripts/test_published_writer.sh` runs an opt-in native macOS acceptance
+check against the checksum-pinned public v0.1.1 Darwin binary. It uses disposable
+HOME and data roots, stripped environment, and scheduler/Keychain stubs. A
+legacy scalar config is the successful control; protected config must fail the
+old integer decoder and remain byte-identical. Extended macOS runs this check.

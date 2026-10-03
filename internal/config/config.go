@@ -42,6 +42,7 @@ const (
 // EffectiveSkillEvidence preserves the behavior of configs saved before this
 // setting existed. Fresh setup persists metadata explicitly.
 func (c Config) EffectiveSkillEvidence() SkillEvidence {
+	c.SkillEvidence = underlyingSkillEvidence(c.SkillEvidence)
 	if c.SkillEvidence == "" {
 		return SkillEvidenceBody
 	}
@@ -62,6 +63,8 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// Discovery carries forward-only authorization; absent means disabled.
+	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
 	// SpareKeys is the desired unused key count; nil means two.
 	SpareKeys *int `json:"spare_keys,omitempty"`
 	// SpareCredentialRefs is an advisory index. The issued ledger owns eligibility.
@@ -215,35 +218,50 @@ func Load(home string) (Config, bool, error) { return LoadWithCatalog(home, agen
 
 // LoadWithCatalog reads configuration using the caller's supported identities.
 func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, err error) {
+	cfg, found, _, err = loadConfigWithCatalog(home, c)
+	return cfg, found, err
+}
+
+func loadConfig(home string) (Config, bool, bool, error) {
+	return loadConfigWithCatalog(home, agentmeta.Builtins())
+}
+
+func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found, fenced bool, err error) {
 	defer trace.Start("load config").End()
-	err = local.Read(path(home), &cfg)
+	data, err := os.ReadFile(path(home))
+	if err == nil {
+		fenced, err = decodeConfig(data, &cfg)
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, false, nil
+		return Config{}, false, false, nil
 	}
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
+		return Config{}, false, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
+	}
+	if err := validateDiscoveryConfig(cfg); err != nil {
+		return Config{}, false, false, err
 	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
-		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
+		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := cfg.ValidateSpares(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := cfg.ValidateMachine(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
-	return cfg, true, nil
+	return cfg, true, fenced, nil
 }
 
 // ErrUnreadable is a configuration file that exists but does not decode.
@@ -254,6 +272,9 @@ func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, age
 
 // SaveWithCatalog validates and writes configuration with injected identities.
 func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	if err := prepareDiscoveryConfig(&cfg); err != nil {
+		return err
+	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
 		return err
 	}
@@ -278,8 +299,16 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 // SetPaused updates the Paused flag and rotates PauseGeneration at a state
 // transition, preserving the rest of an existing configuration. It fails if
 // setup has not run yet: pausing before there is
-// anything to pause is not a meaningful state.
-func SetPaused(home string, paused bool) (Config, error) {
+// anything to pause is not a meaningful state. An optional observation time
+// lets command callers commit pause and discovery intervals on their clock.
+func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
+	if len(at) > 1 {
+		return Config{}, errors.New("pause requires at most one observation time")
+	}
+	now := time.Now().UTC()
+	if len(at) == 1 {
+		now = at[0].UTC()
+	}
 	cfg, found, err := Load(home)
 	if err != nil {
 		return Config{}, err
@@ -292,6 +321,9 @@ func SetPaused(home string, paused bool) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
 		}
+	}
+	if err := transitionDiscoveryPause(&cfg, paused, now.UTC()); err != nil {
+		return Config{}, err
 	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {

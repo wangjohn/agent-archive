@@ -46,6 +46,9 @@ type statsFilters struct {
 	// Origin is "imported" or "hook" when --imported or --hook-captured was
 	// given.
 	Origin string `json:"origin,omitempty"`
+	// Replays is "include" or "only" when --replays was given one of them;
+	// by default replay sessions are left out and the field is absent.
+	Replays string `json:"replays,omitempty"`
 }
 
 // runStatsCommand implements `agent-archive stats`. Like list, it reads only
@@ -75,8 +78,9 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	viewName := fs.String("view", "", "which screen to print: overview (the default), detail, projects, models, or agents")
 	detail := fs.Bool("detail", false, "print the detail screen; the same as --view detail")
 	pricesFile := fs.String("prices", "", "price the tokens from this JSON file's prices on top of the built-in table")
-	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
-	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	imported, hookCaptured := fs.Bool("imported", false, "only sessions agent-archive backfill imported"),
+		fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	replays := fs.String("replays", string(replaysHide), replaysFlagUsage)
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the numbers")
@@ -124,7 +128,7 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// it is not passed and the window sets the filter's From below.
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skillUsage: string(reader.SkillUsageUsed),
-		imported: *imported, hookCaptured: *hookCaptured, noCache: *noCache,
+		imported: *imported, hookCaptured: *hookCaptured, replays: replaysFlag(*replays), noCache: *noCache,
 	}, now)
 	if code != 0 {
 		return code
@@ -283,6 +287,13 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 // statsFiltersOf is the filters a run applied, as the output echoes them.
 func statsFiltersOf(opts listOptions) statsFilters {
 	filters := statsFilters{Harness: opts.filter.Harness, Model: opts.filter.Model}
+	switch opts.filter.Replays {
+	case reader.ReplaysIncluded:
+		filters.Replays = string(replaysInclude)
+	case reader.ReplaysOnly:
+		filters.Replays = string(replaysOnly)
+	case reader.ReplaysHidden:
+	}
 	switch {
 	case opts.imported:
 		filters.Origin = "imported"

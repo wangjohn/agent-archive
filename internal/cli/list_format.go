@@ -132,6 +132,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 		if m.ParentSessionID != "" {
 			parent = archive.DisplayLine(shortSessionID(m.ParentSessionID))
 		}
+		if m.IsReplay() {
+			title = "[replay] " + title
+		}
 		rows[i] = listRow{
 			PR:         prLabel(m),
 			Children:   opts.Children[childKey(m.Harness.Name, m.SessionID)],

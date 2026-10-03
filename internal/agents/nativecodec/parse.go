@@ -37,6 +37,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			return archive.Analysis{}, err
 		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
+		collectExportFacts(&analysis.Facts, bundle, record, agent)
 		if isParentBundle && isSidechainRecord(record) {
 			// A subagent's records are archived as the child's own session.
 			// Older Claude layouts inline them in the parent transcript; the
@@ -277,6 +278,32 @@ func collectPullRequest(f *archive.NativeFacts, r map[string]any) {
 			if !seen {
 				f.PullRequests = append(f.PullRequests, link)
 			}
+		}
+	}
+}
+
+// collectExportFacts retains the initial branch and native start semantics used by export.
+func collectExportFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]any, agent nativeProfile) {
+	if b.ParentSessionID != "" || !isSidechainRecord(r) {
+		if f.FirstBranch == "" {
+			f.FirstBranch = firstStringDeep(r, "gitBranch")
+		}
+	}
+	observe := func(at time.Time) {
+		if !at.IsZero() && (f.EarliestRecordAt.IsZero() || at.Before(f.EarliestRecordAt)) {
+			f.EarliestRecordAt = at
+		}
+	}
+	observe(parseNativeTimestamp(r))
+	if firstString(r, "type") == "session_meta" {
+		payload, _ := r["payload"].(map[string]any)
+		at := parseNativeTimestamp(payload)
+		observe(at)
+		if agent == profileCodex && f.NativeStartedAt.IsZero() {
+			if at.IsZero() {
+				at = parseNativeTimestamp(r)
+			}
+			f.NativeStartedAt = at
 		}
 	}
 }

@@ -2,6 +2,7 @@ package claude
 
 import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"path/filepath"
 	"strings"
@@ -27,4 +28,18 @@ func (ProjectEvidence) MissingWorktreeRepository(dir string) (string, bool) {
 		return "", false
 	}
 	return dir[:i], true
+}
+
+// RecognizesTranscriptPath recognizes files under this integration's observed roots.
+func (ProjectEvidence) RecognizesTranscriptPath(e agentapi.NativePathEnvironment, path string) bool {
+	dirs := e.Locations.Directories
+	if dirs == nil {
+		dirs = (NativeHeaders{}).DefaultDirectories(e.Locations.UserHome)
+	}
+	for _, dir := range dirs {
+		if filepath.IsAbs(dir) && local.PathWithin(path, dir) {
+			return true
+		}
+	}
+	return false
 }

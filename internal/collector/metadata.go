@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -62,6 +63,12 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	}
 	if !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		return outcomeSkipped, false, nil
+	}
+	// A commit the hooks recorded since is published first, from the
+	// retained metadata: it needs no derivation, so neither a refresh this
+	// parser cannot make nor one it already skipped holds it back.
+	if outcome, handled, err := s.publishRecordedGitHead(last, key); handled || err != nil {
+		return outcome, handled, err
 	}
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.parserVersion()
@@ -134,6 +141,8 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 	next.ApplyRegistrationProvenance(s.reg)
 	next.ApplyProjectName(s.reg.ProjectRoot)
 	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
+	next.ApplyGitHead(s.reg)
+	next.ApplyReplay(s.reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all
 		// (one cached under an older source schema, say). That is not a
@@ -312,4 +321,110 @@ func (s *sessionScan) parserVersion() string {
 		return parser.Version()
 	}
 	return "unavailable"
+}
+
+// publishRecordedGitHead updates hook observations even when a stop brought
+// no new transcript bytes. It reuses retained metadata and source, preserving
+// capture time and parser output; it never runs git or re-derives metadata.
+// It needs no request: the scan signature's PublishedLastHead brings a
+// session whose registration has moved past it back for a scan.
+func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (sessionOutcome, bool, error) {
+	next := last.metadata
+	next.ApplyGitHead(s.reg)
+	oldHead, err := json.Marshal(last.metadata.GitHead)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	newHead, err := json.Marshal(next.GitHead)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	if bytes.Equal(oldHead, newHead) {
+		return outcomeSkipped, false, nil
+	}
+	// Normal capture will carry these observations when content grew. Avoid an
+	// extra publication and preserve the request's new lifecycle evidence.
+	if s.liveTranscriptChanged(last.bundle) || s.requestAddsEvidence(last.bundle) {
+		return outcomeSkipped, false, nil
+	}
+	uploaded, known := s.published.LastPublishedSource()
+	if known && uploaded != next.SourceBundle {
+		return outcomeSkipped, false, nil
+	}
+	// Carry the retained source's bytes when this build can rebuild them, as
+	// a metadata refresh does, so a source missing from storage is repaired
+	// instead of failing this publication on every pass.
+	source := refreshSource{ref: next.SourceBundle}
+	if rebuilt, ok := chooseRefreshSource(last.bundle, uploaded, known); ok && rebuilt.bytes != nil {
+		source = rebuilt
+	}
+	next.SourceBundle = source.ref
+	next.MetadataDerivedAt = s.now
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: encoded, ReadyAt: s.now, Attempted: true}
+	if err := s.local.SavePending(s.id(), pending); err != nil {
+		return outcomeSkipped, false, err
+	}
+	outcome, err := s.publishPending(pending)
+	if err != nil {
+		return outcome, true, err
+	}
+	// The scan ends here, before it would record a signature: note the
+	// published commit on the one standing, so the next pass can skip.
+	if signature, found, err := s.local.LoadScanSignature(s.id()); err != nil || !found {
+		return outcome, true, err
+	} else if next.GitHead != nil {
+		signature.PublishedLastHead = headFingerprint(next.GitHead.Last)
+		return outcome, true, s.local.SaveScanSignature(s.id(), signature)
+	}
+	return outcome, true, nil
+}
+
+// headFingerprint identifies a last-HEAD observation for the scan signature:
+// its commit and first-seen time, so the same commit seen again after
+// another is told apart. "" for none.
+func headFingerprint(h *archive.GitHead) string {
+	if !h.Valid() {
+		return ""
+	}
+	return h.SHA + "@" + h.ObservedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// publishedLastHead is the last-HEAD observation the session's published
+// metadata holds (headFingerprint), for the scan signature. With nothing
+// published yet there is nothing to update, and the registration's own is
+// taken as settled: the first publication carries it. With a publication
+// but no metadata cached (an older install's), it is unknown, "", so a
+// moved HEAD keeps the session scanned until its metadata is read.
+func (s *sessionScan) publishedLastHead() string {
+	encoded := s.published.Metadata()
+	if len(encoded) == 0 {
+		if _, _, published := s.published.LastPublished(); published {
+			return ""
+		}
+		return headFingerprint(s.reg.LastHead)
+	}
+	var published struct {
+		GitHead *archive.SessionGitHead `json:"git_head"`
+	}
+	if err := json.Unmarshal(encoded, &published); err != nil || published.GitHead == nil {
+		return ""
+	}
+	return headFingerprint(published.GitHead.Last)
+}
+
+// requestAddsEvidence reports whether the request carries hook evidence the
+// published bundle lacks. Normal capture folds that evidence and the HEAD
+// observation into one publication and completes the request; a
+// metadata-only update would leave the request for a second upload.
+func (s *sessionScan) requestAddsEvidence(published archive.SourceBundle) bool {
+	if len(s.req.HookEvidence) == 0 {
+		return false
+	}
+	base := limitSkillEvidence(published.SupplementalEvidence, s.opts.skillEvidence())
+	merged := limitSkillEvidence(mergeSupplementalEvidence(base, s.req.HookEvidence), s.opts.skillEvidence())
+	return len(merged) != len(base)
 }

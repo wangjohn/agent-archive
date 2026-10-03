@@ -89,13 +89,18 @@ type appStatus struct {
 	Name               string   `json:"name"`
 	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State string `json:"state"`
-	// Sessions counts the app's sessions its hooks registered, subagents
+	// Sessions counts the app's hook and discovery registrations, subagents
 	// included; SubagentSessions counts the subagents among them.
 	Sessions         int `json:"sessions"`
 	SubagentSessions int `json:"subagent_sessions"`
 	// ImportedSessions counts the app's top-level sessions agent-archive
 	// backfill imported that the configuration publishes (AcceptSession).
 	ImportedSessions int `json:"imported_sessions"`
+	// ReplaySessions counts the top-level sessions among Sessions that a
+	// replay tool ran (archive.ReplayEnv). They are hook captures, so they
+	// count as sessions and verify the app's hooks; list hides them.
+	// Absent when there are none.
+	ReplaySessions int `json:"replay_sessions,omitempty"`
 	// UploadingSessions counts the app's top-level sessions, captured or
 	// imported, with work not yet published (state.Outstanding's Pending)
 	// that is not a recorded capture gap; Uploading lists them.
@@ -621,10 +626,20 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if reg.Harness.Name != name || !cfg.AcceptSession(reg) {
 			continue
 		}
+		// Explicit observation survives imports and discovery. Registrations
+		// written before this field existed retain their hook-origin evidence.
+		observed := !reg.HookObservedAt.IsZero() || reg.Origin == archive.SessionOriginHook || reg.Origin == ""
+		if observed {
+			app.HookObserved = true
+			project(reg.ProjectRoot).HookObserved = true
+			if app.State == "waiting for first session" {
+				app.State = "hook observed; waiting for capture"
+			}
+		}
 		if reg.Imported() {
-			// An import is not evidence that this app's hooks work: it
-			// never counts toward the app's sessions, hook observation,
-			// or verification, only toward its imports and uploads.
+			// Import publication is not evidence that this app's hooks captured
+			// the session. Actual subsequent hook observation is recorded above.
+			// Imports only count toward imports and uploads, not verification.
 			// Subagents go with their parent.
 			if reg.ParentSessionID == "" {
 				app.ImportedSessions++
@@ -639,6 +654,9 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if reg.ParentSessionID != "" {
 			app.SubagentSessions++
 		} else {
+			if reg.Replay != nil {
+				app.ReplaySessions++
+			}
 			project(reg.ProjectRoot).sessions++
 			s.addUploading(&app, project(reg.ProjectRoot), reg, issues)
 		}
@@ -705,24 +723,17 @@ func sortUploading(sessions []uploadingSession) {
 }
 
 // addSession adds one accepted session's evidence to app and to its project
-// pair (nil for a session no configured project owns): hook observation,
+// pair (nil for a session no configured project owns):
 // local capture and gaps, publication, and read-back verification. A session
 // whose files cannot be read is skipped where it fails.
 func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, issues map[string]string, readBackIssue *verificationOutcome) {
 	app.Sessions++
-	app.HookObserved = true
 	gapsBefore := len(app.CaptureGaps)
-	if pair != nil {
-		pair.HookObserved = true
-	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
 		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
-	}
-	if app.State == "waiting for first session" {
-		app.State = "hook observed; waiting for capture"
 	}
 	bundle, _, cacheStatus, found, err := s.store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
@@ -1641,6 +1652,9 @@ func appCounts(app appStatus) string {
 		if app.SubagentSessions > 0 {
 			parts[0] += " (+" + plural(app.SubagentSessions, "subagent") + ")"
 		}
+	}
+	if app.ReplaySessions > 0 {
+		parts[0] += fmt.Sprintf(", %d of them replays", app.ReplaySessions)
 	}
 	if app.ImportedSessions > 0 {
 		parts = append(parts, fmt.Sprintf("%d imported", app.ImportedSessions))

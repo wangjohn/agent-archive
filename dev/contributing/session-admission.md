@@ -26,7 +26,8 @@ Every boundary check uses `archive.SessionRegistration.Admitted()`
 | Retention age before a first capture | `Admitted()` |
 | App selection | `Harnesses`, plus `ImportedHarnesses` for imports |
 | Fresh-start eligibility for hooks, metadata `started_at`, subagent ordering, handoff | `session_started_at` |
-| App hook verification, `HookObserved`, skill inventory | hook-registered sessions only |
+| App hook observation | Durable `HookObservedAt` from an actual supported hook; independent of original registration origin |
+| Discovery fresh-start permission | Native original creation within the current agent/project/destination authorization generation and its unpaused intervals |
 
 Two guard tests in `internal/archive/admission_guard_test.go` read the
 source. `TestNoBoundaryComparesSessionStartedAtOutsideAdmitted` fails if code
@@ -40,3 +41,23 @@ A hook that later resumes an imported session continues it: the
 registration keeps its start, admission, destination ID, and origin.
 Retention and undo leave a removal record when they forget a session, so
 backfill does not import it again (unless `--include-removed`).
+
+## Shared discovery foundations
+
+Automatic discovery is not activated by these foundations. `sourcefacts` supplies shared project and worktree facts; those facts never
+authorize capture. Strict source readers belong with the scanner integration.
+`config.ReconcileDiscovery` records forward-only permission generations and
+`DiscoveryGeneration` checks native creation against half-open intervals.
+
+`state.RegisterOrMerge` uses the existing qualified SessionKey reservation and
+request-lock protocol, preserves compatible original provenance, and rejects
+removed automatic candidates. Explicit imports retain their removal override.
+The older low-level `RegisterNewSession` remains a replacement primitive for
+existing controlled callers; new admission paths must use register-or-merge.
+A real hook records `HookObservedAt` without relabeling imports or discovery.
+Generic hook locators cannot replace a discovery-owned confined source.
+
+Protected authorization uses a schema-version object that published integer
+decoders refuse. Legacy hook-only config remains numeric. Setup integration must
+fence protected Before snapshots before journaling a reconfiguration; never
+recover a numeric snapshot over protected authorization.

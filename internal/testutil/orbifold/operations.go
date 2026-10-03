@@ -289,3 +289,10 @@ func ReadManifestShards(paths []string, open func(string) (io.ReadCloser, error)
 	}
 	return out, nil
 }
+
+// RecognizesTranscriptPath demonstrates a fourth native folder convention.
+func (*Ports) RecognizesTranscriptPath(e agentapi.NativePathEnvironment, path string) bool {
+	root := filepath.Join(e.Locations.UserHome, ".orbifold", "flight-recorder")
+	rel, err := filepath.Rel(root, path)
+	return filepath.IsAbs(path) && filepath.IsAbs(e.Locations.UserHome) && err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}

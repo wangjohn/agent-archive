@@ -241,3 +241,8 @@ func (m *cursorMatcher) walk(dir, rest string, budget *int, found func(string)) 
 		}
 	}
 }
+
+// RecognizesTranscriptPath recognizes Cursor's native transcript directory component.
+func (ProjectEvidence) RecognizesTranscriptPath(_ agentapi.NativePathEnvironment, path string) bool {
+	return filepath.IsAbs(path) && strings.Contains(filepath.ToSlash(filepath.Clean(path)), "/agent-transcripts/")
+}

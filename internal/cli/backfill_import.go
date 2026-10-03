@@ -287,9 +287,14 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
+	previous := cfg
+	previous.Archive.Projects = slices.Clone(cfg.Archive.Projects)
 	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
+	}
+	if err := config.ReconcileDiscovery(&cfg, previous, admittedAt); err != nil {
+		return batch, admittedAt, 0, fmt.Errorf("update discovery authorization: %w", err)
 	}
 	batch.AddChanges(changes)
 	if err := backfill.SaveBatch(home, batch); err != nil {

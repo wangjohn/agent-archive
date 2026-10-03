@@ -1,15 +1,15 @@
 package backfill
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"path/filepath"
-	"strings"
 
-	"context"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // resolution is where one working directory is imported, or why it is not.
@@ -260,15 +260,8 @@ func (r *resolver) homeRule(dir string) resolution {
 // configuredOwner is the nearest configured project containing dir, compared
 // on resolved paths: the rule hooks use (configuredProjectActivationFor).
 func (r *resolver) configuredOwner(dir string) (project archiveProject, found bool) {
-	bestLen := -1
-	for _, p := range r.cfg.Archive.Projects {
-		configured := r.env.resolved(p.Root)
-		if !local.PathWithin(dir, configured) || len(configured) <= bestLen {
-			continue
-		}
-		project, bestLen, found = archiveProject{Root: p.Root, Included: p.Included}, len(configured), true
-	}
-	return project, found
+	p, ok := sourcefacts.ConfiguredOwner(r.cfg.Archive.Projects, dir, r.env.resolved)
+	return archiveProject{Root: p.Root, Included: p.Included}, ok
 }
 
 type archiveProject struct {
@@ -314,7 +307,7 @@ func (r *resolver) repository(dir string) (repo string, found bool, skip SkipRea
 			if info.IsDir() {
 				return d, true, ""
 			}
-			main, ok := r.worktreeMain(d, gitPath)
+			main, ok := r.worktreeMain(d)
 			if !ok {
 				// The git directory the file names is gone: the worktree's
 				// repository was removed or moved. Only a Claude Code
@@ -338,42 +331,8 @@ func (r *resolver) repository(dir string) (repo string, found bool, skip SkipRea
 // the git directory it names, or the common directory, does not exist.
 // Anything else it cannot follow leaves the checkout holding the file as its
 // own root.
-func (r *resolver) worktreeMain(checkout, gitFile string) (string, bool) {
-	data, err := r.env.readFile(gitFile)
-	if err != nil {
-		return checkout, true
-	}
-	line := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
-	gitDir, ok := strings.CutPrefix(line, "gitdir:")
-	if !ok {
-		return checkout, true
-	}
-	gitDir = strings.TrimSpace(gitDir)
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(checkout, gitDir)
-	}
-	if !r.env.exists(gitDir) {
-		return "", false
-	}
-	common, err := r.env.readFile(filepath.Join(gitDir, "commondir"))
-	if err != nil {
-		// No commondir: a submodule or a separate git directory, not a
-		// linked worktree. The checkout is the repository.
-		return checkout, true
-	}
-	commonDir := strings.TrimSpace(string(common))
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(gitDir, commonDir)
-	}
-	commonDir = filepath.Clean(commonDir)
-	if filepath.Base(commonDir) != ".git" {
-		// A bare repository has no main checkout to fold into.
-		return checkout, true
-	}
-	if !r.env.exists(commonDir) {
-		return "", false
-	}
-	return filepath.Dir(commonDir), true
+func (r *resolver) worktreeMain(checkout string) (string, bool) {
+	return sourcefacts.WorktreeMain(checkout, r.env.readFile, r.env.exists, false)
 }
 
 // kindOf says what an existing configured root is.

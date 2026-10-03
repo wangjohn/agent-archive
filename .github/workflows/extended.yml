@@ -74,6 +74,8 @@ jobs:
         env:
           AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
+      - name: Published old writer refuses protected consent
+        run: bash scripts/test_published_writer.sh
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_install.py

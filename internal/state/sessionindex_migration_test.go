@@ -684,3 +684,33 @@ func TestQualifiedRecoveryBeginCancellationPreservesRequest(t *testing.T) {
 		t.Fatalf("cancelled retry stranded: found=%t err=%v", found, err)
 	}
 }
+
+// A foreign agent is unrelated only when its native ID matches the legacy
+// pointer's key. A different native ID means the pointer is corrupt.
+func TestLegacyForeignPointerRejectsDifferentNativeIdentity(t *testing.T) {
+	t.Parallel()
+	for _, candidate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "registration", true: "child-candidate"}[candidate], func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "requested"}
+			foreign := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "different"}
+			if candidate {
+				if err := s.SaveSubagentCandidate(SubagentCandidate{ArchiveSessionID: "foreign", NativeSessionID: foreign.NativeID, ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: string(foreign.Agent)}, AgentID: "child", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := local.Write(s.registrationPath("foreign"), migrationRegistration(foreign, "foreign")); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.Write(nativeSessionIndexPath(s.home, key.NativeID), sessionIndexEntry{ArchiveSessionID: "foreign"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := s.EnsureArchiveSessionID(key); !errors.Is(err, ErrSessionIdentityConflict) {
+				t.Fatalf("corrupt foreign pointer bypassed: %v", err)
+			}
+			if _, err := os.Stat(qualifiedSessionIndexPath(s.home, key)); !os.IsNotExist(err) {
+				t.Fatalf("corrupt pointer allocated a qualified identity: %v", err)
+			}
+		})
+	}
+}

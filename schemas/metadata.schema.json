@@ -77,6 +77,21 @@
       "type": "string",
       "pattern": "^repo-[0-9a-f]{16}$"
     },
+    "git_head": {
+      "description": "The commit the session's working directory had checked out, as the session's own hooks recorded it by running git there (a linked worktree's own HEAD; a submodule's when the session ran inside one). 'start' is HEAD, with whether the working tree was dirty, when the hook that registered the session ran; 'last' is HEAD at the most recent stop hook that could read it. Either is absent when no hook could tell (git not installed, not a repository, a branch with no commits, git slower than the hook's budget) 'start' is also absent on sessions registered before this field or imported by backfill; a later live stop can record 'last'. Subagents have neither. Neither is ever inferred afterwards. Only commit names, a boolean, and times are recorded: never a branch, remote, path, or file name. The commit may exist only on the capturing machine.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/git_head_observation"
+        },
+        "last": {
+          "description": "Replaced only when a stop hook finds HEAD at a different commit, so observed_at is the first stop that saw this commit. Carries no dirty flag.",
+          "$ref": "#/$defs/git_head_last_observation"
+        }
+      }
+    },
     "started_at": {
       "type": "string",
       "format": "date-time"
@@ -188,7 +203,7 @@
     },
     "counts": {
       "type": "object",
-      "description": "Every count is optional: an absent count is unknown, never zero. From parser 0.6.0 'turns' counts human prompts (a user record with text or any non-tool-result content), 'messages' counts those prompts plus assistant records, and 'tool_results' counts observed tool results. From parser 0.7.0 a harness-written user record (isMeta, local-command or shell output, or a slash command no assistant answered) is not a prompt, 'messages' counts distinct assistant message ids (a record without an id counts on its own), and 'user_shell_commands' counts shell commands the person ran directly (Claude Code '!' commands). From parser 0.8.0 a Claude Code compaction summary (a user record marked isCompactSummary) is neither a prompt nor a message, and 'compactions' counts how many times the session was compacted (/compact or auto-compaction), from compact_boundary records or, when none was retained, from compaction summaries; it is present only for Claude Code sessions captured with filter 5 or later. From parser 0.9.0 a harness-written notification (origin.kind 'task-notification') is not a prompt. From parser 0.10.0 Claude Code's '[Request interrupted by user…]' marker is not a prompt, 'tool_calls' no longer counts tool-call shapes found inside another call's arguments, a Cursor text transcript's role sections start only at a header in column 0, and a message Claude Code synthesized itself (model '<synthetic>') names no model and adds no tokens. From parser 0.11.0 a Cursor text transcript's role header is lower case ('user:', not 'User:'), and when its sections are separated by blank lines a role line that does not follow one is content; token totals saturate at 2^53 instead of overflowing. The token counts are summed from whatever the harness exposed, counting only whole numbers from 0 to 2^53 (anything else in a record is ignored), and are absent when it exposed none.",
+      "description": "Every count is optional: an absent count is unknown, never zero. From parser 0.6.0 'turns' counts human prompts (a user record with text or any non-tool-result content), 'messages' counts those prompts plus assistant records, and 'tool_results' counts observed tool results. From parser 0.7.0 a harness-written user record (isMeta, local-command or shell output, or a slash command no assistant answered) is not a prompt, 'messages' counts distinct assistant message ids (a record without an id counts on its own), and 'user_shell_commands' counts shell commands the person ran directly (Claude Code '!' commands). From parser 0.8.0 a Claude Code compaction summary (a user record marked isCompactSummary) is neither a prompt nor a message, and 'compactions' counts how many times the session was compacted (/compact or auto-compaction), from compact_boundary records or, when none was retained, from compaction summaries; it is present only for Claude Code sessions captured with filter 5 or later. From parser 0.9.0 a harness-written notification (origin.kind 'task-notification') is not a prompt. From parser 0.10.0 Claude Code's '[Request interrupted by user\u2026]' marker is not a prompt, 'tool_calls' no longer counts tool-call shapes found inside another call's arguments, a Cursor text transcript's role sections start only at a header in column 0, and a message Claude Code synthesized itself (model '<synthetic>') names no model and adds no tokens. From parser 0.11.0 a Cursor text transcript's role header is lower case ('user:', not 'User:'), and when its sections are separated by blank lines a role line that does not follow one is content; token totals saturate at 2^53 instead of overflowing. The token counts are summed from whatever the harness exposed, counting only whole numbers from 0 to 2^53 (anything else in a record is ignored), and are absent when it exposed none.",
       "properties": {
         "turns": {
           "type": "integer",
@@ -344,8 +359,23 @@
       }
     },
     "origin": {
-      "const": "import",
-      "description": "Present only for a session `agent-archive backfill` imported; absent for a hook-captured session. An imported session also carries the capture gap 'imported_without_hook_evidence': it has no lifecycle events, final-response text, or skill inventory."
+      "enum": [
+        "import",
+        "discovery"
+      ],
+      "description": "Admission provenance. From parser 0.20.0 discovery has no imported_at and preserves a discovered_without_hook_evidence gap; later hooks do not establish earlier lifecycle coverage."
+    },
+    "replay": {
+      "description": "Present only for a session a replay tool ran: the environment variable AGENT_ARCHIVE_REPLAY was set (non-empty) in the hook that registered it. list, stats, and handoff leave such sessions out unless asked (list --replays include|only). Fixed at registration, so a continuation never adds or removes it; a subagent carries its parent's. An object even without a run_id, so a reader tests for the key, not the value.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "description": "The variable's value when it is an identifier: 1 to 128 ASCII letters, digits, '.', '_', ':' or '-', starting with a letter or digit. Absent when the value was anything else, which is never recorded.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      }
     },
     "imported_at": {
       "type": "string",
@@ -359,7 +389,7 @@
         "file_created",
         "cursor_composer"
       ],
-      "description": "Where started_at came from: 'hook' when a hook observed the start, 'transcript' the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps), and 'cursor_composer' the chat's creation time in Cursor's database (a chat imported from it). Present only with origin 'import'."
+      "description": "Where started_at came from: 'hook' when a hook observed the start, 'transcript' the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps), and 'cursor_composer' the chat's creation time in Cursor's database (a chat imported from it). Present for import and discovery origins."
     }
   },
   "$defs": {
@@ -615,7 +645,8 @@
             "text_structure_partial",
             "unknown_field_omitted",
             "unknown_record_type",
-            "unsupported_value_omitted"
+            "unsupported_value_omitted",
+            "discovered_without_hook_evidence"
           ]
         },
         {
@@ -623,6 +654,50 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "git_head_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "observed_at"
+      ],
+      "properties": {
+        "sha": {
+          "description": "HEAD's full object name: 40 hex digits (SHA-1) or 64 (SHA-256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "dirty": {
+          "description": "Whether the working tree had staged, unstaged, or untracked (not ignored) changes against sha. A submodule counts when its checked-out commit differs, not for changes inside it. Absent when unknown.",
+          "type": "boolean"
+        },
+        "observed_at": {
+          "description": "The time of the hook event that saw it.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "git_head_last_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "observed_at"
+      ],
+      "properties": {
+        "sha": {
+          "description": "HEAD's full object name: 40 hex digits (SHA-1) or 64 (SHA-256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "observed_at": {
+          "description": "The time of the hook event that saw it.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     },
     "pull_request_link": {
       "type": "object",

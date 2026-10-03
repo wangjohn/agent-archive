@@ -28,6 +28,12 @@ type NativePathsProvider interface {
 	ProjectPaths(NativePathEnvironment) NativeProjectPaths
 }
 
+// TranscriptPathRecognizer optionally recognizes native transcript locations from
+// observed path facts. It must not read files or mutate configuration.
+type TranscriptPathRecognizer interface {
+	RecognizesTranscriptPath(NativePathEnvironment, string) bool
+}
+
 // NativePathsLookup provides path declarations for real source and project consumers.
 type NativePathsLookup interface {
 	LookupNativePaths(string) (NativePathsProvider, bool)

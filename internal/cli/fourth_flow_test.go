@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"io"
 	"os"
@@ -554,7 +555,7 @@ func TestFourthHistoryRepositoryMatch(t *testing.T) {
 	key := archive.RepoKey("https://example.test/acme/relocated.git")
 	env := Env{Agents: registry, BackfillTempDirs: []string{}, LookupEnv: func(string) (string, bool) { return "", false }, WorkingDir: func() (string, error) { return "", nil }, repoKeyContext: func(context.Context, string) string { return key }}
 	got := matchProjects(t.Context(), env, userHome, config.Config{}, []projectMatchRequest{{RepoKey: key}})
-	if got.Incomplete || len(got.Roots) != 1 || len(got.Roots[0]) != 1 || got.Roots[0][0] != project {
+	if got.Incomplete || len(got.Roots) != 1 || len(got.Roots[0]) != 1 || got.Roots[0][0] != local.CanonicalPath(project) {
 		t.Fatalf("history-only fourth clone missed: %+v", got)
 	}
 }
