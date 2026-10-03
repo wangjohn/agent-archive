@@ -519,7 +519,7 @@ func installedApps(cfg config.Config, found bool, lookups ...agentapi.HooksLooku
 		if len(lookups) > 0 {
 			return uninstallHookApps(lookups[0], hooks.Files(cfg.HookFiles), nil, nil)
 		}
-		return allHarnesses
+		return uninstallHookApps(productionAgents, hooks.Files(cfg.HookFiles), nil, nil)
 	}
 	return cfg.Harnesses
 }
