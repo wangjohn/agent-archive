@@ -214,3 +214,52 @@ func TestGluedURLsStayLinear(t *testing.T) {
 		}
 	}
 }
+
+// Folding used by credential gates is byte based: Unicode and malformed
+// UTF-8 must survive exactly, while every ASCII capital is folded.
+func TestNeedleTextFoldsOnlyASCII(t *testing.T) {
+	input := make([]byte, 256)
+	want := make([]byte, 256)
+	for i := range input {
+		input[i], want[i] = byte(i), byte(i)
+		if i >= 'A' && i <= 'Z' {
+			want[i] += 'a' - 'A'
+		}
+	}
+	if got := newNeedleText(string(input)).lower; got != string(want) {
+		t.Fatalf("folded bytes = %x, want %x", got, want)
+	}
+	for _, text := range []string{"TOKEN=secret", "PAſſWORD=secret"} {
+		if !newNeedleText(text).exotic {
+			t.Fatalf("lost Unicode credential gate for %q", text)
+		}
+	}
+}
+
+func TestASCIILowerBorrowsAlreadyFoldedText(t *testing.T) {
+	input := strings.Repeat("ordinary lowercase transcript text\n", 100)
+	var got string
+	if allocations := testing.AllocsPerRun(100, func() { got = asciiLower(input) }); allocations != 0 {
+		t.Fatalf("already folded text allocates %g times", allocations)
+	}
+	if got != input {
+		t.Fatal("already folded text changed")
+	}
+}
+
+func FuzzASCIILowerPreservesByteFolding(f *testing.F) {
+	for _, input := range []string{"", "already lowercase", "ASSISTANT: TOKEN=secret", "TOKEN=secret", "PAſſWORD=secret", "a\xffZ\x00"} {
+		f.Add(input)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		want := []byte(input)
+		for i, c := range want {
+			if 'A' <= c && c <= 'Z' {
+				want[i] = c + 'a' - 'A'
+			}
+		}
+		if got := asciiLower(input); got != string(want) {
+			t.Fatalf("folded bytes = %x, want %x", got, want)
+		}
+	})
+}

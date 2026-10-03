@@ -388,7 +388,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	// included (filter 10 dropped them). Sections are joined with a blank
 	// line when the transcript separated them with one, so the retained
 	// text is read back with the same rule.
-	var sections [][]string
+	visibleSections, visibleBytes := 0, 0
 	hiddenSections, hiddenLines := 0, 0
 	for _, section := range parsed.sections {
 		if hiddenTextRoles[section.role] {
@@ -400,18 +400,36 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 			}
 			continue
 		}
-		sections = append(sections, section.lines)
+		visibleSections++
+		sectionBytes := len(section.lines) - 1
+		for _, line := range section.lines {
+			sectionBytes += len(line)
+		}
+		visibleBytes += min(sectionBytes, maxTextBytes)
 	}
 	if hiddenSections > 0 {
 		addGap("hidden_instruction_omitted", fmt.Sprintf("%d text sections omitted (%d lines)", hiddenSections, hiddenLines))
 	}
-	if len(sections) == 0 {
+	if visibleSections == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable visible sections"}
 	}
 	state := sanitizeState{addGap: func(code string, _ int, detail string) { addGap(code, detail) }}
-	retained := make([]string, 0, len(sections))
-	for _, section := range sections {
-		safe, keep := sanitizeValue(strings.Join(section, "\n"), &state)
+	separator := "\n"
+	if parsed.blankSeparated {
+		separator = "\n\n"
+	}
+	// Append each sanitized section as soon as it is ready. Keeping all
+	// sanitized sections until a final Join doubles the live output storage
+	// for a large transcript. The visible input sizes provide a bounded
+	// initial capacity without reserving space for omitted hidden sections.
+	var retained strings.Builder
+	retained.Grow(visibleBytes + (visibleSections-1)*len(separator))
+	retainedSections := 0
+	for _, section := range parsed.sections {
+		if hiddenTextRoles[section.role] {
+			continue
+		}
+		safe, keep := sanitizeValue(strings.Join(section.lines, "\n"), &state)
 		if !keep {
 			continue
 		}
@@ -419,16 +437,16 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 		if !ok {
 			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
 		}
-		retained = append(retained, indentHeaderShapedLines(text, parsed.headerCase))
+		if retainedSections > 0 {
+			retained.WriteString(separator)
+		}
+		retained.WriteString(indentHeaderShapedLines(text, parsed.headerCase))
+		retainedSections++
 	}
-	if len(retained) == 0 {
+	if retainedSections == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable content"}
 	}
-	separator := "\n"
-	if parsed.blankSeparated {
-		separator = "\n\n"
-	}
-	text := strings.Join(retained, separator)
+	text := retained.String()
 	result.Text = []string{text}
 	result.Boundary.RetainedBytes = len(text)
 	return result, nil

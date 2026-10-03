@@ -68,17 +68,41 @@ type needleText struct {
 }
 
 func newNeedleText(s string) needleText {
-	lower := []byte(s)
-	for i, c := range lower {
-		if 'A' <= c && c <= 'Z' {
-			lower[i] = c + 'a' - 'A'
-		}
-	}
-	t := needleText{s: s, lower: string(lower), exotic: strings.ContainsRune(s, '\u017f') || strings.ContainsRune(s, '\u212a')}
+	lower := asciiLower(s)
+	t := needleText{s: s, lower: lower, exotic: strings.ContainsRune(s, '\u017f') || strings.ContainsRune(s, '\u212a')}
 	if len(s) >= pairSetMinLength {
 		t.pairs = newPairSet(t.lower)
 	}
 	return t
+}
+
+// asciiLower borrows already folded text and allocates only when an ASCII
+// upper-case byte changes. Unlike Unicode case folding it leaves every other
+// byte, including malformed UTF-8, intact for the credential pattern gates.
+func asciiLower(s string) string {
+	first := -1
+	for i := 0; i < len(s); i++ {
+		if 'A' <= s[i] && s[i] <= 'Z' {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return s
+	}
+	var lower strings.Builder
+	lower.Grow(len(s))
+	position := 0
+	for i := first; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			lower.WriteString(s[position:i])
+			lower.WriteByte(c + 'a' - 'A')
+			position = i + 1
+		}
+	}
+	lower.WriteString(s[position:])
+	return lower.String()
 }
 
 // presentNeedles returns the needles that occur anywhere in t, all of them
