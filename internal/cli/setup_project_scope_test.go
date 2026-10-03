@@ -53,7 +53,7 @@ func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
 			command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, sourceHome, env)
 			// Execute only shell argument parsing, so this also verifies the
 			// printed JSON survives quotes and reaches the receiving flag intact.
-			output, err := exec.Command("sh", "-c", "set -- "+command+"; printf '%s\\000' \"$@\"").Output()
+			output, err := exec.CommandContext(t.Context(), "sh", "-c", "set -- "+command+"; printf '%s\\000' \"$@\"").Output()
 			must(t, err)
 			args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
 			encoded := ""
@@ -119,17 +119,18 @@ func TestScopeTransferRefusesPartialInclusionsAndEscapingSubtrees(t *testing.T) 
 		}
 	}
 	for _, reason := range []string{"missing", "ambiguous"} {
-		cfg := config.Config{}
+		var projects []archive.ProjectActivation
 		other := filepath.Join(home, "other")
 		if reason == "ambiguous" {
 			must(t, os.Mkdir(other, 0700))
-			cfg.Archive.Projects = []archive.ProjectActivation{{Root: other, Included: true}}
+			projects = []archive.ProjectActivation{{Root: other, Included: true}}
 		} else {
 			env.repoKeyContext = func(context.Context, string) string { return "" }
 		}
 		if reason == "ambiguous" {
 			env.repoKeyContext = func(context.Context, string) string { return key }
 		}
+		cfg := config.Config{Archive: archive.Config{Projects: projects}}
 		before := append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
 		encoded, err := json.Marshal([]portableProjectRule{{RepoKey: key, Path: ".", Included: true}, {RepoKey: key, Path: "private", Included: false}})
 		must(t, err)

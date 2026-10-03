@@ -59,7 +59,7 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	}
 	rules := make([]portableProjectRule, 0, len(projects))
 	for _, project := range projects {
-		rule := portableProjectRule{Path: homeRelative(project.Root, home), Included: project.Included}
+		path, repoKey := homeRelative(project.Root, home), ""
 		// Keep nested checkouts under the outer scope: relocating an excluded
 		// nested repo independently would leave its old subtree included.
 		anchor := ""
@@ -70,10 +70,10 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 		}
 		if anchor != "" {
 			if rel, err := filepath.Rel(anchor, project.Root); err == nil {
-				rule.RepoKey, rule.Path = anchors[anchor], filepath.ToSlash(rel)
+				repoKey, path = anchors[anchor], filepath.ToSlash(rel)
 			}
 		}
-		rules = append(rules, rule)
+		rules = append(rules, portableProjectRule{RepoKey: repoKey, Path: path, Included: project.Included})
 	}
 	encoded, _ := json.Marshal(rules)
 	return string(encoded)
@@ -92,7 +92,7 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 	if err := decoder.Decode(&rules); err != nil {
 		return []error{fmt.Errorf("--project-scope: %w", err)}
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return []error{errors.New("--project-scope must contain one JSON array")}
 	}
 	if len(rules) == 0 {
