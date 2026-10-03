@@ -312,6 +312,11 @@ requests the session created or merged, when its own tool calls confirmed
 them; the `Git` row counts commits and pushes and names each pull request.
 See [JSON output](../reference/json-output.md#show).
 
+A session captured by this release's hooks in a git repository also records
+the commit it started on, whether the working tree had uncommitted changes,
+and the last commit a stop hook saw; the `Commit` row shows them
+(`started on 3f9c2ab4d1e0 with uncommitted changes · last seen on
+9e01d4c7a2b8`), and `--json` has the full names in `git_head`.
 From parser `0.17.0` metadata also records the name your agent gave the
 session (`name`), the last git branch it recorded (`branch`), and the pull
 requests it was linked to (`pull_requests`). The summary's heading is the

@@ -518,7 +518,7 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 			}
 			continue
 		}
-		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after, intent.Replay); err != nil {
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{}, after, intent.Replay); err != nil {
 			return err
 		}
 		// Complete earlier waiting effects immediately after the admitting
@@ -584,7 +584,7 @@ func applyWaitingReplayEffects(home string, store *state.Store, cfg config.Confi
 		if !found {
 			return state.ErrSessionNotRegistered
 		}
-		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, "", after, intent.Replay); err != nil {
+		if err := applyEvent(home, store, cfg, event, intent.ObservedAt, gitLookups{}, after, intent.Replay); err != nil {
 			return err
 		}
 	}

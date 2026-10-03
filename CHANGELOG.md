@@ -20,6 +20,22 @@ Planned for v0.2.0. This release has not been tagged or published.
   and `status --json` counts them per app in `replay_sessions`. See
   [JSON output](docs/reference/json-output.md#replay-sessions).
 
+- **The commit a session started on.** When a session starts in a git
+  repository, the hook records the commit checked out in its working
+  directory and whether the working tree had uncommitted changes, and each
+  stop records the commit checked out then. The metadata carries them as
+  `git_head` (`start` with `sha`, `dirty` and `observed_at`; `last` with
+  `sha` and `observed_at`), `show` has a `Commit` row, and `show --json` and
+  `list --json` include the field. Only full commit names, a yes/no, and
+  times are kept: no branch, remote, path, or file name. The hook runs
+  `git rev-parse` and `git status` with the same short timeout as the
+  repository key, before it takes its lock, and records nothing when git is
+  missing, slow, or the directory is not a repository. Sessions registered
+  before this release and imported sessions have no starting commit; later
+  live stops can still record `last`. Subagents have neither, and nothing
+  infers a commit later. See
+  [JSON output](docs/reference/json-output.md#show) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
   plus transaction-based

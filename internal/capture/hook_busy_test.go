@@ -35,7 +35,7 @@ func TestHookLockTimeoutLeavesContentFreeDiagnostic(t *testing.T) {
 		waited, lockErr = time.Since(start), err
 		return unlock, err
 	}
-	err = handleEvent(home, "claude", payload, at, lock, nil, eventOptions{})
+	err = handleEvent(home, "claude", payload, at, lock, nil, nil)
 	if err != nil {
 		t.Fatalf("queued first start: %v", err)
 	}
