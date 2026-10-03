@@ -114,7 +114,9 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
 		return false, signature, nil
 	}
-	if !signature.Failed && reg.LastHead.Valid() && reg.LastHead.SHA != signature.PublishedLastHead {
+	// Even past a remembered read failure: the HEAD-only publication needs
+	// no read of the source.
+	if headFingerprint(reg.LastHead) != "" && headFingerprint(reg.LastHead) != signature.PublishedLastHead {
 		return false, signature, nil
 	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
