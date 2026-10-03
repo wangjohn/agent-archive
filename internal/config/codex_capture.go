@@ -50,6 +50,10 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	if next.CodexCapture == nil && previous.CodexCapture == nil {
 		return nil
 	}
+	nativeConsentStart := now.UTC()
+	if next.DestinationSince.After(nativeConsentStart) {
+		nativeConsentStart = next.DestinationSince
+	}
 	var p CodexCaptureConfig
 	if next.CodexCapture != nil {
 		p = *next.CodexCapture
@@ -85,10 +89,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		start := now.UTC()
-		if next.DestinationSince.After(start) {
-			start = next.DestinationSince
-		}
+		start := nativeConsentStart
 		var intervals []DiscoveryInterval
 		if !next.Paused {
 			intervals = []DiscoveryInterval{{Start: start}}
@@ -96,7 +97,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 		a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
 		p.Authorization = &a
 	}
-	if err := reconcileCodexSource(&p, *next, previous, active, keep, now); err != nil {
+	if err := reconcileCodexSource(&p, *next, previous, active, keep, now, nativeConsentStart); err != nil {
 		return err
 	}
 	reconcileCodexBarriers(&p, previous, *next, now)
@@ -243,7 +244,7 @@ func (c Config) CodexContinuationAllowed(root, cwd string) bool {
 	return !found || rule.Included
 }
 
-func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, keep bool, now time.Time) error {
+func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, keep bool, now, nativeConsentStart time.Time) error {
 	old := previous.CodexCapture
 	if active && next.Discovery != nil && next.Discovery.Enabled {
 		sourceKeep := keep && old.SourceAuthorization != nil && !discoveryNativeStartFloor(*old.SourceAuthorization).IsZero() && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
@@ -261,10 +262,7 @@ func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, 
 			if err != nil {
 				return err
 			}
-			start := now.UTC()
-			if next.DestinationSince.After(start) {
-				start = next.DestinationSince
-			}
+			start := nativeConsentStart
 			var intervals []DiscoveryInterval
 			if !next.Paused {
 				intervals = []DiscoveryInterval{{Start: start}}

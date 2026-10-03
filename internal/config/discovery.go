@@ -141,15 +141,19 @@ func validateCodexAuthorization(a *DiscoveryAuthorization) error {
 // ReconcileDiscovery creates new generations when effective scope changes.
 // Setup calls it before its journal commits the config and all permissions.
 func ReconcileDiscovery(next *Config, previous Config, now time.Time) error {
+	nativeConsentStart := now.UTC()
+	if next.DestinationSince.After(nativeConsentStart) {
+		nativeConsentStart = next.DestinationSince
+	}
 	working := *next
-	if err := reconcileDiscovery(&working, previous, now); err != nil {
+	if err := reconcileDiscovery(&working, previous, now, nativeConsentStart); err != nil {
 		return err
 	}
 	*next = working
 	return nil
 }
 
-func reconcileDiscovery(next *Config, previous Config, now time.Time) error {
+func reconcileDiscovery(next *Config, previous Config, now, nativeConsentStart time.Time) error {
 	if err := ReconcileCodexCapture(next, previous, now); err != nil {
 		return err
 	}
@@ -182,12 +186,9 @@ func reconcileDiscovery(next *Config, previous Config, now time.Time) error {
 				if err != nil {
 					return err
 				}
-				start := now.UTC()
+				start := nativeConsentStart
 				if p.ActivatedAt.After(start) {
 					start = p.ActivatedAt
-				}
-				if next.DestinationSince.After(start) {
-					start = next.DestinationSince
 				}
 				var intervals []DiscoveryInterval
 				if !next.Paused {
