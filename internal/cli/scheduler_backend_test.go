@@ -309,7 +309,7 @@ func TestSetupOverARecordThisSystemCannotUseRecordsItsOwn(t *testing.T) {
 	// Not parallel: asksFor replaces the scheduler lookup.
 	l := newLinuxInstall(t)
 	must(t, os.MkdirAll(l.home, 0o700))
-	must(t, config.Save(l.home, config.Config{BackgroundBackend: "launchd"}))
+	must(t, config.Save(l.home, config.Config{BackgroundBackend: "launchd", Discovery: &config.DiscoveryConfig{ChoiceRecorded: true}}))
 	asked := l.asksFor(t)
 	l.setup()
 	// "" while it plans, and "systemd" as its journal names the job's backend.

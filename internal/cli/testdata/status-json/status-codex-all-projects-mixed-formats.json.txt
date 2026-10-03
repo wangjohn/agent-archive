@@ -1,0 +1,125 @@
+$ agent-archive status --json
+{
+  "identity_recovery": {
+    "complete": false,
+    "pending": false,
+    "phase": "unknown"
+  },
+  "privacy_evidence": {
+    "state": "not_verified",
+    "reason": "inspection_unavailable",
+    "scope": "native_bucket_public_access",
+    "checked_at": "2026-09-25T12:00:00Z",
+    "configuration_id": "ID",
+    "guidance_url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"
+  },
+  "configuration_id": "ID",
+  "authentication": {
+    "configuration_id": "",
+    "state": "unknown",
+    "context": ""
+  },
+  "code": "awaiting_capture",
+  "schema_version": 4,
+  "state": "Waiting for capture",
+  "storage": "s3 / team-archive / agent-archive/",
+  "storage_verified_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_by": "setup",
+  "privacy": "not_verified",
+  "background": "loaded",
+  "paused": false,
+  "skill_evidence": "metadata",
+  "projects": [],
+  "applications": [
+    {
+      "codex_capture_scope": "all-projects",
+      "discovery": {
+        "enabled": true,
+        "supported": true,
+        "last_attempt": "2026-09-25T11:59:00Z",
+        "pending": true,
+        "project_metadata_operations": 0,
+        "git_metadata_bytes": 0,
+        "header_probes": 0,
+        "directory_entries": 0,
+        "bytes_read": 0,
+        "registered": 0,
+        "outcomes": {
+          "invalid_metadata": 1,
+          "native_format": 2,
+          "unsupported_producer": 1
+        }
+      },
+      "published_sessions": 0,
+      "verified_sessions": 0,
+      "configured": true,
+      "hook_observed": false,
+      "captured_locally": false,
+      "published": false,
+      "read_back_verified": false,
+      "verification_state": "not_verified",
+      "trust": "unknown",
+      "installed": true,
+      "installed_version": "0.121.0",
+      "installed_version_source": "test",
+      "installed_version_observed_at": "2026-09-25T12:00:00Z",
+      "installed_version_kind": "cli",
+      "installed_version_state": "known",
+      "installed_version_support": "unverified",
+      "installed_version_support_reason": "no_verified_capture",
+      "capabilities": {
+        "fresh_start": {
+          "state": "documented",
+          "evidence": "SessionStart.source distinguishes startup/clear from resume/compact."
+        },
+        "transcript": {
+          "state": "documented",
+          "evidence": "Hooks provide transcript_path; official documentation says its format is not stable."
+        },
+        "lifecycle": {
+          "state": "documented",
+          "evidence": "SessionStart, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop are documented."
+        },
+        "skill_evidence": {
+          "state": "unavailable",
+          "evidence": "No supported native eligibility/use contract has been verified.",
+          "next_action": "Treat eligibility comparisons as unavailable."
+        },
+        "subagent_linkage": {
+          "state": "unavailable",
+          "evidence": "A lifecycle event alone does not provide a verified child transcript and parent link.",
+          "next_action": "Validate child identity, parent identity, and transcript path for the installed version."
+        },
+        "adapter_fixtures": {
+          "state": "documented",
+          "evidence": "Synthetic fixtures exercise the bounded adapter; they do not prove an installed version."
+        }
+      },
+      "projects": null,
+      "code": "awaiting_session",
+      "hooks": "installed",
+      "name": "codex",
+      "state": "waiting for first session",
+      "sessions": 0,
+      "subagent_sessions": 0,
+      "imported_sessions": 0,
+      "uploading_sessions": 0,
+      "uploading": [],
+      "waiting_for_transcript_sessions": 0
+    }
+  ],
+  "agent_skills": [
+    "/Users/alex/.agents/skills/handoff/SKILL.md",
+    "/Users/alex/.agents/skills/agent-archive/SKILL.md"
+  ],
+  "collector": {
+    "pending_count": 0
+  },
+  "imported_sessions": 0,
+  "imported_pending": 0,
+  "imported_with_issues": 0,
+  "last_import": "",
+  "next_action": "Start a supported new Codex task in any non-excluded project, then run agent-archive sync. Hook approval is optional for discovery."
+}
+[exit 0]

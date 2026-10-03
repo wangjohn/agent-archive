@@ -61,7 +61,7 @@ func TestMachineTwoHomeFakeAcceptance(t *testing.T) {
 	project := filepath.Join(userHome, "project")
 	must(t, os.MkdirAll(project, 0700))
 	output.Reset()
-	if code := Run([]string{"setup", "--pair-file", "-", "--yes", "--project", project}, strings.NewReader(bundle), &output, &diagnostics, receiver); code != 0 {
+	if code := Run([]string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}, strings.NewReader(bundle), &output, &diagnostics, receiver); code != 0 {
 		t.Fatalf("pair %d %s", code, diagnostics.String())
 	}
 	cfg, _, err := config.Load(home)

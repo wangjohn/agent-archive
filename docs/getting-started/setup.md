@@ -178,7 +178,7 @@ The review lists what setup will save, then a checklist of what it found:
 ```
 Step 3 of 3 · Ready to start
 
-  Apps       Codex 0.121.0 · Claude Code 2.1.90
+  Apps       Codex 0.159.3 · Claude Code 2.1.90
   Projects   ~/src/web-app
   Skills     metadata  User skill roots outside selected projects may be scanned
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
@@ -187,7 +187,7 @@ Step 3 of 3 · Ready to start
   ✓ Storage connected       write, read, list, delete
   ✓ Bucket is private       all public access blocked
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ✓ Codex discovery        supported new tasks do not require hook approval
 ```
 
 The summary shows the apps with their versions ("version not detected"
@@ -222,8 +222,9 @@ any row is ✗, setup does not offer to start: fix what it names, then choose
   ✗ unless you chose **Continue anyway** during guided R2 creation; that
   choice remains visible as a warning in the review.
 - **Hook files are valid**: setup can edit each app's hook file.
-- **Codex needs one step**: Codex asks you to approve new hooks. After
-  setup, run `/hooks` in Codex and approve them.
+- **Codex discovery**: supported new tasks do not require hook approval when
+  enabled. Hook-only setups instead show **Codex needs one step**: run `/hooks`
+  in Codex and approve the archive hooks.
 
 Any warnings about the change follow, such as a shorter retention period or
 hooks moving to another file.
@@ -267,7 +268,7 @@ that fixes it, before any check runs.
 export AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY=...   # or pipe it on standard input
 agent-archive setup --yes --provider r2 --r2-account ACCOUNT_ID --bucket BUCKET \
   --r2-access-key-id KEY_ID --project ~/code/app --project ~/code/api \
-  --apps codex,claude
+  --apps codex,claude --codex-discovery on --codex-capture-scope included-projects
 
 agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   --project ~/code/app
@@ -552,9 +553,12 @@ from loading its own job into your real launchd or systemd user manager: stub
 
 After "Configuration saved.", setup says, with one line per app, what to do next:
 
-- **Codex:** run `/hooks` and approve the archive hooks, then start a new
-  session. Codex doesn't run hooks it hasn't approved, and this is the most
-  common reason nothing is captured.
+- **Codex:** start a supported new task within the reviewed Codex scope: an included
+  project in included-project mode, or any non-excluded project in all-projects mode.
+  Interactive setup reviews automatic discovery and Codex scope; fresh scripts
+  specify both choices explicitly. Hook
+  capture remains available with `/hooks` approval, and is required when
+  discovery is disabled or the native producer is unsupported.
 - **Claude Code:** nothing to approve; start a new session.
 - **Cursor:** nothing to approve; start a new Agent chat.
 
@@ -609,7 +613,7 @@ ready to copy:
 
 ```text
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/code/app
+  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/code/app
 ```
 
 Whole repositories with a known origin use `--project-repo` for bounded
@@ -626,3 +630,60 @@ For another machine, the encrypted shared-key beta can transfer settings through
 `setup --pair` or `setup --pair-file PATH`. Read [Multiple machines](../guides/multiple-machines.md)
 for separate bundle/code delivery, destination consent, scope review, and the
 shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.
+
+## Automatic Codex discovery
+
+Interactive setup offers Codex capture scope, defaulting to **Included projects
+only**. Choosing **All current and future projects (Codex only)** approves supported
+new Codex tasks in unlisted repositories and directories without another project
+prompt. Claude Code and Cursor still need explicitly included projects. Codex-only
+all-projects setup can have zero explicitly included projects.
+
+Scope and automatic discovery are separate choices. Fresh scripted Codex setup
+must pass both `--codex-discovery on|off` and
+`--codex-capture-scope included-projects|all-projects`. For example:
+
+```sh
+agent-archive setup --yes --provider s3 --bucket BUCKET \
+  --aws-profile PROFILE --region us-east-1 --apps codex \
+  --codex-discovery on --codex-capture-scope all-projects
+```
+
+`all-projects` plus `--codex-discovery off` approves hook-only capture for that
+Codex scope. Existing installations keep omitted choices; `--yes`, refresh,
+pairing, destination edits and new projects never imply expanded permission.
+Pairing reviews the receiving machine's local capture choice and starts its own
+permission window; another machine's live authorization intervals are never imported.
+Use the review’s **Edit a setting → Codex project exceptions** to exclude a
+directory or explicitly include a child beneath an excluded parent. The nearest
+explicit rule wins; lifting an exclusion admits only eligible future starts.
+The final review separates capture mechanism, scope, exceptions, approved Codex
+homes, destination, start boundary, history, copies and optional hooks.
+
+Consent uses the session's original native creation time, not its file modification
+time, copy time, first prompt, or discovery time. Existing history and sessions
+created while paused stay excluded. Recognizable imports, forks and spawned-agent
+records stay unsupported. A recently copied native session that has indistinguishable
+supported metadata may qualify; discovery does not attest where execution occurred.
+Project exclusions, destination consent, deduplication and privacy filtering still
+apply. Deliberate backfill remains the way to include older history.
+
+Ordinary `agent-archive status` leads Codex with discovery state and scope;
+absent optional hooks are healthy, while broken owned hooks remain actionable.
+Mixed supported and unsupported observations show skipped counts and reasons.
+Update agent-archive for unknown source formats; hooks and backfill can help only
+where that particular format is supported. The shell CLI version does not prove
+which format every desktop build writes. Status shows last attempt age and
+separates discovery/reconciliation, identity recovery and queued uploads.
+Manual sync advances bounded work; it does not guarantee exhaustive coverage or
+an ETA. Large cold source trees can need many scheduled passes.
+`agent-archive status --verbose` adds details separately from hook observation.
+A task found locally is not an upload, and an upload is not verified until its
+filtered archive has been read back. A complete scan is coverage information,
+not proof that a task was captured.
+
+Initial discovery supports exact producer combinations for Codex `0.159.3` and
+`0.160.0`: CLI `cli/codex-tui`, exec `exec/codex_exec`, and desktop source
+`vscode/Codex Desktop`. Unknown versions remain unsupported until inspected.
+These are source-format compatibility rules, not a claim that every installed
+desktop build or GUI onboarding workflow has been tested.

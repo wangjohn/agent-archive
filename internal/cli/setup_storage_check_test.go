@@ -419,7 +419,7 @@ func TestSetupYesStorageDiagnosisGoesToStandardError(t *testing.T) {
 	env := failingStorageEnv(t, t.TempDir(), &failure)
 	env.IsTerminal = func(any) bool { return false }
 	var out, errOut strings.Builder
-	args := []string{"setup", "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex"}
+	args := []string{"setup", "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}
 	if code := Run(args, strings.NewReader(""), &out, &errOut, env); code != 1 {
 		t.Fatalf("exit %d\n%s\n%s", code, &out, &errOut)
 	}

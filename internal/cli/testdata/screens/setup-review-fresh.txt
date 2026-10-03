@@ -11,6 +11,11 @@ Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n] y
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+Codex capture scope
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [1]: included-projects
+
 
 Step 2 of 3 · Connect storage
 
@@ -36,6 +41,15 @@ Step 3 of 3 · Ready to start
 
   Apps       Codex 0.121.0 · Claude Code 2.1.90
   Projects   ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
@@ -43,7 +57,7 @@ Step 3 of 3 · Ready to start
   ✓ Storage connected       write, read, list, delete
   ✓ Bucket is private       all public access blocked
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ✓ Codex discovery         supported new tasks do not require hook approval
 
   Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
