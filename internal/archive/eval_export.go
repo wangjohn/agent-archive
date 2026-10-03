@@ -274,7 +274,7 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 // bundle when the sidecar was written by another parser version, so the
 // record's counts, tools, and parser describe the same parse as its
 // prompts and edited files. What the registration contributed (identity,
-// project, commits, replay, an import's gap) stays the sidecar's.
+// project, commits, replay, admission gaps) stays the sidecar's.
 func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
 	if m.Parser.Version == DefaultParserVersion {
 		return nil
@@ -292,7 +292,7 @@ func (e *EvalExport) rederive(bundle SourceBundle, m Metadata) error {
 	e.Models, e.Counts, e.ModelTokens, e.ToolsUsed, e.MCPCalls = derived.Models, derived.Counts, derived.ModelTokens, derived.ToolsUsed, derived.MCPCalls
 	e.SkillsUsed, e.GitActivity, e.CaptureGaps = derived.SkillsUsed, derived.GitActivity, derived.CaptureGaps
 	for _, gap := range m.CaptureGaps {
-		if gap.Code == CaptureGapImportedWithoutHookEvidence && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
+		if (gap.Code == CaptureGapImportedWithoutHookEvidence || gap.Code == CaptureGapDiscoveredWithoutHookEvidence) && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
 			e.CaptureGaps = append(e.CaptureGaps, gap)
 		}
 	}
