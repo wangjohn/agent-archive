@@ -126,7 +126,7 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
-	"setup_project_scope.go": {"json.NewDecoder": 1},                  // explicit JSON flag string, never stdin; cannot wait for a person
+	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1}, // explicit JSON or --yes file/stdin scope, never an implicit prompt
 	"pairing_receive.go":     {"io.ReadAll": 1},                       // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
 	"pairing_ledger.go":      {"io.ReadAll": 1},                       // bounded local ledger files, never input
 	"machines_revoke.go":     {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin

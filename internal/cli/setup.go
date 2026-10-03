@@ -149,6 +149,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if opts.given() && !opts.yes {
 		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
+
 	// Every step asks something, so without a terminal setup would stop at
 	// its first question with nothing but an end-of-input error.
 	if !opts.yes && !env.interactive(stdin) {
@@ -1110,8 +1111,11 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		args = append(args, "--skills")
 	}
 
+	projectStart := len(args)
+	scope := ""
 	if hasProjectExclusions(cfg.Archive.Projects) {
-		args = append(args, "--project-scope", portableProjectScope(cfg.Archive.Projects, userHome, env, ctx))
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		args = append(args, "--project-scope-file", "-")
 	} else {
 		for _, project := range cfg.Archive.Projects {
 			if !project.Included {
@@ -1137,10 +1141,20 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 			}
 		}
 	}
+	if scope == "" && scopeArgumentsNeedStream(args) {
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		args = append(args[:projectStart], "--project-scope-file", "-")
+	}
 	for i, arg := range args {
 		args[i] = shellWord(arg)
 	}
-	return strings.Join(args, " ")
+	command := strings.Join(args, " ")
+	if scope != "" {
+		// JSON is a single line beginning with [, so it cannot terminate this
+		// quoted heredoc. Its paths never become shell expansions or argv.
+		command += " <<'AGENT_ARCHIVE_PROJECT_SCOPE'\n" + scope + "\nAGENT_ARCHIVE_PROJECT_SCOPE"
+	}
+	return command
 }
 
 // homeRelative writes path from ~ when it is in the home folder. Project
@@ -2132,7 +2146,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScope != "" {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScope != "" || opts.projectScopeFile != "" {
 		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

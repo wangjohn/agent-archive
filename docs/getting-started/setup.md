@@ -628,7 +628,7 @@ for separate bundle/code delivery, destination consent, scope review, and the
 shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.
 
 When your capture scope contains exclusions, the second-machine command uses
-`--project-scope JSON` to transfer all inclusion and exclusion rules together.
+`--project-scope-file -` with a quoted heredoc to transfer all inclusion and exclusion rules together.
 Repository-relative exclusions and reincluded subtrees follow a relocated
 checkout. Missing excluded folders stay excluded if created later; a failed
 repository match or unsafe subtree mapping refuses the transfer before

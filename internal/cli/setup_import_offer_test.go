@@ -218,7 +218,9 @@ func TestAnotherMachineCommand(t *testing.T) {
 		}},
 	}
 	got := anotherMachineCommand(cfg, "/Users/alex")
-	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project-scope '[{"path":"~/src/web app","included":true},{"path":"~/src/api","included":false},{"path":"/Volumes/work/it'\''s","included":true},{"path":"~","included":true}]'`
+	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project-scope-file - <<'AGENT_ARCHIVE_PROJECT_SCOPE'
+[{"path":"~/src/web app","included":true},{"path":"~/src/api","included":false},{"path":"/Volumes/work/it's","included":true},{"path":"~","included":true}]
+AGENT_ARCHIVE_PROJECT_SCOPE`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
