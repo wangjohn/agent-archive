@@ -54,24 +54,35 @@ func TestDiscoveryProviderPassesSeparateApprovedHomesAndLegacyFiles(t *testing.T
 	}
 }
 
+type discoveryImmutableFact string
+
+const (
+	discoveryNativeIDFact   discoveryImmutableFact = "native_id"
+	discoveryStartFact      discoveryImmutableFact = "start"
+	discoveryCWDFact        discoveryImmutableFact = "cwd"
+	discoveryVersionFact    discoveryImmutableFact = "version"
+	discoveryOriginatorFact discoveryImmutableFact = "originator"
+	discoverySourceFact     discoveryImmutableFact = "source"
+)
+
 func TestDiscoveryImmutableFactsRejectBeforeSelectedFilter(t *testing.T) {
 	t.Parallel()
-	for _, field := range []string{"native_id", "start", "cwd", "version", "originator", "source"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []discoveryImmutableFact{discoveryNativeIDFact, discoveryStartFact, discoveryCWDFact, discoveryVersionFact, discoveryOriginatorFact, discoverySourceFact} {
+		t.Run(string(field), func(t *testing.T) {
 			t.Parallel()
 			reg := discoveryProviderRegistration(t, t.TempDir(), "000000000001")
 			switch field {
-			case "native_id":
+			case discoveryNativeIDFact:
 				reg.NativeSessionID = "other"
-			case "start":
+			case discoveryStartFact:
 				reg.SessionStartedAt = reg.SessionStartedAt.Add(time.Second)
-			case "cwd":
+			case discoveryCWDFact:
 				reg.DiscoveryCwd = reg.DiscoveryCwd + "-other"
-			case "version":
+			case discoveryVersionFact:
 				reg.Harness.Version = "other"
-			case "originator":
+			case discoveryOriginatorFact:
 				reg.DiscoveryProducerOriginator = "other"
-			case "source":
+			case discoverySourceFact:
 				reg.DiscoveryProducerSource = "exec"
 			}
 			filter := &discoveryObservedFilter{TranscriptFilter: codex.Filter{}}

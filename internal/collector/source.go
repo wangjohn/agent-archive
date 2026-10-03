@@ -116,12 +116,15 @@ func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegi
 // sourceEnvironment keeps discovered files confined to their admitted source home.
 // Hooks and backfill retain the provider's existing default filesystem semantics.
 func sourceEnvironment(reg *archive.SessionRegistration, database string) agentapi.SourceEnvironment {
-	e := agentapi.SourceEnvironment{Database: (Options{CursorDatabase: database}).cursorDatabase()}
+	db := (Options{CursorDatabase: database}).cursorDatabase()
 	if reg != nil {
-		e.Files = sourcefacts.RootOpener{Root: reg.DiscoveryRoot}
-		e.Policy = transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true}
+		return agentapi.SourceEnvironment{
+			Database: db,
+			Files:    sourcefacts.RootOpener{Root: reg.DiscoveryRoot},
+			Policy:   transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true},
+		}
 	}
-	return e
+	return agentapi.SourceEnvironment{Database: db}
 }
 
 func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptFilter, error) {
