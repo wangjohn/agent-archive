@@ -35,10 +35,17 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 
 func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
-	canonical := make([]archive.ProjectActivation, len(projects))
-	copy(canonical, projects)
-	for i := range canonical {
-		canonical[i].Root = local.CanonicalPath(canonical[i].Root)
+	canonical := make([]archive.ProjectActivation, 0, len(projects))
+	seen := map[string]bool{}
+	for _, project := range projects {
+		project.Root = local.CanonicalPath(project.Root)
+		// Equal decisions coalesce. Conflicts remain duplicate rules so the
+		// receiver refuses atomically; latched capture identities can differ
+		// from today's aliases, so choosing an inclusion could widen scope.
+		if included, exists := seen[project.Root]; !exists || included != project.Included {
+			seen[project.Root] = project.Included
+			canonical = append(canonical, project)
+		}
 	}
 	projects = canonical
 	home = local.CanonicalPath(home)
@@ -99,6 +106,43 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	return string(encoded)
 }
 
+// readProjectScopeInput reads only an explicitly selected file or stdin stream.
+func readProjectScopeInput(opts setupOptions, stdin io.Reader, env Env) (setupOptions, error) {
+	if opts.projectScopeFile == "" {
+		return opts, nil
+	}
+	if opts.projectScope != "" {
+		return opts, errors.New("give only one of --project-scope and --project-scope-file")
+	}
+	reader := stdin
+	var file *os.File
+	if opts.projectScopeFile != "-" {
+		var err error
+		file, err = os.Open(opts.projectScopeFile)
+		if err != nil {
+			return opts, errors.New("--project-scope-file cannot be opened")
+		}
+		reader = file
+	}
+	// 4096 native 4096-byte paths, each byte escaped as six JSON characters,
+	// plus rule fields and repository keys fit below this bounded input size.
+	const maxScopeBytes = 128 << 20
+	data, err := io.ReadAll(io.LimitReader(reader, maxScopeBytes+1))
+	if file != nil {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil || len(data) > maxScopeBytes {
+		return opts, errors.New("--project-scope-file is unreadable or exceeds 128 MiB")
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return opts, errors.New("--project-scope-file must contain capture rules")
+	}
+	opts.projectScope = string(data)
+	return opts, nil
+}
+
 // setupProjectScope resolves every rule before changing the candidate config.
 // A failed exclusion must never leave its ancestor newly included.
 func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []error {
@@ -132,7 +176,7 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 		}
 		if _, ok := indices[rule.RepoKey]; !ok {
 			indices[rule.RepoKey] = len(requests)
-			requests = append(requests, projectMatchRequest{RepoKey: rule.RepoKey})
+			requests = append(requests, projectMatchRequest{RepoKey: rule.RepoKey, TransferredScope: true})
 		}
 	}
 	matched := projectMatchResult{}
@@ -185,8 +229,13 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 func applyProjectScope(cfg *config.Config, resolved []archive.ProjectActivation) []error {
 	saved := make([]archive.ProjectActivation, len(cfg.Archive.Projects))
 	copy(saved, cfg.Archive.Projects)
+	decisions := map[string]bool{}
 	for i := range saved {
 		saved[i].Root = local.CanonicalPath(saved[i].Root)
+		if included, exists := decisions[saved[i].Root]; exists && included != saved[i].Included {
+			return []error{errors.New("--project-scope saved aliases have conflicting capture decisions; review the saved capture scope first")}
+		}
+		decisions[saved[i].Root] = saved[i].Included
 	}
 	// Saved reinclusions must not defeat a transferred exclusion. Refuse
 	// before writing anything, while keeping explicitly transferred reinclusions.
@@ -264,4 +313,13 @@ func resolveProjectScopePath(path string) (string, error) {
 		return "", err
 	}
 	return local.CanonicalPath(filepath.Join(resolved, rel)), nil
+}
+
+// scopeArgumentsNeedStream selects transport before OS argv limits are reached.
+func scopeArgumentsNeedStream(args []string) bool {
+	bytes := 0
+	for _, arg := range args {
+		bytes += len(arg) + 1
+	}
+	return bytes > 64<<10
 }
