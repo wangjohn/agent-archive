@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/discoveryio"
 	"github.com/wangjohn/agent-archive/internal/filechange"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Skills declares fixture-owned locations, separately from other integrations.
@@ -293,6 +294,5 @@ func ReadManifestShards(paths []string, open func(string) (io.ReadCloser, error)
 // RecognizesTranscriptPath demonstrates a fourth native folder convention.
 func (*Ports) RecognizesTranscriptPath(e agentapi.NativePathEnvironment, path string) bool {
 	root := filepath.Join(e.Locations.UserHome, ".orbifold", "flight-recorder")
-	rel, err := filepath.Rel(root, path)
-	return filepath.IsAbs(path) && filepath.IsAbs(e.Locations.UserHome) && err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return filepath.IsAbs(path) && filepath.IsAbs(e.Locations.UserHome) && filepath.Clean(path) != root && local.PathWithin(path, root)
 }
