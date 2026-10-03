@@ -797,153 +797,199 @@ func messageHashAt(ctx context.Context, q querier, key string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)[:16]), nil
 }
 
-// signatureOnly avoids loading an over-limit composer value into Go merely to cache its stable failure.
-// SQLite visits selected header fields; unknown fields and inline message contents are never returned.
+// signatureOnly visits the composer once without returning unknown native content.
+// A statement-local JSON tree retains only typed metadata and direct identities;
+// separate json_each statements would parse a huge omitted value repeatedly.
 func signatureOnly(ctx context.Context, q querier, id string) (Signature, error) {
 	key := "composerData:" + id
-	var valid sql.NullBool
-	var kind sql.NullString
-	// SQLite JSON treats a raw NUL as end-of-input; encoding/json rejects it.
-	// Escaped JSON NUL characters remain valid native identity bytes.
-	err := q.QueryRowContext(ctx, `SELECT json_valid(value) AND instr(CAST(value AS BLOB),x'00') = 0, CASE WHEN json_valid(value) THEN json_type(value) END FROM cursorDiskKV WHERE key = ?`, key).Scan(&valid, &kind)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && !valid.Valid {
-		return Signature{}, ErrComposerNotFound
-	}
-	if err != nil {
-		return Signature{}, err
-	}
-	if !valid.Bool {
-		return signatureJSONFallback(ctx, q, key, id)
-	}
-	if sqliteValueKind(kind.String) != sqliteObject {
-		return Signature{}, NotChecked(UnknownFormat)
-	}
-	field := func(name string) (sqliteValueKind, any, error) {
-		var t sqliteValueKind
-		var v any
-		err := q.QueryRowContext(ctx, `SELECT type, CASE WHEN type IN ('integer','real') THEN value END FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t, &v)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil, nil
-		}
-		return t, v, err
-	}
-	var sig Signature
-	t, v, err := field("lastUpdatedAt")
-	if err != nil {
-		return Signature{}, err
-	}
-	switch t {
-	case "", sqliteNull:
-	case sqliteInteger:
-		n, ok := v.(int64)
-		if !ok {
-			return Signature{}, NotChecked(UnknownFormat)
-		}
-		sig.LastUpdatedAt = int64(float64(n))
-	case sqliteReal:
-		n, ok := v.(float64)
-		if !ok || math.IsInf(n, 0) || math.IsNaN(n) {
-			return Signature{}, NotChecked(UnknownFormat)
-		}
-		sig.LastUpdatedAt = int64(n)
-	case sqliteBlob, sqliteText, sqliteArray, sqliteObject:
-		return Signature{}, NotChecked(UnknownFormat)
-	default:
-		return Signature{}, NotChecked(UnknownFormat)
-	}
-	// Only query field type here: returning the array value would duplicate the whole inline conversation.
-	fieldType := func(name string) (sqliteValueKind, error) {
-		var t sqliteValueKind
-		err := q.QueryRowContext(ctx, `SELECT type FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1`, key, name).Scan(&t)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return t, err
-	}
-	name := "fullConversationHeadersOnly"
-	t, err = fieldType(name)
-	if err != nil {
-		return Signature{}, err
-	}
-	inline := false
-	if t == "" || t == sqliteNull {
-		name = "conversation"
-		inline = true
-		t, err = fieldType(name)
-	}
-	if err != nil {
-		return Signature{}, err
-	}
-	if t == "" || t == sqliteNull {
-		return sig, nil
-	}
-	if t != sqliteArray {
-		return Signature{}, NotChecked(UnknownFormat)
-	}
-	return signatureOnlyHeaders(ctx, q, key, id, name, inline, sig)
-}
-
-func signatureOnlyHeaders(ctx context.Context, q querier, key, id, name string, inline bool, sig Signature) (Signature, error) {
-	rows, err := q.QueryContext(ctx, `SELECT j.id,j.type,
- (SELECT type FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
- (SELECT CASE WHEN type = 'text' THEN value END FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' ORDER BY id DESC LIMIT 1),
- EXISTS (SELECT 1 FROM json_each(CASE WHEN j.type = 'object' THEN j.value ELSE '{}' END) WHERE lower(key) = 'bubbleid' AND type NOT IN ('text','null'))
- FROM json_each((SELECT value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1)) AS j ORDER BY j.id`, key, name)
+	rows, err := q.QueryContext(ctx, signatureNodeQuery, key)
 	if err != nil {
 		return Signature{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []string
-	var repairs []int64
+	var found, valid bool
+	var root sqliteValueKind
+	var timestamp int64
+	var timestampErr error
+	var headers signatureTreeHeaders
+	inline := signatureTreeHeaders{inline: true}
 	for rows.Next() {
-		var index int64
-		var invalidIdentity bool
-		var object sqliteValueKind
-		var idtype, identity sql.NullString
-		if err = rows.Scan(&index, &object, &idtype, &identity, &invalidIdentity); err != nil {
+		var present bool
+		var index, parent sql.NullInt64
+		var key any
+		var kind sql.NullString
+		var scalar any
+		if err := rows.Scan(&present, &index, &parent, &key, &kind, &scalar); err != nil {
 			return Signature{}, err
 		}
-		if invalidIdentity || object != sqliteObject && object != sqliteNull || idtype.Valid && sqliteValueKind(idtype.String) != sqliteText && sqliteValueKind(idtype.String) != sqliteNull {
-			return Signature{}, NotChecked(UnknownFormat)
-		}
-		if !inline && (!identity.Valid || identity.String == "") {
-			return Signature{}, NotChecked(UnknownFormat)
-		}
-		sig.HeaderCount++
-		sig.LastBubbleID = identity.String
-		if !utf8.ValidString(identity.String) {
-			repairs = append(repairs, index)
-		} else {
-			repairs = append(repairs, -1)
-		}
-		if !inline {
-			ids = append(ids, identity.String)
-		}
-	}
-	if err = rows.Err(); err != nil {
-		return Signature{}, err
-	}
-	// SQL string decoding differs from Go JSON for invalid UTF-8 and lone
-	// surrogate escapes. Revisit only those rare fields from bounded raw JSON.
-	for i, index := range repairs {
-		if index < 0 {
+		found = present
+		if !parent.Valid {
+			valid = kind.Valid
+			root = sqliteValueKind(kind.String)
 			continue
 		}
-		identity, err := rawHeaderIdentity(ctx, q, key, name, index)
+		typ := sqliteValueKind(kind.String)
+		if parent.Int64 == 0 {
+			switch key {
+			case "lastUpdatedAt":
+				timestamp, timestampErr = signatureTimestamp(typ, scalar)
+			case "fullConversationHeadersOnly":
+				headers = newSignatureTreeHeaders(index.Int64, typ, false)
+			case "conversation":
+				inline = newSignatureTreeHeaders(index.Int64, typ, true)
+			}
+			continue
+		}
+		headers.visit(index.Int64, parent.Int64, typ, scalar)
+		inline.visit(index.Int64, parent.Int64, typ, scalar)
+	}
+	if err := rows.Err(); err != nil {
+		return Signature{}, err
+	}
+	// Release the SQL row owner before fallback or bubble-row queries on a
+	// serial connection. Unknown JSON must still be fully validated.
+	if err := rows.Close(); err != nil {
+		return Signature{}, err
+	}
+	if !found {
+		return Signature{}, ErrComposerNotFound
+	}
+	if !valid {
+		return signatureJSONFallback(ctx, q, key, id)
+	}
+	if root != sqliteObject || timestampErr != nil {
+		return Signature{}, NotChecked(UnknownFormat)
+	}
+	selected, name := &headers, "fullConversationHeadersOnly"
+	if !headers.present {
+		selected, name = &inline, "conversation"
+	}
+	selected.finish()
+	if selected.err != nil {
+		return Signature{}, NotChecked(UnknownFormat)
+	}
+	sig := Signature{LastUpdatedAt: timestamp, HeaderCount: selected.count, LastBubbleID: selected.last}
+	// SQL's invalid UTF-8/surrogate decoding is repaired only for affected
+	// identities, using bounded raw reads and the selected array ordinal.
+	for _, ordinal := range selected.repairs {
+		identity, err := rawHeaderIdentity(ctx, q, key, name, ordinal)
 		if err != nil {
 			return Signature{}, err
 		}
-		if !inline {
-			ids[i] = identity
+		if !selected.inline {
+			selected.ids[ordinal] = identity
 		}
-		if i == len(repairs)-1 {
+		if ordinal == int64(selected.count-1) {
 			sig.LastBubbleID = identity
 		}
 	}
-	if inline {
+	if selected.inline {
 		return sig, nil
 	}
-	return signatureRows(ctx, q, id, sig, ids)
+	return signatureRows(ctx, q, id, sig, selected.ids)
+}
+
+// JSON validation and the selected tree traversal stay within one statement.
+// The CASE never exports large wrong-type timestamps/identities. The path
+// predicate restricts identity rows to direct array objects, excluding unknown
+// nested fields and their unrestricted contents. No whole-value CTE is built.
+const signatureNodeQuery = `SELECT c.value IS NOT NULL, j.id, j.parent, j.key, j.type,
+ CASE WHEN j.parent = 0 AND j.key = 'lastUpdatedAt' AND j.type IN ('integer','real') THEN j.atom
+      WHEN j.parent != 0 AND lower(j.key) = 'bubbleid' AND j.type = 'text'
+           AND j.path NOT IN ('$.fullConversationHeadersOnly','$.conversation') THEN j.atom END
+ FROM cursorDiskKV AS c LEFT JOIN json_tree(
+ CASE WHEN json_valid(c.value) AND instr(CAST(c.value AS BLOB),x'00') = 0 THEN c.value END) AS j
+ WHERE c.key = ? AND (j.parent IS NULL
+ OR j.parent = 0 AND j.key IN ('lastUpdatedAt','fullConversationHeadersOnly','conversation')
+ OR j.path IN ('$.fullConversationHeadersOnly','$.conversation')
+ OR lower(j.key) = 'bubbleid'
+    AND (j.path GLOB '$.fullConversationHeadersOnly[[]*]' OR j.path GLOB '$.conversation[[]*]')
+    AND instr(substr(j.path,instr(j.path,'[')+1),']') = length(j.path)-instr(j.path,'['))
+ ORDER BY j.id`
+
+func signatureTimestamp(kind sqliteValueKind, value any) (int64, error) {
+	switch kind {
+	case "", sqliteNull:
+		return 0, nil
+	case sqliteInteger:
+		if n, ok := value.(int64); ok {
+			return int64(float64(n)), nil
+		}
+	case sqliteReal:
+		if n, ok := value.(float64); ok && !math.IsInf(n, 0) && !math.IsNaN(n) {
+			return int64(n), nil
+		}
+	case sqliteBlob, sqliteText, sqliteArray, sqliteObject:
+		return 0, NotChecked(UnknownFormat)
+	}
+	return 0, NotChecked(UnknownFormat)
+}
+
+type signatureTreeHeaders struct {
+	signatureHeaders
+	inline      bool
+	node        int64
+	entry       int64
+	live        bool
+	identity    string
+	identitySet bool
+	invalid     bool
+	repairs     []int64
+}
+
+func newSignatureTreeHeaders(node int64, kind sqliteValueKind, inline bool) signatureTreeHeaders {
+	var err error
+	if kind != sqliteArray && kind != sqliteNull {
+		err = NotChecked(UnknownFormat)
+	}
+	return signatureTreeHeaders{
+		signatureHeaders: signatureHeaders{present: kind != sqliteNull, err: err},
+		inline:           inline,
+		node:             node,
+	}
+}
+
+func (h *signatureTreeHeaders) visit(node, parent int64, kind sqliteValueKind, scalar any) {
+	if parent == h.node && h.present && h.err == nil {
+		h.finish()
+		h.entry, h.live = node, true
+		h.invalid = kind != sqliteObject && kind != sqliteNull
+		return
+	}
+	if !h.live || parent != h.entry {
+		return
+	}
+	switch kind {
+	case sqliteText:
+		h.identity, h.identitySet = scalar.(string), true
+	case sqliteNull:
+		h.identity, h.identitySet = "", false
+	case sqliteBlob, sqliteInteger, sqliteReal, sqliteArray, sqliteObject:
+		// encoding/json rejects any wrong-type duplicate, even if a later
+		// bubbleId has a valid string. Top-level duplicates instead select last.
+		h.invalid = true
+	default:
+		h.invalid = true
+	}
+}
+
+func (h *signatureTreeHeaders) finish() {
+	if !h.live {
+		return
+	}
+	h.count++
+	h.last = h.identity
+	if h.invalid || !h.inline && (!h.identitySet || h.identity == "") {
+		h.err = NotChecked(UnknownFormat)
+	}
+	if !utf8.ValidString(h.identity) {
+		h.repairs = append(h.repairs, int64(h.count-1))
+	}
+	if !h.inline {
+		h.ids = append(h.ids, h.identity)
+	}
+	h.live, h.identitySet, h.invalid = false, false, false
+	h.identity = ""
 }
 
 // sqliteValueKind preserves SQLite's actual storage and JSON type spellings.

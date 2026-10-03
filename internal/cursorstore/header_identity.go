@@ -87,7 +87,7 @@ func (r *headerReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	if len(r.chunk) == 0 {
-		err := r.q.QueryRowContext(r.ctx, `SELECT substr(CAST(j.value AS BLOB),?,65536) FROM json_each((SELECT value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1)) AS j WHERE j.id = ?`, r.offset+1, r.key, r.name, r.index).Scan(&r.chunk)
+		err := r.q.QueryRowContext(r.ctx, `SELECT substr(CAST(j.value AS BLOB),?,65536) FROM json_each((SELECT value FROM json_each((SELECT value FROM cursorDiskKV WHERE key = ?)) WHERE key = ? ORDER BY id DESC LIMIT 1)) AS j WHERE j.key = ?`, r.offset+1, r.key, r.name, r.index).Scan(&r.chunk)
 		if err != nil {
 			return 0, err
 		}
