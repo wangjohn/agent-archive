@@ -67,16 +67,50 @@ func TestNativeTempRejectsSymlinkAndPublicNamespace(t *testing.T) {
 			t.Parallel()
 			temp := t.TempDir()
 			root := nativeTempPath(temp, os.Geteuid())
+			contents := root
 			if kind == "symlink" {
-				must(t, os.Symlink(t.TempDir(), root))
+				contents = t.TempDir()
+				must(t, os.Symlink(contents, root))
 			} else {
 				must(t, os.Mkdir(root, 0o700))
 				must(t, os.Chmod(root, 0o755))
 			}
+			old := filepath.Join(contents, "launch-old")
+			must(t, os.Mkdir(old, 0o700))
+			sentinel := filepath.Join(old, "handoff.md")
+			must(t, os.WriteFile(sentinel, []byte("keep this handoff"), 0o600))
+			at := time.Now().Add(-8 * 24 * time.Hour)
+			must(t, os.Chtimes(old, at, at))
 			if _, err := nativeTempRoot(temp); err == nil {
 				t.Fatal("unsafe namespace accepted")
 			}
+			pruneNativeHandoffs(temp, time.Now())
+			got, err := os.ReadFile(sentinel)
+			must(t, err)
+			if string(got) != "keep this handoff" {
+				t.Fatalf("cleanup changed an unsafe namespace: %q", got)
+			}
 		})
+	}
+}
+
+func TestNativeTempCleanupKeepsPublicLaunchDirectory(t *testing.T) {
+	t.Parallel()
+	temp := t.TempDir()
+	root, err := nativeTempRoot(temp)
+	must(t, err)
+	dir := filepath.Join(root, "launch-public")
+	must(t, os.Mkdir(dir, 0o700))
+	must(t, os.Chmod(dir, 0o755))
+	path := filepath.Join(dir, "handoff.md")
+	must(t, os.WriteFile(path, []byte("keep this handoff"), 0o600))
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	must(t, os.Chtimes(dir, old, old))
+	pruneNativeHandoffs(temp, time.Now())
+	got, err := os.ReadFile(path)
+	must(t, err)
+	if string(got) != "keep this handoff" {
+		t.Fatalf("cleanup changed a public launch directory: %q", got)
 	}
 }
 
