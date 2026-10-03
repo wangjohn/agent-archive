@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
@@ -50,17 +52,20 @@ func (c preflightChecks) blocked() bool {
 
 // print writes one line per check: a ✓, or a ✗ with, under it, the
 // problem and the fix. Long lines wrap under their own text.
-func (c preflightChecks) print(p *prompter) {
+func (c preflightChecks) print(p *prompter) { c.write(p.out, p.style) }
+
+// write is print to out, in style.
+func (c preflightChecks) write(out io.Writer, style textStyle) {
 	for _, check := range c {
 		line := check.Label + ": " + check.Detail
 		if check.OK {
-			terminal.Println(p.out, p.style.hang("  "+p.style.okMark()+" ", line))
+			terminal.Println(out, style.hang("  "+style.okMark()+" ", line))
 			continue
 		}
-		terminal.Println(p.out, p.style.hang("  "+p.style.failMark()+" ", line))
+		terminal.Println(out, style.hang("  "+style.failMark()+" ", line))
 		for _, text := range []string{check.Problem, check.Fix} {
 			if text != "" {
-				terminal.Println(p.out, p.style.hang("    ", text))
+				terminal.Println(out, style.hang("    ", text))
 			}
 		}
 	}
@@ -135,7 +140,7 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 			fix += " To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
 		}
 		return fix
-	})
+	}, env.installation(home, userHome).hook("").Ports)
 
 	in := env.installation(home, userHome)
 	ref, words := in.ref(), in.sched().Words()
@@ -146,6 +151,9 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 	case scheduler.Unknown:
 		job.OK = false
 		job.Detail = fmt.Sprintf("%s did not say whether the %s job is loaded, and setup loads it only when it can tell", words.Tool, ref)
+		if problem.Reason != "" {
+			job.Detail = fmt.Sprintf("%s, so setup cannot tell whether the %s job is loaded, and loads it only when it can tell", problem.Reason, ref)
+		}
 		job.Fix = problem.Fix + ", then run agent-archive setup again."
 	case scheduler.AnotherInstallation:
 		job.OK = false
@@ -165,19 +173,23 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 // each of apps, as all names it, is one setup can install into. A failed
 // check names the file, and the line when the problem is at one, and fix
 // says how to fix it.
-func hookFileChecks(apps []string, all hooks.Files, userHome string, fix func(app string) string) preflightChecks {
+func hookFileChecks(apps []string, all hooks.Files, userHome string, fix func(app string) string, lookups ...agentapi.HooksLookup) preflightChecks {
+	ports := agentapi.HooksLookup(productionAgents)
+	if len(lookups) > 0 && lookups[0] != nil {
+		ports = lookups[0]
+	}
 	files := hooks.Files{}
-	for _, app := range allHarnesses {
+	for _, app := range apps {
 		if containsString(apps, app) {
 			files[app] = all[app]
 		}
 	}
 	problems := map[string]hooks.Problem{}
-	for _, problem := range hooks.Validate(files) {
+	for _, problem := range hooks.Validate(files, ports) {
 		problems[problem.Harness] = problem
 	}
 	var checks preflightChecks
-	for _, app := range allHarnesses {
+	for _, app := range apps {
 		path, ok := files[app]
 		if !ok {
 			continue
@@ -227,7 +239,7 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
-// before its first question: every app detected on this Mac that neither
+// before its first question: every app detected on this machine that neither
 // the saved configuration nor the unfinished setup leaves out, and every
 // app the saved configuration or the unfinished setup includes.
 func preflightApps(detected, saved, declined, draft []string) []string {

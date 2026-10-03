@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -41,7 +42,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.opts.parserVersion()
 	if sameParser && !last.legacy {
-		return outcomeSkipped, false, nil
+		return s.publishRecordedGitHead(last, key)
 	}
 	// The metadata must describe the source actually uploaded last, as
 	// recorded at upload. (For state older than that record,
@@ -231,12 +232,17 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		// cost a full read of each.
 		return false
 	}
-	adapter, err := archive.NewAdapter(s.reg.Harness.Name)
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return false
 	}
 	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
+		// Native input is optional for a retained-source refresh, but an owned
+		// resource that could not be released must remain visible to the caller.
+		if agentapi.HasFailure(err, agentapi.Cleanup) {
+			s.warn(err)
+		}
 		return false
 	}
 	// Normal capture reads this same source next unless the refresh ends the
@@ -250,7 +256,11 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil || same {
 		return false
 	}
-	if s.reg.SourceKind == archive.SourceKindCursorSQLite {
+	semantics, err := sourceSemantics(s.opts.Sources, s.reg)
+	if err != nil {
+		return false
+	}
+	if semantics.Mutation == agentapi.ReplaceableSnapshot {
 		return true
 	}
 	guard := cached
@@ -258,4 +268,47 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		guard = lastPublished
 	}
 	return nativeEvidenceExtends(guard, candidate)
+}
+
+// publishRecordedGitHead updates hook observations even when a stop brought
+// no new transcript bytes. It reuses retained metadata and source, preserving
+// capture time and parser output; it never runs git or re-derives metadata.
+func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (sessionOutcome, bool, error) {
+	if s.req.Token == "" {
+		return outcomeSkipped, false, nil
+	}
+	next := last.metadata
+	next.ApplyGitHead(s.reg)
+	oldHead, err := json.Marshal(last.metadata.GitHead)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	newHead, err := json.Marshal(next.GitHead)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	if bytes.Equal(oldHead, newHead) {
+		return outcomeSkipped, false, nil
+	}
+	// Normal capture will carry these observations when content grew. Avoid an
+	// extra publication and preserve the request's new lifecycle evidence.
+	if s.liveTranscriptChanged(last.bundle) {
+		return outcomeSkipped, false, nil
+	}
+	next.MetadataDerivedAt = s.now
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	source := next.SourceBundle
+	uploaded, known := s.published.LastPublishedSource()
+	if known && uploaded != source {
+		return outcomeSkipped, false, nil
+	}
+	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.Key, MetadataKey: key, SourceSHA256: source.SHA256, SourceSize: source.CompressedBytes, MetadataBytes: encoded, ReadyAt: s.now, Attempted: true}
+	if err := s.local.SavePending(s.id(), pending); err != nil {
+		return outcomeSkipped, false, err
+	}
+	outcome, err := s.publishPending(pending)
+	return outcome, true, err
 }

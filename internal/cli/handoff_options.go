@@ -2,26 +2,45 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
+type handoffConfigState struct {
+	cfg   config.Config
+	found bool
+}
+
+func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error) {
+	if opts.config != nil {
+		return opts.config.cfg, opts.config.found, nil
+	}
+	return config.Load(home)
+}
+
 type handoffOptions struct {
-	sessionID  string
-	project    string
-	harness    string
-	file       string
-	source     string
-	format     string
-	output     string
-	to         string
-	latest     bool
-	force      bool
-	noPreamble bool
-	maxBytes   int
+	config    *handoffConfigState
+	native    bool
+	sessionID string
+	project   string
+	harness   string
+	// allProjects searches and lists every project, not only the working
+	// directory's repository.
+	allProjects bool
+	file        string
+	source      string
+	format      string
+	output      string
+	to          string
+	latest      bool
+	force       bool
+	noPreamble  bool
+	maxBytes    int
 	// worktree launches in a new git worktree on branch (default
 	// handoff/<short id>) instead of the current checkout.
 	worktree bool
@@ -43,8 +62,9 @@ const (
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
-	latest := fs.Bool("latest", false, "the most recent session for the project")
-	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
+	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
+	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
+	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
 	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
@@ -68,11 +88,11 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
-	opts := handoffOptions{sessionID: sessionID, project: *project, harness: *harness,
+	opts := handoffOptions{sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
 		worktree: *worktree, branch: *branch}
-	if message := validateHandoffOptions(&opts, interactive); message != "" {
+	if message := validateHandoffOptionsWithCatalog(&opts, interactive, catalogFor(env)); message != "" {
 		fs.usageError("%s", message)
 		return handoffOptions{}, false
 	}
@@ -81,17 +101,23 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 
 // validateHandoffOptions returns the usage error for opts, or "" when they
 // are valid, in which case opts.harness is now the canonical harness name.
-func validateHandoffOptions(opts *handoffOptions, interactive bool) string {
+func validateHandoffOptionsWithCatalog(opts *handoffOptions, interactive bool, c agentmeta.Catalog) string {
+	if opts.to != "" {
+		opts.to = agentmeta.Canonical(c, opts.to)
+		if opts.to == "" {
+			return "--to must be claude, codex, or cursor"
+		}
+	}
 	if message := validateHandoffFlagCombinations(*opts, interactive); message != "" {
 		return message
 	}
-	if message := validateHandoffLaunchOptions(opts.to, opts.output, opts.format, opts.noPreamble); message != "" {
+	if message := validateHandoffLaunchOptionsWithCatalog(opts.to, opts.output, opts.format, opts.noPreamble, c); message != "" {
 		return message
 	}
 	if message := validateHandoffWindowOptions(*opts, interactive); message != "" {
 		return message
 	}
-	canonical, ok := harnessFlag(opts.harness)
+	canonical, ok := harnessFlagWithCatalog(c, opts.harness)
 	if !ok {
 		return harnessFlagError(opts.harness)
 	}
@@ -121,8 +147,12 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		return "a session ID, --latest, and --file are mutually exclusive"
 	case opts.file != "" && opts.harness == "":
 		return "--file requires --harness (claude, codex, or cursor)"
-	case opts.project != "" && !opts.latest:
-		return "--project applies only to --latest"
+	case opts.project != "" && opts.allProjects:
+		return "--project and --all-projects cannot be used together: --project picks one project, --all-projects searches every project"
+	case opts.project != "" && opts.file != "":
+		return "--project does not apply to --file, which names a transcript"
+	case opts.allProjects && (opts.latest || opts.file != ""):
+		return "--all-projects applies to the picker and to a title, not to --latest or --file"
 	case opts.force && opts.output == "":
 		return "--force applies only to --output"
 	case opts.maxBytes < 0:
@@ -160,9 +190,9 @@ const noSelectorMessage = "name a session ID or title, --latest, or --file PATH;
 // the agent session it runs in.
 const noCurrentSessionMessage = "name a session ID or title, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
 
-func validateHandoffLaunchOptions(to, output, format string, noPreamble bool) string {
+func validateHandoffLaunchOptionsWithCatalog(to, output, format string, noPreamble bool, c agentmeta.Catalog) string {
 	switch {
-	case to != "" && handoffDestination(to) != handoffDestinationClaude && handoffDestination(to) != handoffDestinationCodex && handoffDestination(to) != handoffDestinationCursor:
+	case to != "" && !launchSupported(c, to):
 		return "--to must be claude, codex, or cursor"
 	case to != "" && output != "":
 		return "--to and --output cannot be used together"
@@ -189,4 +219,11 @@ func validateHandoffWindowOptions(opts handoffOptions, interactive bool) string 
 	default:
 		return ""
 	}
+}
+
+func (e Env) loadHandoffConfig(home string) (config.Config, bool, error) {
+	if e.handoffConfigLoad != nil {
+		return e.handoffConfigLoad(home)
+	}
+	return config.LoadWithCatalog(home, e.agentRegistry().Catalog())
 }

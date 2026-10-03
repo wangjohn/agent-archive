@@ -53,12 +53,13 @@ var (
 )
 
 func TestPublicationCarriesTheRegistrationsRepoKeyWithoutAskingGit(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = widgetKey
 	remote := storagetest.NewMemoryStore()
 	git := &countingLookup{keys: map[string]string{"/p": gadgetKey}}
-	opts := Options{MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Errorf("repo_key = %q, want the registration's %q", got.RepoKey, widgetKey)
 	}
@@ -68,11 +69,12 @@ func TestPublicationCarriesTheRegistrationsRepoKeyWithoutAskingGit(t *testing.T)
 }
 
 func TestPublicationDerivesTheRepoKeyFromTheProjectRootWhenTheRegistrationHasNone(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
-	opts := Options{MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Errorf("repo_key = %q, want %q", got.RepoKey, widgetKey)
 	}
@@ -82,10 +84,11 @@ func TestPublicationDerivesTheRepoKeyFromTheProjectRootWhenTheRegistrationHasNon
 }
 
 func TestPublicationWithoutARepoKeyOmitsTheField(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	publishOnce(t, local, remote, reg, &opts)
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	raw, err := remote.Get(context.Background(), key)
@@ -100,11 +103,12 @@ func TestPublicationWithoutARepoKeyOmitsTheField(t *testing.T) {
 // Only a hash may reach the sidecar, whatever a lookup or a registration
 // hands the collector.
 func TestPublicationNeverCarriesAnythingButARepoKey(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.RepoKey = "https://user:synthetic-token@example.test/acme/widget.git"
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	publishOnce(t, local, remote, reg, &opts)
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	raw, err := remote.Get(context.Background(), key)
@@ -119,8 +123,12 @@ func TestPublicationNeverCarriesAnythingButARepoKey(t *testing.T) {
 // A sidecar from any earlier parser gains repo_key, once: 0.13.0 predates the
 // token fields, 0.15.0 is the last parser before repo_key.
 func TestParserUpgradeGivesAnOldSidecarItsRepoKeyOnce(t *testing.T) {
+	t.Parallel()
 	for _, oldVersion := range []string{"0.13.0", "0.15.0"} {
-		t.Run(oldVersion, func(t *testing.T) { checkOldSidecarGainsRepoKey(t, oldVersion) })
+		t.Run(oldVersion, func(t *testing.T) {
+			t.Parallel()
+			checkOldSidecarGainsRepoKey(t, oldVersion)
+		})
 	}
 }
 
@@ -132,13 +140,13 @@ func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
 	now := reg.RegisteredAt.Add(time.Hour)
 	// The sidecar as an earlier parser wrote it: no repo_key.
-	old := Options{MachineID: "machine", ParserVersion: oldVersion, RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	old := Options{Sources: testSources, MachineID: "machine", ParserVersion: oldVersion, RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	if before := publishOnce(t, local, remote, reg, &old); before.RepoKey != "" || before.Parser.Version != oldVersion {
 		t.Fatalf("setup: old sidecar = %+v", before)
 	}
 
 	now = now.Add(time.Hour)
-	current := Options{MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	current := Options{Sources: testSources, MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	remote.keys = nil
 	result, err := Run(context.Background(), local, remote, current)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
@@ -177,6 +185,7 @@ func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
 }
 
 func TestRefreshSweepAsksGitOncePerProjectRoot(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -190,13 +199,13 @@ func TestRefreshSweepAsksGitOncePerProjectRoot(t *testing.T) {
 		}
 	}
 	git := &countingLookup{keys: map[string]string{"/widget": widgetKey, "/gadget": gadgetKey}}
-	old := Options{MachineID: "machine", ParserVersion: "one", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	old := Options{Sources: testSources, MachineID: "machine", ParserVersion: "one", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, old); err != nil || len(result.Errors) != 0 || len(result.Published) != len(roots) {
 		t.Fatalf("setup: %#v %v", result, err)
 	}
 
 	now = now.Add(time.Hour)
-	current := Options{MachineID: "machine", ParserVersion: "two", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	current := Options{Sources: testSources, MachineID: "machine", ParserVersion: "two", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, current); err != nil || len(result.Errors) != 0 || len(result.Published) != len(roots) {
 		t.Fatalf("refresh: %#v %v", result, err)
 	}

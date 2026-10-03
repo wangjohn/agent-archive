@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -130,7 +131,7 @@ func TestHandoffLatestPassesOverReplays(t *testing.T) {
 	t.Parallel()
 	ordinary := archive.Metadata{SessionID: "mine", ProjectID: "p"}
 	replay := archive.Metadata{SessionID: "replayed", ProjectID: "p", Replay: &archive.Replay{}}
-	got := archiveHandoffCandidates([]archive.Metadata{replay, ordinary}, map[string]bool{"p": true}, nil)
+	got, _ := archiveHandoffCandidates([]archive.Metadata{replay, ordinary}, map[string]bool{"p": true}, "", nil)
 	if len(got) != 1 || got[0].SessionID != "mine" {
 		t.Errorf("candidates = %+v, want only the ordinary session", got)
 	}
@@ -138,7 +139,7 @@ func TestHandoffLatestPassesOverReplays(t *testing.T) {
 	regs := []archive.SessionRegistration{
 		{ArchiveSessionID: "replayed", NativeSessionID: "n1", ProjectRoot: "/work/p", Harness: archive.Harness{Name: "claude"}, Replay: &archive.Replay{RunID: "run-1"}},
 	}
-	if c := r.localCandidates(regs, "/work/p"); len(c) != 0 {
+	if c := r.localCandidates(regs, "/work/p"); len(c.byPath) != 0 || len(c.byRepo) != 0 {
 		t.Errorf("local candidates = %+v, want the replay passed over", c)
 	}
 }
@@ -152,5 +153,81 @@ func TestStatusCountsReplaysAmongAnAppsSessions(t *testing.T) {
 	}
 	if got := appCounts(appStatus{Sessions: 3}); got != "3 sessions" {
 		t.Errorf("appCounts without replays = %q", got)
+	}
+}
+
+func TestStatusObservesReplayHooksWithoutPromotingImports(t *testing.T) {
+	t.Parallel()
+	home, project, userHome := t.TempDir(), t.TempDir(), t.TempDir()
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	cfg := pairTestConfig(now, []string{"codex"}, project)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	env := pairStatusEnv(t, home, userHome, now, "codex")
+	env.repoKey = func(string) string { return "" }
+	env.LookupEnv = func(key string) (string, bool) { return "run-status", key == archive.ReplayEnv }
+	var errOut bytes.Buffer
+	payload := `{"hook_event_name":"SessionStart","source":"startup","session_id":"native-replay","cwd":` + quoteJSON(project) + `}`
+	if code := runHookCommand([]string{"--harness", "codex"}, strings.NewReader(payload), &errOut, env); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("hook code=%d err=%s", code, errOut.String())
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := saveImportedSession(t, store, now, "imported-replay", project)
+	imported.Replay = &archive.Replay{RunID: "run-imported"}
+	if err := store.SaveRegistration(imported); err != nil {
+		t.Fatal(err)
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := view.Apps[0]
+	if app.Sessions != 1 || app.ReplaySessions != 1 || app.ImportedSessions != 1 || !app.HookObserved || !app.Projects[0].HookObserved {
+		t.Fatalf("replay hook/import status lost provenance: %+v", app)
+	}
+}
+
+// Explicit whole and displayed short IDs can hand off a replay; title search
+// and the ordinary picker still leave it out.
+func TestHandoffReplayIDsRemainExplicitSelections(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{"local", "archive"} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			f := newPickerFixture(t)
+			id := f.notUploaded
+			store, err := state.Open(f.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error {
+				reg.Replay = &archive.Replay{RunID: "explicit-replay"}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if source == "archive" {
+				f.sync(t)
+				f.unregister(t, id)
+			} else {
+				takeArchiveOffline(&f.env)
+			}
+			for _, query := range []string{id, shortSessionID(id)} {
+				out, errOut, code := runHandoff(t, f.env, query, "--source", source)
+				if code != 0 || !strings.Contains(out, "session "+id+" · source: "+source) {
+					t.Errorf("explicit %q: code=%d stderr=%s\n%s", query, code, errOut, out)
+				}
+			}
+			if out, errOut, code := runHandoff(t, f.env, "not uploaded", "--source", source); code != 1 || !strings.Contains(errOut, "no session matches") || out != "" {
+				t.Errorf("title exposed replay: code=%d stderr=%s stdout=%s", code, errOut, out)
+			}
+			if out, errOut, code := runPicker(t, f.env, "q\n", "--source", source); code != 0 || strings.Contains(out, shortSessionID(id)) {
+				t.Errorf("picker exposed replay: code=%d stderr=%s stdout=%s", code, errOut, out)
+			}
+		})
 	}
 }

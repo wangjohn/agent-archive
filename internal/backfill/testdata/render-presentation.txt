@@ -2,7 +2,7 @@
 Nothing to import.
 
 --- included, retention off ---
-Backfill imports every session found on this Mac into
+Backfill imports every session found on this machine into
 s3 / bucket. Nothing has been uploaded yet.
 
 PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL

@@ -271,6 +271,9 @@ func BuildEvalExport(bundle SourceBundle, m Metadata, source EvalExportSource, d
 // gitBranch): the branch the session started on. "" when none does.
 func firstBranch(bundle SourceBundle) string {
 	for _, record := range bundle.NativeRecords {
+		if bundle.ParentSessionID == "" && isSidechainRecord(record) {
+			continue
+		}
 		if branch := firstStringDeep(record, "gitBranch"); branch != "" {
 			return branch
 		}
@@ -338,7 +341,15 @@ func FitEvalExport(e EvalExport, maxBytes int) EvalExport {
 			break
 		}
 		before := jsonLen(*text)
-		*text = TruncateUTF8(*text, max(minEvalText, len(*text)/2))
+		cut := max(minEvalText, len(*text)/2)
+		// Round the floor up to a whole rune, so the 256-byte promise holds.
+		for cut < len(*text) && !isRuneStart((*text)[cut]) {
+			cut++
+		}
+		if cut == len(*text) {
+			break
+		}
+		*text = (*text)[:cut]
 		size -= before - jsonLen(*text)
 		if !*truncated {
 			*truncated = true
@@ -380,6 +391,15 @@ func cloneEvalTexts(e EvalExport) EvalExport {
 // truncated flag; nil when there is none.
 func longestEvalText(e *EvalExport) (text *string, truncated *bool) {
 	consider := func(t *string, flag *bool) {
+		// A floor ending inside the last rune cannot be shortened. Skip it
+		// so another field can still be fitted.
+		floor := minEvalText
+		for floor < len(*t) && !isRuneStart((*t)[floor]) {
+			floor++
+		}
+		if len(*t) <= floor {
+			return
+		}
 		if text == nil || len(*t) > len(*text) {
 			text, truncated = t, flag
 		}
@@ -399,22 +419,22 @@ func longestEvalText(e *EvalExport) (text *string, truncated *bool) {
 	return text, truncated
 }
 
-// evalSize is the length of e's JSON encoding.
+// evalSize is the length of e's display-safe JSON encoding.
 func evalSize(e EvalExport) int {
 	encoded, err := json.Marshal(e)
 	if err != nil {
 		return 0
 	}
-	return len(encoded)
+	return len(DisplayJSON(encoded))
 }
 
-// jsonLen is the length of s encoded as a JSON string.
+// jsonLen is the length of s encoded as a display-safe JSON string.
 func jsonLen(s string) int {
 	encoded, err := json.Marshal(s)
 	if err != nil {
 		return 0
 	}
-	return len(encoded)
+	return len(DisplayJSON(encoded))
 }
 
 // LocalTranscript describes a transcript file on this machine for

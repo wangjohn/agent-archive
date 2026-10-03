@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -96,6 +97,12 @@ func renderHandoffSession(b *strings.Builder, h Handoff) {
 	}
 	if len(where) > 0 {
 		fmt.Fprintf(b, "- %s (as recorded)\n", oneLine(capitalize(strings.Join(where, " · "))))
+	}
+	if h.Workspace.Elsewhere {
+		b.WriteString("- The recorded directory differs from your current checkout: the session ran in another clone or on another machine, so check paths against the current tree.\n")
+	}
+	if h.Workspace.CurrentBranch != "" {
+		fmt.Fprintf(b, "- Your current checkout is on branch %s, not the recorded one.\n", codeSpan(h.Workspace.CurrentBranch))
 	}
 	if h.ToolResultsUnavailable {
 		fmt.Fprintf(b, "- %s does not record tool results, so none appear below.\n", agent)
@@ -382,13 +389,55 @@ func displayValue(v reflect.Value) reflect.Value {
 	return v
 }
 
-// oneLine collapses every run of whitespace, newlines included, to one space.
+// DisplayLine collapses every run of whitespace, newlines included, to one space.
 // DisplayLine returns text as one line that is safe to print to a terminal
 // or a table cell: displayText's normalization (no escape sequences or other
 // controls), then every run of whitespace, newlines and tabs included, as one
 // space. Use it for any string read from the bucket that the CLI prints.
+//
+// It also removes invisible format characters (Unicode category Cf: zero-width
+// spaces and joiners, the byte-order mark, soft hyphens, the Arabic letter
+// mark), the tag characters U+E0000 to U+E007F, the variation selectors,
+// U+034F, the Hangul fillers, and the braille blank, which show nothing on a
+// terminal but can carry text a model reads or pad a line. That costs a joined
+// emoji its joiners and emoji presentation selector (it shows as its parts)
+// and a Persian word its non-joiner, which is why displayText, which shapes a
+// handoff's own content, leaves them.
+//
+// It does not cap length: a caller that shows a string in a fixed space cuts
+// it after this, so what is cut is what would have been shown.
 func DisplayLine(text string) string {
-	return oneLine(displayText(text))
+	return oneLine(stripInvisible(displayText(text)))
+}
+
+// stripInvisible removes the characters DisplayLine documents as invisible.
+func stripInvisible(s string) string {
+	if !strings.ContainsFunc(s, isInvisibleFormat) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if isInvisibleFormat(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// isInvisibleFormat reports whether r has no glyph of its own: a format
+// character, a tag character, a variation selector (also the Mongolian ones),
+// the combining grapheme joiner, a Hangul filler, or the braille blank.
+func isInvisibleFormat(r rune) bool {
+	switch {
+	case unicode.Is(unicode.Cf, r):
+		return true
+	case r >= 0xE0000 && r <= 0xE007F, r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF, r >= 0x180B && r <= 0x180D, r == 0x180F:
+		return true
+	}
+	switch r {
+	case 0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800:
+		return true
+	}
+	return false
 }
 
 // DisplayJSON returns JSON text (from encoding/json) safe to print to a

@@ -11,6 +11,7 @@ import (
 // withCursorRewriteGap keeps one rewrite gap: it replaces the earlier one,
 // counting on from it, and leaves other evidence alone.
 func TestWithCursorRewriteGapKeepsOne(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 	other := archive.SupplementalEvidence{Kind: archive.EvidenceKindCaptureGap, ObservedAt: at, Provenance: "hook:subagent-link", Payload: map[string]any{"code": "x"}}
 	evidence := []archive.SupplementalEvidence{other}

@@ -8,7 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-// KnownProject is a project that sessions on this Mac ran in, resolved as a
+// KnownProject is a project that sessions on this machine ran in, resolved as a
 // plan resolves them.
 type KnownProject struct {
 	Root string
@@ -20,14 +20,17 @@ type KnownProject struct {
 }
 
 // KnownProjects lists the projects Claude Code and Codex sessions on this
-// Mac ran in, most recently used first, for setup to offer. It lists the
+// machine ran in, most recently used first, for setup to offer. It lists the
 // apps' session folders and reads each transcript's leading records, as a
 // plan does, and nothing more: no transcript is filtered and nothing is
 // written. Projects cfg already names, included or excluded, are left out,
 // as are the home directory, temporary folders, folders that no longer
 // exist, and sessions whose project cannot be told.
 func KnownProjects(ctx context.Context, env Environment, cfg config.Config) ([]KnownProject, error) {
-	found, _ := discover(env)
+	found, _, err := discover(ctx, env)
+	if err != nil {
+		return nil, err
+	}
 	var items []*work
 	for _, t := range found {
 		if t.harness != harnessCursor {

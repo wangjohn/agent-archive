@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"unicode/utf8"
 )
 
 // CursorDatabaseChat is what the plan lists of one Cursor chat in Cursor's
@@ -85,7 +87,8 @@ type CursorDatabaseResult struct {
 	// one snapshot of the database. It is not safe for concurrent use. A
 	// chat Cursor deleted since the listing wraps fs.ErrNotExist. Set when
 	// Checked.
-	ReadChat func(ctx context.Context, id string) (cursorstore.Composer, error)
+	ReadChat     func(ctx context.Context, id string) (cursorstore.Composer, error)
+	ReadSnapshot func(context.Context, string) (cursorstore.Composer, agentapi.SourceSnapshot, error)
 	// Close removes the snapshot ReadChat took, if any. Set when Checked.
 	Close func() error
 }
@@ -120,12 +123,42 @@ func CursorDatabaseReaderFor(env Environment) func(context.Context) (CursorDatab
 			// A copy an earlier plan left when it was killed goes before this
 			// plan can take another.
 			cursorstore.RemoveStaleSnapshots()
-			reader := cursorstore.NewReader(path)
-			res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
-				c, _, err := reader.ReadComposer(ctx, id)
-				return c, err
+			if env.Sources == nil {
+				return CursorDatabaseResult{}, errors.New("source integrations are required")
 			}
-			res.Close = reader.Close
+			provider, _, ok := env.Sources.LookupSources(archive.HarnessCursor)
+			if !ok {
+				return CursorDatabaseResult{}, errors.New("cursor source integration unavailable")
+			}
+			pass, err := provider.OpenPass(ctx, agentapi.SourceEnvironment{Database: path})
+			if err != nil {
+				return CursorDatabaseResult{}, err
+			}
+			res.ReadSnapshot = func(ctx context.Context, id string) (cursorstore.Composer, agentapi.SourceSnapshot, error) {
+				snap, err := pass.Read(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+				if err != nil {
+					return cursorstore.Composer{}, nil, err
+				}
+				var c cursorstore.Composer
+				records := snap.Input().Records
+				for {
+					r, ok, err := records.Next(ctx)
+					if err != nil {
+						return c, nil, errors.Join(err, snap.Close())
+					}
+					if !ok {
+						break
+					}
+					switch r.Kind {
+					case agentapi.ComposerRecord:
+						c.Composer = r.Raw
+					case agentapi.BubbleRecord:
+						c.Bubbles = append(c.Bubbles, cursorstore.Bubble{ID: r.Key, Value: r.Raw, Missing: r.Missing})
+					}
+				}
+				return c, snap, nil
+			}
+			res.Close = pass.Close
 		}
 		return res, nil
 	}
@@ -437,12 +470,12 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	if err != nil {
 		return err
 	}
-	if res.ReadChat == nil {
+	if res.ReadChat == nil && res.ReadSnapshot == nil {
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedUnreadable
 		return nil
 	}
-	if err := readCursorDatabaseChats(ctx, workers, res.ReadChat, toRead); err != nil {
-		if ctx.Err() != nil {
+	if err := readCursorDatabaseChats(ctx, workers, res.ReadChat, res.ReadSnapshot, toRead, env.Sources); err != nil {
+		if ctx.Err() != nil || fatalSourceFailure(err) {
 			return err
 		}
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(err)
@@ -490,6 +523,10 @@ func selectCursorDatabaseChats(chats []CursorDatabaseChat, candidates []Candidat
 			continue
 		}
 		var reason SkipReason
+		if !utf8.ValidString(chat.ID) {
+			w.unsafe = true
+			continue
+		}
 		if strings.TrimSpace(chat.ID) != "" {
 			reason, err = state.Classify("cursor", chat.ID)
 			if err != nil {
@@ -534,18 +571,32 @@ func decideCursorDatabaseChat(chat CursorDatabaseChat, reason SkipReason, includ
 
 // readCursorDatabaseChats serializes reads through one Reader and filters
 // independent chats on the workers. A database failure aborts the whole set.
-func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(context.Context, string) (cursorstore.Composer, error), toRead []*work) error {
+func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(context.Context, string) (cursorstore.Composer, error), readSnapshot func(context.Context, string) (cursorstore.Composer, agentapi.SourceSnapshot, error), toRead []*work, sources agentapi.SourcesLookup) error {
 	// Reads go one at a time through the plan's one Reader; filtering, the
 	// costly part, runs on the workers.
 	var mu sync.Mutex
 	var readErr error
 	if err := forEach(ctx, workers, toRead, func(w *work) {
 		mu.Lock()
-		c, err := readChat(ctx, w.chat.KeyID)
+		var c cursorstore.Composer
+		var snap agentapi.SourceSnapshot
+		var err error
+		if readSnapshot != nil {
+			c, snap, err = readSnapshot(ctx, w.chat.KeyID)
+		} else {
+			c, err = readChat(ctx, w.chat.KeyID)
+		}
+		if snap != nil {
+			defer func() {
+				mu.Lock()
+				readErr = errors.Join(readErr, snap.Close())
+				mu.Unlock()
+			}()
+		}
 		// A value of this chat's that does not decode is the chat's
 		// problem, unsafe_format; only a failure of the database itself
 		// (a lock, a failed copy, a changed file) leaves it unchecked.
-		chatOnly := err != nil && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat)
+		chatOnly := err != nil && !fatalSourceFailure(err) && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat || agentapi.HasFailure(err, agentapi.Limit))
 		if err != nil && !chatOnly && readErr == nil {
 			readErr = err
 		}
@@ -553,12 +604,32 @@ func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(con
 		if err != nil {
 			// A chat Cursor deleted since the listing is not counted at all.
 			w.vanished = isNotExist(err)
-			w.unsafe = !w.vanished
+			w.tooLarge = agentapi.HasFailure(err, agentapi.Limit)
+			w.unsafe = !w.vanished && !w.tooLarge
 			return
 		}
 		w.c.Bytes = collector.CursorChatSize(c)
 		w.messageFolders = messageWorkspaceFolders(c)
-		filtered, err := collector.FilterCursorChat(c)
+		var filtered archive.FilteredTranscript
+		if snap == nil {
+			filtered, err = collector.FilterCursorChat(c, sources)
+		} else {
+			_, filter, ok := sources.LookupSources(archive.HarnessCursor)
+			if !ok {
+				err = errors.New("cursor filter unavailable")
+			} else {
+				filtered, err = filter.Filter(ctx, snap.Input(), agentapi.FilterContext{Limits: agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes}})
+				if err == nil && int64(filtered.Boundary.RetainedBytes) > collector.DefaultMaxTranscriptBytes {
+					err = archive.ErrRecordTooLarge
+				}
+			}
+		}
+		if fatalSourceFailure(err) {
+			mu.Lock()
+			readErr = errors.Join(readErr, err)
+			mu.Unlock()
+			return
+		}
 		switch {
 		case errors.Is(err, archive.ErrRecordTooLarge):
 			w.tooLarge = true

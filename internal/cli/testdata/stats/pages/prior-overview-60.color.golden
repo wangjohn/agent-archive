@@ -28,16 +28,19 @@ sonnet         \e[36m███\e[0m                               $320
 \e[2m+ 2 more\e[0m
 
 \e[1mMOST USED\e[0m
-\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 · cursor-guide
-        2 sessions
+\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 ·
+        cursor-guide 2 sessions
 \e[2mMCP   \e[0m  github 41 · linear 12 calls (Claude Code and Cursor
         only)
 
-\e[1mHEADS UP\e[0m
+\e[1mFINDINGS\e[0m
 \e[33m●\e[0m 77% of tokens came from subagents (497 runs)
 \e[33m●\e[0m Costliest session ~$564 · styleprofile · long context, 38
   subagents
-\e[33m●\e[0m 10 sessions have no token data (Cursor 8, Claude Code 2)
+
+\e[1mCOVERAGE\e[0m
+\e[2mSessions with no token data are left out of token and cost\e[0m
+\e[2mtotals (Claude Code: 2, Cursor: 8).\e[0m
 
 \e[2mEstimated at list price, not a bill.\e[0m
 \e[2m--detail for more · --by project · --html\e[0m

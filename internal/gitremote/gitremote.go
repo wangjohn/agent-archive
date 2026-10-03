@@ -1,6 +1,7 @@
 // Package gitremote finds a project's git origin remote and turns it into an
-// archive.RepoKey, and reads the commit a working directory has checked out
-// (Head, Dirty), best effort. It is the only place the program runs git.
+// archive.RepoKey, and reads the branch and commit checked out in a directory, best
+// effort. It is where the program runs git to ask a name of it; handoff's
+// --worktree runs git for its own changes.
 //
 // Every failure (git not installed, a directory that is not a repository, no
 // origin, a slow disk) is an empty result, never an error: a repository key
@@ -65,9 +66,81 @@ func OriginURL(ctx context.Context, root string, run Runner) string {
 	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 }
 
+// Branch returns the branch checked out in dir, as `branch --show-current`
+// reports it (the bare name, also when a tag has the same name, and the name
+// of a branch with no commits yet), or "" when HEAD is detached, dir is not in
+// a repository, git is older than 2.22, or git cannot be asked within
+// Timeout. run is nil for ExecRunner. It reads a name and changes nothing.
+func Branch(ctx context.Context, dir string, run Runner) string {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, dir, "-C", dir, "branch", "--show-current")
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+}
+
 // RepoKey is archive.RepoKey of root's origin remote, or "" (see OriginURL).
 func RepoKey(ctx context.Context, root string, run Runner) string {
 	return archive.RepoKey(OriginURL(ctx, root, run))
+}
+
+// ProjectKey returns the origin's repository key and whether Git established
+// its identity or absence. Unlike RepoKey, failed or nonportable origins are
+// unknown: they cannot authorize an automatic path fallback. A missing config
+// entry (Git exit 1 with no output) establishes no origin. run is nil for
+// ExecRunner; it must respect ctx. Remote URLs never leave this function.
+func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return "", false
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "config", "--get", "remote.origin.url")
+	if ctx.Err() != nil {
+		return "", false
+	}
+	if err != nil {
+		var status interface{ ExitCode() int }
+		missing := errors.As(err, &status) && status.ExitCode() == 1 && len(out) == 0
+		return "", missing
+	}
+	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	key := archive.RepoKey(raw)
+	return key, raw == "" || key != ""
+}
+
+// ProjectRoot returns Git's checkout top level, or empty when it cannot be
+// established. It never infers full-repository scope from an inherited origin.
+// run is nil for ExecRunner and must respect ctx when supplied.
+func ProjectRoot(ctx context.Context, root string, run Runner) string {
+	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
+		return ""
+	}
+	if run == nil {
+		run = ExecRunner
+	}
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	out, err := run(ctx, root, "-C", root, "rev-parse", "--show-toplevel")
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	top := strings.TrimSuffix(strings.TrimSuffix(string(out), "\n"), "\r")
+	if !filepath.IsAbs(top) || strings.ContainsAny(top, "\x00\r\n") {
+		return ""
+	}
+	return filepath.Clean(top)
 }
 
 // Resolver derives repository keys and remembers each project root's answer,

@@ -121,7 +121,7 @@ func TestSetupAndBackfillShareOneTempFolderList(t *testing.T) {
 			t.Parallel()
 			env := Env{OS: goos, LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
 			temps := env.backfillTempDirs()
-			for _, want := range append(backfill.Environment{OS: goos}.DefaultTempDirs(), "/scratch/tmp") {
+			for _, want := range append(backfill.Environment{Sources: productionAgents, OS: goos}.DefaultTempDirs(), "/scratch/tmp") {
 				if !slices.Contains(temps, want) {
 					t.Fatalf("temporary folders %v lack %s", temps, want)
 				}
@@ -282,7 +282,7 @@ func TestSetupFirstRunFromHomeFolderAsksSeparately(t *testing.T) {
 	must(t, os.Mkdir(filepath.Join(f.userHome, ".git"), 0o700))
 	f.env.WorkingDir = func() (string, error) { return f.userHome, nil }
 	project := f.project(t, "src/web-app")
-	out := f.runSetup(t, strings.Join([]string{"", project, "", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", project, "", "s3-existing", "work", "2", ""}, "\n")+"\n")
 	if strings.Contains(out, "Archive Claude Code sessions in") || !strings.Contains(out, "Include Claude Code? [Y/n]") {
 		t.Fatalf("home folder was offered on one Enter:\n%s", out)
 	}
@@ -319,7 +319,7 @@ func TestSetupResumeAndReconfigureSkipTheCombinedQuestion(t *testing.T) {
 		if first := f.setupOutput("", "", ""); !strings.Contains(first, combined) {
 			t.Fatalf("the first run did not ask the combined question:\n%s", first)
 		}
-		out := f.setupOutput("capture", "", "", "2", "work", "2", "3")
+		out := f.setupOutput("capture", "", "", "s3-existing", "work", "2", "3")
 		if strings.Contains(out, combined) || !strings.Contains(out, "Change which apps are included?") {
 			t.Fatalf("resuming did not ask the separate questions:\n%s", out)
 		}
@@ -345,7 +345,7 @@ func TestReviewHintIsNotRepeatedAfterAnEdit(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.setupOutput("", "2", "work", "2", "edit", "retention", "30", "")
+	out := f.setupOutput("", "s3-existing", "work", "2", "edit", "retention", "30", "")
 	if n := strings.Count(out, "\n  Edit a setting adds projects, drops apps"); n != 1 {
 		t.Fatalf("the review showed the hint %d times, want once (before the edit):\n%s", n, out)
 	}

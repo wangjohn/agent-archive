@@ -14,6 +14,7 @@ import (
 // waiting: no failure, no LastError, any queued request kept, and it is
 // retried (and published) once the path exists.
 func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, "")
 	reg.Harness.Name = "cursor"
@@ -26,7 +27,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
-		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +48,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
 	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v err=%v", result, err)
 	}
@@ -58,6 +59,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 // same waiting state, one step later: no failure, no LastError, the queued
 // request kept, and publication on the first pass after content arrives.
 func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	transcript := writeTranscript(t, t.TempDir(), "native-1.jsonl", "")
 	reg := registration(t, transcript)
@@ -71,7 +73,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
-		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +93,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 	}
 
 	writeTranscript(t, filepath.Dir(transcript), "native-1.jsonl", `{"role":"user","message":{"content":[{"type":"text","text":"hello"}]}}`+"\n"+`{"role":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n")
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now.Add(time.Minute) }})
 	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v err=%v", result, err)
 	}

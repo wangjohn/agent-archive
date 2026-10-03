@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,7 +190,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	t.Parallel()
 	f := newUndoFixture(t)
-	env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{Sources: testSources, Home: f.home, Now: func() time.Time { return fixedNow }}
 	code := "/work/code"
 	codeID := f.include(code)
 	secretID := archive.ProjectID(code + "/secret")
@@ -210,11 +211,11 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 
 	// Once B's sessions are gone, A's undo excludes the folder and removes
 	// the entry.
-	id, _, err := f.store.ArchiveSessionID("b-session")
+	id, _, err := f.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "b-session"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.ForgetIdleSession(id, "b-session", false, nil); err != nil {
+	if _, err := f.store.ForgetIdleSession(id, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "b-session"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil {
@@ -250,7 +251,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("a partly undone import's kept-out entry was removed: %v %v", plan.RemoveKeptOut, err)
 	}
-	aSession, _, err := f.store.ArchiveSessionID("a-session")
+	aSession, _, err := f.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "a-session"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +259,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.ForgetIdleSession(aSession, "a-session", false, nil); err != nil {
+	if _, err := f.store.ForgetIdleSession(aSession, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "a-session"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {

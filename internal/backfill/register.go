@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
 	"time"
 
@@ -252,7 +253,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 			result.Invalid++
 			return true, nil
 		}
-		w.id, _, err = r.Store.EnsureArchiveSessionID(c.NativeSessionID)
+		w.id, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID})
 		return false, err
 	}
 	if w.next < len(c.Subagents) {
@@ -271,7 +272,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if err != nil || skip {
 		return true, err
 	}
-	reg, err := r.Store.RegisterNewSession(c.NativeSessionID, func(id string) archive.SessionRegistration {
+	reg, err := r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, w.id, func(id string) archive.SessionRegistration {
 		return r.registration(c, id, w.repoKey)
 	})
 	if err != nil {
@@ -306,7 +307,7 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		result.Gone++
 		return true, nil
 	}
-	id, found, err := r.Store.ArchiveSessionID(c.NativeSessionID)
+	id, found, err := r.Store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID})
 	if err != nil {
 		return false, err
 	}
@@ -336,7 +337,7 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 	}
 	c := w.c
 	childNativeID := c.NativeSessionID + ":subagent:" + sub.AgentID
-	childID, _, err := r.Store.EnsureArchiveSessionID(childNativeID)
+	childID, _, err := r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: childNativeID})
 	if err != nil {
 		return fmt.Errorf("assign a subagent archive session ID: %w", err)
 	}

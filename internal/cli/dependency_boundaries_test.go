@@ -7,6 +7,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
@@ -55,8 +56,11 @@ func TestPreflightUsesOnlyItsDependencies(t *testing.T) {
 type collectorEnvironmentProbe struct {
 	values map[string]string
 	base   string
+	system platform.OS
 	reads  int
 }
+
+func (p *collectorEnvironmentProbe) operatingSystem() platform.OS { return p.system }
 
 func (p *collectorEnvironmentProbe) lookupEnv(name string) (string, bool) {
 	p.reads++
@@ -78,7 +82,8 @@ func TestCollectorEnvironmentBuilderUsesOnlyItsSource(t *testing.T) {
 			"AWS_ENDPOINT_URL_S3": "https://user:secret@s3.example.test",
 			"PATH":                "/usr/bin",
 		},
-		base: t.TempDir(),
+		base:   t.TempDir(),
+		system: platform.Darwin,
 	}
 	storage := credentials.Config{Provider: credentials.ProviderS3}
 	got := buildCollectorEnvironment(probe, storage)

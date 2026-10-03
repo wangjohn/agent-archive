@@ -16,8 +16,10 @@ import (
 )
 
 func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []config.SkillEvidence{config.SkillEvidenceNone, config.SkillEvidenceMetadata} {
 		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			project := t.TempDir()
 			skill := filepath.Join(project, ".agents", "skills", "secret", "SKILL.md")
 			if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
@@ -35,7 +37,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 			}
 			remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-			options := Options{MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
+			options := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 				SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 					return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 				},
@@ -76,6 +78,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 }
 
 func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
@@ -92,7 +95,7 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	mode := config.SkillEvidenceBody
-	options := Options{MachineID: "m", Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }, SkillEvidence: mode,
+	options := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},
@@ -131,6 +134,7 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 }
 
 func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
@@ -148,7 +152,7 @@ func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing
 	remote := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	mode := config.SkillEvidenceBody
-	options := Options{MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
+	options := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},

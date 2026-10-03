@@ -4,17 +4,22 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -30,8 +35,9 @@ type Composer struct {
 // Bubble is one message of a chat: its bubble ID and its bubbleId row's
 // value, nil when the row is missing.
 type Bubble struct {
-	ID    string
-	Value json.RawMessage
+	ID      string
+	Value   json.RawMessage
+	Missing bool
 }
 
 // Signature is what tells one state of a chat from the next without reading
@@ -79,6 +85,7 @@ type Reader struct {
 	// hooks are test observation points; production Readers have none.
 	hooks     readerHooks
 	snapshots int
+	attempts  int
 	swept     bool
 }
 
@@ -98,13 +105,17 @@ func (r *Reader) Close() error {
 		return nil
 	}
 	defer untrackSnapshot(dir)
-	err := os.RemoveAll(dir)
+	remove := os.RemoveAll
+	if r.hooks.removeSnapshot != nil {
+		remove = r.hooks.removeSnapshot
+	}
+	err := remove(dir)
 	if lock != nil {
 		// Released only after the copy is gone.
-		_ = lock.Close()
+		err = errors.Join(err, lock.Close())
 	}
 	if err != nil {
-		return errors.New("remove the Cursor database snapshot")
+		return fmt.Errorf("remove the Cursor database snapshot: %w", err)
 	}
 	return nil
 }
@@ -126,6 +137,11 @@ func (r *Reader) Close() error {
 // ErrComposerNotFound; both wrap fs.ErrNotExist. Anything else that can't be
 // read safely is a *NotCheckedError.
 func (r *Reader) ReadComposer(ctx context.Context, composerID string) (Composer, Signature, error) {
+	return r.ReadComposerLimited(ctx, composerID, 0, 0)
+}
+
+// ReadComposerLimited checks native value lengths before allocating transcript values.
+func (r *Reader) ReadComposerLimited(ctx context.Context, composerID string, rawLimit, recordLimit int64) (Composer, Signature, error) {
 	if composerID == "" {
 		return Composer{}, Signature{}, errors.New("a Cursor composer ID is required")
 	}
@@ -137,7 +153,11 @@ func (r *Reader) ReadComposer(ctx context.Context, composerID string) (Composer,
 	var sig Signature
 	read := func(ctx context.Context, db *sql.DB) error {
 		var err error
-		c, sig, err = queryComposer(ctx, db, composerID)
+		if rawLimit > 0 || recordLimit > 0 {
+			c, sig, err = queryComposerLimited(ctx, db, composerID, rawLimit, recordLimit)
+		} else {
+			c, sig, err = queryComposer(ctx, db, composerID)
+		}
 		return err
 	}
 	var err error
@@ -155,6 +175,7 @@ func (r *Reader) ReadComposer(ctx context.Context, composerID string) (Composer,
 			err = readInPlace(ctx, src, Options{}, read)
 			break
 		}
+		r.attempts++
 		if err = r.snapshot(ctx, src); err != nil {
 			r.snapErr = err
 			break
@@ -183,43 +204,20 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 			return err
 		}
 		defer func() { _ = tx.Rollback() }() // a read-only transaction; nothing to undo
-		value, err := composerRow(ctx, tx, composerID)
+		value, oversized, err := signatureComposerRow(ctx, tx, composerID, archive.MaxRecordBytes)
 		if err != nil {
+			return err
+		}
+		if oversized {
+			sig, err = signatureOnly(ctx, tx, composerID)
 			return err
 		}
 		var ids []string
 		if sig, ids, err = decodeHeaders(value); err != nil || len(ids) == 0 {
 			return err
 		}
-		prefix := bubblePrefix(composerID)
-		rows, err := tx.QueryContext(ctx, bubbleKeyQuery, prefix, bubbleUpper(prefix))
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		present := map[string]bool{}
-		for rows.Next() {
-			var key string
-			if err := rows.Scan(&key); err != nil {
-				return err
-			}
-			present[strings.TrimPrefix(key, prefix)] = true
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if present[id] {
-				sig.MessageRows++
-			}
-		}
-		var last []byte
-		err = tx.QueryRowContext(ctx, `SELECT value FROM cursorDiskKV WHERE key = ?`, prefix+ids[len(ids)-1]).Scan(&last)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		sig.LastMessageHash = messageHash(last)
-		return nil
+		sig, err = signatureRows(ctx, tx, composerID, sig, ids)
+		return err
 	})
 	if err != nil {
 		return Signature{}, err
@@ -247,12 +245,19 @@ func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (
 			if id == "" {
 				continue
 			}
-			value, err := composerRow(ctx, tx, id)
+			value, oversized, err := signatureComposerRow(ctx, tx, id, archive.MaxRecordBytes)
 			if errors.Is(err, ErrComposerNotFound) {
 				continue
 			}
 			if err != nil {
 				return err
+			}
+			if oversized {
+				sig, err := signatureOnly(ctx, tx, id)
+				if err == nil && sig.LastUpdatedAt > 0 {
+					out[id] = sig.LastUpdatedAt
+				}
+				continue
 			}
 			if sig, _, err := decodeHeaders(value); err == nil && sig.LastUpdatedAt > 0 {
 				out[id] = sig.LastUpdatedAt
@@ -264,6 +269,18 @@ func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (
 		return nil, err
 	}
 	return out, nil
+}
+
+// signatureComposerRow keeps oversized inline content in SQLite. The ordinary
+// branch returns the original value and preserves the legacy decoder semantics.
+func signatureComposerRow(ctx context.Context, q querier, id string, limit int64) ([]byte, bool, error) {
+	var value []byte
+	var size sql.NullInt64
+	err := q.QueryRowContext(ctx, `SELECT CASE WHEN length(CAST(value AS BLOB)) <= ? THEN value END,length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key = ?`, limit, "composerData:"+id).Scan(&value, &size)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !size.Valid {
+		return nil, false, ErrComposerNotFound
+	}
+	return value, size.Valid && size.Int64 > limit, err
 }
 
 // readCopy reads the Reader's snapshot. The copy is this process's own and
@@ -280,10 +297,14 @@ func (r *Reader) readCopy(ctx context.Context, read func(context.Context, *sql.D
 
 // readerHooks let a test watch a Reader at work.
 type readerHooks struct {
+	removeSnapshot func(string) error
 	// afterSnapshot runs once the copy is written and before it is read.
 	afterSnapshot func(copyPath string)
 	// backupRetried runs before each busy retry of the backup.
 	backupRetried func()
+	// lockPlaced runs once the snapshot's lock file is in place, before the
+	// copy is written.
+	lockPlaced func(lockPath string)
 }
 
 // snapshot copies the live database src into a new private directory under
@@ -301,7 +322,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	}
 	r.snapDir = dir
 	trackSnapshot(dir)
-	if r.lock, err = lockSnapshot(dir); err != nil {
+	if r.lock, err = lockSnapshot(dir, r.hooks.lockPlaced); err != nil {
 		return errors.New("lock a Cursor database snapshot directory")
 	}
 	copyPath := filepath.Join(dir, "state.vscdb")
@@ -318,8 +339,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	defer cancel()
 	r.snapshots++
 	if err := backup(ctx, dsn(src.path, true), copyPath, r.hooks.backupRetried); err != nil {
-		_ = r.Close()
-		return notChecked(err)
+		return errors.Join(notChecked(err), agentapi.Wrap(agentapi.Cleanup, r.Close()))
 	}
 	r.copyPath = copyPath
 	if r.hooks.afterSnapshot != nil {
@@ -548,3 +568,448 @@ func decodeHeaders(value []byte) (Signature, []string, error) {
 	}
 	return Signature{LastUpdatedAt: lastUpdatedAt}, nil, nil
 }
+
+// queryComposerLimited preserves header order without first loading every bubble value.
+func queryComposerLimited(ctx context.Context, db *sql.DB, id string, rawLimit, recordLimit int64) (Composer, Signature, error) {
+	check := func(n int64) error {
+		if recordLimit > 0 && n > recordLimit {
+			return agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
+		}
+		if rawLimit > 0 && n > rawLimit {
+			return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		return nil
+	}
+	var observedSize sql.NullInt64
+	err := db.QueryRowContext(ctx, `SELECT length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key = ?`, "composerData:"+id).Scan(&observedSize)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !observedSize.Valid {
+		return Composer{}, Signature{}, ErrComposerNotFound
+	}
+	if err != nil {
+		return Composer{}, Signature{}, err
+	}
+	if err = check(observedSize.Int64); err != nil {
+		sig, sigErr := signatureOnly(ctx, db, id)
+		if sigErr != nil {
+			return Composer{}, Signature{}, sigErr
+		}
+		return limitedFailure(sig, err)
+	}
+	value, err := composerRow(ctx, db, id)
+	if err != nil {
+		return Composer{}, Signature{}, err
+	}
+	sig, ids, err := decodeHeaders(value)
+	if err != nil {
+		return Composer{}, Signature{}, err
+	}
+	lengths, err := bubbleLengths(ctx, db, id)
+	if err != nil {
+		return Composer{}, Signature{}, err
+	}
+	total := observedSize.Int64
+	for _, key := range ids {
+		n, present := lengths[key]
+		if !present {
+			continue
+		}
+		sig.MessageRows++
+		if err = check(n); err != nil {
+			sig, err2 := signatureRows(ctx, db, id, Signature{LastUpdatedAt: sig.LastUpdatedAt, HeaderCount: sig.HeaderCount, LastBubbleID: sig.LastBubbleID}, ids)
+			if err2 != nil {
+				return Composer{}, Signature{}, err2
+			}
+			return limitedFailure(sig, err)
+		}
+		if rawLimit > 0 && n > rawLimit-total {
+			sig, err2 := signatureRows(ctx, db, id, Signature{LastUpdatedAt: sig.LastUpdatedAt, HeaderCount: sig.HeaderCount, LastBubbleID: sig.LastBubbleID}, ids)
+			if err2 != nil {
+				return Composer{}, Signature{}, err2
+			}
+			return limitedFailure(sig, agentapi.ErrRawLimit)
+		}
+		total += n
+	}
+	found, err := listedBubbles(ctx, db, id, ids, lengths)
+	if err != nil {
+		return Composer{}, Signature{}, err
+	}
+	c := Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
+	for i, key := range ids {
+		_, present := lengths[key]
+		c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
+	}
+	if len(ids) > 0 {
+		sig.LastMessageHash = messageHash(c.Bubbles[len(ids)-1].Value)
+	}
+	return c, sig, nil
+}
+
+func limitedFailure(sig Signature, err error) (Composer, Signature, error) {
+	o := agentapi.SourceObservation{Signature: sig.SourceSignature(), Present: true, Empty: sig.HeaderCount == 0, Activity: time.UnixMilli(sig.LastUpdatedAt)}
+	return Composer{}, sig, &agentapi.SourceError{Kind: agentapi.Limit, Err: err, Observed: &o}
+}
+
+func bubbleLengths(ctx context.Context, q querier, id string) (out map[string]int64, err error) {
+	prefix := bubblePrefix(id)
+	rows, err := q.QueryContext(ctx, `SELECT key,length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= ? AND key < ?`, prefix, bubbleUpper(prefix))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	out = map[string]int64{}
+	for rows.Next() {
+		var key string
+		var n sql.NullInt64
+		if err = rows.Scan(&key, &n); err != nil {
+			return nil, err
+		}
+		out[strings.TrimPrefix(key, prefix)] = n.Int64
+	}
+	return out, rows.Err()
+}
+
+func listedBubbles(ctx context.Context, q querier, id string, ids []string, present map[string]int64) (map[string]json.RawMessage, error) {
+	out := map[string]json.RawMessage{}
+	seen := map[string]bool{}
+	var keys []string
+	prefix := bubblePrefix(id)
+	for _, key := range ids {
+		if _, exists := present[key]; exists && !seen[key] {
+			seen[key] = true
+			keys = append(keys, prefix+key)
+		}
+	}
+	const batchSize = 128
+	for start := 0; start < len(keys); start += batchSize {
+		end := min(start+batchSize, len(keys))
+		args := make([]any, end-start)
+		for i, key := range keys[start:end] {
+			args[i] = key
+		}
+		query := `SELECT key,value FROM cursorDiskKV WHERE key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
+		if err := readListedBubbles(ctx, q, query, args, prefix, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func readListedBubbles(ctx context.Context, q querier, query string, args []any, prefix string, out map[string]json.RawMessage) (err error) {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		var key string
+		var value []byte
+		if err = rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		out[strings.TrimPrefix(key, prefix)] = value
+	}
+	return rows.Err()
+}
+
+// ErrRecordLimit marks a native value larger than the read policy permits.
+var ErrRecordLimit = errors.New("cursor record exceeds source record limit")
+
+// Attempts counts snapshot preparation attempts, including failures before backup.
+func (r *Reader) Attempts() int { return r.attempts }
+
+// SourceSignature encodes exact native equality as a fixed provider token.
+func (s Signature) SourceSignature() agentapi.SourceSignature {
+	h := sha256.New()
+	_, _ = h.Write([]byte("agent-archive/cursor-signature/v1"))
+	var b [8]byte
+	number := func(n uint64) { binary.BigEndian.PutUint64(b[:], n); _, _ = h.Write(b[:]) }
+	text := func(v string) { number(uint64(len(v))); _, _ = h.Write([]byte(v)) }
+	number(uint64(s.LastUpdatedAt)) //nolint:gosec // Signed timestamp bits are the existing equality contract.
+	number(uint64(s.HeaderCount))   //nolint:gosec // Counts are decoded from nonnegative slice lengths.
+	text(s.LastBubbleID)
+	number(uint64(s.MessageRows)) //nolint:gosec // Counts are decoded from nonnegative indexed row counts.
+	text(s.LastMessageHash)
+	return agentapi.SourceSignature{Version: 1, Provider: "cursor/sqlite", Token: hex.EncodeToString(h.Sum(nil))}
+}
+
+func signatureRows(ctx context.Context, q querier, id string, sig Signature, ids []string) (out Signature, err error) {
+	if len(ids) == 0 {
+		return sig, nil
+	}
+	prefix := bubblePrefix(id)
+	rows, err := q.QueryContext(ctx, bubbleKeyQuery, prefix, bubbleUpper(prefix))
+	if err != nil {
+		return Signature{}, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	present := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err = rows.Scan(&key); err != nil {
+			return Signature{}, err
+		}
+		present[strings.TrimPrefix(key, prefix)] = true
+	}
+	err = rows.Err()
+	if err != nil {
+		return Signature{}, err
+	}
+	for _, id := range ids {
+		if present[id] {
+			sig.MessageRows++
+		}
+	}
+	sig.LastMessageHash, err = messageHashAt(ctx, q, prefix+ids[len(ids)-1])
+	return sig, err
+}
+
+func messageHashAt(ctx context.Context, q querier, key string) (string, error) {
+	const chunkSize = 64 * 1024
+	var chunk []byte
+	var size sql.NullInt64
+	var null bool
+	var kind sqliteValueKind
+	err := q.QueryRowContext(ctx, `SELECT CASE WHEN typeof(value) IN ('blob','text') THEN substr(CAST(value AS BLOB),1,?) ELSE value END,length(CAST(value AS BLOB)),value IS NULL,typeof(value) FROM cursorDiskKV WHERE key = ?`, chunkSize, key).Scan(&chunk, &size, &null, &kind)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && null {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if kind != sqliteBlob && kind != sqliteText {
+		return messageHash(chunk), nil
+	}
+	h := sha256.New()
+	_, _ = h.Write(chunk)
+	for offset := int64(len(chunk)); offset < size.Int64; offset += int64(len(chunk)) {
+		if err = ctx.Err(); err != nil {
+			return "", err
+		}
+		if err = q.QueryRowContext(ctx, `SELECT substr(CAST(value AS BLOB),?,?) FROM cursorDiskKV WHERE key = ?`, offset+1, chunkSize, key).Scan(&chunk); err != nil {
+			return "", err
+		}
+		if len(chunk) == 0 {
+			return "", NotChecked(ChangedDuringRead)
+		}
+		_, _ = h.Write(chunk)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16]), nil
+}
+
+// signatureOnly visits the composer once without returning unknown native content.
+// A statement-local JSON tree retains only typed metadata and direct identities;
+// separate json_each statements would parse a huge omitted value repeatedly.
+func signatureOnly(ctx context.Context, q querier, id string) (Signature, error) {
+	key := "composerData:" + id
+	rows, err := q.QueryContext(ctx, signatureNodeQuery, key)
+	if err != nil {
+		return Signature{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	var found, valid bool
+	var root sqliteValueKind
+	var timestamp int64
+	var timestampErr error
+	var headers signatureTreeHeaders
+	inline := signatureTreeHeaders{inline: true}
+	for rows.Next() {
+		var present bool
+		var index, parent sql.NullInt64
+		var key any
+		var kind sql.NullString
+		var scalar any
+		if err := rows.Scan(&present, &index, &parent, &key, &kind, &scalar); err != nil {
+			return Signature{}, err
+		}
+		found = present
+		if !parent.Valid {
+			valid = kind.Valid
+			root = sqliteValueKind(kind.String)
+			continue
+		}
+		typ := sqliteValueKind(kind.String)
+		if parent.Int64 == 0 {
+			switch key {
+			case "lastUpdatedAt":
+				timestamp, timestampErr = signatureTimestamp(typ, scalar)
+			case "fullConversationHeadersOnly":
+				headers = newSignatureTreeHeaders(index.Int64, typ, false)
+			case "conversation":
+				inline = newSignatureTreeHeaders(index.Int64, typ, true)
+			}
+			continue
+		}
+		headers.visit(index.Int64, parent.Int64, typ, scalar)
+		inline.visit(index.Int64, parent.Int64, typ, scalar)
+	}
+	if err := rows.Err(); err != nil {
+		return Signature{}, err
+	}
+	// Release the SQL row owner before fallback or bubble-row queries on a
+	// serial connection. Unknown JSON must still be fully validated.
+	if err := rows.Close(); err != nil {
+		return Signature{}, err
+	}
+	if !found {
+		return Signature{}, ErrComposerNotFound
+	}
+	if !valid {
+		return signatureJSONFallback(ctx, q, key, id)
+	}
+	if root != sqliteObject || timestampErr != nil {
+		return Signature{}, NotChecked(UnknownFormat)
+	}
+	selected, name := &headers, "fullConversationHeadersOnly"
+	if !headers.present {
+		selected, name = &inline, "conversation"
+	}
+	selected.finish()
+	if selected.err != nil {
+		return Signature{}, NotChecked(UnknownFormat)
+	}
+	sig := Signature{LastUpdatedAt: timestamp, HeaderCount: selected.count, LastBubbleID: selected.last}
+	// SQL's invalid UTF-8/surrogate decoding is repaired only for affected
+	// identities, using bounded raw reads and the selected array ordinal.
+	for _, ordinal := range selected.repairs {
+		identity, err := rawHeaderIdentity(ctx, q, key, name, ordinal)
+		if err != nil {
+			return Signature{}, err
+		}
+		if !selected.inline {
+			selected.ids[ordinal] = identity
+		}
+		if ordinal == int64(selected.count-1) {
+			sig.LastBubbleID = identity
+		}
+	}
+	if selected.inline {
+		return sig, nil
+	}
+	return signatureRows(ctx, q, id, sig, selected.ids)
+}
+
+// JSON validation and the selected tree traversal stay within one statement.
+// The CASE never exports large wrong-type timestamps/identities. The path
+// predicate restricts identity rows to direct array objects, excluding unknown
+// nested fields and their unrestricted contents. No whole-value CTE is built.
+// jsonb reuses json_valid's parsed cache and avoids a second text translation
+// in json_tree. Equal text-character and blob-byte lengths prove there is no
+// raw NUL (which terminates SQLite text length); other inputs retain the scan.
+const signatureNodeQuery = `SELECT c.value IS NOT NULL, j.id, j.parent, j.key, j.type,
+ CASE WHEN j.parent = 0 AND j.key = 'lastUpdatedAt' AND j.type IN ('integer','real') THEN j.atom
+      WHEN j.parent != 0 AND lower(j.key) = 'bubbleid' AND j.type = 'text'
+           AND j.path NOT IN ('$.fullConversationHeadersOnly','$.conversation') THEN j.atom END
+ FROM cursorDiskKV AS c LEFT JOIN json_tree(
+ CASE WHEN json_valid(c.value)
+      AND (length(CAST(c.value AS TEXT)) = length(CAST(c.value AS BLOB))
+           OR instr(CAST(c.value AS BLOB),x'00') = 0) THEN jsonb(c.value) END) AS j
+ WHERE c.key = ? AND (j.parent IS NULL
+ OR j.parent = 0 AND j.key IN ('lastUpdatedAt','fullConversationHeadersOnly','conversation')
+ OR j.path IN ('$.fullConversationHeadersOnly','$.conversation')
+ OR lower(j.key) = 'bubbleid'
+    AND (j.path GLOB '$.fullConversationHeadersOnly[[]*]' OR j.path GLOB '$.conversation[[]*]')
+    AND instr(substr(j.path,instr(j.path,'[')+1),']') = length(j.path)-instr(j.path,'['))
+ ORDER BY j.id`
+
+func signatureTimestamp(kind sqliteValueKind, value any) (int64, error) {
+	switch kind {
+	case "", sqliteNull:
+		return 0, nil
+	case sqliteInteger:
+		if n, ok := value.(int64); ok {
+			return int64(float64(n)), nil
+		}
+		// JSON integral numbers outside SQLite's int64 range retain their
+		// integer JSON type but have a floating-point atom. Match the legacy
+		// decoder's float64 conversion, including its int64 overflow behavior.
+		fallthrough
+	case sqliteReal:
+		if n, ok := value.(float64); ok && !math.IsInf(n, 0) && !math.IsNaN(n) {
+			return int64(n), nil
+		}
+	case sqliteBlob, sqliteText, sqliteArray, sqliteObject:
+		return 0, NotChecked(UnknownFormat)
+	}
+	return 0, NotChecked(UnknownFormat)
+}
+
+type signatureTreeHeaders struct {
+	signatureHeaders
+	inline      bool
+	node        int64
+	entry       int64
+	live        bool
+	identity    string
+	identitySet bool
+	invalid     bool
+	repairs     []int64
+}
+
+func newSignatureTreeHeaders(node int64, kind sqliteValueKind, inline bool) signatureTreeHeaders {
+	var err error
+	if kind != sqliteArray && kind != sqliteNull {
+		err = NotChecked(UnknownFormat)
+	}
+	return signatureTreeHeaders{
+		signatureHeaders: signatureHeaders{present: kind != sqliteNull, err: err},
+		inline:           inline,
+		node:             node,
+	}
+}
+
+func (h *signatureTreeHeaders) visit(node, parent int64, kind sqliteValueKind, scalar any) {
+	if parent == h.node && h.present && h.err == nil {
+		h.finish()
+		h.entry, h.live = node, true
+		h.invalid = kind != sqliteObject && kind != sqliteNull
+		return
+	}
+	if !h.live || parent != h.entry {
+		return
+	}
+	switch kind {
+	case sqliteText:
+		h.identity, h.identitySet = scalar.(string), true
+	case sqliteNull:
+		h.identity, h.identitySet = "", false
+	case sqliteBlob, sqliteInteger, sqliteReal, sqliteArray, sqliteObject:
+		// encoding/json rejects any wrong-type duplicate, even if a later
+		// bubbleId has a valid string. Top-level duplicates instead select last.
+		h.invalid = true
+	default:
+		h.invalid = true
+	}
+}
+
+func (h *signatureTreeHeaders) finish() {
+	if !h.live {
+		return
+	}
+	h.count++
+	h.last = h.identity
+	if h.invalid || !h.inline && (!h.identitySet || h.identity == "") {
+		h.err = NotChecked(UnknownFormat)
+	}
+	if !utf8.ValidString(h.identity) {
+		h.repairs = append(h.repairs, int64(h.count-1))
+	}
+	if !h.inline {
+		h.ids = append(h.ids, h.identity)
+	}
+	h.live, h.identitySet, h.invalid = false, false, false
+	h.identity = ""
+}
+
+// sqliteValueKind preserves SQLite's actual storage and JSON type spellings.
+type sqliteValueKind string
+
+const (
+	sqliteBlob    sqliteValueKind = "blob"
+	sqliteText    sqliteValueKind = "text"
+	sqliteNull    sqliteValueKind = "null"
+	sqliteInteger sqliteValueKind = "integer"
+	sqliteReal    sqliteValueKind = "real"
+	sqliteArray   sqliteValueKind = "array"
+	sqliteObject  sqliteValueKind = "object"
+)

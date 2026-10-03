@@ -1,7 +1,7 @@
 $ agent-archive setup
 Checking installed applications...
   ✓ Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 Step 1 of 3 · Choose what to capture
 
@@ -22,11 +22,11 @@ Projects:
 
 Step 2 of 3 · Connect storage
 
-Where should sessions be stored?
+Where should your archive live?
   1) Cloudflare R2
   2) Amazon S3
-  3) Show setup instructions
-Enter 1-3 [1]: 2
+[h] Setup instructions
+Choose [1]: s3-existing
 
 AWS profile: work
 

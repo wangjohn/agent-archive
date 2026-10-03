@@ -142,12 +142,20 @@
 {{- end}}
 {{- if .HeadsUp}}
 <section class="card" aria-labelledby="h-heads">
-<h2 id="h-heads">Heads up</h2>
+<h2 id="h-heads">Findings</h2>
 <ul class="alerts">
 {{- range .HeadsUp}}
 <li>{{.}}</li>
 {{- end}}
 </ul>
+</section>
+{{- end}}
+{{- if .Coverage}}
+<section class="card" aria-labelledby="h-coverage">
+<h2 id="h-coverage">Coverage</h2>
+{{- range .Coverage}}
+<p class="note">{{.}}</p>
+{{- end}}
 </section>
 {{- end}}
 <h2 class="divider" id="h-detail">Details</h2>

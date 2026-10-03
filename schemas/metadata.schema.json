@@ -43,9 +43,29 @@
       "minLength": 1
     },
     "title": {
-      "description": "One-line preview of the first filtered human prompt, truncated for browsing. Omitted when no prompt text was available.",
+      "description": "One-line preview of the first filtered human prompt, cut to 72 characters through parser 0.17.0 or 128 characters from parser 0.17.1. From parser 0.19.0 the <timestamp> line and <user_query> tags Cursor wraps a prompt in are not part of it. Omitted when no prompt text was available.",
       "type": "string",
       "minLength": 1
+    },
+    "name": {
+      "description": "From parser 0.17.0: the title the harness gave the session, collapsed to one line and cut to 72 characters through parser 0.17.0 or 128 characters from parser 0.17.1, like title: Claude Code's custom title (the last one, when the session was renamed) or a Cursor chat's name; from parser 0.18.0 a Claude Code subagent's name is the description its parent gave the task. Absent when the session has none.",
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "description": "From parser 0.17.0: the last git branch the transcript recorded. Absent when none was recorded, it is HEAD (a detached checkout), or it is not a valid branch name.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9._/+-]+$"
+    },
+    "pull_requests": {
+      "description": "From parser 0.17.0: the pull requests the session was linked to (Claude Code's pr-link records), in the order first linked, each once, at most 20. Absent when there are none.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/pull_request_link"
+      }
     },
     "project_name": {
       "description": "Basename of the session's project root at publish time, for list without local config.",
@@ -58,7 +78,7 @@
       "pattern": "^repo-[0-9a-f]{16}$"
     },
     "git_head": {
-      "description": "The commit the session's working directory had checked out, as the session's own hooks recorded it by running git there (a linked worktree's own HEAD; a submodule's when the session ran inside one). 'start' is HEAD, with whether the working tree was dirty, when the hook that registered the session ran; 'last' is HEAD at the most recent stop hook that could read it. Either is absent when no hook could tell (git not installed, not a repository, a branch with no commits, git slower than the hook's budget) and on sessions registered before this field, imported by backfill, or recorded as subagents; neither is ever inferred afterwards. Only commit names, a boolean, and times are recorded: never a branch, remote, path, or file name. The commit may exist only on the capturing machine.",
+      "description": "The commit the session's working directory had checked out, as the session's own hooks recorded it by running git there (a linked worktree's own HEAD; a submodule's when the session ran inside one). 'start' is HEAD, with whether the working tree was dirty, when the hook that registered the session ran; 'last' is HEAD at the most recent stop hook that could read it. Either is absent when no hook could tell (git not installed, not a repository, a branch with no commits, git slower than the hook's budget) 'start' is also absent on sessions registered before this field or imported by backfill; a later live stop can record 'last'. Subagents have neither. Neither is ever inferred afterwards. Only commit names, a boolean, and times are recorded: never a branch, remote, path, or file name. The commit may exist only on the capturing machine.",
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
@@ -652,6 +672,33 @@
           "description": "The time of the hook event that saw it.",
           "type": "string",
           "format": "date-time"
+        }
+      }
+    },
+    "pull_request_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "number"
+      ],
+      "properties": {
+        "repository": {
+          "description": "owner/repo.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "number": {
+          "description": "The pull request's number.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "url": {
+          "description": "The pull request's GitHub address, https://github.com/<owner>/<repo>/pull/<number>, kept only in exactly that form. Absent when the record carried none.",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://github\\.com/"
         }
       }
     },

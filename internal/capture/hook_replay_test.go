@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"testing"
 	"time"
 
@@ -31,7 +33,7 @@ func TestHookMarksASessionStartedWithTheReplayVariable(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithReplay(value)); err != nil {
+			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithReplay(value), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			regs := registrations(t, home)
@@ -55,6 +57,7 @@ func TestHookNeverChangesTheReplayMarkerOfARegisteredSession(t *testing.T) {
 		then  string
 	}{
 		"a replay tool resumes a person's session": {"", "run-1"},
+		"another run resumes a replay":             {"run-1", "run-2"},
 		"a person resumes a replay":                {"run-1", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -62,16 +65,16 @@ func TestHookNeverChangesTheReplayMarkerOfARegisteredSession(t *testing.T) {
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-			if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithReplay(tc.first)); err != nil {
+			if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithReplay(tc.first), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			resumed := startPayload("/work/widget")
 			resumed["source"] = "resume"
-			if err := HandleEvent(home, "codex", resumed, at.Add(time.Hour), WithReplay(tc.then)); err != nil {
+			if err := HandleEvent(home, "codex", resumed, at.Add(time.Hour), WithReplay(tc.then), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			regs := registrations(t, home)
-			if len(regs) != 1 || (regs[0].Replay != nil) != (tc.first != "") {
+			if len(regs) != 1 || (regs[0].Replay != nil) != (tc.first != "") || (regs[0].Replay != nil && regs[0].Replay.RunID != tc.first) {
 				t.Errorf("registrations = %#v, want the marker as first registered", regs)
 			}
 		})
@@ -91,15 +94,56 @@ func TestAQueuedReplayStartIsAdmittedAsAReplay(t *testing.T) {
 	busy := func(home string, _ time.Duration) (func(), error) {
 		return local.NamedLockWait(home, "hooks.lock", 10*time.Millisecond)
 	}
-	if err := handleEvent(home, "claude", claudeStart(project, "native-replay", "startup", ""), at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}}); err != nil {
+	batch, err := testBatch("claude", claudeStart(project, "native-replay", "startup", ""), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handleBatch(home, "claude", batch, at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}, decoders: testDecoders}); err != nil {
 		t.Fatalf("queued start: %v", err)
 	}
 	release()
-	if err := ReplayAdmissionIntents(home, at.Add(2*time.Second)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(2*time.Second), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs := registrations(t, home)
 	if len(regs) != 1 || regs[0].Replay == nil || regs[0].Replay.RunID != "run-7" {
 		t.Fatalf("admitted registrations = %#v, want the replay marker kept", regs)
+	}
+}
+
+// Interrupted ordered admissions retain the original hook marker across every
+// durable effect and retry, even when no replay environment is present later.
+func TestOrderedAdmissionKeepsReplayMarkerAfterInterruptedEffects(t *testing.T) {
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	for _, boundary := range []effectName{effectRegistrationCreate, effectLocatorUpdate, effectEvidenceSave, effectRequestSave, effectIntentAck} {
+		t.Run(string(boundary), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			follow := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalAnswer, "marked", project, "/earlier"), ObservedAt: at})
+			start := syntheticLifecycle(agentapi.HookInput{Payload: syntheticPayload(signalBegin, "marked", project, ""), ObservedAt: at})
+			interrupted := false
+			err := handleBatch(home, "synthetic", append(follow, start...), at, nil, nil, eventOptions{
+				replay: archive.ParseReplay("run-ordered"),
+				afterEffect: func(name effectName) error {
+					if name == boundary && !interrupted {
+						interrupted = true
+						return errors.New("interrupted admission")
+					}
+					return nil
+				},
+			})
+			if err == nil || !interrupted {
+				t.Fatalf("expected interrupted %s: %v", boundary, err)
+			}
+			for range 2 {
+				if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			regs := registrations(t, home)
+			if len(regs) != 1 || regs[0].Replay == nil || regs[0].Replay.RunID != "run-ordered" || regs[0].TranscriptPath != "/earlier" {
+				t.Fatalf("admission lost replay identity or locator: %+v", regs)
+			}
+		})
 	}
 }

@@ -13,7 +13,7 @@ func TestPublicationCarriesTheReplayMarker(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.Replay = &archive.Replay{RunID: "run-7"}
-	opts := Options{MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return reg.RegisteredAt.Add(time.Hour) }}
 	if got := publishOnce(t, local, storagetest.NewMemoryStore(), reg, &opts); got.Replay == nil || got.Replay.RunID != "run-7" {
 		t.Errorf("replay = %+v, want the registration's", got.Replay)
 	}

@@ -42,8 +42,10 @@ working directory at the moment a session starts is the hook.
   of a registered session in an included project runs `rev-parse` in the
   reported directory, before the lock and under the same bound, and records
   the answer as `last_head` when it names a different commit from the one
-  recorded. A stop at the same commit writes nothing, so the common case adds
-  one `git rev-parse` (a few milliseconds) and no extra durable write.
+  recorded. A stop at the same commit preserves its published first-seen
+  time and advances a local observation watermark, so an older delayed stop
+  cannot replace a newer observation. The common case adds one `git rev-parse`
+  (a few milliseconds) and one registration update.
   `git status` is not run at stops: it can take far longer in a large
   repository, and it would run on every turn.
 - **The working directory, not the project root.** The repository key is
@@ -62,8 +64,9 @@ working directory at the moment a session starts is the hook.
   registration holds into the sidecar's `git_head` at every publication. It
   never runs git for a commit itself: HEAD at publish time is not HEAD at the
   start, and a sidecar that looked authoritative would be worse than none.
-  Sessions registered before this change, imported by `backfill`, or captured
-  as subagents have no `git_head`.
+  Sessions registered before this change or imported by `backfill` have no
+  starting observation. Later live stops can record `last`. Subagents have
+  neither observation.
 - **No parser bump.** `git_head` comes from the registration, not from the
   source bundle, and nothing can derive it for a session that was published
   before the hooks recorded it. Bumping `DefaultParserVersion` would make every
@@ -99,7 +102,9 @@ In the sidecar:
   printed (file names) is read for emptiness only and never kept.
 - `last.observed_at` is the first stop that saw HEAD at that commit. A later
   stop at the same commit does not move it, and a stop whose lookup fails
-  keeps what was recorded.
+  keeps what was recorded. The registration's local-only `last_head_seen_at`
+  tracks the most recent successful stop, including repeated commits, and
+  fences older delayed observations.
 - `show` prints a `Commit` row (`started on 3f9c2ab4d1e0 with uncommitted
   changes · last seen on 9e01d4c7a2b8`); `show --json` and `list --json`
   carry `git_head` as stored.
@@ -121,7 +126,7 @@ In the sidecar:
 | A continuation (resume, `/clear`, compact) | `start_head` is never replaced; the stop that follows updates `last_head`. |
 | A start that found `hooks.lock` busy and was admitted later from its queued intent | No `start`: the collector admits it after the fact, when HEAD may have moved. Its stops still record `last`. |
 | A subagent | No `git_head`: its start is not its parent's, and no hook reports one. |
-| An imported session | No `git_head`; see the heuristic below. |
+| An imported session | No `start`; later live stops can record `last`. See the heuristic below. |
 
 ## Privacy
 
@@ -138,7 +143,7 @@ metadata makes no claim that it is reachable anywhere else.
 ## Not done here: inferring a start for older sessions
 
 Sessions captured before this change, and every imported session, have no
-recorded commit. A consumer that wants one anyway can infer a candidate
+recorded starting commit. A consumer that wants one anyway can infer a candidate
 outside agent-archive, and must label it as inferred:
 
 1. Take the session's branch from its retained transcript (Claude Code's
@@ -171,7 +176,7 @@ never in `start`.
 - `internal/capture/hook_git_head_test.go`: the commit and dirty flag on a new
   registration (including a worktree and Cursor's first prompt), nothing for a
   declined, resumed, or already registered start, the stop's HEAD-only lookup
-  and its write-only-on-change rule, nothing at the stop of a session that is
+  and its first-seen timestamp and delayed-observation rules, nothing at the stop of a session that is
   not archived, the lookups running together and before `hooks.lock`, and a
   hung lookup.
 - `internal/archive/git_head_test.go` and `schema_test.go`: what
