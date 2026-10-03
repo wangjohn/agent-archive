@@ -18,6 +18,8 @@ import (
 type Integration struct {
 	Descriptor agentmeta.Descriptor
 	Launcher   agentapi.Launcher
+	Parser     agentapi.TranscriptParser
+	Preview    agentapi.RecordPreviewer
 	Sources    agentapi.SourceProvider
 	Filter     agentapi.TranscriptFilter
 	Runtime    agentapi.RuntimeDetector
@@ -49,24 +51,10 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if _, ok := r.bindings[d.ID]; ok {
 			return nil, fmt.Errorf("duplicate binding %q", d.ID)
 		}
-		if err := validateBinding(b, d.ID); err != nil {
+		var err error
+		d, err = boundDescriptor(b, d)
+		if err != nil {
 			return nil, err
-		}
-		d.Operations = nil
-		if b.Launcher != nil {
-			d.Operations = append(d.Operations, agentmeta.Launch)
-		}
-		if b.Runtime != nil {
-			d.Operations = append(d.Operations, agentmeta.Runtime)
-		}
-		if b.Hooks != nil {
-			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
-		}
-		if b.Decoder != nil {
-			d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
-		}
-		if b.Sources != nil {
-			d.Operations = append(d.Operations, agentmeta.Source)
 		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
@@ -89,28 +77,6 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		return nil, err
 	}
 	return r, nil
-}
-
-func validateBinding(b Integration, id agentmeta.ID) error {
-	if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) || nilImplementation(b.Sources) || nilImplementation(b.Filter) {
-		return fmt.Errorf("agent %s has a typed-nil implementation", id)
-	}
-	if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil {
-		return fmt.Errorf("agent %s has no operations", id)
-	}
-	// Declaration metadata and operation promises cannot override the catalog.
-	if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
-		return fmt.Errorf("binding %s must contain only its canonical ID", id)
-	}
-	if b.Sources != nil || b.Filter != nil {
-		if b.Sources == nil || b.Filter == nil {
-			return fmt.Errorf("agent %s has incomplete source bindings", id)
-		}
-		if b.Filter.Name() != string(id) {
-			return fmt.Errorf("agent %s has filter for %s", id, b.Filter.Name())
-		}
-	}
-	return nil
 }
 
 func nilImplementation(v interface{}) bool {
@@ -149,14 +115,26 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	return r
+}
+
+// LookupParser resolves only the parser needed by retained-source derivation.
+func (r *Registry) LookupParser(name string) (agentapi.TranscriptParser, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Parser, ok && b.Parser != nil
+}
+
+// LookupPreview resolves a bounded safe-record preview decoder.
+func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Preview, ok && b.Preview != nil
 }
 
 // Launcher resolves the native launch operation without exposing other ports.
@@ -239,4 +217,45 @@ func (r *Registry) SweepSources() {
 			p.Sweep()
 		}
 	}
+}
+
+func boundDescriptor(b Integration, d agentmeta.Descriptor) (agentmeta.Descriptor, error) {
+	for _, port := range []any{b.Launcher, b.Runtime, b.Hooks, b.Decoder, b.Sources, b.Filter, b.Parser, b.Preview} {
+		if port != nil && nilImplementation(port) {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has a typed-nil implementation", d.ID)
+		}
+	}
+	if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil && b.Sources == nil && b.Filter == nil && b.Parser == nil {
+		return agentmeta.Descriptor{}, fmt.Errorf("agent %s has no operations", d.ID)
+	}
+	// Declaration metadata and operation promises cannot override the catalog.
+	if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
+		return agentmeta.Descriptor{}, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
+	}
+	d.Operations = nil
+	if b.Launcher != nil {
+		d.Operations = append(d.Operations, agentmeta.Launch)
+	}
+	if b.Runtime != nil {
+		d.Operations = append(d.Operations, agentmeta.Runtime)
+	}
+	if b.Hooks != nil {
+		d.Operations = append(d.Operations, agentmeta.ManagedHooks)
+	}
+	if b.Decoder != nil {
+		d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
+	}
+	if b.Parser != nil {
+		d.Operations = append(d.Operations, agentmeta.Parse)
+	}
+	if b.Sources != nil || b.Filter != nil {
+		if b.Sources == nil || b.Filter == nil {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
+		}
+		if b.Filter.Name() != string(d.ID) {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has filter for %s", d.ID, b.Filter.Name())
+		}
+		d.Operations = append(d.Operations, agentmeta.Source)
+	}
+	return d, nil
 }

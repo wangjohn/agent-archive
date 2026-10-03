@@ -64,7 +64,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("first publication: %#v %v", result, err)
 	}
 	firstKey := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key
@@ -77,7 +77,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 
 func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
 	t.Helper()
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("republish: %#v %v", result, err)
 	}
@@ -159,7 +159,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -186,14 +186,14 @@ func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return future }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return future }}); err != nil {
 		t.Fatal(err)
 	}
 	// The clock is corrected and the transcript grows, with no hook asking
 	// for a flush.
 	writeTranscript(t, filepath.Dir(path), "codex.jsonl", grownTranscript)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 0 {
 		t.Fatalf("expected one interval's deferral: %#v %v", result, err)
 	}
@@ -214,7 +214,7 @@ func TestPendingReadyAtInTheFutureIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	if _, err := Run(context.Background(), local, store, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	corruptFile(t, subagentCandidatePath(local, "child"))
 
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one corrupt file failed the whole pass: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("second pass: %#v %v", result, err)
 	}
 }
@@ -332,7 +332,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 	if err := os.Chmod(requestPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || result.Errors["session-1"] == nil || errors.Is(result.Errors["session-1"], state.ErrQuarantined) || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -362,7 +362,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one session's local failure ended the pass: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := Run(ctx, local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(ctx, local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -425,7 +425,7 @@ func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 		done <- outcome{result, err}
 	}()
 	select {
@@ -491,7 +491,7 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{stale, nested} {
@@ -516,7 +516,7 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	pendingFile := filepath.Join(local.Home(), "pending", "session-1.json")
 	var written os.FileInfo
 	for pass := range 3 {
@@ -563,7 +563,7 @@ func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
 	if err != nil || complete {
 		t.Fatalf("bounded local stage: complete=%v err=%v", complete, err)
 	}
-	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("queued publication under pending recovery: %#v %v", result, err)
 	}
@@ -641,7 +641,7 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 				}
 				finished <- err
 			}()
-			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
+			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
 			if writeErr := <-finished; writeErr != nil {
 				t.Fatal(writeErr)
 			}

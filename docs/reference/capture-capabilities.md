@@ -79,6 +79,21 @@ Not observed on 3.21.13, and kept fail-closed:
 the fallback proof, and a payload that names no transcript still proves
 nothing.
 
+## Replay sessions
+
+A session is marked as a replay when `AGENT_ARCHIVE_REPLAY` is set in the
+environment of the hook that registers it ([the design](../../dev/specs/replay-sessions.md)).
+The hook reads its own environment, which it inherits from whatever starts it:
+
+| App | Where the hook's environment comes from | Status |
+| --- | --- | --- |
+| Claude Code | The `claude` process, which runs hooks as its children | `documented` (hooks inherit the agent's environment); not yet observed with a replay runner |
+| Codex | The `codex` process, which runs hooks as its children | `documented`; not yet observed with a replay runner |
+| Cursor | The app (or the Cursor agent CLI) as it was launched: a variable exported in a terminal after the app started does not reach it | `unverified` |
+
+A runner that cannot get the variable to the hooks gets ordinary sessions,
+which `list` then shows as the person's own.
+
 ## Capability states and subagents
 
 `documented` means the vendor exposes the named evidence. `unavailable` means
@@ -123,6 +138,24 @@ Please continue from where you left off" after a restart. That record has
 `promptSource: "sdk"` and no `origin`, the same as a prompt submitted through
 the SDK, so nothing in it distinguishes it from something a person sent and it
 is still counted as a prompt. Matching its text is deliberately not done.
+
+## The commit a session started on
+
+No app reports the commit it is working on, so agent-archive's hook asks git
+itself, in the directory the payload names (see
+[the design](../../dev/specs/git-head.md)). What each app gives it:
+
+| App | Registering hook | Directory | Stop hooks that read HEAD again |
+| --- | --- | --- | --- |
+| Claude Code | `SessionStart` (`startup`, `clear`) | `cwd`, which follows a persisted `cd` and names a worktree under `.claude/worktrees/` | `Stop`, `StopFailure`, `SessionEnd` |
+| Codex | `SessionStart` (`startup`, `clear`) | `cwd` | `Stop`, `Interrupt`, `SessionEnd` |
+| Cursor | `beforeSubmitPrompt` of a new chat (3.21.13 fires no `sessionStart`) | the first of `workspace_roots` (no `cwd`); a multi-root workspace uses its first root | `stop`, `sessionEnd` |
+
+This is `documented` for the payload fields and relies on nothing else from
+the app: git, not the app, answers. It is recorded wherever git is installed
+and answers within the hook's budget, and is absent (a capture gap in the
+sense of "unknown", not an error) otherwise. A session a hook did not register
+(an import, a subagent) has no starting commit.
 
 ## Installed version versus captured version
 

@@ -13,6 +13,46 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"eval": `Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
+       | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+
+Export sessions for an evaluation tool, one JSON Lines record per session
+(schemas/eval-export.schema.json), from the archive or from transcripts on
+this machine. Read-only and never interactive.
+`,
+	"eval export": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       agent-archive eval export --ids-from - [--detail metadata|full]
+       agent-archive eval export --scan [--harness NAME] [--project DIR]
+               [--since DATE] [--until DATE] [--detail metadata|full]
+       agent-archive eval export --file PATH --harness NAME [--detail ...]
+       Any of them also takes [--max-bytes N] [--workers N].
+
+Print one JSON line per session: its identity, commits, counts, tokens and
+tools, and with --detail full (the default) its filtered human prompts in
+order, final response, edited files and feedback. Archived sessions are
+named by full SESSION_ID. Transcripts on this machine (--file, --scan, or
+absolute paths with --ids-from) need no setup and are filtered as they
+would be before upload. With several workers each record is written as its
+session finishes. A session that cannot be exported is an error record on
+its own line; the others are still printed, and the exit code is 1.
+Nothing is uploaded or written.
+  --detail metadata|full     metadata prints no conversation text and, for
+                             the archive, reads only sidecars (default full)
+  --ids-from -               Read session IDs or transcript paths from stdin,
+                             one a line
+  --scan                     Export the transcripts backfill would find here
+  --project DIR              With --scan, only this project; repeatable
+  --since DATE|TIME|AGE      With --scan, sessions started on or after this
+                             local day (as backfill's --since)
+  --until DATE|TIME|AGE      With --scan, sessions started on or before it
+  --file PATH                Export one transcript; needs --harness
+  --harness NAME             The app: for --file, for a path outside the apps'
+                             folders, or a session under two apps
+  --workers N                Export N sessions at once (default 0: the number
+                             of CPUs, up to 8)
+  --max-bytes N              Cut each record's longest texts to fit N bytes
+                             (default 120000; 0 for no limit)
+`,
 	"machines revoke": `Usage: agent-archive machines revoke NAME [--include-issued] [--yes] [--json]
        agent-archive machines revoke --machine-id MACHINE_ID [--yes] [--json]
        agent-archive machines revoke --recipient-id RECIPIENT_ID
@@ -327,6 +367,8 @@ paged through $PAGER unless --no-pager.
                                  capture gaps
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
   --project DIR|NAME             List this project's sessions: the
@@ -443,6 +485,8 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
                                  other models count too)
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --prices FILE                  Price tokens with the prices in this JSON file
                                  (the built-in table's format), applied on top
                                  of it; the output says so

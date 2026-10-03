@@ -17,7 +17,7 @@ func (s *sessionScan) blockThenRemember(reason state.BlockedReason, read sourceR
 	if err != nil {
 		return outcome, err
 	}
-	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason)
+	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason, s.publishedLastHead())
 }
 
 // block records a terminal capture gap for the session and completes its
@@ -165,7 +165,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			err = errors.Join(err, removeErr)
 		}
 		if _, buildErr := archive.BuildCompressedSource(pending.Bundle); buildErr != nil {
-			skip := state.RefreshSkip{ParserVersion: s.opts.parserVersion(), SourceKey: pending.SourceKey, Reason: state.RefreshSkipSourceUnavailable}
+			skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: pending.SourceKey, Reason: state.RefreshSkipSourceUnavailable}
 			if skipErr := s.local.SaveRefreshSkip(s.id(), skip); skipErr != nil {
 				err = errors.Join(err, skipErr)
 			}

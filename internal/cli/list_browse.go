@@ -369,7 +369,7 @@ func (b *sessionBrowser) renderTranscript(ctx context.Context, row listRow) ([]b
 	if err != nil {
 		return nil, err
 	}
-	t, err := buildTranscript(bundle)
+	t, err := buildTranscript(ctx, b.env, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("normalized view unavailable: %w", err)
 	}
@@ -945,7 +945,7 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 		return nil, false, 1
 	}
 	stopBrowse := startActivity(stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}}, stderr, command)
+	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, stderr, command)
 	stopBrowse()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)

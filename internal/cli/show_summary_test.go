@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -250,9 +251,9 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	}
 	_, adapter, ok := productionAgents.LookupSources("claude")
 	if !ok {
-		t.Fatal("fixture source filter missing")
+		t.Fatal("Claude filter unavailable")
 	}
-	filtered, err := adapter.FilterJSONL(bytes.NewReader(raw))
+	filtered, err := (claude.Filter{}).FilterJSONL(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcript, err := buildTranscript(bundle)
+	transcript, err := buildTranscript(context.Background(), nil, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,6 +559,34 @@ func TestSummaryGit(t *testing.T) {
 	}
 	if got := summaryGit(archive.Metadata{Counts: archive.Counts{Commits: intPtr(0), Pushes: intPtr(0)}}); got != nil {
 		t.Fatalf("a session with no git work shows %q", got)
+	}
+}
+
+// The Commit row names the commit the session started on, says when its tree
+// was dirty, and adds the last commit a stop saw when it moved.
+func TestSummaryCommit(t *testing.T) {
+	t.Parallel()
+	start, last := strings.Repeat("3f", 20), strings.Repeat("9e", 20)
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		head *archive.SessionGitHead
+		want string
+	}{
+		{nil, ""},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(false), ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}, "started on 3f3f3f3f3f3f with uncommitted changes"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "started on 3f3f3f3f3f3f · last seen on 9e9e9e9e9e9e"},
+		{&archive.SessionGitHead{Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "last seen on 9e9e9e9e9e9e"},
+	} {
+		if got := strings.Join(summaryCommit(tc.head), " · "); got != tc.want {
+			t.Errorf("summaryCommit(%+v) = %q, want %q", tc.head, got, tc.want)
+		}
+	}
+	view := sessionView{Metadata: archive.Metadata{SessionID: "s", GitHead: &archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}}}
+	if out := renderSummaryText(view, summaryOptions{Now: at, Location: time.UTC}); !strings.Contains(out, "Commit    started on 3f3f3f3f3f3f with uncommitted changes") {
+		t.Errorf("show has no Commit row:\n%s", out)
 	}
 }
 

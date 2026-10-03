@@ -336,11 +336,23 @@ type SessionRegistration struct {
 	// registered: a hash, never the URL. Empty when there was no portable
 	// origin, or on older registrations; the collector then derives it from
 	// ProjectRoot when it publishes.
-	RepoKey               string    `json:"repo_key,omitempty"`
-	ParentSessionID       string    `json:"parent_session_id,omitempty"`
-	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
-	SubagentID            string    `json:"subagent_id,omitempty"`
-	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// StartHead is the commit the session's working directory had checked
+	// out, and whether its tree was dirty, when the hook registered it. Set
+	// once; nil when git could not tell in time, and on registrations made
+	// before the field, by backfill, or for a subagent.
+	StartHead *GitHead `json:"start_head,omitempty"`
+	// LastHead is HEAD at the latest stop hook that could read it, replaced
+	// only when the commit changes (see GitHead.ObservedAt). Nil when no
+	// stop hook has.
+	LastHead *GitHead `json:"last_head,omitempty"`
+	// LastHeadSeenAt fences delayed stop observations without changing the
+	// first-seen time published in LastHead. Local only; absent on older state.
+	LastHeadSeenAt        *time.Time `json:"last_head_seen_at,omitempty"`
+	ParentSessionID       string     `json:"parent_session_id,omitempty"`
+	ParentNativeSessionID string     `json:"parent_native_session_id,omitempty"`
+	SubagentID            string     `json:"subagent_id,omitempty"`
+	SubagentObservedAt    time.Time  `json:"subagent_observed_at,omitempty"`
 	// AdmittedAt is when this machine took ownership of the session: the
 	// boundary for project activation and storage destination. Hooks set it at
 	// registration and backfill sets it to the import time. Empty on older
@@ -371,6 +383,10 @@ type SessionRegistration struct {
 	// registrations, which fall back to comparing Admitted() with the
 	// destination's start.
 	DestinationID string `json:"destination_id,omitempty"`
+	// Replay marks a session a replay tool ran: ReplayEnv was set in the
+	// hook that registered it. Set once, at registration; a subagent copies
+	// its parent's. Nil for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 	// SourceKind is where the collector reads the session from, fixed at
 	// registration: a transcript file ("") or a Cursor database chat.
 	SourceKind SourceKind `json:"source_kind,omitempty"`
@@ -430,9 +446,21 @@ type CaptureBoundary struct {
 	RetainedBytes   int `json:"retained_bytes"`
 }
 
+// NativeSessionIdentity is sanitized retained identity evidence supplied by an
+// integration. ID is authoritative when set; Candidates preserve retained order.
+// These observations are transient and are never persisted in source bundles.
+type NativeSessionIdentity struct {
+	ID         string
+	Candidates []string
+}
+
 // FilteredTranscript is the only adapter output accepted by NewSourceBundle.
 // Records retain their allowed native JSON shape and source ordering.
 type FilteredTranscript struct {
+	// LocalIdentity is safe retained identity evidence, never raw ownership IDs.
+	LocalIdentity NativeSessionIdentity `json:"-"`
+	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
+	ObservedHarness     Harness         `json:"-"`
 	Format              string          `json:"format"`
 	Records             [][]byte        `json:"-"`
 	Boundary            CaptureBoundary `json:"boundary"`
@@ -685,8 +713,12 @@ type Metadata struct {
 	// of where it is checked out: a hash of the normalized origin URL (see
 	// RepoKey), never the URL. Omitted when the project had no portable
 	// origin remote.
-	RepoKey   string    `json:"repo_key,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// GitHead is the commit the session's working directory had checked out
+	// when it started and when a stop hook last looked, as its hooks
+	// recorded them (see ApplyGitHead). Omitted when no hook could tell.
+	GitHead   *SessionGitHead `json:"git_head,omitempty"`
+	StartedAt time.Time       `json:"started_at"`
 	// EndedAt is the latest timestamp any retained record of the session
 	// carries, never earlier than StartedAt. Omitted when no record carries
 	// a timestamp (a Cursor transcript) or the source could not be parsed.
@@ -734,6 +766,9 @@ type Metadata struct {
 	Origin          SessionOrigin   `json:"origin,omitempty"`
 	ImportedAt      *time.Time      `json:"imported_at,omitempty"`
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
+	// Replay marks a session a replay tool ran (see ApplyReplay). Omitted
+	// for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 }
 
 // CaptureGapImportedWithoutHookEvidence marks an imported session: no hook

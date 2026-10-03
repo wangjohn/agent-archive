@@ -36,7 +36,7 @@ func TestEveryPassSweepsStaleCursorSnapshots(t *testing.T) {
 	}
 
 	local := newTestStore(t)
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "machine"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "machine"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); !errors.Is(err, fs.ErrNotExist) {

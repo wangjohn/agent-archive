@@ -181,17 +181,21 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{Sources: registryFor(env), Decoders: env.agentRegistry(), SkipSessionIndexRecovery: true,
-		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
-		SkillEvidence:        cfg.EffectiveSkillEvidence(),
-		AcceptSession:        cfg.AcceptSession,
-		Now:                  env.Now,
-		RequireSkillUse:      cfg.RequireSkillUse,
-		Progress:             pass.progress,
-		Stop:                 stop,
-		CursorDatabase:       env.cursorDatabase(),
-		RepoKey:              env.repoKey,
+	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+		SkipSessionIndexRecovery: true,
+		Parsers:                  parsersFor(env),
+		Sources:                  registryFor(env),
+		Decoders:                 env.agentRegistry(),
+		MachineID:                cfg.MachineID,
+		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:            cfg.EffectiveSkillEvidence(),
+		AcceptSession:            cfg.AcceptSession,
+		Now:                      env.Now,
+		RequireSkillUse:          cfg.RequireSkillUse,
+		Progress:                 pass.progress,
+		Stop:                     stop,
+		CursorDatabase:           env.cursorDatabase(),
+		RepoKey:                  env.repoKey,
 	})
 	// Collector status replaces its previous LastErrors. Preserve every local
 	// preflight failure, even if recovery later succeeds or collection errors.

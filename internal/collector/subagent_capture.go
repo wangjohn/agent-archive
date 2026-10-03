@@ -213,7 +213,7 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 	}
 	return archive.SessionRegistration{CodexAdmission: proof, DiscoveryCwd: parent.DiscoveryCwd,
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
-		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, RepoKey: parent.RepoKey, Harness: parent.Harness,
+		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, RepoKey: parent.RepoKey, Replay: parent.Replay, Harness: parent.Harness,
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,
 		ParentSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		SubagentID: candidate.AgentID, SubagentObservedAt: candidate.ObservedAt,

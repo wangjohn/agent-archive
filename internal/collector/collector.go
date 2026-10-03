@@ -35,8 +35,11 @@ type Options struct {
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool
-	Sources                  agentapi.SourcesLookup
-	sourcePasses             *sourcePassSet
+	// Parsers resolves pure derivation separately from native source access.
+	Parsers      agentapi.ParsersLookup
+	parserCache  map[string]agentapi.TranscriptParser
+	Sources      agentapi.SourcesLookup
+	sourcePasses *sourcePassSet
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -194,6 +197,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
@@ -509,7 +513,7 @@ func (p *pass) saveStatus() error {
 		PendingCount:           p.pending,
 		LastPublishedAt:        lastPublishedAt,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
-		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
+		UnrefreshableSummaries: p.countRefreshSkips(),
 		WaitingSubagents:       len(p.result.WaitingSubagents),
 		RunningSubagents:       len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
@@ -564,4 +568,20 @@ func harnessAdapterVersion(sources agentapi.SourcesLookup, harness string) (stri
 		return "", false
 	}
 	return adapter.Version(), true
+}
+
+// countRefreshSkips matches the parser actually bound to each registration.
+func (p *pass) countRefreshSkips() int {
+	n := 0
+	skips := p.local.RefreshSkips()
+	if len(skips) == 0 {
+		return 0
+	}
+	for _, reg := range p.registrations {
+		skipped, found := skips[reg.ArchiveSessionID]
+		if found && skipped.ParserVersion == p.opts.parserVersionFor(reg.Harness.Name) {
+			n++
+		}
+	}
+	return n
 }

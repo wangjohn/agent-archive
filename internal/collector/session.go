@@ -59,14 +59,16 @@ import (
 // saves it through this one copy rather than decoding published/<id>.json
 // again (it holds whole source bundles).
 type sessionScan struct {
-	ctx       context.Context
-	local     *state.Store
-	remote    storage.ObjectStore
-	opts      Options
-	now       time.Time
-	reg       archive.SessionRegistration
-	req       state.Request
-	published *state.Published
+	parser         agentapi.TranscriptParser
+	parserResolved bool
+	ctx            context.Context
+	local          *state.Store
+	remote         storage.ObjectStore
+	opts           Options
+	now            time.Time
+	reg            archive.SessionRegistration
+	req            state.Request
+	published      *state.Published
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
@@ -91,6 +93,7 @@ type sessionScan struct {
 
 // filteredSource is a source read and filtered once in a scan.
 type filteredSource struct {
+	adapter    agentapi.TranscriptFilter
 	transcript archive.FilteredTranscript
 	observed   sourceState
 }
@@ -200,7 +203,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	adapter  archive.Adapter
+	adapter  agentapi.TranscriptFilter
 	filtered archive.FilteredTranscript
 	observed sourceState
 	// outcome is the scan's outcome when the read ended it.
@@ -220,12 +223,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// arrives), and nothing is recorded as a failure.
 		return read, false, nil
 	}
-	if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
-		return read, false, err
-	}
 	if s.filtered != nil {
+		read.adapter = s.filtered.adapter
 		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
 	} else {
+		if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
+			return read, false, err
+		}
 		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
 	}
 	if err != nil {
@@ -284,7 +288,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, ""); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", s.publishedLastHead()); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
@@ -346,7 +350,7 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 
 	// Observe the filesystem only with session activity. An unrelated skill edit
 	// must not refresh every historical session or extend its retention lifetime.
-	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(cached, candidate) || !nativeEvidenceExtends(candidate, cached)
+	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
 	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		active = true
 	}
@@ -495,7 +499,7 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 			return refiltered, false, err
 		}
 	}
-	if !haveGuard || nativeEvidenceExtends(guardBundle, candidate) {
+	if !haveGuard || nativeEvidenceExtends(read.adapter, guardBundle, candidate) {
 		return candidate, false, nil
 	}
 	provider, _, found := s.opts.Sources.LookupSources(s.reg.Harness.Name)
@@ -530,7 +534,7 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
 func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
-	rendered, err := renderPublication(candidate, s.reg, s.now, s.opts, s.priorRepoKey)
+	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -589,7 +593,7 @@ type renderedPublication struct {
 
 // renderPublication compresses candidate, derives its object keys, and
 // builds its metadata document.
-func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
+func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, parserVersion string, candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
 	compressed, err := archive.BuildCompressedSource(candidate)
 	if err != nil {
 		return renderedPublication{}, fmt.Errorf("compress source bundle: %w", err)
@@ -603,10 +607,13 @@ func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegist
 		return renderedPublication{}, fmt.Errorf("derive metadata key: %w", err)
 	}
 	source := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-	metadata, buildErr := archive.BuildMetadata(candidate, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: opts.parserVersion()})
+	analysis, parseErr := agentapi.Analyze(ctx, parser, candidate)
+	metadata, buildErr := archive.BuildMetadataWithAnalysis(candidate, analysis, parseErr, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: parserVersion})
 	metadata.ApplyRegistrationProvenance(reg)
 	metadata.ApplyProjectName(reg.ProjectRoot)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
+	metadata.ApplyGitHead(reg)
+	metadata.ApplyReplay(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return renderedPublication{}, fmt.Errorf("derive metadata: %w", buildErr)
 	}
