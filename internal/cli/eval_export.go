@@ -490,7 +490,7 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 	// sanitized identity for output. Text-only transcripts retain discovery's
 	// identity because they have no structured records to sanitize.
 	if nativeID == "" || len(filtered.Records) > 0 {
-		nativeID = transcriptSessionID(harness, path, filtered)
+		nativeID = transcriptSessionID(adapter, path, filtered)
 	}
 	sum := sha256.Sum256([]byte(path))
 	root := input.projectRoot
@@ -550,47 +550,17 @@ func (x *evalExporter) filterLocal(harness, path string, startedAt time.Time) (o
 	return collector.FilterTranscriptSnapshot(x.ctx, file, harness, startedAt, collector.DefaultMaxTranscriptBytes, x.env.agentRegistry())
 }
 
-// transcriptSessionID is the app's session ID for a transcript named
-// directly: the one its records carry, else, for a Codex rollout
-// (rollout-<time>-<uuid>.jsonl), the UUID its name ends with, else the file's
-// name without its extension, as handoff --file names it.
-func transcriptSessionID(harness, path string, filtered archive.FilteredTranscript) string {
-	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	var safeIDs []string
-	for _, raw := range filtered.Records {
-		var record struct {
-			Type            string `json:"type"`
-			SessionID       string `json:"session_id"`
-			ClaudeSessionID string `json:"sessionId"`
-			Payload         struct {
-				ID string `json:"id"`
-			} `json:"payload"`
-		}
-		if json.Unmarshal(raw, &record) != nil {
-			continue
-		}
-		if harness == "codex" && record.Type == "session_meta" && record.Payload.ID != "" {
-			return record.Payload.ID
-		}
-		for _, id := range []string{record.SessionID, record.ClaudeSessionID} {
-			if id != "" {
-				safeIDs = append(safeIDs, id)
-			}
-		}
+// transcriptSessionID consumes the integration's sanitized identity facts and
+// optional filename policy. The generic fallback preserves original spelling.
+func transcriptSessionID(adapter archive.Adapter, path string, filtered archive.FilteredTranscript) string {
+	identity := filtered.LocalIdentity
+	if resolver, ok := adapter.(agentapi.LocalIdentityResolver); ok {
+		identity = resolver.LocalIdentity(filtered, filepath.Base(path))
 	}
-	for _, id := range safeIDs {
-		if id == stem {
-			return id
-		}
+	if identity.ID != "" {
+		return identity.ID
 	}
-	if len(safeIDs) > 0 {
-		return safeIDs[0]
-	}
-	const uuidLength = 36
-	if strings.HasPrefix(stem, "rollout-") && len(stem) > len("rollout-")+uuidLength {
-		return stem[len(stem)-uuidLength:]
-	}
-	return stem
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 // transcriptHarness infers one owner from declared native path recognition ports.

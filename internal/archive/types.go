@@ -446,9 +446,19 @@ type CaptureBoundary struct {
 	RetainedBytes   int `json:"retained_bytes"`
 }
 
+// NativeSessionIdentity is sanitized retained identity evidence supplied by an
+// integration. ID is authoritative when set; Candidates preserve retained order.
+// These observations are transient and are never persisted in source bundles.
+type NativeSessionIdentity struct {
+	ID         string
+	Candidates []string
+}
+
 // FilteredTranscript is the only adapter output accepted by NewSourceBundle.
 // Records retain their allowed native JSON shape and source ordering.
 type FilteredTranscript struct {
+	// LocalIdentity is safe retained identity evidence, never raw ownership IDs.
+	LocalIdentity NativeSessionIdentity `json:"-"`
 	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
 	ObservedHarness     Harness         `json:"-"`
 	Format              string          `json:"format"`
