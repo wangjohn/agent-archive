@@ -56,12 +56,19 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	if len(records) == 0 && len(nativeText) == 0 {
 		return SourceBundle{}, errors.New("filtered transcript has no retained evidence")
 	}
+	discoveryOrigin := SessionOrigin("")
+	if reg.Origin == SessionOriginDiscovery {
+		discoveryOrigin = reg.Origin
+	}
 	harness := observedHarness(reg.Harness, transcript.Format, records)
 	filteredSupplemental, gaps, err := FilterSupplementalEvidence(supplemental)
 	if err != nil {
 		return SourceBundle{}, err
 	}
 	allGaps := append(append([]CaptureGap(nil), transcript.Gaps...), gaps...)
+	if reg.Origin == SessionOriginDiscovery {
+		allGaps = append(allGaps, CaptureGap{Code: CaptureGapDiscoveredWithoutHookEvidence, Detail: "Discovered locally; hooks did not establish complete lifecycle coverage"})
+	}
 	for _, item := range filteredSupplemental {
 		if item.Kind == EvidenceKindCaptureGap {
 			if code := firstString(item.Payload, "code"); code != "" {
@@ -75,6 +82,7 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 		NativeSessionID:  reg.NativeSessionID,
 		ProjectID:        reg.ProjectID,
 		Capture: SourceCapture{
+			Origin:  discoveryOrigin,
 			Harness: harness, AdapterName: adapter.Name(), AdapterVersion: adapter.Version(),
 			SourceFormat: transcript.Format, Boundary: transcript.Boundary,
 			FilterVersion: FilterVersion, CapturedAt: capturedAt.UTC(), Gaps: allGaps,

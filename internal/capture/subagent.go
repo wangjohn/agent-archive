@@ -31,6 +31,13 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 		return nil
 	}
 
+	if _, err := store.UpdateRegistration(parentID, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = now
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	agentID := event.Child.ID
 	if agentID == "" {
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", event.Child.MissingDetail, now)

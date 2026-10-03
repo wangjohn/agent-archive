@@ -293,6 +293,8 @@ const (
 	// SessionOriginImport means `agent-archive backfill` imported the session
 	// after the fact, so it has no hook evidence.
 	SessionOriginImport SessionOrigin = "import"
+	// SessionOriginDiscovery means bounded local source discovery admitted the session.
+	SessionOriginDiscovery SessionOrigin = "discovery"
 )
 
 // StartedAtSource says where a registration's SessionStartedAt came from. The
@@ -350,6 +352,14 @@ type SessionRegistration struct {
 	AdmittedAt time.Time `json:"admitted_at,omitempty"`
 	// Origin is how the session entered the archive. Set once.
 	Origin SessionOrigin `json:"origin,omitempty"`
+	// HookObservedAt records actual lifecycle hook execution independently of origin.
+	HookObservedAt time.Time `json:"hook_observed_at,omitzero"`
+	// DiscoveryRoot confines reopening a discovered source to its approved root.
+	DiscoveryRoot       string `json:"discovery_root,omitempty"`
+	DiscoveryCwd        string `json:"discovery_cwd,omitempty"`
+	DiscoveryGeneration string `json:"discovery_generation,omitempty"`
+	// DiscoverySourcePriority is an adapter scheduling hint for source preference.
+	DiscoverySourcePriority int `json:"discovery_source_priority,omitempty"`
 	// StartedAtSource says where SessionStartedAt came from.
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
 	// ImportBatch is the backfill run that registered the session. Whether
@@ -445,6 +455,8 @@ type SupplementalEvidence struct {
 
 // SourceCapture describes the provenance shared by all records in a snapshot.
 type SourceCapture struct {
+	// Origin is emitted for discovery sources without inventing hook evidence.
+	Origin         SessionOrigin   `json:"origin,omitempty"`
 	Harness        Harness         `json:"harness"`
 	AdapterName    string          `json:"adapter_name"`
 	AdapterVersion string          `json:"adapter_version"`
@@ -728,21 +740,32 @@ type Metadata struct {
 // CaptureGapImportedWithoutHookEvidence marks an imported session: no hook
 // ran while it happened, so it has no lifecycle events, final-response text,
 // or skill inventory.
+const CaptureGapDiscoveredWithoutHookEvidence = "discovered_without_hook_evidence"
+
 const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
 
 // ApplyRegistrationProvenance records how the session entered the archive.
 // It changes nothing for a hook registration. Callers apply it to every
 // metadata document BuildMetadata returns, including a failed parse's.
 func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
-	if !r.Imported() {
+	if !r.Imported() && r.Origin != SessionOriginDiscovery {
 		return
 	}
 	m.Origin = r.Origin
-	if !r.AdmittedAt.IsZero() {
+	if r.Imported() && !r.AdmittedAt.IsZero() {
 		importedAt := r.AdmittedAt.UTC()
 		m.ImportedAt = &importedAt
 	}
 	m.StartedAtSource = r.StartedAtSource
+	if r.Origin == SessionOriginDiscovery {
+		for _, gap := range m.CaptureGaps {
+			if gap.Code == CaptureGapDiscoveredWithoutHookEvidence {
+				return
+			}
+		}
+		m.CaptureGaps = append(m.CaptureGaps, CaptureGap{Code: CaptureGapDiscoveredWithoutHookEvidence, Detail: "Discovered locally; hooks did not establish complete lifecycle coverage"})
+		return
+	}
 	for _, gap := range m.CaptureGaps {
 		if gap.Code == CaptureGapImportedWithoutHookEvidence {
 			return
