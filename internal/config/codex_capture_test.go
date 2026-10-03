@@ -252,3 +252,67 @@ func TestCodexProtectedDraftNormalizationRetainsPolicyAndRejectsFutureWriter(t *
 		}
 	}
 }
+
+func TestCodexRetargetedExclusionKeepsPhysicalHistoryBarrier(t *testing.T) {
+	for _, discovery := range []bool{false, true} {
+		t.Run(map[bool]string{false: "hook-only", true: "discovery"}[discovery], func(t *testing.T) {
+			c, at := blanketConfig(t)
+			if !discovery {
+				c.Discovery = nil
+			}
+			base := t.TempDir()
+			original, replacement, alias := filepath.Join(base, "original"), filepath.Join(base, "replacement"), filepath.Join(base, "alias")
+			for _, path := range []string{original, replacement} {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(original, alias); err != nil {
+				t.Fatal(err)
+			}
+			previous := c
+			c.Archive.Projects = []archive.ProjectActivation{{Root: alias, Included: false}}
+			if err := ReconcileDiscovery(&c, previous, at.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			original, err := filepath.EvalSymlinks(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation := c.CodexGeneration
+			if discovery {
+				generation = c.CodexDiscoveryGeneration
+			}
+			if _, ok := generation(original, original, at.Add(2*time.Minute), at.Add(4*time.Minute)); ok {
+				t.Fatal("original exclusion did not apply")
+			}
+			previous = c
+			if err := os.Remove(alias); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(replacement, alias); err != nil {
+				t.Fatal(err)
+			}
+			if err := ReconcileDiscovery(&c, previous, at.Add(3*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			generation = c.CodexGeneration
+			if discovery {
+				generation = c.CodexDiscoveryGeneration
+			}
+			if _, ok := generation(original, original, at.Add(2*time.Minute), at.Add(4*time.Minute)); ok {
+				t.Fatal("retarget admitted original excluded-period start")
+			}
+			if _, ok := generation(original, original, at.Add(4*time.Minute), at.Add(4*time.Minute)); !ok {
+				t.Fatal("forward original physical start did not reopen")
+			}
+			replacement, err = filepath.EvalSymlinks(replacement)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := generation(replacement, replacement, at.Add(4*time.Minute), at.Add(4*time.Minute)); ok {
+				t.Fatal("retarget lifted replacement exclusion")
+			}
+		})
+	}
+}

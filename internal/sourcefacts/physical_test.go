@@ -84,3 +84,42 @@ func TestProjectResolverInvalidatesWorktreeAndAncestorMetadataWithinPass(t *test
 		t.Fatalf("stale ancestor cache before=%#v after=%#v", before, after)
 	}
 }
+
+func TestPhysicalWorktreeBacklinkUsesCanonicalDirectoryAlias(t *testing.T) {
+	base := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(base, alias); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(alias, "main")
+	checkout := filepath.Join(alias, "checkout")
+	gitdir := filepath.Join(main, ".git", "worktrees", "one")
+	for _, dir := range []string{gitdir, checkout} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{filepath.Join(checkout, ".git"): "gitdir: " + gitdir, filepath.Join(gitdir, "commondir"): "../..", filepath.Join(gitdir, "gitdir"): filepath.Join(checkout, ".git")} {
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	facts, ok := PhysicalProject(checkout)
+	canonicalMain, err := filepath.EvalSymlinks(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCwd, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || facts.Root != canonicalMain || facts.Cwd != canonicalCwd {
+		t.Fatalf("alias changed physical worktree identity: %#v %t", facts, ok)
+	}
+	if err := os.WriteFile(filepath.Join(gitdir, "gitdir"), []byte(filepath.Join(main, ".git")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := PhysicalProject(checkout); ok {
+		t.Fatal("canonicalization admitted an unrelated backlink")
+	}
+}

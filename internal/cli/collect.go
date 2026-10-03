@@ -165,7 +165,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	recoveryCancel()
 	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
 	if discoveryErr != nil {
-		recordPreflightError(localStore, discoveryErr)
+		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
@@ -193,13 +193,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		CursorDatabase:       env.cursorDatabase(),
 		RepoKey:              env.repoKey,
 	})
-	// Collector status replaces its previous LastErrors. Restore local
-	// preflight failures even when collection itself returns an error.
-	if recoveryErr != nil {
-		addStatusProblem(localStore, recoveryErr.Error())
-	}
-	if discoveryErr != nil {
-		addStatusProblem(localStore, discoveryErr.Error())
+	// Collector status replaces its previous LastErrors. Preserve every local
+	// preflight failure, even if recovery later succeeds or collection errors.
+	for _, preflightErr := range []error{recoveryErr, discoveryErr} {
+		if preflightErr != nil {
+			addStatusProblem(localStore, preflightErr.Error())
+		}
 	}
 	if err != nil {
 		return result, err
