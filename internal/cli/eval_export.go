@@ -410,7 +410,11 @@ func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, 
 		if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
 			return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 		}
-		return archive.FitEvalExport(archive.EvalExportFromMetadata(metadata, archive.EvalExportSourceArchive), opts.maxBytes)
+		record := archive.EvalExportFromMetadata(metadata, archive.EvalExportSourceArchive)
+		if err := archive.ValidateEvalExport(record); err != nil {
+			return fail(archive.EvalErrorReadFailed, "the session metadata is not valid: "+err.Error())
+		}
+		return archive.FitEvalExport(record, opts.maxBytes)
 	}
 	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	if errors.Is(err, storage.ErrNotFound) {
@@ -422,13 +426,23 @@ func exportArchivedSession(ctx context.Context, parsers agentapi.ParsersLookup, 
 	if actualKey, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID); err != nil || actualKey != key {
 		return fail(archive.EvalErrorReadFailed, "the session metadata does not match the requested identity")
 	}
-	analysis, err := analyzeSource(ctx, parsers, bundle)
+	if parsers == nil {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	parser, ok := parsers.LookupParser(bundle.Capture.Harness.Name)
+	if !ok {
+		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	analysis, err := agentapi.Analyze(ctx, parser, bundle)
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
 	}
-	record, err := archive.BuildEvalExportWithAnalysis(bundle, analysis, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull)
+	record, err := archive.BuildEvalExportWithAnalysis(bundle, analysis, metadata, archive.EvalExportSourceArchive, archive.EvalExportDetailFull, archive.ParserInfo{Version: parser.Version()})
 	if err != nil {
 		return fail(archive.EvalErrorParseFailed, "the filtered source could not be parsed")
+	}
+	if err := archive.ValidateEvalExport(record); err != nil {
+		return fail(archive.EvalErrorReadFailed, "the session metadata is not valid: "+err.Error())
 	}
 	return archive.FitEvalExport(record, opts.maxBytes)
 }

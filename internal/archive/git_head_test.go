@@ -108,6 +108,7 @@ func TestMetadataSchemaAcceptsOnlyFullCommitNamesInGitHead(t *testing.T) {
 		`{"start":{"sha":"3f9c2ab","observed_at":"2026-09-30T09:00:00Z"}}`,
 		`{"start":{"sha":"main","observed_at":"2026-09-30T09:00:00Z"}}`,
 		`{"start":{"sha":"` + startSHA + `"}}`,
+		`{"last":{"sha":"` + startSHA + `","dirty":true,"observed_at":"2026-09-30T09:00:00Z"}}`,
 		`{"start":{"sha":"` + startSHA + `","observed_at":"2026-09-30T09:00:00Z","branch":"main"}}`,
 		`{"start":{"sha":"` + startSHA + `","observed_at":"2026-09-30T09:00:00Z"},"remote":"https://example.test/acme/widget.git"}`,
 	} {

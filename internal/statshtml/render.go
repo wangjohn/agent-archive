@@ -68,6 +68,15 @@ type Filters struct {
 	Model   string
 	// Origin is "imported" or "hook" when only those sessions were counted.
 	Origin string
+	// Replays is "include" when replay sessions were counted with the rest,
+	// or "only" when nothing else was. Empty is the default: none counted.
+	Replays string
+}
+
+// replaysText is how the heading names the Replays filters the command has.
+var replaysText = map[string]string{
+	"include": "replay sessions included",
+	"only":    "replay sessions only",
 }
 
 // originText is how the heading names the Origin filters the command has.
@@ -191,6 +200,13 @@ func (b *builder) header(p *page, window string) {
 		text, known := originText[f.Origin]
 		if !known {
 			text = clean(f.Origin) + " sessions"
+		}
+		parts = append(parts, text)
+	}
+	if f.Replays != "" {
+		text, known := replaysText[f.Replays]
+		if !known {
+			text = "replays " + clean(f.Replays)
 		}
 		parts = append(parts, text)
 	}

@@ -122,6 +122,12 @@ func TestEvalExportUsesInjectedAnalysisForLocalAndArchive(t *testing.T) {
 	if code != 0 || len(records) != 1 || records[0]["prompts"].([]any)[0].(map[string]any)["text"] != "synthetic prompt" {
 		t.Fatalf("archive: %d %v %s", code, records, stderr)
 	}
+	if got := records[0]["parser"].(map[string]any)["version"]; got != parser.Version() {
+		t.Fatalf("archive parser version = %v, want %s", got, parser.Version())
+	}
+	if got := records[0]["counts"].(map[string]any)["turns"]; got != float64(1) {
+		t.Fatalf("archive turns = %v, want the injected analysis's one prompt", got)
+	}
 	if parser.calls.Load() != 3 {
 		t.Fatalf("parser called %d times, want once per derivation", parser.calls.Load())
 	}

@@ -219,15 +219,21 @@ func EvalExportFromMetadata(m Metadata, source EvalExportSource) EvalExport {
 // branch; at full detail it adds the prompts, the final response, the edited
 // files, and explicit feedback. The caller supplies successful analysis of
 // the filtered source; this builder never resolves a native parser.
-func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metadata, source EvalExportSource, detail EvalExportDetail) (EvalExport, error) {
+func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metadata, source EvalExportSource, detail EvalExportDetail, parser ParserInfo) (EvalExport, error) {
 	e := EvalExportFromMetadata(m, source)
 	e.Detail = detail
-	e.Branch = analysis.Facts.FirstBranch
+	e.Branch = validBranch(analysis.Facts.FirstBranch)
+	if e.Branch == "HEAD" {
+		e.Branch = ""
+	}
 	if detail != EvalExportDetailFull {
 		return e, nil
 	}
 	if err := validateBundle(bundle); err != nil {
 		return EvalExport{}, &ParseError{Reason: err.Error()}
+	}
+	if err := e.rederiveWithAnalysis(bundle, analysis, m, parser); err != nil {
+		return EvalExport{}, err
 	}
 	view := analysis.View
 	prompts := []EvalPrompt{}
@@ -247,7 +253,7 @@ func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metad
 		}
 	}
 	if last == nil {
-		last = lastHookFinal(bundle.SupplementalEvidence)
+		last = lastHookFinal(bundle)
 	}
 	files := []string{}
 	if len(bundle.NativeRecords) > 0 {
@@ -258,11 +264,46 @@ func BuildEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, m Metad
 	return e, nil
 }
 
+// rederive replaces what a parser derives with this build's parse of the
+// bundle when the sidecar was written by another parser version, so the
+// record's counts, tools, and parser describe the same parse as its
+// prompts and edited files. What the registration contributed (identity,
+// project, commits, replay, admission gaps) stays the sidecar's.
+func (e *EvalExport) rederiveWithAnalysis(bundle SourceBundle, analysis Analysis, m Metadata, parser ParserInfo) error {
+	parser = defaultMetadataParser(bundle, parser)
+	if m.Parser.Version == parser.Version {
+		return nil
+	}
+	derived, err := BuildMetadataWithAnalysis(bundle, analysis, nil, m.MachineID, m.StartedAt, m.MetadataDerivedAt, m.SourceBundle, parser)
+	if err != nil && !IsParseError(err) {
+		// Inputs an old sidecar lacks (a derivation time, say): keep
+		// what it says rather than fail a record whose source parses.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	e.EndedAt, e.State, e.TurnOutcome, e.Parser = derived.EndedAt, derived.State, derived.TurnOutcome, derived.Parser
+	e.Models, e.Counts, e.ModelTokens, e.ToolsUsed, e.MCPCalls = derived.Models, derived.Counts, derived.ModelTokens, derived.ToolsUsed, derived.MCPCalls
+	e.SkillsUsed, e.GitActivity, e.CaptureGaps = derived.SkillsUsed, derived.GitActivity, derived.CaptureGaps
+	for _, gap := range m.CaptureGaps {
+		if (gap.Code == CaptureGapImportedWithoutHookEvidence || gap.Code == CaptureGapDiscoveredWithoutHookEvidence) && !slices.ContainsFunc(e.CaptureGaps, func(g CaptureGap) bool { return g.Code == gap.Code }) {
+			e.CaptureGaps = append(e.CaptureGaps, gap)
+		}
+	}
+	return nil
+}
+
 // lastHookFinal is the text of the last final message a stop hook reported,
-// or nil.
-func lastHookFinal(evidence []SupplementalEvidence) *EvalFinalResponse {
+// or nil. In a parent session's bundle, a final carrying an agent_id is a
+// subagent's (HookFinalStatusSeparateSubagent), not the session's answer.
+func lastHookFinal(bundle SourceBundle) *EvalFinalResponse {
+	evidence := bundle.SupplementalEvidence
 	for i := len(evidence) - 1; i >= 0; i-- {
 		if evidence[i].Kind != EvidenceKindFinalResponse {
+			continue
+		}
+		if bundle.ParentSessionID == "" && firstString(evidence[i].Payload, "agent_id") != "" {
 			continue
 		}
 		if text, _ := evidence[i].Payload["text"].(string); text != "" {
@@ -475,7 +516,7 @@ func BuildLocalEvalExportWithAnalysis(bundle SourceBundle, analysis Analysis, pa
 		root = analysis.Facts.WorkspaceRoot
 	}
 	metadata.ApplyProjectName(root)
-	record, err := BuildEvalExportWithAnalysis(bundle, analysis, metadata, EvalExportSourceLocal, detail)
+	record, err := BuildEvalExportWithAnalysis(bundle, analysis, metadata, EvalExportSourceLocal, detail, parser)
 	if err != nil {
 		return EvalExport{}, err
 	}
