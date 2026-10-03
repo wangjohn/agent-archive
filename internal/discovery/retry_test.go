@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func TestConflictingSourceDoesNotStarveLaterDirectoryBatches(t *testing.T) {
@@ -138,7 +139,7 @@ func TestUnavailableDirectoryRetriesNextPassWithoutStarvingBacklog(t *testing.T)
 				}
 			}
 			unlock()
-			if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+			if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 				t.Fatal(err)
 			}
 			adapter := &unavailableDirectoryAdapter{codexAdapter: codexAdapter{supported: syntheticSupport}, persistent: persistent}
