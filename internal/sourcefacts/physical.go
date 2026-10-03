@@ -164,7 +164,21 @@ func (r *ProjectResolver) resolve(cwd string) (ProjectFacts, bool) {
 				i, e := r.lstat(path)
 				return e == nil && i.IsDir()
 			}
-			main, ok := WorktreeMain(d, read, exists, true)
+			// Registry backlinks may use an absolute spelling through an OS
+			// directory alias. Compare the physical path with the already
+			// canonical checkout; the canonicalizer still accounts every read.
+			readMetadata := func(path string) ([]byte, error) {
+				b, err := read(path)
+				if err != nil || filepath.Base(path) != "gitdir" {
+					return b, err
+				}
+				backlink, err := r.canonical(strings.TrimSpace(string(b)))
+				if err != nil {
+					return nil, err
+				}
+				return []byte(backlink), nil
+			}
+			main, ok := WorktreeMain(d, readMetadata, exists, true)
 			if !ok {
 				return ProjectFacts{}, false
 			}

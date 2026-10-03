@@ -5,212 +5,91 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func TestCodexFloorPublicPauseRefusesAtomically(t *testing.T) {
-	for _, paused := range []bool{false, true} {
-		for _, scope := range []string{"scope", "source"} {
-			t.Run(scope+map[bool]string{true: "resume", false: "pause"}[paused], func(t *testing.T) {
-				c, at := blanketConfig(t)
-				home := t.TempDir()
-				if paused {
-					if err := transitionDiscoveryPause(&c, true, at.Add(time.Minute)); err != nil {
-						t.Fatal(err)
-					}
-					c.Paused = true
-				}
-				bad := c.CodexCapture.Authorization
-				if scope == "source" {
-					bad = c.CodexCapture.SourceAuthorization
-				}
-				bad.NativeStartFloor = at.Add(2 * time.Minute)
-				bad.Intervals = []DiscoveryInterval{{Start: at.Add(2 * time.Minute)}}
-				if paused {
-					bad.Intervals = nil
-				}
-				if err := Save(home, c); err != nil {
-					t.Fatal(err)
-				}
-				before, err := os.ReadFile(filepath.Join(home, "config.json"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := SetPaused(home, !paused, at.Add(time.Minute)); err == nil {
-					t.Fatal("invalid transition accepted")
-				}
-				after, err := os.ReadFile(filepath.Join(home, "config.json"))
-				if err != nil || !bytes.Equal(before, after) {
-					t.Fatal("refusal changed durable state", err)
-				}
-			})
-		}
-	}
+func TestCodexConsentFloorAndAtomicPause(t *testing.T) {
 	c, at := blanketConfig(t)
-	before, _ := json.Marshal(c)
-	if err := transitionDiscoveryPause(&c, true, at); err == nil {
-		t.Fatal("pause equality accepted")
+	// A source consent boundary later than the blanket boundary must prevent
+	// every scope from changing when pause is rejected.
+	c.CodexCapture.SourceAuthorization.Intervals[0].Start = at.Add(time.Minute)
+	home := t.TempDir()
+	if err := Save(home, c); err != nil {
+		t.Fatal(err)
 	}
-	after, _ := json.Marshal(c)
-	if !bytes.Equal(before, after) {
-		t.Fatal("equality refusal mutated shared histories")
+	before, _ := os.ReadFile(filepath.Join(home, "config.json"))
+	if _, err := SetPaused(home, true, at.Add(time.Minute)); err == nil {
+		t.Fatal("equal source boundary accepted")
+	}
+	after, _ := os.ReadFile(filepath.Join(home, "config.json"))
+	if string(before) != string(after) {
+		t.Fatal("rejected transition changed bytes")
+	}
+	if err := transitionDiscoveryPause(&c, true, at.Add(time.Minute)); err == nil {
+		t.Fatal("in-memory invalid transition accepted")
+	}
+	if !c.CodexCapture.Authorization.Intervals[0].End.IsZero() {
+		t.Fatal("earlier scope mutated before source refusal")
 	}
 }
 
-func TestCodexPausedScopeAndSourceCreationKeepImmutableFloors(t *testing.T) {
+func TestCodexPausedConsentFloorAndUnknownRenewal(t *testing.T) {
 	c, at := blanketConfig(t)
-	previous := c
 	c.Paused = true
-	c.Storage.Bucket = "changed"
-	floor := at.Add(time.Hour)
-	if err := ReconcileDiscovery(&c, previous, floor); err != nil {
+	c.CodexCapture.Authorization = nil
+	c.CodexCapture.SourceAuthorization = nil
+	c.Discovery.Authorizations = nil
+	c.DestinationSince = at.Add(time.Hour)
+	if err := ReconcileDiscovery(&c, Config{}, at); err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
-		if !a.NativeStartFloor.Equal(floor) || len(a.Intervals) != 0 {
-			t.Fatalf("paused creation lost floor: %#v", a)
+		if !a.NativeStartFloor.Equal(c.DestinationSince) || len(a.Intervals) != 0 {
+			t.Fatal("paused policy/source lost latest boundary")
 		}
 	}
 	home := t.TempDir()
 	if err := Save(home, c); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SetPaused(home, false, floor.Add(-time.Nanosecond)); err == nil {
-		t.Fatal("early resume accepted")
+	if _, err := SetPaused(home, false, at.Add(time.Minute)); err == nil {
+		t.Fatal("resumed below consent floor")
 	}
-	resumed, err := SetPaused(home, false, floor)
-	if err != nil {
+	if _, err := SetPaused(home, false, c.DestinationSince); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := resumed.CodexDiscoveryGeneration("/new", "/new", floor.Add(-time.Nanosecond), floor); ok {
-		t.Fatal("pre-floor native start accepted")
+	c.CodexCapture.Authorization.NativeStartFloor = time.Time{}
+	c.CodexCapture.SourceAuthorization.NativeStartFloor = time.Time{}
+	if err := transitionDiscoveryPause(&c, false, at.Add(2*time.Hour)); err == nil {
+		t.Fatal("unknown history resumed")
 	}
-	if _, ok := resumed.CodexDiscoveryGeneration("/new", "/new", floor, floor); !ok {
-		t.Fatal("floor equality rejected")
+	old := c
+	if err := ReconcileDiscovery(&c, old, at.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestCodexLegacyWriterMigrationRenewsUnknownEmptyHistories(t *testing.T) {
-	for _, retained := range []bool{false, true} {
-		c, at := blanketConfig(t)
-		for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
-			a.NativeStartFloor = time.Time{}
-			if !retained {
-				a.Intervals = nil
-			}
+	for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+		if !a.NativeStartFloor.Equal(at.Add(3 * time.Hour)) {
+			t.Fatal("explicit renewal did not establish floor")
 		}
-		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + legacyCodexWriterMarker)
-		raw, err := json.Marshal(configJSON(c))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var doc map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &doc); err != nil {
-			t.Fatal(err)
-		}
-		doc["schema_version"] = json.RawMessage(`{"version":3,"writer":"codex-scope-v3"}`)
-		raw, err = json.Marshal(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		home := t.TempDir()
-		path := filepath.Join(home, "config.json")
-		if err := os.WriteFile(path, raw, 0600); err != nil {
-			t.Fatal(err)
-		}
-		loaded, found, err := Load(home)
-		if err != nil || !found {
-			t.Fatal(err)
-		}
-		old := loaded.CodexCapture.Authorization.Generation
-		if err := ProtectIdentityWriter(home); err != nil {
-			t.Fatal(err)
-		}
-		migrated, _, fenced, err := loadConfig(home)
-		if err != nil || !fenced {
-			t.Fatal(err)
-		}
-		if !retained {
-			if _, ok := migrated.CodexGeneration("/new", "/new", at, at); ok {
-				t.Fatal("empty legacy history authorized")
-			}
-			next := migrated
-			next.Paused = true
-			if err := ReconcileDiscovery(&next, migrated, at.Add(time.Hour)); err != nil {
-				t.Fatal(err)
-			}
-			if next.CodexCapture.Authorization.Generation == old || !next.CodexCapture.Authorization.NativeStartFloor.Equal(at.Add(time.Hour)) {
-				t.Fatal("unknown generation was not renewed")
-			}
-		} else if !migrated.CodexCapture.Authorization.NativeStartFloor.Equal(at) {
-			t.Fatal("retained floor lost")
-		}
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var prior struct {
-			SchemaVersion writerVersion `json:"schema_version"`
-		}
-		if err := json.Unmarshal(before, &prior); err != nil {
-			t.Fatal(err)
-		}
-		if prior.SchemaVersion.Writer == legacyCodexWriter {
-			t.Fatal("old writer can flatten floor")
-		}
-		after, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatal("prior decoder refusal changed bytes")
-		}
+	}
+	if c.CodexCapture.Authorization.Generation == old.CodexCapture.Authorization.Generation {
+		t.Fatal("unknown generation reused")
 	}
 }
 
-func TestCodexReconciliationErrorPreservesCallerAndPriorSlices(t *testing.T) {
+func TestCodexFloorWriterMigrationIsPrivateAndProtected(t *testing.T) {
 	c, at := blanketConfig(t)
-	previous := c
-	c.Paused = true
-	source := *c.CodexCapture.SourceAuthorization
-	source.Intervals = []DiscoveryInterval{{Start: at.Add(time.Hour)}}
-	p := *c.CodexCapture
-	p.SourceAuthorization = &source
-	previous.CodexCapture = &p
-	before := c
-	if err := ReconcileDiscovery(&c, previous, at.Add(time.Minute)); err == nil {
-		t.Fatal("source clock refusal missing")
-	}
-	if !reflect.DeepEqual(c, before) {
-		t.Fatal("failed reconciliation partially changed caller")
-	}
-	if !previous.CodexCapture.SourceAuthorization.Intervals[0].End.IsZero() {
-		t.Fatal("failed reconciliation mutated previous slice")
-	}
-}
-
-func TestCodexFloorRollbackSnapshotKeepsFenceWithoutReopeningConsent(t *testing.T) {
-	current, at := blanketConfig(t)
-	rolled := Config{MachineID: current.MachineID, Harnesses: current.Harnesses, Archive: current.Archive}
-	PreserveWriterFence(&rolled, current)
-	home := t.TempDir()
-	if err := Save(home, rolled); err != nil {
-		t.Fatal(err)
-	}
-	loaded, found, fenced, err := loadConfig(home)
-	if err != nil || !found || !fenced {
-		t.Fatal(err)
-	}
-	if loaded.EffectiveCodexCaptureScope() != CodexIncludedProjects || loaded.CodexCapture.Authorization != nil || loaded.CodexCapture.SourceAuthorization != nil {
-		t.Fatal("rollback copied live blanket permission")
-	}
-	if _, ok := loaded.CodexGeneration("/new", "/new", at, at); ok {
-		t.Fatal("rollback opened new starts")
-	}
-	raw, err := os.ReadFile(filepath.Join(home, "config.json"))
+	c.CodexCapture.Authorization.NativeStartFloor = time.Time{}
+	c.CodexCapture.SourceAuthorization.NativeStartFloor = time.Time{}
+	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !c.CodexCapture.Authorization.NativeStartFloor.IsZero() {
+		t.Fatal("marshal mutated caller")
 	}
 	var wire struct {
 		SchemaVersion writerVersion `json:"schema_version"`
@@ -218,8 +97,130 @@ func TestCodexFloorRollbackSnapshotKeepsFenceWithoutReopeningConsent(t *testing.
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.SchemaVersion.Writer != codexWriter {
-		t.Fatal("rollback downgraded writer fence")
+	if wire.SchemaVersion.Writer == legacyCodexWriter {
+		t.Fatal("prior policy writer could discard floor")
+	}
+	var loaded Config
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.CodexCapture.Authorization.NativeStartFloor.Equal(at) {
+		t.Fatal("missing migrated floor")
+	}
+	const nestedMarkers SkillEvidence = "none+discovery-v2+codex-scope-v3"
+	loaded.SkillEvidence = nestedMarkers
+	raw, err = json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.EffectiveSkillEvidence() != SkillEvidenceNone {
+		t.Fatal("nested marker normalization lost evidence mode")
+	}
+}
+
+func TestCodexLegacyPolicyMigrationAndMissingFloorRefusal(t *testing.T) {
+	c, at := blanketConfig(t)
+	c.CodexCapture.Authorization.NativeStartFloor = time.Time{}
+	c.CodexCapture.SourceAuthorization.NativeStartFloor = time.Time{}
+	raw, err := json.Marshal(configJSON(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["schema_version"] = json.RawMessage(`{"version":3,"writer":"codex-scope-v3"}`)
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProtectIdentityWriter(home); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CodexCapture.Authorization.NativeStartFloor.Equal(at) || !got.CodexCapture.SourceAuthorization.NativeStartFloor.Equal(at) {
+		t.Fatal("old policy retained histories did not migrate")
+	}
+	doc["schema_version"] = json.RawMessage(`{"version":3,"writer":"codex-scope-floor-v3"}`)
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Config
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		t.Fatal("floor writer accepted missing promised floors")
+	}
+}
+
+func TestCodexHistoryCompactionAndRejectedReconciliationPreserveSnapshots(t *testing.T) {
+	c, at := blanketConfig(t)
+	for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+		a.Intervals = nil
+		for i := range 256 {
+			start := at.Add(time.Duration(i*2) * time.Minute)
+			a.Intervals = append(a.Intervals, DiscoveryInterval{Start: start, End: start.Add(time.Minute)})
+		}
+	}
+	c.Paused = true
+	old := c
+	before, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transitionDiscoveryPause(&c, false, at.Add(512*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := json.Marshal(old)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("transition mutated old snapshot")
+	}
+	c.Paused = false
+	for _, a := range []*DiscoveryAuthorization{c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization} {
+		if len(a.Intervals) != 256 || !a.NativeStartFloor.Equal(at) {
+			t.Fatal("compaction changed floor")
+		}
+	}
+	next := c
+	next.Paused = true
+	nextBefore, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileDiscovery(&next, c, at.Add(512*time.Minute)); err == nil {
+		t.Fatal("equal reconciliation boundary accepted")
+	}
+	nextAfter, err := json.Marshal(next)
+	if err != nil || string(nextBefore) != string(nextAfter) {
+		t.Fatal("rejected reconciliation mutated caller")
+	}
+}
+
+func TestCodexSubtreeBarrierNeverMovesBackward(t *testing.T) {
+	c, at := blanketConfig(t)
+	c.Archive.Projects = []archive.ProjectActivation{{Root: "/excluded", Included: false}}
+	c.CodexCapture.Barriers = []CodexRuleBarrier{{Root: "/excluded", Since: at.Add(2 * time.Hour)}}
+	old := c
+	c.Archive.Projects = nil
+	if err := ReconcileDiscovery(&c, old, at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if !c.CodexCapture.Barriers[0].Since.Equal(at.Add(2 * time.Hour)) {
+		t.Fatal("backward exception edit lowered durable subtree barrier")
+	}
+	if _, ok := c.CodexGeneration("/excluded", "/excluded", at.Add(90*time.Minute), at.Add(3*time.Hour)); ok {
+		t.Fatal("backward lift admitted excluded-period history")
 	}
 }
 

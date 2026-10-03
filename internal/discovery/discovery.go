@@ -136,6 +136,9 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
 
+	// Retry unavailable directories before the remaining backlog next pass,
+	// without revisiting them in this pass or consuming forward queue slots.
+	var unavailable []directory
 	for len(c.Queue) > 0 && h.Probes < HeaderProbes && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(ctx, o) {
 			break
@@ -150,9 +153,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 				break
 			}
 			h.Errors = appendUnique(h.Errors, "source_root_unavailable")
+			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx}
+		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
 		for _, source := range batch.Entries {
 			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
@@ -174,6 +178,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			c.Queue = append(c.Queue, d)
 		}
 	}
+	c.Queue = append(unavailable, c.Queue...)
 	h.ProjectOperations = resolver.Operations
 	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
@@ -441,7 +446,12 @@ func mergeContinuation(store *state.Store, cfg config.Config, candidate Candidat
 	if !compatible || !cfg.AcceptSession(reg) || !permission {
 		return reg, true, errors.New("identity conflict")
 	}
-	if reg.Origin == archive.SessionOriginDiscovery && (reg.DiscoveryCwd != candidate.WorkingDirectory || !reg.SessionStartedAt.Equal(candidate.StartedAt)) {
+	// A discovery observation cannot establish an unrestricted hook/import
+	// locator. Those origins retain their own source authority and attribution.
+	if reg.Origin != archive.SessionOriginDiscovery {
+		return reg, true, nil
+	}
+	if reg.DiscoveryCwd != candidate.WorkingDirectory || !reg.SessionStartedAt.Equal(candidate.StartedAt) {
 		return reg, true, errors.New("continuation identity conflict")
 	}
 	if reg.TranscriptPath == "" || (hint.Replace && reg.TranscriptPath == hint.Previous && reg.Origin == archive.SessionOriginDiscovery) {
@@ -488,15 +498,16 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
-	resolver *sourcefacts.ProjectResolver
-	store    *state.Store
-	cfg      config.Config
-	catalog  *catalog
-	health   *Health
-	now      time.Time
-	adapter  SourceAdapter
-	ctx      context.Context
-	priority bool
+	resolver            *sourcefacts.ProjectResolver
+	store               *state.Store
+	cfg                 config.Config
+	catalog             *catalog
+	health              *Health
+	now                 time.Time
+	adapter             SourceAdapter
+	ctx                 context.Context
+	priority            bool
+	reservedDirectories int
 }
 
 func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
@@ -598,7 +609,7 @@ func (s scan) enqueueDirectory(d directory, path string) {
 		s.health.Outcomes["invalid_source"]++
 		return
 	}
-	if len(s.catalog.Queue) >= maxDirectories || strings.Count(d.Path, string(filepath.Separator)) >= 16 {
+	if len(s.catalog.Queue)+s.reservedDirectories >= maxDirectories || strings.Count(d.Path, string(filepath.Separator)) >= 16 {
 		s.health.Errors = appendUnique(s.health.Errors, "directory_limit")
 		return
 	}

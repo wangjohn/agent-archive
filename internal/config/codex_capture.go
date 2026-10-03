@@ -47,12 +47,22 @@ func (c Config) EffectiveCodexCaptureScope() CodexCaptureScope {
 
 // ReconcileCodexCapture opens only locally committed forward authorization.
 func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
-	if next.CodexCapture == nil && previous.CodexCapture == nil {
-		return nil
-	}
 	nativeConsentStart := now.UTC()
 	if next.DestinationSince.After(nativeConsentStart) {
 		nativeConsentStart = next.DestinationSince
+	}
+
+	draft := *next
+	if err := reconcileCodexCapture(&draft, previous, now, nativeConsentStart); err != nil {
+		return err
+	}
+	*next = draft
+	return nil
+}
+
+func reconcileCodexCapture(next *Config, previous Config, now, nativeConsentStart time.Time) error {
+	if next.CodexCapture == nil && previous.CodexCapture == nil {
+		return nil
 	}
 	var p CodexCaptureConfig
 	if next.CodexCapture != nil {
@@ -65,7 +75,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	for _, rule := range next.Archive.Projects {
 		canonical, e := filepath.EvalSymlinks(rule.Root)
 		if e != nil {
-			canonical = filepath.Clean(rule.Root)
+			canonical = canonicalRuleRoot(rule.Root)
 		}
 		p.RuleRoots[rule.Root] = canonical
 	}
@@ -76,13 +86,12 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	active := p.Scope == CodexAllProjects && next.Archive.Enabled && slices.Contains(next.Harnesses, "codex")
 	keep := active && old != nil && old.Authorization != nil && !discoveryNativeStartFloor(*old.Authorization).IsZero() && old.Scope == CodexAllProjects && previous.Archive.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.DestinationID() == next.DestinationID()
 	if keep {
-		a := *old.Authorization
-		a.Intervals = slices.Clone(a.Intervals)
-		p.Authorization = &a
+		p.Authorization = normalizedAuthorization(old.Authorization)
 		if next.Paused != previous.Paused {
-			if err := transitionIntervals(p.Authorization, next.Paused, now.UTC()); err != nil {
+			if err := validateIntervalTransition(*p.Authorization, next.Paused, now.UTC()); err != nil {
 				return err
 			}
+			transitionIntervals(p.Authorization, next.Paused, now.UTC())
 		}
 	} else if active {
 		id, err := local.ID()
@@ -249,13 +258,12 @@ func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, 
 	if active && next.Discovery != nil && next.Discovery.Enabled {
 		sourceKeep := keep && old.SourceAuthorization != nil && !discoveryNativeStartFloor(*old.SourceAuthorization).IsZero() && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
 		if sourceKeep {
-			a := *old.SourceAuthorization
-			a.Intervals = slices.Clone(a.Intervals)
-			p.SourceAuthorization = &a
+			p.SourceAuthorization = normalizedAuthorization(old.SourceAuthorization)
 			if next.Paused != previous.Paused {
-				if err := transitionIntervals(p.SourceAuthorization, next.Paused, now.UTC()); err != nil {
+				if err := validateIntervalTransition(*p.SourceAuthorization, next.Paused, now.UTC()); err != nil {
 					return err
 				}
+				transitionIntervals(p.SourceAuthorization, next.Paused, now.UTC())
 			}
 		} else {
 			id, err := local.ID()
@@ -279,9 +287,10 @@ func reconcileCodexBarriers(p *CodexCaptureConfig, previous, next Config, now ti
 		if before.Included {
 			continue
 		}
+		// A retargeted path lifts its prior physical exclusion as well.
 		unchanged := false
 		for _, after := range next.Archive.Projects {
-			if after.Root == before.Root && !after.Included {
+			if after.Root == before.Root && !after.Included && p.RuleRoots[after.Root] == previous.codexRuleRoot(before.Root) {
 				unchanged = true
 			}
 		}
@@ -289,13 +298,32 @@ func reconcileCodexBarriers(p *CodexCaptureConfig, previous, next Config, now ti
 			found := false
 			for i := range p.Barriers {
 				if p.Barriers[i].Root == previous.codexRuleRoot(before.Root) {
-					p.Barriers[i].Since = now.UTC()
+					if now.After(p.Barriers[i].Since) {
+						p.Barriers[i].Since = now.UTC()
+					}
 					found = true
 				}
 			}
 			if !found {
 				p.Barriers = append(p.Barriers, CodexRuleBarrier{Root: previous.codexRuleRoot(before.Root), Since: now.UTC()})
 			}
+		}
+	}
+}
+
+// Canonicalize the existing ancestor of a removed rule root. Exceptions still
+// apply to retained physical facts when the leaf is temporarily unavailable.
+func canonicalRuleRoot(root string) string {
+	root = filepath.Clean(root)
+	for parent := filepath.Dir(root); ; parent = filepath.Dir(parent) {
+		if canonical, err := filepath.EvalSymlinks(parent); err == nil {
+			relative, err := filepath.Rel(parent, root)
+			if err == nil {
+				return filepath.Join(canonical, relative)
+			}
+		}
+		if filepath.Dir(parent) == parent {
+			return root
 		}
 	}
 }
