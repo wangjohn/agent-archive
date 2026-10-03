@@ -134,7 +134,12 @@ func persistEventBatchInGeneration(home string, batch []agentapi.LifecycleEvent,
 		return "", err
 	}
 	if len(replay) > 0 {
-		intent.Replay = replay[0]
+		for _, effect := range intent.Effects {
+			if effect.Event.Kind == agentapi.EventStart {
+				intent.Replay = replay[0]
+				break
+			}
+		}
 	}
 	if intent.PauseGeneration != generation {
 		return "", nil
