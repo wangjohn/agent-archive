@@ -156,7 +156,7 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 			return err
 		}
 	}
-	_, saved, err := s.registerUnderLock(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg })
+	_, saved, err := s.registerUnderLock(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg }, false)
 	if err == nil && !saved {
 		return ErrSessionNotRegistered
 	}
@@ -179,6 +179,20 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 // back after retention forgot it, leaving it without its native-session index
 // entry, so the session's next start would be given a second archive ID.
 func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
+	return s.updateRegistration(archiveSessionID, update, nil)
+}
+
+// RecordHookObservation records actual hook execution without synchronizing a
+// registration whose observation was already persisted by the same event.
+func (s *Store) RecordHookObservation(archiveSessionID string, at time.Time) error {
+	_, err := s.updateRegistration(archiveSessionID, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = at
+		return nil
+	}, func(reg archive.SessionRegistration) bool { return reg.HookObservedAt.Equal(at) })
+	return err
+}
+
+func (s *Store) updateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error, unchanged func(archive.SessionRegistration) bool) (found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -195,6 +209,9 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		originalKey, err := registrationKey(reg)
 		if err != nil {
 			return nil, false, err
+		}
+		if unchanged != nil && unchanged(reg) {
+			return nil, false, nil
 		}
 		if err := update(&reg); err != nil {
 			updateFailed = true
@@ -227,6 +244,17 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
 func (s *Store) RegisterNewSession(key agentmeta.SessionKey, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	return s.registerSession(key, build, false)
+}
+
+// RegisterOrMerge creates a reservation-backed registration or returns its
+// compatible existing owner without rewriting original admission or provenance.
+// The caller serializes admission with hooks.lock.
+func (s *Store) RegisterOrMerge(key agentmeta.SessionKey, build func(string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	return s.registerSession(key, build, true)
+}
+
+func (s *Store) registerSession(key agentmeta.SessionKey, build func(string) archive.SessionRegistration, merge bool) (archive.SessionRegistration, error) {
 	for range 3 {
 		id, _, err := s.EnsureArchiveSessionID(key)
 		if errors.Is(err, errIndexMoved) {
@@ -235,7 +263,7 @@ func (s *Store) RegisterNewSession(key agentmeta.SessionKey, build func(archiveS
 		if err != nil {
 			return archive.SessionRegistration{}, err
 		}
-		reg, saved, err := s.registerUnderLock(key, id, build)
+		reg, saved, err := s.registerUnderLock(key, id, build, merge)
 		if err != nil || saved {
 			return reg, err
 		}
@@ -250,7 +278,7 @@ func (s *Store) RegisterReservedSession(key agentmeta.SessionKey, id string, bui
 	if err := key.Validate(); err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	reg, saved, err := s.registerUnderLock(key, id, build)
+	reg, saved, err := s.registerUnderLock(key, id, build, true)
 	if err == nil && !saved {
 		return archive.SessionRegistration{}, errIndexMoved
 	}
@@ -260,7 +288,7 @@ func (s *Store) RegisterReservedSession(key agentmeta.SessionKey, id string, bui
 // registerUnderLock saves build's registration for id, atomically with
 // respect to the request lock (see writeUnderRequestLock), if the index
 // still maps nativeSessionID to id there; saved is false when it does not.
-func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration, merge bool) (archive.SessionRegistration, bool, error) {
 	if !safeFileComponent(id) {
 		return archive.SessionRegistration{}, false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -271,8 +299,8 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
-	// The registration is built without reading the file, so another
-	// writer's change to it cannot overtake this one.
+	// Controlled replacement writes are blind. Admission revalidates the
+	// staged registration snapshot before preserving or filling its owner.
 	err := s.writeUnderLock(lockedWrite{
 		lock: func() (func(), error) { return s.lockRequest(id) },
 		path: s.registrationPath(id),
@@ -293,8 +321,15 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 			}
 			return nil
 		},
-		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
-		blind:  true,
+		change: func(current fileSnapshot) (any, bool, error) {
+			if !merge {
+				return reg, true, nil
+			}
+			var err error
+			reg, err = s.mergeAdmissionRegistration(key, reg, current)
+			return reg, true, err
+		},
+		blind: !merge,
 	})
 	if errors.Is(err, errIndexMoved) {
 		return archive.SessionRegistration{}, false, nil
@@ -309,6 +344,31 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 		return archive.SessionRegistration{}, false, err
 	}
 	return reg, true, nil
+}
+
+// mergeAdmissionRegistration runs inside the request-lock update. Existing
+// registration attribution is immutable; only a missing compatible file locator
+// can be filled. Removal records forbid fresh automatic admission.
+func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive.SessionRegistration, current fileSnapshot) (archive.SessionRegistration, error) {
+	if current.found {
+		var existing archive.SessionRegistration
+		if err := json.Unmarshal(current.data, &existing); err != nil {
+			return reg, err
+		}
+		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
+			return reg, ErrSessionIdentityConflict
+		}
+		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
+			existing.TranscriptPath = reg.TranscriptPath
+		}
+		return existing, nil
+	}
+	if _, removed, err := s.Removal(reg.Harness.Name, reg.NativeSessionID); err != nil {
+		return reg, err
+	} else if removed && !reg.Imported() {
+		return reg, errors.New("session was removed")
+	}
+	return reg, nil
 }
 
 // errIndexMoved is registerUnderLock's check failing: the native session's

@@ -54,3 +54,16 @@ loss of later local pending work, or use a separate empty data home. Do not run
 old and new writers together against the migrated home, and do not convert the
 index back into an unqualified namespace. Existing remote archives remain
 readable by older readers because their IDs, keys and schemas are unchanged.
+
+## Protected discovery configuration
+
+The discovery foundations do not enable automatic capture. When discovery
+authorization is present, configuration uses a protected `schema_version` object.
+Published v0.1.1 integer-version readers refuse it rather than rewriting away
+consent intervals. Existing hook-only configurations keep the numeric format.
+This protection does not retroactively protect every existing qualified-index
+home: the complete-snapshot rollback guidance above still applies.
+
+New automatic admission honors retention and undo removal records. Deliberate
+backfill remains the way to include removed history explicitly. Repeated
+admission preserves original identity, origin, destination and admission times.

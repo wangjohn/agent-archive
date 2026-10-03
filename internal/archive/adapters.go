@@ -64,7 +64,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.19.0"
+const DefaultParserVersion = "0.20.0"
 
 // CodexAdapter supports the conservative JSONL shapes observed by this
 // foundation. Unsupported Codex record types are gaps, never pass-through.
