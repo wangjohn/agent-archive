@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -111,5 +113,72 @@ func TestStopCommitWithHookEvidencePublishesOnce(t *testing.T) {
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
 		t.Fatalf("stop commit not published: %+v", after.GitHead)
+	}
+}
+
+// stopAtNewCommit records laterCommit as the session's last HEAD and a stop
+// request with no new evidence, as a stop with no new transcript bytes leaves.
+func stopAtNewCommit(t *testing.T, local *state.Store, reg archive.SessionRegistration, at time.Time) *archive.GitHead {
+	t.Helper()
+	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: at}
+	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
+		t.Fatal(err)
+	}
+	return last
+}
+
+// A publication made before metadata was cached locally still gets the
+// commit a later stop recorded, at the same parser version.
+func TestStopCommitPublishesForLegacyPublication(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := stopAtNewCommit(t, local, reg, now.Add(time.Minute))
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
+		t.Fatalf("legacy publication lost the stop commit: %+v", after.GitHead)
+	}
+}
+
+// A HEAD-only publication whose source has gone from storage re-uploads the
+// retained source instead of failing on every pass.
+func TestStopCommitRepairsAMissingSource(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	before := publishOnce(t, local, remote, reg, &opts)
+	if err := remote.Delete(context.Background(), before.SourceBundle.Key); err != nil {
+		t.Fatal(err)
+	}
+	last := stopAtNewCommit(t, local, reg, now.Add(time.Minute))
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
+		t.Fatalf("stop commit not published: %+v", after.GitHead)
+	}
+	if _, err := remote.Get(context.Background(), after.SourceBundle.Key); err != nil {
+		t.Fatalf("source %s not restored: %v", after.SourceBundle.Key, err)
 	}
 }
