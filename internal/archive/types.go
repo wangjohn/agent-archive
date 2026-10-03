@@ -358,6 +358,10 @@ type SessionRegistration struct {
 	DiscoveryRoot       string `json:"discovery_root,omitempty"`
 	DiscoveryCwd        string `json:"discovery_cwd,omitempty"`
 	DiscoveryGeneration string `json:"discovery_generation,omitempty"`
+	// DiscoveryProducerOriginator and DiscoveryProducerSource retain admitted
+	// producer facts for publication revalidation. They remain private state.
+	DiscoveryProducerOriginator string `json:"discovery_producer_originator,omitempty"`
+	DiscoveryProducerSource     string `json:"discovery_producer_source,omitempty"`
 	// DiscoverySourcePriority is an adapter scheduling hint for source preference.
 	DiscoverySourcePriority int `json:"discovery_source_priority,omitempty"`
 	// StartedAtSource says where SessionStartedAt came from.

@@ -75,13 +75,17 @@ func LastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 	if sources == nil {
 		return out
 	}
-	groups := map[string][]archive.SessionRegistration{}
+	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
-		groups[reg.Harness.Name] = append(groups[reg.Harness.Name], reg)
+		key := sourcePassKey{name: reg.Harness.Name, discovery: reg.Origin == archive.SessionOriginDiscovery}
+		if key.discovery {
+			key.root = reg.DiscoveryRoot
+		}
+		groups[key] = append(groups[key], reg)
 	}
-	e := agentapi.SourceEnvironment{Database: Options{CursorDatabase: database}.cursorDatabase()}
-	for name, group := range groups {
-		provider, _, ok := sources.LookupSources(name)
+	for key, group := range groups {
+		e := sourceEnvironment(discoveryRegistration(group[0]), database)
+		provider, _, ok := sources.LookupSources(key.name)
 		if !ok {
 			continue
 		}

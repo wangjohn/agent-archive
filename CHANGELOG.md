@@ -24,7 +24,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   writes; size limits include escaped display controls and preserve whole
   UTF-8 characters at the text floor. Decoded sidecars with missing or null
   model attributes are rejected; model, tool and MCP name limits count
-  Unicode characters, matching the published schema.
+  Unicode characters, matching the published schema. Malformed HTTPS URLs
+  in Git activity produce a `read_failed` error at either detail without
+  exposing the invalid URL.
 - `eval export` also works without setup, on this machine's transcripts:
   `--file PATH --harness NAME` for one, and `--scan` for every transcript
   backfill would find (with its `--harness`, `--project`, `--since`, and
@@ -46,6 +48,15 @@ Planned for v0.2.0. This release has not been tagged or published.
   show them, marked `[replay]` in the table. `show ID` opens one as usual,
   and `status --json` counts them per app in `replay_sessions`. See
   [JSON output](docs/reference/json-output.md#replay-sessions).
+
+- Disabled Codex discovery machinery performs bounded source scans before
+  storage access and reopens admitted sources within approved roots. Identity
+  misses require registration-census recovery before allocation. Startup
+  restores surviving owners after both derived indexes are lost, including
+  admitted continuations outside a later consent window. Producer activation
+  and setup remain a separate implementation phase. Failed directories retry
+  without waiting for backlog completion, local recovery failures survive final
+  collector status, and existing hook/import origins keep their own locators.
 
 - **The commit a session started on.** When a session starts in a git
   repository, the hook records the commit checked out in its working
