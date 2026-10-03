@@ -579,10 +579,7 @@ func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, no
 }
 
 func saveLifecycleEvidence(store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
-	if _, err := store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error {
-		reg.HookObservedAt = now
-		return nil
-	}); err != nil {
+	if err := store.RecordHookObservation(id, now); err != nil {
 		return err
 	}
 	for _, evidence := range event.Evidence {

@@ -178,6 +178,20 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 // back after retention forgot it, leaving it without its native-session index
 // entry, so the session's next start would be given a second archive ID.
 func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
+	return s.updateRegistration(archiveSessionID, update, nil)
+}
+
+// RecordHookObservation records actual hook execution without synchronizing a
+// registration whose observation was already persisted by the same event.
+func (s *Store) RecordHookObservation(archiveSessionID string, at time.Time) error {
+	_, err := s.updateRegistration(archiveSessionID, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = at
+		return nil
+	}, func(reg archive.SessionRegistration) bool { return reg.HookObservedAt.Equal(at) })
+	return err
+}
+
+func (s *Store) updateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error, unchanged func(archive.SessionRegistration) bool) (found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -194,6 +208,9 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		originalKey, err := registrationKey(reg)
 		if err != nil {
 			return nil, false, err
+		}
+		if unchanged != nil && unchanged(reg) {
+			return nil, false, nil
 		}
 		if err := update(&reg); err != nil {
 			updateFailed = true
