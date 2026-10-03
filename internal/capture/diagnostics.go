@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -20,6 +21,7 @@ type DiagnosticCode string
 
 // The diagnostic codes status explains (DiagnosticMessage).
 const (
+	DiagnosticProjectUnavailable  DiagnosticCode = "project_facts_unavailable"
 	DiagnosticUnknownSessionStart DiagnosticCode = "session_start_unknown"
 	DiagnosticPreActivationStart  DiagnosticCode = "session_started_before_activation"
 	// DiagnosticSetupInProgress records a start that arrived while setup's own
@@ -105,6 +107,9 @@ func RecordDiagnostic(home string, diagnostic Diagnostic) error {
 // recordDiagnostic can report diagnostics-lock contention to callers whose
 // stderr is the only remaining place to explain a dropped hook event.
 func recordDiagnostic(home string, diagnostic Diagnostic, busyIsError bool) error {
+	if cfg, found, err := config.Load(home); err == nil && found && diagnostic.Harness == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		diagnostic.ProjectRoot = ""
+	}
 	err := recordUpdate(home, diagnostic).run(home)
 	if errors.Is(err, local.ErrBusy) {
 		if busyIsError {
@@ -126,7 +131,7 @@ func recordUpdate(home string, diagnostic Diagnostic) diagnosticsUpdate {
 			if err != nil {
 				return false, fmt.Errorf("load config: %w", err)
 			}
-			return found && len(IncludedDiagnostics([]Diagnostic{diagnostic}, cfg.Archive.Projects)) > 0, nil
+			return found && len(IncludedDiagnosticsForConfig([]Diagnostic{diagnostic}, cfg)) > 0, nil
 		},
 		// Advisory, and rewritten whole: a file that no longer decodes is
 		// replaced rather than left to fail every later diagnostic.
@@ -322,6 +327,8 @@ func pruneUpdate(projects []archive.ProjectActivation) diagnosticsUpdate {
 // DiagnosticMessage says in words what a diagnostic code means.
 func DiagnosticMessage(code DiagnosticCode) string {
 	switch code {
+	case DiagnosticProjectUnavailable:
+		return "the working directory or Git worktree mapping could not be validated; retry after it is available"
 	case DiagnosticUnknownSessionStart:
 		return "the session start could not be established"
 	case DiagnosticPreActivationStart:
@@ -337,4 +344,18 @@ func DiagnosticMessage(code DiagnosticCode) string {
 	default:
 		return "capture evidence was not accepted"
 	}
+}
+
+// IncludedDiagnosticsForConfig includes bounded Codex scope diagnostics without
+// storing a discovered project sample. Legacy project diagnostics retain their rules.
+func IncludedDiagnosticsForConfig(diagnostics []Diagnostic, cfg config.Config) []Diagnostic {
+	kept := IncludedDiagnostics(diagnostics, cfg.Archive.Projects)
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "codex") {
+		for _, d := range diagnostics {
+			if d.Harness == "codex" && d.ProjectRoot == "" {
+				kept = append(kept, d)
+			}
+		}
+	}
+	return kept
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -541,5 +542,123 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 	remote.failMetadata = false
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
+	local := newTestStore(t)
+	store := storagetest.NewMemoryStore()
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+	if err := local.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest("session-1", "stop", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := local.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond)
+	if err != nil || complete {
+		t.Fatalf("bounded local stage: complete=%v err=%v", complete, err)
+	}
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("queued publication under pending recovery: %#v %v", result, err)
+	}
+	var marker struct {
+		Complete bool `json:"complete"`
+	}
+	data, err := os.ReadFile(filepath.Join(local.Home(), "session-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &marker); err != nil || marker.Complete {
+		t.Fatalf("publication certified incomplete recovery: %#v %v", marker, err)
+	}
+}
+
+// The collector must keep an IO error joined to its cancelled recovery context.
+func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(strconv.FormatBool(broken), func(t *testing.T) {
+			local := newTestStore(t)
+			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+			reg := registration(t, path)
+			if err := local.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			regPath := filepath.Join(local.Home(), "registrations", reg.ArchiveSessionID+".json")
+			if err := os.Remove(regPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(regPath, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if err := os.Mkdir(filepath.Join(local.Home(), "session-index-recovery.json"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				var file *os.File
+				var err error
+				deadline := time.Now().Add(15 * time.Second)
+				for time.Now().Before(deadline) {
+					file, err = os.OpenFile(regPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+					if err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if err != nil {
+					finished <- err
+					return
+				}
+				// A successful writer open proves recovery reached the census
+				// read. Cancel at that boundary instead of racing a short timeout
+				// against marker staging and filesystem scheduling.
+				cancel()
+				replacement := regPath + ".replacement"
+				err = os.WriteFile(replacement, data, 0600)
+				if err == nil {
+					err = os.Rename(replacement, regPath)
+				}
+				if err == nil {
+					_, err = file.Write(data)
+				}
+				closeErr := file.Close()
+				if err == nil {
+					err = closeErr
+				}
+				finished <- err
+			}()
+			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
+			if writeErr := <-finished; writeErr != nil {
+				t.Fatal(writeErr)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, err := local.LoadStatus()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if !errors.Is(result.Errors["session-index"], context.Canceled) || !strings.Contains(result.Errors["session-index"].Error(), "session-index-recovery.json") || status.LastError != FailedSessionsProblem(1) {
+					t.Fatalf("checkpoint error lost: %#v %q", result.Errors, status.LastErrors)
+				}
+			} else if len(result.Errors) != 0 || len(status.LastErrors) != 0 {
+				t.Fatalf("ordinary pending warned: %#v %q", result.Errors, status.LastErrors)
+			}
+		})
 	}
 }

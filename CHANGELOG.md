@@ -61,6 +61,25 @@ Planned for v0.2.0. This release has not been tagged or published.
   infers a commit later. See
   [JSON output](docs/reference/json-output.md#show) and
   [privacy](docs/security/privacy.md#what-is-uploaded).
+
+- Codex-only blanket policy and admission consumers retain one explicit scope
+  across current and future physical projects, independently of discovery.
+  Fresh hook/discovery starts keep immutable local proof and current exclusion/
+  destination checks; new projects never grow configuration. Scope-capable
+  configuration uses the incompatible `codex-scope-floor-v3` writer fence,
+  including disabled history. Scope and source generations retain immutable
+  start floors; invalid clock transitions refuse atomically.
+  Public selection remains in the activation change.
+
+- Disabled Codex discovery machinery performs bounded source scans before
+  storage access and reopens admitted sources within approved roots. Identity
+  misses require registration-census recovery before allocation. Startup
+  restores surviving owners after both derived indexes are lost, including
+  admitted continuations outside a later consent window. Producer activation
+  and setup remain a separate implementation phase. Failed directories retry
+  without waiting for backlog completion, local recovery failures survive final
+  collector status, and existing hook/import origins keep their own locators.
+
 - Shared local discovery foundations: shared project/worktree facts, durable
   authorization intervals, immutable admission, and actual hook observation.
   Parser 0.20.0 records discovery provenance alongside the existing Cursor

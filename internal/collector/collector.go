@@ -37,6 +37,8 @@ type Options struct {
 	parserCache  map[string]agentapi.TranscriptParser
 	Sources      agentapi.SourcesLookup
 	sourcePasses *sourcePassSet
+	// SkipSessionIndexRecovery follows the CLI bounded local recovery stage.
+	SkipSessionIndexRecovery bool
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -199,10 +201,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
-	if ctx.Err() == nil {
-		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
+		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
-	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
 	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)

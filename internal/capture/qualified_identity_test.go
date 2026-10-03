@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func corruptQualifiedIndex(t *testing.T, home string, key agentmeta.SessionKey) {
@@ -51,7 +52,7 @@ func TestLegacyChildHookBeforeRecoveryKeepsCandidateIdentity(t *testing.T) {
 	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute), WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("legacy child hook: %v", err)
 	}
-	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := HandleEvent(home, "claude", payload, at.Add(2*time.Minute), WithDecoders(testDecoders)); err != nil {
@@ -97,7 +98,7 @@ func TestCorruptIdentityPreservesDeferredProofAndGeneration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := store.RecoverSessionIndex(context.Background()); err != nil {
+			if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 				t.Fatal(err)
 			}
 			if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute), testDecoders); err != nil {
@@ -133,7 +134,7 @@ func TestCorruptContinuationDoesNotCreateRegistrationOrStartIntent(t *testing.T)
 	if err := HandleEvent(home, "claude", claudeStart(project, key.NativeID, "resume", "/synthetic/resumed.jsonl"), at, WithDecoders(testDecoders)); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("continuation %v", err)
 	}
-	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
@@ -209,7 +210,7 @@ func TestCorruptChildIdentityRequestsExactKeyRecovery(t *testing.T) {
 	if regs, err := store.LoadRegistrations(); err != nil || len(regs) != 1 {
 		t.Fatalf("unproved child admitted: %#v %v", regs, err)
 	}
-	if err := store.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 		t.Fatalf("child recovery stranded: %v", err)
 	}
 	if err := ReplayAdmissionIntents(home, at.Add(2*time.Minute), testDecoders); err != nil {
