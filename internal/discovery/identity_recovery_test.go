@@ -3,7 +3,6 @@ package discovery
 import (
 	"context"
 	"errors"
-	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"testing"
