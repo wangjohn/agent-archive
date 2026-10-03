@@ -77,6 +77,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 		rows = append(rows, reviewRow{label: "Imported", values: []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}
 	rows = append(rows, reviewRow{label: "Projects", values: projects})
+	rows = append(rows, codexConsentRows(cfg)...)
 	skillScope := string(cfg.EffectiveSkillEvidence())
 	if cfg.SkillEvidence == "" {
 		skillScope += " (kept from previous setup)"
@@ -234,6 +235,10 @@ func reviewChecklist(cfg config.Config, review setupReview, at time.Time) []revi
 	}
 	checks = append(checks, hookFilesChecks(cfg.Harnesses, review.hookFiles, review.userHome)...)
 	for _, app := range cfg.Harnesses {
+		if app == "codex" && cfg.Discovery != nil && cfg.Discovery.Enabled {
+			checks = append(checks, reviewCheck{mark: symbolOK, label: "Codex discovery", detail: "supported new tasks do not require hook approval"})
+			continue
+		}
 		// An app whose hooks are installed already has taken its step,
 		// unless they move to another file, which it has not approved.
 		if review.reconfiguring && containsString(review.existing.Harnesses, app) && review.installedHookFiles[app] == review.hookFiles[app] {
@@ -477,6 +482,12 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	if draft.Config.Storage.Provider == credentials.ProviderS3 {
 		choices = append(choices, option{"region", "AWS bucket region"})
 	}
+	if containsString(draft.Config.Harnesses, "codex") {
+		choices = append(choices, option{"discovery", "Automatic Codex discovery"}, option{"codex-scope", "Codex capture scope"})
+		if draft.Config.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			choices = append(choices, option{"codex-exceptions", "Codex project exceptions"})
+		}
+	}
 	choices = append(choices, option{"back", "Nothing, go back to the review"})
 	choice, err := p.menu("\nWhat would you like to change?", "back", choices...)
 	if err != nil {
@@ -484,6 +495,17 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	}
 	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
+	case "codex-exceptions":
+		err = promptCodexExceptions(p, &draft.Config, userHome)
+	case "codex-scope":
+		err = promptCodexCaptureScope(p, &draft.Config)
+	case "discovery":
+		enabled := draft.Config.Discovery != nil && draft.Config.Discovery.Enabled
+		enabled, err = p.yesNo("Enable automatic Codex discovery? Recent indistinguishable copies may be captured.", enabled)
+		if err == nil {
+			enableDiscovery(&draft.Config, enabled)
+			draft.DiscoveryReviewed = true
+		}
 	case "apps":
 		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
 			return err
@@ -513,7 +535,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		if e != nil {
 			return e
 		}
-		draft.Config.SkillEvidence = config.SkillEvidence(mode)
+		config.SetSkillEvidence(&draft.Config, config.SkillEvidence(mode))
 	case "retention":
 		draft.Config.RetentionDays, err = p.retentionDays(draft.Config.RetentionDays)
 	case "storage":

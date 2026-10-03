@@ -13,6 +13,11 @@ Choose which apps to include:
 
 \e[1mInclude Cursor?\e[0m [y/\e[1mN\e[0m] › n
 
+\e[1mCodex capture scope\e[0m
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [\e[1m1\e[0m] › included-projects
+
 Add project directories, one per line. Enter a blank line when finished.
 \e[1mProject path\e[0m › ~/src/web-app
 

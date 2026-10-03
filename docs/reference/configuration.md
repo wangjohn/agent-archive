@@ -144,6 +144,32 @@ the encrypted bundle, and clear it in the parent shell afterward. There is no
 code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
 redirected bundle input uses a private terminal for the code and destination review.
 
+## Codex discovery consent
+
+`discovery` records `enabled`, `choice_recorded` (an explicit setup choice),
+approved `codex_homes`, and current per-project
+`authorizations`. Each authorization has an agent, project root, destination ID,
+generation and half-open unpaused intervals. Setup commits these together with
+its configuration transaction. Changing effective project scope, destination or
+source roots creates a new generation; pause closes the open interval and resume
+opens another. A session created before consent or during a closed interval does
+not become eligible merely because it is found later.
+
+Use setup's `--codex-discovery on|off` choice instead of editing this ledger.
+Disabling discovery retains writer protection and identity history. Protected
+configuration uses the schema-2 writer object; explicit Codex capture scope uses
+the stronger schema-3 `codex-scope-floor-v3` writer fence so older writers
+refuse it instead of removing consent or namespaced identities. Hook-only legacy
+configurations remain readable.
+
+
+`codex_capture.scope` is `included-projects` or `all-projects` and is independent
+of `discovery.enabled`. Legacy configurations retain included-project scope.
+The blanket authorization window, source authorization window, explicit rule
+barriers and rule revision are local permission state; pairing does not import
+another machine’s live windows. Discovery-off all-mode can still use approved
+hooks. Scope choice and history keep the strongest writer fence after disablement,
+rollback, refresh or skill-policy edits; old v2 writers refuse rather than drop it.
 ## Protected Codex capture scope
 
 The optional local `codex_capture` record separates Codex project permission

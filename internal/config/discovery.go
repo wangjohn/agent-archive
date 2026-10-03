@@ -19,9 +19,29 @@ const legacyCodexWriterMarker = "+codex-scope-v3"
 // DiscoveryConfig records consent, roots and current per-project generations.
 // Retain it even after disablement: old writers must never flatten the history.
 type DiscoveryConfig struct {
+	ChoiceRecorded bool                     `json:"choice_recorded,omitempty"`
 	Enabled        bool                     `json:"enabled"`
 	CodexHomes     []string                 `json:"codex_homes"`
 	Authorizations []DiscoveryAuthorization `json:"authorizations"`
+}
+
+// SetDiscoveryChoice records proposed setup consent without opening authorization
+// intervals. ReconcileDiscovery opens intervals only for the committed scope.
+func SetDiscoveryChoice(c *Config, enabled bool) {
+	d := DiscoveryConfig{}
+	if c.Discovery != nil {
+		d = *c.Discovery
+	}
+	d.Enabled = enabled
+	d.ChoiceRecorded = true
+	c.Discovery = &d
+	_ = prepareDiscoveryConfig(c)
+}
+
+// SetSkillEvidence changes the user policy while retaining discovery writer protection.
+func SetSkillEvidence(c *Config, mode SkillEvidence) {
+	c.SkillEvidence = mode
+	_ = prepareDiscoveryConfig(c)
 }
 
 // DiscoveryAuthorization is a current permission generation for one scope.

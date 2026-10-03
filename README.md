@@ -4,7 +4,7 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A lightweight CLI that hooks into Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
+A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
 
 OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
 
@@ -43,7 +43,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    agent-archive setup
    ```
 
-5. **Complete setup's per-app steps.** In Codex, run `/hooks` and approve the archive hooks. Start a **new** Claude Code or Codex session, or a new Cursor Agent chat, in an included project and send a prompt ([after setup](docs/getting-started/setup.md#after-setup)).
+5. **Start a new task.** Interactive Codex setup reviews automatic discovery and capture scope; fresh scripts explicitly choose both. All-projects scope is Codex only; hook approval is optional for discovery. Existing installations opt in explicitly. Start a **new** Claude Code or Codex session, or a new Cursor Agent chat, in an included project and send a prompt ([discovery consent and supported versions](docs/getting-started/setup.md#automatic-codex-discovery)). Indistinguishable recent native copies may qualify.
 
 6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
@@ -59,6 +59,7 @@ flowchart LR
   H --> S[("local state<br/>~/.local/share/agent-archive")]
   L["launchd job (macOS) or<br/>systemd timer (Linux)<br/>every 60 s"] --> C["collector<br/>filter → bundle → upload → verify"]
   S --> C
+  T --> D["supported Codex discovery<br/>creation-time consent"] --> S
   C --> B[("your S3 / R2 bucket")]
   B --> R["list · show · handoff"]
   T["transcripts already<br/>on this machine"] --> BF["backfill"] --> S

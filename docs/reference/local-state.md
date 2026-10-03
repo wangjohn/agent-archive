@@ -135,3 +135,13 @@ list in step with `state.OwnedEntries()`.
   backup tools to skip it; never `/tmp` and never the data directory, which
   may be backed up or synced. The copy is removed when the read ends, and an
   abandoned one is swept by the next read.
+
+## Discovery state
+
+Discovery keeps a bounded source catalog and enumeration cursor, plus a
+content-free health snapshot. These are scheduling hints, not identity or consent
+authority. Namespaced native identities and their registration journal prevent
+duplicate logical archives across hooks, discovery and deliberate imports.
+Deleting a scan cache may cause another bounded scan; it does not grant permission
+to capture old history. Preserve protected configuration and identity state when
+disabling discovery; an older binary refuses protected configuration.

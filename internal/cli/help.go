@@ -126,6 +126,8 @@ report next to the plan. A plan expires five minutes after creation.
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--codex-discovery on|off]
+               [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS]
                [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
@@ -200,6 +202,13 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
+                        Reconfiguration keeps an omitted choice. Discovery
+                        finds supported sources; recent native copies may count
+  --codex-capture-scope MODE included-projects or all-projects (Codex only).
+                        Fresh scripts must choose; default: included projects.
+                        Omitted reconfiguration never expands recorded scope.
+                        all-projects with discovery off uses approved hooks only
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs

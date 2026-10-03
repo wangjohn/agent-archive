@@ -26,8 +26,17 @@ const (
 	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY" //nolint:gosec // G101: a variable's name, not a credential.
 )
 
+type discoverySetting string
+
+const (
+	discoveryOn  discoverySetting = "on"
+	discoveryOff discoverySetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
+	codexDiscovery         string
+	codexCaptureScope      string
 	pair                   bool
 	pairFile               string
 	prefix                 string
@@ -127,6 +136,21 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.r2KeyID, "r2-access-key-id", "", "R2 access key ID")
 	fs.StringVar(&opts.awsProfile, "aws-profile", "", "AWS profile for S3")
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
+	fs.Func("codex-discovery", "on or off; automatically discover supported Codex tasks", func(value string) error {
+		if discoverySetting(value) != discoveryOn && discoverySetting(value) != discoveryOff {
+			return fmt.Errorf("--codex-discovery requires on or off")
+		}
+		opts.codexDiscovery = value
+		return nil
+	})
+	fs.Func("codex-capture-scope", "included-projects or all-projects; Codex only", func(value string) error {
+		scope := config.CodexCaptureScope(value)
+		if scope != config.CodexIncludedProjects && scope != config.CodexAllProjects {
+			return fmt.Errorf("--codex-capture-scope requires included-projects or all-projects")
+		}
+		opts.codexCaptureScope = value
+		return nil
+	})
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
@@ -161,7 +185,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
+	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -213,6 +237,10 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err != nil {
 		return err
 	}
+	if err := validateScriptCodexChoices(cfg, opts, found && containsString(existing.Harnesses, "codex")); err != nil {
+		return err
+	}
+	prepareDiscoveryHomes(&cfg, env, userHome)
 	if secret.SecretAccessKey, err = scriptR2Secret(secret, p, stdin, env); err != nil {
 		return err
 	}
@@ -257,12 +285,8 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		}
 		return failure
 	}
-	if secret.SecretAccessKey != "" {
-		if err = stageR2Key(home, &cfg, &draft, secret, env); err != nil {
-			return discard(err)
-		}
-	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
-		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
+	if err = stageScriptR2Credential(home, &cfg, &draft, secret, env); err != nil {
+		return discard(err)
 	}
 
 	accessErr := runStorageCheck(p, &cfg, env)
@@ -299,6 +323,7 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 	if err := reviewChanges(home, existing, cfg, p, env); err != nil {
 		return err
 	}
+	printDiscoveryConsent(p, cfg)
 	terminal.Printf(p.out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
 	policy := string(cfg.EffectiveSkillEvidence())
 	if cfg.SkillEvidence == "" {
@@ -343,7 +368,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		cfg.SkillEvidence = config.SkillEvidenceMetadata
 	}
 	if opts.skillEvidence != "" {
-		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
+		config.SetSkillEvidence(&cfg, config.SkillEvidence(opts.skillEvidence))
 	}
 	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
 	cfg.AllowNetworkHome = env.networkHomeOptIn(home, userHome, opts.allowNetworkHome, existing)
@@ -352,6 +377,12 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
 	problems := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	if err := configureCodexCaptureScope(&cfg, opts.codexCaptureScope); err != nil {
+		problems = append(problems, err)
+	}
+	if err := configureDiscovery(&cfg, discoverySetting(opts.codexDiscovery)); err != nil {
+		problems = append(problems, err)
+	}
 	if len(problems) == 0 {
 		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
 			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
@@ -537,7 +568,7 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) []error 
 	if len(problems) > 0 {
 		return problems
 	}
-	if includedProjects(cfg.Archive.Projects) == 0 {
+	if includedProjects(cfg.Archive.Projects) == 0 && !codexOnlyAllProjects(*cfg) {
 		return []error{errors.New("no project is included; pass --project DIR")}
 	}
 	return nil
@@ -688,4 +719,14 @@ func (e Env) forgetR2Variables() {
 func lookupEnvTrimmed(env Env, key string) string {
 	value, _ := env.lookupEnv(key)
 	return strings.TrimSpace(value)
+}
+
+func stageScriptR2Credential(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
+	if secret.SecretAccessKey != "" {
+		return stageR2Key(home, cfg, draft, secret, env)
+	}
+	if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
+		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
+	}
+	return nil
 }

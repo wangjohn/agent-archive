@@ -186,7 +186,7 @@ func TestSetupYesWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
-	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "test-bucket", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir())
+	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "test-bucket", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`) {
 		t.Fatalf("setup --yes did not warn about the credential_process:\n%s", output)
 	}
@@ -298,7 +298,7 @@ func TestSetupYesGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	path := binDir + ":/usr/bin:/bin"
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": path})
-	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
+	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if strings.Contains(output, "cannot find") {
 		t.Fatalf("setup --yes warned about a helper the collector can find:\n%s", output)
 	}

@@ -116,6 +116,14 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 }
 
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
+	if old.EffectiveCodexCaptureScope() != next.EffectiveCodexCaptureScope() {
+		if next.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			p.warn("Codex scope expands to all current and future projects (Codex only).",
+				"New admissions start after this local consent; old history and paused or excluded starts remain out of scope.")
+		} else {
+			p.warn("Codex scope reduces to included projects. Capture outside remaining scope stops; published archives are retained.")
+		}
+	}
 	if old.MachineID == "" {
 		return nil
 	}
@@ -224,7 +232,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if !reflect.DeepEqual(withoutBucketPrivacy(current), withoutBucketPrivacy(old)) {
 		return fmt.Errorf("settings changed while setup was open; restart setup to review the current settings")
 	}
-	if err := protectSetupWriter(home, current); err != nil {
+	if err := protectSetupWriter(home, current, *next); err != nil {
 		return err
 	}
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
@@ -631,11 +639,21 @@ func freshestBucketPrivacy(cfg config.Config, candidate *storage.PrivacyReport) 
 
 // protectSetupWriter fences protected rollback snapshots before journal planning.
 // Callers hold hooks.lock after settling any previous setup transaction.
-func protectSetupWriter(home string, current config.Config) error {
+func protectSetupWriter(home string, current config.Config, proposed ...config.Config) error {
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if current.Discovery == nil {
+	if len(proposed) > 0 && proposed[0].CodexCapture != nil && current.CodexCapture == nil {
+		if _, found, err := config.Load(home); err != nil {
+			return err
+		} else if found {
+			config.PreserveWriterFence(&current, proposed[0])
+			if err := config.Save(home, current); err != nil {
+				return err
+			}
+		}
+	}
+	if current.Discovery == nil && current.CodexCapture == nil {
 		return nil
 	}
 	return config.ProtectIdentityWriter(home)

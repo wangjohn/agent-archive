@@ -24,7 +24,7 @@ func TestSetupRollbackCannotRestoreNumericProtectedWriter(t *testing.T) {
 	}{{"setup-disabled", false, false}, {"refresh-disabled", true, false}, {"setup-enabled", false, true}, {"refresh-enabled", true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", true, true, false, t.TempDir()))
+			home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 			// An earlier protected writer has already committed authoritative
 			// identities, while its schema2 wire format was still numeric.
 			store, err := state.Open(home)
