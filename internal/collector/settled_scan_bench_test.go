@@ -39,7 +39,7 @@ func BenchmarkScanSettledRegistrations(b *testing.B) {
 				}
 			}
 			remote := &settledReadStore{MemoryStore: storagetest.NewMemoryStore()}
-			opts := Options{MachineID: "synthetic", Now: func() time.Time { return now }}
+			opts := Options{Sources: testSources, MachineID: "synthetic", Now: func() time.Time { return now }}
 			result, err := Run(context.Background(), local, remote, opts)
 			if err != nil || len(result.Errors) != 0 || len(result.Published) != sessions {
 				b.Fatalf("settle: %#v %v", result, err)
@@ -103,7 +103,7 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 	}
 	remote := &settledReadStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "synthetic", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "synthetic", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 32 {
 		t.Fatalf("settle: %#v %v", result, err)

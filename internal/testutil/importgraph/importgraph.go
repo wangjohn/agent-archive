@@ -103,3 +103,26 @@ func goListLines(tb testing.TB, args ...string) []string {
 	}
 	return strings.Split(strings.TrimSpace(string(out)), "\n")
 }
+
+// FileImports checks an independently compilable production declaration boundary.
+// Files from effectful siblings cannot satisfy hidden helper references.
+func FileImports(tb testing.TB, files ...string) (direct, all []string) {
+	tb.Helper()
+	out, err := exec.CommandContext(tb.Context(), "go", append([]string{"test", "-run=^$"}, files...)...).CombinedOutput()
+	if err != nil {
+		tb.Fatalf("pure declaration boundary %v: %v\n%s", files, err, out)
+	}
+	direct = goList(tb, append([]string{"-f", `{{join .Imports "\n"}}`}, files...)...)
+	seen := map[string]bool{}
+	for _, p := range direct {
+		for _, dep := range goList(tb, "-deps", p) {
+			seen[dep] = true
+		}
+	}
+	for p := range seen {
+		all = append(all, p)
+	}
+	slices.Sort(direct)
+	slices.Sort(all)
+	return direct, all
+}

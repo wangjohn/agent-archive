@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -110,17 +111,19 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty    bool
-	unsafe   bool
-	tooLarge bool
+	empty     bool
+	unsafe    bool
+	tooLarge  bool
+	sourceErr error
 }
 
 // subagentWork is one subagent transcript of an imported parent.
 type subagentWork struct {
-	parent   *work
-	sub      Subagent
-	skipped  bool
-	vanished bool
+	parent    *work
+	sub       Subagent
+	skipped   bool
+	vanished  bool
+	sourceErr error
 }
 
 // importable reports whether nothing about the file itself stops it being
@@ -362,6 +365,11 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	}); err != nil {
 		return err
 	}
+	for _, w := range toFilter {
+		if w.sourceErr != nil {
+			return w.sourceErr
+		}
+	}
 	for _, group := range sessions {
 		markDuplicates(env, group)
 	}
@@ -412,8 +420,12 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{}, env.Sources)
 		if err != nil {
+			if fatalSourceFailure(err) {
+				s.sourceErr = err
+				return
+			}
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
 			return
@@ -425,6 +437,9 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		return err
 	}
 	for _, s := range subagents {
+		if s.sourceErr != nil {
+			return s.sourceErr
+		}
 		switch {
 		case s.vanished:
 		case s.skipped:
@@ -509,8 +524,12 @@ func runAdapter(env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart)
+	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart, env.Sources)
 	if err != nil {
+		if fatalSourceFailure(err) {
+			w.sourceErr = err
+			return
+		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
@@ -551,6 +570,10 @@ func runAdapter(env Environment, w *work) {
 	case harnessCursor:
 		// Its start is the file's creation, set above.
 	}
+}
+
+func fatalSourceFailure(err error) bool {
+	return agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // conversationTypes are the retained record types that hold a turn of the

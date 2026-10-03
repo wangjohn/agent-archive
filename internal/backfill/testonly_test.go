@@ -18,5 +18,5 @@ func CursorStateDatabase(home string) string {
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under
 // home on this machine.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	return CursorDatabaseReaderFor(Environment{Home: home})
+	return CursorDatabaseReaderFor(Environment{Sources: testSources, Home: home})
 }
