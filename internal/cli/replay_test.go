@@ -81,6 +81,14 @@ func TestListMarksAReplayInTheTable(t *testing.T) {
 	if !strings.Contains(out.String(), "[replay]") {
 		t.Errorf("no replay mark:\n%s", out.String())
 	}
+	// Replay is not an origin: --verbose keeps the capture's own.
+	out.Reset()
+	if code := runListCommand([]string{"--replays", "only", "--verbose", "--no-pager"}, strings.NewReader(""), &out, &errOut, env); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if text := out.String(); strings.Contains(text, " replay ") || !strings.Contains(text, " hook ") {
+		t.Errorf("ORIGIN is not the replay's capture origin:\n%s", out.String())
+	}
 }
 
 func TestStatsLeavesOutReplaysUnlessAsked(t *testing.T) {
@@ -98,6 +106,45 @@ func TestStatsLeavesOutReplaysUnlessAsked(t *testing.T) {
 		if doc.Coverage.Sessions != want || doc.Filters.Replays != args {
 			t.Errorf("%v: %d sessions, filters %+v; want %d", a, doc.Coverage.Sessions, doc.Filters, want)
 		}
+	}
+}
+
+// The terminal screen and the saved page both say when replays were counted.
+func TestStatsNamesTheReplayFilter(t *testing.T) {
+	t.Parallel()
+	env := replayArchive(t)
+	for _, tc := range []struct {
+		replays string
+		screen  string
+		page    string
+	}{
+		{"include", "replays included", "replay sessions included"},
+		{"only", "replays only", "replay sessions only"},
+	} {
+		if text := mustRunStats(t, env, 0, "--replays", tc.replays, "--no-pager"); !strings.Contains(text, tc.screen) {
+			t.Errorf("--replays %s: the screen does not say %q:\n%s", tc.replays, tc.screen, text)
+		}
+		if page := mustRunStats(t, env, 0, "--html", "--replays", tc.replays); !strings.Contains(page, tc.page) {
+			t.Errorf("--replays %s: the page does not say %q", tc.replays, tc.page)
+		}
+	}
+	if text := mustRunStats(t, env, 0, "--no-pager"); strings.Contains(text, "replays") {
+		t.Errorf("the default screen names a replay filter:\n%s", text)
+	}
+}
+
+// show opens a replay by its ID, but a search of titles and names leaves it
+// out, as list and the pickers do.
+func TestShowFindsAReplayOnlyByItsID(t *testing.T) {
+	t.Parallel()
+	env, mem := statsEnv(t)
+	syntheticSession{id: "replayed", harness: "claude", project: "benchmarked", captured: statsDay(time.September, 28, 10),
+		turns: 1, replay: &archive.Replay{RunID: "run-7"}}.publish(t, mem)
+	if _, errOut, code := runShow(t, env, "--json", "replayed"); code != 0 {
+		t.Errorf("show by ID: exit %d: %s", code, errOut)
+	}
+	if out, errOut, code := runShow(t, env, "--json", "benchmarked"); code != 1 || !strings.Contains(errOut, "no archived session") {
+		t.Errorf("a search by project found the replay: exit %d: %s\n%s", code, errOut, out)
 	}
 }
 
