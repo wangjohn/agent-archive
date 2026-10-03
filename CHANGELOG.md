@@ -12,8 +12,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 - Disabled Codex discovery machinery performs bounded source scans before
   storage access and reopens admitted sources within approved roots. Identity
-  misses require registration-census recovery before allocation; producer
-  activation and setup remain a separate implementation phase.
+  misses require registration-census recovery before allocation. Startup
+  restores surviving owners after both derived indexes are lost, including
+  admitted continuations outside a later consent window. Producer activation
+  and setup remain a separate implementation phase.
 
 - Shared local discovery foundations: shared project/worktree facts, durable
   authorization intervals, immutable admission, and actual hook observation.

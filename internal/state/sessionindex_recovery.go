@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,9 +222,46 @@ func (s *Store) RecoverSessionIndexIfNeeded(ctx context.Context) error {
 	var marker sessionIndexMarker
 	err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
 	if err == nil && marker.Version == 1 && marker.Complete {
-		return nil
+		lost, err := s.sessionIndexDirectoriesLost()
+		if err != nil {
+			return err
+		}
+		if !lost {
+			return nil
+		}
 	}
 	return s.RecoverSessionIndex(ctx)
+}
+
+// sessionIndexDirectoriesLost detects total derived-index loss even when Open
+// recreated empty directories. It does not infer any individual key's absence:
+// the existing complete census must restore authoritative owners first.
+func (s *Store) sessionIndexDirectoriesLost() (bool, error) {
+	for _, name := range []string{"sessions-v1", "sessions"} {
+		present, err := directoryHasEntry(filepath.Join(s.home, name))
+		if err != nil || present {
+			return false, err
+		}
+	}
+	return directoryHasEntry(filepath.Join(s.home, "registrations"))
+}
+
+// directoryHasEntry reads only one directory name, without listing or reading
+// its entries. A healthy empty store therefore remains a completed no-op.
+func directoryHasEntry(path string) (bool, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.New("session index availability cannot be checked")
+	}
+	defer func() { _ = f.Close() }()
+	names, err := f.Readdirnames(1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, errors.New("session index availability cannot be checked")
+	}
+	return len(names) > 0, nil
 }
 
 // Candidate ownership is durable reservation evidence even when a child has
