@@ -71,13 +71,13 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 				return errProjectLimit
 			}
 			d.files++
-			if c.IdentityError != nil {
+			if c.IdentityError == nil {
+				d.addProject(c.Header.Directory)
+				if d.stopped() {
+					return errProjectLimit
+				}
+			} else {
 				d.result.Unreadable++
-				return nil
-			}
-			d.addProject(c.Header.Directory)
-			if d.stopped() {
-				return errProjectLimit
 			}
 			return nil
 		})
@@ -229,7 +229,9 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 	}
 	return out, nil
 }
-func (p *projectFiles) Lstat(path string) (fs.FileInfo, error)  { return p.d.env.lstat(path) }
+
+func (p *projectFiles) Lstat(path string) (fs.FileInfo, error) { return p.d.env.lstat(path) }
+
 func (p *projectFiles) Open(path string) (io.ReadCloser, error) { return p.d.env.open(path) }
 
 type projectEntry struct {

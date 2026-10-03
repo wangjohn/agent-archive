@@ -18,19 +18,26 @@ import (
 
 type unreadableExtensionDiscovery struct{ agentapi.DiscoveryLookup }
 
+type extensionDiscoveryName string
+
+const (
+	extensionCanonical extensionDiscoveryName = "orbifold"
+	extensionAlias     extensionDiscoveryName = "orbit"
+)
+
 func (d unreadableExtensionDiscovery) DiscoveryAgents() []string {
 	return append(d.DiscoveryLookup.DiscoveryAgents(), "orbifold")
 }
 
 func (d unreadableExtensionDiscovery) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
-	if name == "orbifold" || name == "orbit" {
+	if extensionDiscoveryName(name) == extensionCanonical || extensionDiscoveryName(name) == extensionAlias {
 		return d, true
 	}
 	return d.DiscoveryLookup.LookupDiscovery(name)
 }
 
 func (d unreadableExtensionDiscovery) CanonicalDiscovery(name string) (string, bool) {
-	if name == "orbit" || name == "orbifold" {
+	if extensionDiscoveryName(name) == extensionAlias || extensionDiscoveryName(name) == extensionCanonical {
 		return "orbifold", true
 	}
 	return d.DiscoveryLookup.CanonicalDiscovery(name)
