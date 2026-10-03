@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func migrationRegistration(key agentmeta.SessionKey, id string) archive.SessionRegistration {
@@ -228,7 +229,7 @@ func TestQualifiedRecoveryConflictsAndIncompleteEnumeration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.ArchiveSessionID(key); !errors.Is(err, ErrSessionIdentityConflict) {
@@ -242,7 +243,7 @@ func TestQualifiedRecoveryConflictsAndIncompleteEnumeration(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeCorrupt(t, s.registrationPath("broken"))
-	if err := s.RecoverSessionIndex(context.Background()); err == nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err == nil {
 		t.Fatal("incomplete census succeeded")
 	}
 	if _, _, err := s.EnsureArchiveSessionID(absent); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
@@ -251,7 +252,7 @@ func TestQualifiedRecoveryConflictsAndIncompleteEnumeration(t *testing.T) {
 	if err := os.Remove(s.registrationPath("broken")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if id, found, err := s.ArchiveSessionID(key); err != nil || !found || id != "one" {
@@ -281,7 +282,7 @@ func TestQualifiedRecoveryResumesEveryDurableBoundary(t *testing.T) {
 				}
 				return nil
 			}
-			if err := s.RecoverSessionIndex(context.Background()); !errors.Is(err, interrupted) {
+			if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); !errors.Is(err, interrupted) {
 				t.Fatalf("missing boundary %v", err)
 			}
 			//lint:ignore LV1001 boundary names match the string-valued durable interruption seam
@@ -291,7 +292,7 @@ func TestQualifiedRecoveryResumesEveryDurableBoundary(t *testing.T) {
 				}
 			}
 			s.onIndexStep = nil
-			if err := s.RecoverSessionIndex(context.Background()); err != nil {
+			if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err != nil {
 				t.Fatal(err)
 			}
 			if id, found, err := s.ArchiveSessionID(key); err != nil || !found || id != "stable" {
@@ -376,7 +377,7 @@ func TestQualifiedRecoveryPreservesLegacyChildReservation(t *testing.T) {
 	if err := s.RequestSessionIndexRecovery(childKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := s.ArchiveSessionID(childKey); err != nil || found {
@@ -448,7 +449,7 @@ func TestQualifiedRecoveryKeepsRequestDuringCompletion(t *testing.T) {
 				}
 				return nil
 			}
-			err := s.RecoverSessionIndex(context.Background())
+			err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true)
 			if !requested {
 				t.Fatal("request boundary not reached")
 			}
@@ -456,7 +457,7 @@ func TestQualifiedRecoveryKeepsRequestDuringCompletion(t *testing.T) {
 				t.Fatalf("newer generation accepted: %v", err)
 			}
 			s.onIndexStep, s.onWriteSync = nil, nil
-			if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+			if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
 				t.Fatal(err)
 			}
 			if _, created, err := s.EnsureArchiveSessionID(key); err != nil || !created {
@@ -480,7 +481,7 @@ func TestQualifiedRecoveryAcceptsExistingMarkerWithoutGeneration(t *testing.T) {
 			}
 			unlock()
 		}
-		if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.sessionIndexMissAllowed(); err != nil {
@@ -568,7 +569,7 @@ func TestQualifiedRecoveryBeginWaitsForInFlightRequest(t *testing.T) {
 		}
 		return nil
 	}
-	recoveryErr := s.RecoverSessionIndex(context.Background())
+	recoveryErr := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true)
 	release()
 	if err := <-finished; err != nil {
 		t.Fatal(err)
@@ -577,7 +578,7 @@ func TestQualifiedRecoveryBeginWaitsForInFlightRequest(t *testing.T) {
 		t.Fatal(recoveryErr)
 	}
 	s.onIndexStep, s.onLockWait = nil, nil
-	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
@@ -604,7 +605,7 @@ func TestQualifiedRecoveryBeginRetriesBusyHooks(t *testing.T) {
 	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &before); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecoverSessionIndex(context.Background()); !errors.Is(err, local.ErrBusy) {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); !errors.Is(err, local.ErrBusy) {
 		t.Fatalf("busy begin: %v", err)
 	}
 	var after sessionIndexMarker
@@ -615,7 +616,7 @@ func TestQualifiedRecoveryBeginRetriesBusyHooks(t *testing.T) {
 		t.Fatal("busy begin replaced requested generation")
 	}
 	unlock()
-	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := s.ArchiveSessionID(key); err != nil || found {
@@ -641,7 +642,7 @@ func TestQualifiedRecoveryBeginStagingLeavesHooksAvailable(t *testing.T) {
 			}
 		}
 	}
-	if err := s.RecoverSessionIndex(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, true); err != nil {
 		t.Fatal(err)
 	}
 	if !requested {
@@ -666,7 +667,7 @@ func TestQualifiedRecoveryBeginCancellationPreservesRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.onWriteSync = cancel
-	if err := s.RecoverSessionIndex(ctx); !errors.Is(err, context.Canceled) {
+	if err := recoverytest.Exhaust(ctx, s, SessionIndexRecoverySlice, true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled begin: %v", err)
 	}
 	s.onWriteSync = nil
@@ -677,7 +678,7 @@ func TestQualifiedRecoveryBeginCancellationPreservesRequest(t *testing.T) {
 	if after != before {
 		t.Fatal("cancelled begin replaced requested generation")
 	}
-	if err := s.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), s, SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := s.ArchiveSessionID(key); err != nil || found {

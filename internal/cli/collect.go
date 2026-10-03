@@ -150,10 +150,20 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	// Local identity recovery and admission must not depend on credentials or
 	// storage availability. Source observation retains its own short budget.
-	recoveryErr := localStore.RecoverSessionIndexIfNeeded(ctx)
+	// The complete authority census precedes the application allowance. Give it
+	// part of the remaining pass budget so a census slower than four seconds
+	// does not consume every future slice before any owner can be applied.
+	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
+	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
 	if recoveryErr != nil {
 		recordPreflightError(localStore, recoveryErr)
 	}
+	recoveryCancel()
 	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
@@ -173,19 +183,20 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		previousScanAt = previous.LastScanAt
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
-		Parsers:              parsersFor(env),
-		Sources:              registryFor(env),
-		Decoders:             env.agentRegistry(),
-		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
-		SkillEvidence:        cfg.EffectiveSkillEvidence(),
-		AcceptSession:        cfg.AcceptSession,
-		Now:                  env.Now,
-		RequireSkillUse:      cfg.RequireSkillUse,
-		Progress:             pass.progress,
-		Stop:                 stop,
-		CursorDatabase:       env.cursorDatabase(),
-		RepoKey:              env.repoKey,
+		SkipSessionIndexRecovery: true,
+		Parsers:                  parsersFor(env),
+		Sources:                  registryFor(env),
+		Decoders:                 env.agentRegistry(),
+		MachineID:                cfg.MachineID,
+		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:            cfg.EffectiveSkillEvidence(),
+		AcceptSession:            cfg.AcceptSession,
+		Now:                      env.Now,
+		RequireSkillUse:          cfg.RequireSkillUse,
+		Progress:                 pass.progress,
+		Stop:                     stop,
+		CursorDatabase:           env.cursorDatabase(),
+		RepoKey:                  env.repoKey,
 	})
 	// Collector status replaces its previous LastErrors. Preserve every local
 	// preflight failure, even if recovery later succeeds or collection errors.

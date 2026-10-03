@@ -32,6 +32,9 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// SkipSessionIndexRecovery is set after the CLI has already attempted its
+	// bounded local recovery stage. Direct collector callers recover once.
+	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
 	Parsers      agentapi.ParsersLookup
 	parserCache  map[string]agentapi.TranscriptParser
@@ -199,10 +202,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
-	if ctx.Err() == nil {
-		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
+		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
-	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
 	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)

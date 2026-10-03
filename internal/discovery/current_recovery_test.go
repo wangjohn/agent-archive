@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 // This test combines two independently supported recovery transitions: a
@@ -100,7 +101,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 func TestCompletedEmptyCensusDoesNotRepeatForHistoricalUnknownSources(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	for n := 1; n <= 8; n++ {

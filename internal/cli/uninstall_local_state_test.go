@@ -1,14 +1,63 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
 )
+
+func TestDeleteLocalDataRemovesScheduledRecoveryEvidence(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete, err := store.RecoverSessionIndexScheduled(context.Background(), time.Second); err != nil || !complete {
+		t.Fatalf("recovery: %v %v", complete, err)
+	}
+	// A nanosecond application allowance checkpoints an actual owner inventory.
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	fixtureHome, _, _ := collectFixture(t, now)
+	reg := theRegistration(t, fixtureHome)
+	if err := store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	if complete, err := store.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond); err != nil || complete {
+		t.Fatalf("checkpoint: %v %v", complete, err)
+	}
+	owned := []string{"session-membership.json", "session-membership.lock", "session-index-recovery.json"}
+	for _, name := range owned {
+		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
+			t.Fatalf("recovery did not create %s: %v", name, err)
+		}
+	}
+	userPath := filepath.Join(home, "my-notes.txt")
+	if err := os.WriteFile(userPath, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	leftover, err := removeLocalState(home)
+	if err != nil || !slices.Equal(leftover, []string{"my-notes.txt"}) {
+		t.Fatalf("leftover=%q err=%v", leftover, err)
+	}
+	for _, name := range owned {
+		if _, err := os.Stat(filepath.Join(home, name)); !os.IsNotExist(err) {
+			t.Fatalf("owned evidence retained: %s %v", name, err)
+		}
+	}
+	if data, err := os.ReadFile(userPath); err != nil || string(data) != "keep" {
+		t.Fatalf("unrelated data changed: %q %v", data, err)
+	}
+}
 
 // Every entry the collector's local store can create under the data
 // directory is one uninstall --delete-local-data removes. The list comes from
@@ -46,6 +95,7 @@ func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 // hand. uninstall --delete-local-data removes exactly these, no more and no
 // fewer; an entry added to either list later is added here too, on purpose.
 var handListedLocalState = []string{
+	"session-membership.json", "session-membership.lock", "session-index-recovery.json",
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
 	machineRegistrationFile, "discovery-catalog.json", "discovery-health.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",

@@ -29,5 +29,10 @@ func (s *Store) SessionIndexAbsent(key agentmeta.SessionKey) (bool, error) {
 	if marker.Version != 1 || !marker.Complete {
 		return false, ErrSessionIndexRecoveryRequired
 	}
+	if marker.MembershipFenced {
+		if _, err := s.sessionMembershipRevision(); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }

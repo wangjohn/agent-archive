@@ -61,3 +61,52 @@ Protected authorization uses a schema-version object that published integer
 decoders refuse. Legacy hook-only config remains numeric. Setup integration must
 fence protected Before snapshots before journaling a reconfiguration; never
 recover a numeric snapshot over protected authorization.
+
+## Scheduled identity recovery
+
+Recovery retains the qualified identity census as its authority. Each scheduled
+slice validates the complete registration inventory and all duplicate owners,
+then resumes derived-index application from a content-free cursor tied to that
+inventory, the request generation, and the membership revision. A partial,
+interrupted or damaged cursor never certifies absence. Candidate reservations
+and requested misses must also finish before the complete marker is written.
+Repeated requests for an already retained exact key preserve progress; a new
+request changes the recovery generation.
+
+Registration membership changes stage a small durable revision outside locks.
+The request lock precedes the short membership lock, which commits the revision
+before the registration rename. Completion takes hooks then membership and
+checks the revision before committing the certificate. The membership lock
+never acquires hooks/request locks or covers staging, syncing or a census.
+Valid continuation updates retain identity and do not change the revision.
+Recorded membership evidence that disappears stays uncertain rather than
+becoming a legacy store again.
+
+The scheduled application allowance is at most four seconds and starts after
+complete registration validation and fingerprinting. One deadline charges all
+application phases, including later phase inventories and checkpoints. The
+caller context bounds the entire stage separately; if complete validation
+cannot finish within it, recovery stays uncertified. The CLI gives complete
+validation up to half of its remaining soft budget,
+reserves checkpoint time within the separate application allowance, and leaves
+time for publication within its existing soft/hard budgets. Complete
+inventory reads and one in-flight atomic operation can exceed an allowance on
+slow storage, so this is a measured scheduling target rather than an arbitrary
+host IO deadline. Local recovery/discovery still precedes credentials/storage,
+and publication of already admitted sessions can proceed while recovery is
+pending. The CLI avoids a second recovery slice inside the collector. Synthetic
+fixtures exhaust the same scheduled engine within their contexts;
+production consumers retain bounded scheduling.
+
+The content-free marker, cursor and membership fence distinguish pending
+application from a completed census. They are internal recovery evidence; the
+activation phase must add bounded health/status presentation of pending
+identity-recovery phases. Missing or corrupt evidence must remain unknown, and
+that health reader must not read native sources, Git or storage.
+
+
+A validated committed qualified index for the same key/archive owner is left
+unchanged after the request-lock registration check. Recovery repairs corrupt,
+conflicting, requested, absent or unfinished reservation entries instead of
+using that optimization. Existing-index and missing-index migration benchmarks
+are separate cases; their allocation and elapsed distributions are not pooled.

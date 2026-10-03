@@ -108,7 +108,7 @@ var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile)
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile)
 }
 
 func safeFileComponent(value string) bool {
