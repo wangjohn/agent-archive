@@ -64,6 +64,7 @@ func TestNativeTempRejectsSymlinkAndPublicNamespace(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"symlink", "public"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			temp := t.TempDir()
 			root := nativeTempPath(temp, os.Geteuid())
 			if kind == "symlink" {
@@ -89,6 +90,7 @@ func (info nativeTempOwnedInfo) Sys() any { return &syscall.Stat_t{Uid: info.uid
 func TestNativeTempDirectoryOwnershipUsesInspectedInformation(t *testing.T) {
 	t.Parallel()
 	path := t.TempDir()
+	must(t, os.Chmod(path, 0o700))
 	info, err := os.Lstat(path)
 	must(t, err)
 	uid := os.Geteuid()
