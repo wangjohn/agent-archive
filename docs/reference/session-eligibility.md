@@ -50,8 +50,11 @@ it so, are in [session admission](../../dev/contributing/session-admission.md).
 ## Automatically discovered Codex tasks
 
 Discovery considers supported regular rollouts confined to approved local Codex
-homes. Original native session creation must fall within the current included
-project/destination authorization and an unpaused interval. Unsupported producer
+homes. Original native session creation must fall within the current Codex scope,
+source and destination authorization and an unpaused interval. Included-project
+scope requires an included project; all-projects scope permits unlisted current
+and future Codex projects subject to explicit exceptions. Other apps retain their
+included-project permissions. Unsupported producer
 versions, recognizable imports, forks, children and referenced histories do not
 qualify. Partial first-task metadata is retried rather than guessed.
 

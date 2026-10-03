@@ -553,7 +553,9 @@ from loading its own job into your real launchd or systemd user manager: stub
 
 After "Configuration saved.", setup says, with one line per app, what to do next:
 
-- **Codex:** start a supported new task in an included project. Interactive setup reviews automatic discovery and Codex scope; fresh scripts
+- **Codex:** start a supported new task within the reviewed Codex scope: an included
+  project in included-project mode, or any non-excluded project in all-projects mode.
+  Interactive setup reviews automatic discovery and Codex scope; fresh scripts
   specify both choices explicitly. Hook
   capture remains available with `/hooks` approval, and is required when
   discovery is disabled or the native producer is unsupported.

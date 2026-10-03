@@ -958,7 +958,10 @@ references and slot IDs, keeping old local access until replacement commits.
 ## Consent for automatic Codex discovery
 
 Automatic discovery authorizes supported new-session records from the Codex homes
-selected by setup, for included projects and the chosen destination. It does not
+selected by setup, within the reviewed Codex capture scope and chosen destination.
+Included-project scope requires an included project; all-projects scope covers
+current and future Codex projects subject to explicit exceptions. Other apps
+retain their included-project permissions. Discovery does not
 prove that execution originated on this machine: an indistinguishable recent
 native copy may be captured. Historical records before consent, starts while
 paused, excluded projects and recognizable unsupported import/fork shapes remain

@@ -43,7 +43,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
    agent-archive setup
    ```
 
-5. **Start a new task.** Interactive Codex setup reviews automatic discovery and capture scope; fresh scripts explicitly choose both. All-projects scope is Codex only; hook approval is optional for discovery. Existing installations opt in explicitly. Start a **new** Claude Code or Codex session, or a new Cursor Agent chat, in an included project and send a prompt ([discovery consent and supported versions](docs/getting-started/setup.md#automatic-codex-discovery)). Indistinguishable recent native copies may qualify.
+5. **Start a new task.** Interactive Codex setup reviews automatic discovery and capture scope; fresh scripts explicitly choose both. All-projects scope is Codex only; hook approval is optional for discovery. Existing installations opt in explicitly. Start a **new** Codex task within the reviewed scope, or a new Claude Code session or Cursor Agent chat in an included project, and send a prompt ([discovery consent and supported versions](docs/getting-started/setup.md#automatic-codex-discovery)). Indistinguishable recent native copies may qualify.
 
 6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
