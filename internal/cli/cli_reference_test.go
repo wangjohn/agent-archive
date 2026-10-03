@@ -72,6 +72,11 @@ func referenceCommandOrder(t *testing.T) []string {
 // examples, linked under its reference entry. A command without one fails
 // TestCLIReferenceIsCurrent, so a new command arrives with a guide.
 var commandGuides = map[string]string{
+	"machines revoke":  "[Multiple machines](../guides/multiple-machines.md)",
+	"machines own-key": "[Multiple machines](../guides/multiple-machines.md)",
+	"machines":         "[Multiple machines](../guides/multiple-machines.md)",
+	"machines add":     "[Multiple machines](../guides/multiple-machines.md)",
+	"machines rename":  "[Multiple machines](../guides/multiple-machines.md)",
 	"setup":            "[Set up capture](../getting-started/setup.md)",
 	"status":           "[Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md)",
 	"sync":             "[Everyday commands](../guides/troubleshooting.md#everyday-commands)",
@@ -134,7 +139,7 @@ is stale. After changing a command's help or flags, regenerate it with
 | 0 | Success, and help. |
 | 1 | An operational failure. What a command was asked for goes to stdout; why it did not do it, or not all of it, goes to stderr. A ` + "`sync`" + ` that is paused, finds another command running, or fails for some sessions exits 1; its summary line, if it ran, stays on stdout. |
 | 2 | A usage error: an unknown command or flag, a bad flag value, or an unexpected argument. It is reported in one line on stderr before the command does anything. |
-| 128 + signal | ` + "`backfill`" + ` stopped at once by a second Ctrl-C (130), SIGHUP (129), or SIGTERM (143). |
+| 128 + signal | A command stopped by a signal exits with the shell's status for it: Ctrl-C (130), SIGHUP (129), SIGQUIT (131), or SIGTERM (143). ` + "`backfill`" + ` stops at once on a second Ctrl-C; ` + "`list`, `show` and `stats`" + ` restore the terminal first. |
 `)
 	for _, command := range referenceCommandOrder(t) {
 		guide, ok := commandGuides[command]

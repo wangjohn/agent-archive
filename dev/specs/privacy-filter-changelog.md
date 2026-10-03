@@ -5,6 +5,137 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 15
+
+Adapter version 0.15.0 goes with it; the parser version is unchanged.
+
+- **Machine pairing bundles.** Every retained string redacts the `aa-pair1:`
+  prefix and its contiguous payload, including short or truncated payloads,
+  padding, and standard-base64 characters. This covers prose, tool arguments,
+  nested JSON text, and displayed files. Each match records a
+  `sensitive_content_redacted` gap. See the [exact boundaries](privacy-filter.md#value-level-redaction).
+  The ordinary-word pairing code has no recognizable credential shape.
+- Existing sessions are re-filtered under version 15 on the next collector
+  scan; older uploaded objects remain subject to the usual purge policy.
+
+## Source filter version 14
+
+Adapter version 0.14.0 goes with it. Parser 0.18.0 is the first to read what
+is newly kept: it derives a subagent's `name` from it. What is newly kept is
+one string, the description the parent session gave a Claude Code subagent's
+task, and nothing else that was dropped.
+
+- **Claude Code's subagent description.** A subagent's transcript,
+  `subagents/agent-<id>.jsonl`, has a sibling `agent-<id>.meta.json` whose
+  `description` is the name the parent gave the task ("Find the retention
+  tests"). The description is not in the transcript, so the collector reads
+  that file when it filters the transcript of a subagent (a registration
+  with a parent session, whose transcript is named `agent-<id>.jsonl`) and
+  `ClaudeAdapter.FilterSubagentJSONL` writes one synthetic record at the front
+  of the filtered records:
+
+  ```json
+  {"type":"subagent-meta","description":"…"}
+  ```
+
+  - The description passes the same value rules as a prompt (injected
+    instruction stripping, credential redaction), applied to the whole text
+    first, and is then cut to 512 bytes on a character boundary (a
+    `content_truncated` gap records the cut) and checked again, so a secret
+    is never cut in half and left behind. It is kept when it is a string with
+    something in it.
+  - Nothing else of the file is kept, and none of it is reported: the file
+    is not part of the transcript. `worktreePath` (a path on this machine) and
+    `agentType` (local-only state) are never read.
+  - The file is optional. One that is missing, unreadable, a symbolic link
+    (never followed, so no file elsewhere is read in its place) or otherwise
+    not a regular file, larger than 16 KB, not a JSON object, or without a
+    description that is a non-blank string changes nothing and records no
+    gap.
+  - The record, and any gap about it (including the names of keys dropped
+    from a description that is JSON text, filtered as a prompt's is), is
+    written only when the transcript has records of its own, so it never
+    makes an empty or unrecognized transcript look captured, and never
+    changes the transcript's timestamps or identities. There is at most
+    one: a `subagent-meta` record in the transcript itself (a retained
+    snapshot filtered again carries the one written earlier) is rebuilt from
+    its description alone, and a second one, or one beside the file's, is
+    dropped with an `unsupported_value_omitted` gap.
+  - A transcript that is not a Claude Code subagent's never reads a
+    `.meta.json`.
+
+The collector does not count a changed description as the transcript being
+rewritten: a subagent captured before its `.meta.json` existed, or whose
+description changed, still extends its earlier snapshot (the leading
+`subagent-meta` record is left out of that comparison). A later scan
+republishes the new description only when the transcript has changed: a
+`.meta.json` that appears or changes beside a transcript that does not
+change is not noticed until the transcript changes or the next filter
+or adapter version re-reads it (a parser version alone re-derives metadata
+from the retained snapshot). The collector registers a subagent when its
+`SubagentStop` hook fires, or when backfill finds it, so the file is normally
+beside the transcript the first time it is read.
+
+A filter bump makes the collector read and republish every session whose
+transcript still exists, which is how a description reaches subagents
+archived before this version. A subagent whose transcript is gone keeps what
+it had.
+
+## Source filter version 13
+
+Adapter version 0.13.0 goes with it. Parser 0.17.0 is the first to read what
+is newly kept: it derives `name` and `pull_requests` from it. What is newly
+kept is the name a session was given and the pull request it is linked to, in
+the three places below. Nothing else that was dropped is kept.
+
+- **Claude Code's `custom-title` record.** `type`, `customTitle`, and, when
+  they are strings, `sessionId` and `timestamp`. `customTitle` is the name in
+  the app's sidebar, set automatically or by `/rename`: text the model wrote
+  from the person's prompt, or the person typed. It is kept when it is a
+  string with something in it, and passes the same value rules as a prompt
+  (injected-instruction stripping, credential redaction, the 64 KB cap). Every
+  other key of the record (`uuid`, `cwd`, …) is dropped and its name listed
+  in the `unknown_field_omitted` gap. A record with no title, an empty or
+  blank one, or one that is not a string is dropped, with an
+  `unsupported_value_omitted` gap (`record omitted`). Claude Code appends
+  one of these records for each name a session is given, and each is kept:
+  renaming a session adds a name and does not remove the earlier ones.
+- **Claude Code's `pr-link` record.** `type`, `prNumber`, `prRepository`,
+  `prUrl`, and, when they are strings, `sessionId` and `timestamp`.
+  - `prRepository` must be `owner/name`, each part matching the pattern
+    `git_activity` requires of a repository (letters, digits, `_`, `.`, `-`).
+  - `prNumber` must be a whole number from 1 to 2^30, written as a string of
+    digits (as Claude Code writes it) or as a number. It is kept as a JSON
+    integer either way, so the retained record has one shape.
+  - `prUrl` is kept only when it is exactly `https://github.com/<prRepository>/pull/<prNumber>`.
+    Any other value (another host, a query string, a fragment, a value
+    that is not a string) is dropped, the rest of the record is kept, and
+    `prUrl` is listed in the `unknown_field_omitted` gap.
+  - A `pr-link` whose repository or number is missing or out of shape is
+    dropped whole, with an `unsupported_value_omitted` gap (`record
+    omitted`). So is one whose repository the value rules would rewrite.
+  - Every other key is dropped and listed in the `unknown_field_omitted` gap.
+- **Cursor's chat name.** The composer's chat-level `name` is written as
+  `name` on the `session` record of a chat read from Cursor's database, and
+  passes the same value rules as a prompt. It is no longer listed as the
+  omitted key `chat.name`. A chat Cursor has not named, or whose `name` is
+  empty, has no `name`; a `name` that is not a string is still reported as
+  `chat.name` in the gap. The session record is the first record; a chat
+  named (or renamed) after an earlier snapshot of it was taken is
+  republished with its new name, and the collector does not count that as
+  Cursor changing the chat's messages (no `cursor_chat_rewritten` gap).
+
+Still dropped: Claude Code's `agent-name` (a copy of the custom title) and
+`last-prompt` (derivable from the turns), as unknown record types. The keys
+are admitted on those two record types only; `customTitle`, `prNumber`,
+`prRepository`, and `prUrl` on any other record are still dropped as unknown
+keys.
+
+A filter bump makes the collector read and republish every session whose
+transcript still exists, which is how a session's name and pull requests
+reach sessions archived before this version. A session whose transcript is
+gone keeps what it had.
+
 ## Source filter version 12
 
 Adapter version 0.12.0 goes with it; the parser is unchanged.

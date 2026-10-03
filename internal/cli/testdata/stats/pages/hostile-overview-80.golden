@@ -18,7 +18,7 @@ By project                                By model
 proj[31mRED]0;tit…  ██████████  $1,862    proj[31mRED]0;tit…  ██████████  $3,270
 [2J[Hgone           ████          $751    [2J[Hgone           █             $386
 abcdefghi           ███           $586    abcdefghi           █             $320
-zero​width‍﻿join       ██            $427    + 2 more
+zerowidthjoin       ██            $427    + 2 more
 + 6 more
 
 MOST USED
@@ -26,10 +26,13 @@ Skills  proj[31mRED]0;title 10 · 日本語のとても長いプロジ 4 · docs
         cursor-guide 2 sessions
 MCP     [2J[Hgone 41 · linear 12 calls (abcdefghi)
 
-HEADS UP
+FINDINGS
 ● 77% of tokens came from subagents (497 runs)
 ● Costliest session ~$564 · wwwwwwwwwwwwwwwwwwwwwwww · long context, 38
   subagents
-● 10 sessions have no token data (emoji 🙂🙂🙂🙂🙂🙂🙂🙂🙂 8, abcdefghi 2)
+
+COVERAGE
+Sessions with no token data are left out of token and cost totals
+(日本語のとても長いプロジ: 2, proj[31mRED]0;title: 8).
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html

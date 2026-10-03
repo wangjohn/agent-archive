@@ -310,7 +310,8 @@ func TestLargeArchiveStaysWithinItsBudget(t *testing.T) {
 		if bars := strings.Count(string(out), `<g class="slot">`); bars > maxBars {
 			t.Errorf("by %q: %d bars, over %d", by, bars, maxBars)
 		}
-		if !strings.Contains(string(out), "Each bar is 31 days and shows its busiest day.") {
+		per := (len(s.ChartDays()) + maxBars - 1) / maxBars
+		if !strings.Contains(string(out), fmt.Sprintf("Each bar is %d days and shows its busiest day.", per)) {
 			t.Errorf("by %q: the chart does not say what a bar is", by)
 		}
 	}
@@ -399,19 +400,22 @@ func TestDonutSegmentsAddUp(t *testing.T) {
 
 // The renderer is a pure function of the stats: it reads no clock, file,
 // environment or network, so it can never fetch or write anything itself.
+// Its archive dependency transitively reaches pure agent identity metadata.
 func TestRendererImportBoundary(t *testing.T) {
 	t.Parallel()
 	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/statshtml")
 	importgraph.Forbid(t, "internal/statshtml", direct,
 		"os", "os/exec", "io/ioutil", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2",
-		"golang.org/x/term", "text/template", "unsafe")
+		"golang.org/x/term", "text/template", "unsafe",
+		"github.com/wangjohn/agent-archive/internal/agentmeta")
 	importgraph.Forbid(t, "internal/statshtml (transitively)", all, "net/http", "os/exec")
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
 			path != "github.com/wangjohn/agent-archive/internal/archive" &&
 			path != "github.com/wangjohn/agent-archive/internal/stats" &&
+			path != "github.com/wangjohn/agent-archive/internal/agentmeta" &&
 			path != "github.com/wangjohn/agent-archive/internal/statsfmt" {
-			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt and internal/archive are allowed", path)
+			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt, internal/archive and its pure agentmeta dependency are allowed", path)
 		}
 	}
 }

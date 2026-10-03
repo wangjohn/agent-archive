@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -129,7 +130,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if settled, err := s.compare(read, &candidate); settled || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, blocked, err := s.guard(read, candidate, supplemental)
+	candidate, blocked, err := s.guard(s.ctx, read, candidate, supplemental)
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
@@ -219,7 +220,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// arrives), and nothing is recorded as a failure.
 		return read, false, nil
 	}
-	if read.adapter, err = archive.NewAdapter(s.reg.Harness.Name); err != nil {
+	if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
 		return read, false, err
 	}
 	if s.filtered != nil {
@@ -258,6 +259,9 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
+	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return outcomeSkipped, err
+	}
 	switch {
 	case errors.Is(err, errTranscriptTooLarge):
 		// The file will not shrink by retrying: record the gap once and
@@ -478,7 +482,7 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 // A transcript that does not is blocked (blocked reports it); a Cursor chat
 // that does not is taken as it now is, with a rewrite gap, and the
 // candidate is rebuilt to carry it.
-func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, supplemental []archive.SupplementalEvidence) (_ archive.SourceBundle, blocked bool, err error) {
+func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate archive.SourceBundle, supplemental []archive.SupplementalEvidence) (_ archive.SourceBundle, blocked bool, err error) {
 	// A blocked candidate is itself the rewritten evidence, so it must never
 	// become the baseline: keep guarding against what was actually published.
 	guardBundle, _, haveGuard := s.published.LastPublished()
@@ -486,7 +490,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 		guardBundle, haveGuard = cached, true
 	}
 	if haveGuard && versionChanged(guardBundle, candidate) {
-		refiltered, replaced, err := s.refilterRewritten(read, guardBundle, candidate)
+		refiltered, replaced, err := s.refilterRewritten(ctx, read, guardBundle, candidate)
 		if err != nil || replaced {
 			return refiltered, false, err
 		}
@@ -494,7 +498,15 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 	if !haveGuard || nativeEvidenceExtends(guardBundle, candidate) {
 		return candidate, false, nil
 	}
-	if s.reg.SourceKind != archive.SourceKindCursorSQLite {
+	provider, _, found := s.opts.Sources.LookupSources(s.reg.Harness.Name)
+	if !found {
+		return candidate, false, errors.New("source integration unavailable")
+	}
+	semantics, describeErr := provider.Describe(sourceRef(s.reg))
+	if describeErr != nil {
+		return candidate, false, describeErr
+	}
+	if semantics.Mutation != agentapi.ReplaceableSnapshot {
 		// Truncated, compacted, or rewritten: the retained snapshot is richer
 		// than what the file now holds, and nothing the collector can do will
 		// change that. Record the gap so later passes are no-ops until the

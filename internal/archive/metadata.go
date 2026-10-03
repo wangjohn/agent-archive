@@ -366,7 +366,8 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 	metadata.Models = models
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
-	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
+	labels := deriveLabels(bundle, view)
+	metadata.Name, metadata.Title, metadata.Branch, metadata.PullRequests = labels.Name, labels.Title, labels.Branch, labels.PullRequests
 	feedback := 0
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind == EvidenceKindExplicitFeedback {
@@ -630,18 +631,28 @@ func deriveEndedAt(view NormalizedView, startedAt time.Time) *time.Time {
 	return &ended
 }
 
-// sessionTitleLimit is the maximum rune length of Metadata.Title.
-const sessionTitleLimit = 72
+// sessionTitleLimit is the maximum rune length of Metadata.Title and Name.
+// Keep enough context to distinguish prompts with a shared preamble in list.
+const sessionTitleLimit = 128
 
 // deriveSessionTitle returns a one-line preview of the first human prompt:
 // from normalized JSONL turns when present, otherwise from the first user
-// section of a filtered NativeText transcript (Cursor text sessions).
-func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
+// section of a filtered NativeText transcript (Cursor text sessions). For a
+// Cursor session (cursor set), the wrapper Cursor puts around a query
+// (stripCursorWrapper) is not part of it; another harness's prompt is kept as
+// written, tags and all.
+func deriveSessionTitle(view NormalizedView, texts []TextTranscript, cursor bool) string {
+	unwrap := func(text string) string {
+		if cursor {
+			return stripCursorWrapper(text)
+		}
+		return text
+	}
 	for _, turn := range view.Turns {
 		if turn.Kind != TurnKindHumanPrompt {
 			continue
 		}
-		if title := collapseSessionTitle(turn.Text); title != "" {
+		if title := collapseSessionTitle(unwrap(turn.Text)); title != "" {
 			return title
 		}
 	}
@@ -658,7 +669,7 @@ func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
 			if len(section.lines) > 1 {
 				parts = append(parts, section.lines[1:]...)
 			}
-			if title := collapseSessionTitle(strings.Join(parts, "\n")); title != "" {
+			if title := collapseSessionTitle(unwrap(strings.Join(parts, "\n"))); title != "" {
 				return title
 			}
 		}

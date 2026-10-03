@@ -4,6 +4,7 @@ Description=agent-archive background collector
 
 [Service]
 Type=oneshot
+WorkingDirectory=/
 ExecStart="/Users/test/My Apps/agent-archive" _collect
 Environment="AGENT_ARCHIVE_HOME=/Users/test/100%% $HOME's data"
 Environment="AWS_PROFILE=it's \"work\" \\ 50%%"

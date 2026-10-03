@@ -17,7 +17,6 @@ import (
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -86,7 +85,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "2", "work", "2", ""},
+		answers: []string{"", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -149,7 +148,7 @@ var screens = []screen{
 	{
 		// A setup left after its first step offers to continue.
 		name:    "setup-resume-menu",
-		answers: []string{"1", "2", "work", "2", "3"},
+		answers: []string{"1", "s3-existing", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -162,7 +161,7 @@ var screens = []screen{
 		// the one named like agent-archive*, and uses that bucket's own
 		// region rather than the profile's.
 		name:    "setup-s3-bucket-list",
-		answers: []string{"y", "n", "n", "", "2", "", "", "3"},
+		answers: []string{"y", "n", "n", "", "s3", "e", "", "", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -176,7 +175,7 @@ var screens = []screen{
 		// S3 refuses both lookups, so setup says why and asks for the
 		// bucket and region, turning away a path typed as the region.
 		name:    "setup-s3-bucket-typed",
-		answers: []string{"y", "n", "n", "", "2", "work", "team-archive", "~/code/api", "us-east-1", "3"},
+		answers: []string{"y", "n", "n", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -229,7 +228,7 @@ var screens = []screen{
 		// Changing only storage on an installed Mac: its headings do not
 		// count steps. This run leaves at the review.
 		name:    "setup-reconfigure-storage",
-		answers: []string{"2", "", "", "", "3"},
+		answers: []string{"2", "", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -260,7 +259,7 @@ var screens = []screen{
 		// says so and asks for the region. The check passes; this run
 		// leaves at the review.
 		name:    "setup-storage-failure-continue",
-		answers: []string{"1", "", "", "", "eu-west-1", "3"},
+		answers: []string{"1", "s3-existing", "", "", "eu-west-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -331,7 +330,7 @@ var screens = []screen{
 		// The review before a first setup commits, to a bucket that blocks
 		// public access, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "2", "work", "2", "3"},
+		answers: []string{"y", "s3-existing", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -343,7 +342,7 @@ var screens = []screen{
 		// The review before a first setup to Cloudflare R2, whose keys
 		// cannot read public-access settings, cancelled there.
 		name:    "setup-review-fresh-r2",
-		answers: []string{"", "1", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
+		answers: []string{"", "r2-existing", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -354,7 +353,7 @@ var screens = []screen{
 		// The review when the bucket allows public access, cancelled
 		// there.
 		name:    "setup-review-public-bucket",
-		answers: []string{"", "2", "work", "2", "3"},
+		answers: []string{"", "s3-existing", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -379,7 +378,7 @@ var screens = []screen{
 		// The review of a reconfiguration that changes apps, projects and
 		// retention, saved.
 		name:    "setup-review-reconfigure-changes",
-		answers: []string{"4", "y", "y", "~/src/api", "", "", "", "", "2", "5", "30", ""},
+		answers: []string{"4", "y", "y", "~/src/api", "", "", "2", "5", "30", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -390,7 +389,7 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "", "2", "work", "2", ""},
+		answers: []string{"y", "y", "y", "", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -400,7 +399,7 @@ var screens = []screen{
 		// A first setup whose project has past sessions offers to import
 		// them, and imports them.
 		name:    "setup-import-offer",
-		answers: []string{"", "2", "work", "2", "", ""},
+		answers: []string{"", "s3-existing", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -515,7 +514,7 @@ var screens = []screen{
 
 // storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
 // stop at the storage check's failure menu.
-var storageFailureAnswers = []string{"y", "n", "n", "", "2", "work", "2", "4"}
+var storageFailureAnswers = []string{"y", "n", "n", "", "s3-existing", "work", "2", "4"}
 
 // failUploads makes the bucket refuse every upload with err.
 func failUploads(err error) func(*testing.T, *screenFixture) {
@@ -668,7 +667,7 @@ func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 func (f *screenFixture) installed(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
-	f.setup(t, 0, "y", "n", "n", project, "", "2", "work", "2", "")
+	f.setup(t, 0, "y", "n", "n", project, "", "s3-existing", "work", "2", "")
 }
 
 // published captures and publishes one Codex session in ~/src/web-app.
@@ -676,7 +675,7 @@ func (f *screenFixture) published(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
 	path := writeCodexTranscript(t, project)
-	must(t, capture.HandleEvent(f.home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, screenNow))
+	must(t, handleTestHookEvent(f.home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, screenNow))
 	result, err := runOnePass(f.env, false)
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("publish: %+v %v", result, err)

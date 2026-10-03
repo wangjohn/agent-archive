@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +33,7 @@ func TestBackfillUndoRefusesBatchWithoutID(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id, _, err := store.ArchiveSessionID("c-archived")
+			id, _, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-archived"})
 			if err != nil {
 				t.Fatal(err)
 			}

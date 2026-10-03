@@ -78,8 +78,9 @@ func TestOriginURLIgnoresARelativeRoot(t *testing.T) {
 
 func TestOriginURLGivesGitAtMostTheTimeout(t *testing.T) {
 	t.Parallel()
+	// The deadlines are checked against clock readings, not elapsed time, so
+	// a slow scheduler (-race on a loaded runner) cannot fail the test.
 	var deadline time.Time
-	start := time.Now()
 	slow := func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
 		deadline, _ = ctx.Deadline()
 		<-ctx.Done()
@@ -90,19 +91,29 @@ func TestOriginURLGivesGitAtMostTheTimeout(t *testing.T) {
 	if got := OriginURL(parent, t.TempDir(), slow); got != "" {
 		t.Errorf("OriginURL after a timeout = %q, want empty", got)
 	}
-	if time.Since(start) > Timeout {
-		t.Errorf("OriginURL took %v, want less than %v", time.Since(start), Timeout)
+	// A shorter parent's deadline is the one git gets.
+	if want, _ := parent.Deadline(); !deadline.Equal(want) {
+		t.Errorf("git's deadline is %v, want the parent's %v", deadline, want)
 	}
-	// With no shorter parent, git still gets no more than Timeout.
+	// With no shorter parent, git gets Timeout and no more: the deadline is
+	// Timeout past some moment between the call and git starting.
 	deadline = time.Time{}
+	var started time.Time
 	fast := func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		started = time.Now()
 		deadline, _ = ctx.Deadline()
 		return nil, errors.New("exit status 1")
 	}
-	begin := time.Now()
+	before := time.Now()
 	OriginURL(t.Context(), t.TempDir(), fast)
-	if deadline.IsZero() || deadline.After(begin.Add(Timeout+50*time.Millisecond)) {
-		t.Errorf("git's deadline is %v after the start, want at most %v", deadline.Sub(begin), Timeout)
+	if deadline.IsZero() {
+		t.Fatal("git ran without a deadline")
+	}
+	if deadline.After(started.Add(Timeout)) {
+		t.Errorf("git's deadline is %v after it started, want at most %v", deadline.Sub(started), Timeout)
+	}
+	if deadline.Before(before.Add(Timeout)) {
+		t.Errorf("git's deadline is %v after the call, want at least %v", deadline.Sub(before), Timeout)
 	}
 }
 
@@ -229,5 +240,160 @@ func TestExecRunnerReportsMissingGit(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if got := OriginURL(t.Context(), t.TempDir(), nil); got != "" {
 		t.Errorf("OriginURL without git on PATH = %q, want empty", got)
+	}
+}
+
+func TestBranchAsksGitForTheBranchInTheDirectory(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fake := &fakeRunner{out: "feature/x\n"}
+	if got := Branch(t.Context(), dir, fake.run); got != "feature/x" {
+		t.Fatalf("Branch = %q", got)
+	}
+	want := []string{"-C", dir, "branch", "--show-current"}
+	if len(fake.calls) != 1 || !slices.Equal(fake.calls[0], want) || fake.dirs[0] != dir {
+		t.Errorf("git ran as %v in %v, want %v in %s", fake.calls, fake.dirs, want, dir)
+	}
+}
+
+func TestBranchIsEmptyWhenGitCannotAnswer(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for name, fake := range map[string]*fakeRunner{
+		"git is not installed":         {err: exec.ErrNotFound},
+		"git too old for the flag":     {err: errors.New("exit status 129")},
+		"not a repository":             {err: errors.New("exit status 128")},
+		"detached HEAD prints nothing": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := Branch(t.Context(), dir, fake.run); got != "" {
+				t.Errorf("Branch = %q, want empty", got)
+			}
+		})
+	}
+	fake := &fakeRunner{out: "main"}
+	for _, relative := range []string{"", ".", "repo"} {
+		if got := Branch(t.Context(), relative, fake.run); got != "" {
+			t.Errorf("Branch(%q) = %q, want empty", relative, got)
+		}
+	}
+	if len(fake.calls) != 0 {
+		t.Errorf("git ran for a relative directory: %v", fake.calls)
+	}
+}
+
+func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "")
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), git, append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.test"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// An unborn branch has its name before any commit.
+	runGit("symbolic-ref", "HEAD", "refs/heads/topic/one")
+	sub := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, sub} {
+		if got := Branch(t.Context(), dir, nil); got != "topic/one" {
+			t.Errorf("Branch(%s) = %q", dir, got)
+		}
+	}
+	// A tag of the same name must not turn the branch into heads/foo.
+	runGit("commit", "-q", "--allow-empty", "-m", "first")
+	runGit("checkout", "-q", "-b", "foo")
+	runGit("tag", "foo")
+	if got := Branch(t.Context(), root, nil); got != "foo" {
+		t.Errorf("Branch with a tag of the same name = %q, want foo", got)
+	}
+	// Detached HEAD has no branch.
+	runGit("checkout", "-q", "--detach")
+	if got := Branch(t.Context(), root, nil); got != "" {
+		t.Errorf("Branch of a detached HEAD = %q, want empty", got)
+	}
+	if got := Branch(t.Context(), t.TempDir(), nil); got != "" {
+		t.Errorf("Branch of a plain directory = %q", got)
+	}
+}
+
+type projectExitStatusError int
+
+func (s projectExitStatusError) Error() string { return "synthetic Git exit" }
+
+func (s projectExitStatusError) ExitCode() int { return int(s) }
+
+func TestProjectKeyDistinguishesMissingOriginFromUnknownIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		out   string
+		err   error
+		known bool
+	}{
+		{name: "portable", out: "https://user:synthetic-secret@example.test/acme/repo.git", known: true},
+		{name: "no origin", err: projectExitStatusError(1), known: true},
+		{name: "empty", known: true},
+		{name: "not installed", err: exec.ErrNotFound},
+		{name: "repository failure", err: projectExitStatusError(128)},
+		{name: "malformed", out: "invalid origin"},
+		{name: "nonportable", out: "file:///tmp/source"},
+		{name: "failed with output", out: "invalid", err: projectExitStatusError(1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			key, known := ProjectKey(t.Context(), t.TempDir(), fake.run)
+			if known != tc.known || key != archive.RepoKey(tc.out) || strings.Contains(key, "synthetic-secret") {
+				t.Fatalf("key %q known %t", key, known)
+			}
+		})
+	}
+}
+
+func TestProjectRootEstablishesCheckoutScopeFromSubdirectory(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/repo.git")
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "pkg")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, child} {
+		if got := ProjectRoot(t.Context(), path, nil); got != root {
+			t.Fatalf("ProjectRoot(%q)=%q want %q", path, got, root)
+		}
+	}
+	if got := ProjectRoot(t.Context(), t.TempDir(), nil); got != "" {
+		t.Fatalf("plain directory: %q", got)
+	}
+}
+
+func TestProjectRootWithholdsFailedOrMalformedScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "failed", out: "/repo", err: projectExitStatusError(128)},
+		{name: "relative", out: "repo"},
+		{name: "multiple lines", out: "/repo\n/other\n"},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeRunner{out: tc.out, err: tc.err}
+			if got := ProjectRoot(t.Context(), t.TempDir(), fake.run); got != "" {
+				t.Fatalf("unproven checkout: %q", got)
+			}
+		})
 	}
 }

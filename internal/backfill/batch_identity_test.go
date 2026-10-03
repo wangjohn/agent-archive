@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -74,7 +75,7 @@ func TestPlanUndoRefusesBatchWithoutID(t *testing.T) {
 	f.register("hook-session", "/p", "", fixedNow.UTC())
 	for _, id := range []string{"", "not-an-id"} {
 		b := Batch{ID: id, StartedAt: fixedNow.Add(-time.Hour)}
-		if _, err := PlanUndo(Environment{Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
+		if _, err := PlanUndo(Environment{Sources: testSources, Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
 			t.Fatalf("ID %q: planned an undo", id)
 		}
 	}
@@ -103,7 +104,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 			}
 			root := []string{"/p", "/q"}[rng.IntN(2)]
 			native := "s-" + string(rune('a'+round)) + "-" + string(rune('a'+i))
-			if _, err := f.store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
+			if _, err := f.store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native}, func(id string) archive.SessionRegistration {
 				return archive.SessionRegistration{
 					ArchiveSessionID: id, NativeSessionID: native, ProjectID: archive.ProjectID(root), ProjectRoot: root,
 					Harness: archive.Harness{Name: "claude"}, SessionStartedAt: fixedNow.Add(-2 * time.Hour),
@@ -119,7 +120,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 			batches = append(batches, b)
 		}
 		for _, b := range batches {
-			plan, err := PlanUndo(Environment{Home: f.home}, f.store, f.cfg, batches, b, "")
+			plan, err := PlanUndo(Environment{Sources: testSources, Home: f.home}, f.store, f.cfg, batches, b, "")
 			if err != nil {
 				t.Fatal(err)
 			}

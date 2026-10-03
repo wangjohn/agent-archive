@@ -47,7 +47,7 @@ func publishSyntheticSessions(t *testing.T, home, project string, remote storage
 			t.Fatal(err)
 		}
 		publishedAt := at.Add(time.Duration(i) * time.Minute)
-		result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return publishedAt }})
+		result, err := collector.Run(context.Background(), store, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return publishedAt }})
 		if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 			t.Fatalf("session %d: %#v %v", i, result, err)
 		}
@@ -74,6 +74,7 @@ func removeRemoteSource(t *testing.T, remote *storagetest.MemoryStore, id string
 }
 
 func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	remote := storagetest.NewMemoryStore()
@@ -120,6 +121,7 @@ func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
 }
 
 func TestExcludedCurrentDestinationPublicationCanBeVerifiedForPrivacyCleanup(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	remote := storagetest.NewMemoryStore()
@@ -388,7 +390,7 @@ func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T)
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
+	result, err := collector.Run(context.Background(), store, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -475,7 +477,7 @@ func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
 		saveImportedSession(t, store, now, "import-"+string(rune('a'+i)), project)
 	}
 	// The imports publish first, so they are the oldest publications.
-	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+	if result, err := collector.Run(context.Background(), store, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	later := now.Add(time.Hour)

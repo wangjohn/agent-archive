@@ -35,7 +35,7 @@ func TestHookLockTimeoutLeavesContentFreeDiagnostic(t *testing.T) {
 		waited, lockErr = time.Since(start), err
 		return unlock, err
 	}
-	err = handleEvent(home, "claude", payload, at, lock, nil, eventOptions{})
+	err = handleEvent(home, "claude", payload, at, lock, nil, nil)
 	if err != nil {
 		t.Fatalf("queued first start: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestHookLockTimeoutLeavesContentFreeDiagnostic(t *testing.T) {
 		}
 	}
 	release()
-	if err := ReplayAdmissionIntents(home, at.Add(2*time.Second)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(2*time.Second), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	store := state.OpenReadOnly(home)
@@ -89,7 +89,7 @@ func TestHookLockAndDiagnosticsLockTimeoutExplainsMissingStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer releaseDiagnostics()
-	err = HandleEvent(home, "claude", claudeStart(project, "session", "startup", ""), time.Now())
+	err = HandleEvent(home, "claude", claudeStart(project, "session", "startup", ""), time.Now(), WithDecoders(testDecoders))
 	if err == nil || !strings.Contains(err.Error(), "status may not show") {
 		t.Fatalf("error = %v", err)
 	}

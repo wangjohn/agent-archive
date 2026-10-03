@@ -350,7 +350,11 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 			t.Fatalf("setup ran launchctl %s", call)
 		}
 	}
-	if err := newScheduler().Unload(context.Background(), scheduler.Site{UserHome: userHome}, jobRef(env.installation(home, userHome).collectorPlist())); err == nil || !strings.Contains(err.Error(), "another installation") {
+	launchd, err := newScheduler("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := launchd.Unload(context.Background(), scheduler.Site{UserHome: userHome}, jobRef(env.installation(home, userHome).collectorPlist())); err == nil || !strings.Contains(err.Error(), "another installation") {
 		t.Fatalf("unload: %v", err)
 	}
 	for _, call := range calls {

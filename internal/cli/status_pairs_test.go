@@ -234,7 +234,7 @@ func publishPairSession(t *testing.T, home string, store *state.Store, remote *s
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }})
+	result, err := collector.Run(context.Background(), store, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("publish result=%#v err=%v", result, err)
 	}
@@ -250,7 +250,7 @@ func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...s
 	t.Helper()
 	executable := "/opt/agent-archive/bin/agent-archive"
 	env := testEnv(t, home, now)
-	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), env.installation(home, userHome).hook(executable), apps)
+	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv, productionAgents), env.installation(home, userHome).hook(executable), apps)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -42,7 +41,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	}
 	hook := func(payload map[string]any, when time.Time) {
 		t.Helper()
-		if err := capture.HandleEvent(home, "claude", payload, when); err != nil {
+		if err := handleTestHookEvent(home, "claude", payload, when); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,7 +61,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	collect := func() {
 		t.Helper()
-		result, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+		result, err := collector.Run(context.Background(), local, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 		if err != nil || len(result.Errors) > 0 {
 			t.Fatalf("collection: %+v %v", result, err)
 		}
@@ -129,7 +128,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 		t.Fatal("child start changed on resume")
 	}
 	// An unchanged pass does not republish either source.
-	unchanged, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+	unchanged, err := collector.Run(context.Background(), local, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 	if err != nil || len(unchanged.Errors) > 0 || len(unchanged.Published) > 0 {
 		t.Fatalf("unchanged capture: %+v %v", unchanged, err)
 	}
@@ -137,7 +136,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	if err := os.WriteFile(childPath, []byte(parentRecord), 0600); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
+	failed, err := collector.Run(context.Background(), local, remote, collector.Options{Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 	if err != nil || failed.Errors[child.ArchiveSessionID] == nil {
 		t.Fatalf("replacement not rejected: %+v %v", failed, err)
 	}

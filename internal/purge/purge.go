@@ -255,7 +255,7 @@ type Report struct {
 }
 
 // Apply deletes one candidate at a time after a fresh full metadata scan.
-// The caller durably saves the report after each successful delete. All Macs
+// The caller durably saves the report after each successful delete. All machines
 // writing to this prefix must be paused; S3 offers no atomic conditional
 // delete against another writer's metadata update.
 func Apply(ctx context.Context, store storage.ObjectStore, plan Plan, report *Report, save func(Report) error) error {

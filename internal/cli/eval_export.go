@@ -194,7 +194,7 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	case *workers < 0:
 		return evalExportOptions{}, fs.usageError("--workers must be 0 (automatic) or more")
 	}
-	canonical, ok := harnessFlag(*harness)
+	canonical, ok := harnessFlagWithCatalog(fs.catalog, *harness)
 	if !ok {
 		return evalExportOptions{}, fs.usageError("%s", harnessFlagError(*harness))
 	}
@@ -434,7 +434,7 @@ func (x *evalExporter) exportLocal(input evalInput) any {
 			return fail(path, archive.EvalErrorUnknownHarness, "not in a folder Claude Code, Codex, or Cursor keeps transcripts in; pass --harness")
 		}
 	}
-	filtered, adapter, err := collector.FilterTranscriptFile(harness, path, info.ModTime())
+	filtered, adapter, err := collector.FilterTranscriptFile(harness, path, info.ModTime(), registryFor(x.env))
 	if err != nil {
 		return fail(path, archive.EvalErrorReadFailed, fmt.Sprintf("filter: %v", err))
 	}

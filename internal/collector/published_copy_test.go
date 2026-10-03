@@ -16,6 +16,7 @@ import (
 // in-memory copy, and name the object the live metadata points at as the
 // one it supersedes. From a stale copy it would find no reference at all.
 func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -25,7 +26,7 @@ func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
 		delete(state, "metadata_bytes")
 	})
 	now := t0.Add(time.Hour)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", ParserVersion: "upgraded", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", ParserVersion: "upgraded", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("scan: %#v %v", result, err)
 	}

@@ -18,7 +18,7 @@ func registerWithRepoKey(t *testing.T, repoKey RepoKeyFunc) archive.SessionRegis
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := HandleEvent(home, "codex", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithRepoKey(repoKey)); err != nil {
+	if err := HandleEvent(home, "codex", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithRepoKey(repoKey), WithDecoders(testDecoders)); err != nil {
 		t.Fatalf("the hook failed: %v", err)
 	}
 	store, err := state.Open(home)
@@ -74,7 +74,7 @@ func TestHookPlainHandleEventRegistersWithoutARepoKey(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := HandleEvent(home, "codex", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)); err != nil {
+	if err := HandleEvent(home, "codex", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -95,7 +95,7 @@ func TestHookDoesNotAskForARepoKeyForASessionItDeclines(t *testing.T) {
 	err := HandleEvent(home, "codex", payload, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithRepoKey(func(string) string {
 		t.Error("the lookup ran for a project that is not archived")
 		return ""
-	}))
+	}), WithDecoders(testDecoders))
 	if err != nil {
 		t.Fatal(err)
 	}

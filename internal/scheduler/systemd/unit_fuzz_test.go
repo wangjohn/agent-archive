@@ -39,7 +39,7 @@ func FuzzRenderServiceRoundTrip(f *testing.F) {
 			t.Fatalf("environment %q, want %q", environment, want)
 		}
 		for line := range strings.SplitSeq(strings.TrimSuffix(string(unit), "\n"), "\n") {
-			ok := line == "" || line[0] == '#' || line[0] == '['
+			ok := line == "" || line[0] == '#' || line[0] == '[' || line == "WorkingDirectory=/"
 			for _, setting := range []string{"Description=", "Type=", "ExecStart=", "Environment=", "StandardOutput=append:", "StandardError=append:"} {
 				ok = ok || strings.HasPrefix(line, setting)
 			}

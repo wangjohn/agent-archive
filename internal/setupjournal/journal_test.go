@@ -2,6 +2,7 @@ package setupjournal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // The journal's on-disk format is read across releases: a setup
@@ -606,5 +608,124 @@ func TestFilesOnlyIsOmittedFromAnOrdinaryJournal(t *testing.T) {
 	}
 	if got := written(Journal{FilesOnly: true}); !strings.Contains(got, `"files_only": true`) {
 		t.Fatalf("a files-only journal does not: %s", got)
+	}
+}
+
+// strandedScheduler is the launchd stand-in with a definition that has a file
+// besides the plist, as systemd's has its enable link: Definition lists both,
+// and the job is defined while the plist is there.
+type strandedScheduler struct {
+	plistScheduler
+	extra string
+}
+
+func (s strandedScheduler) Definition(site scheduler.Site, _ scheduler.Ref) scheduler.Status {
+	_, err := os.Stat(site.UserHome)
+	return scheduler.Status{Defined: err == nil, Paths: []string{site.UserHome, s.extra}}
+}
+
+// A setup that failed before it had a job to stop, on a machine with none,
+// puts back what it found: the definition's files are gone, and so is a file
+// only the manager's own enabling made, which would otherwise be left with
+// nothing to point at. A job that was there before keeps every file.
+func TestRestoreRemovesWhatTheRolledBackDefinitionLeftStranded(t *testing.T) {
+	t.Parallel()
+	for _, before := range []bool{false, true} {
+		t.Run(fmt.Sprintf("defined before: %v", before), func(t *testing.T) {
+			t.Parallel()
+			home, agents := t.TempDir(), t.TempDir()
+			plist, extra := filepath.Join(agents, "job.plist"), filepath.Join(agents, "job.link")
+			journal := Journal{Changes: []hooks.Change{{Path: plist, After: []byte("new"), Mode: 0o600}}, Plist: plist}
+			if before {
+				must(t, local.WriteBytes(plist, []byte("old")))
+				journal.Changes[0].Before, journal.Changes[0].Existed = []byte("old"), true
+			}
+			sim := newLaunchdSim()
+			sim.failLoad[plist] = 1
+			backends := func(string) (scheduler.Scheduler, error) {
+				return strandedScheduler{plistScheduler{sim}, extra}, nil
+			}
+			must(t, local.WriteBytes(extra, []byte("stranded")))
+			if err := Commit(home, journal, backends); err == nil || !strings.Contains(err.Error(), "previous installation restored") {
+				t.Fatalf("err = %v", err)
+			}
+			_, plistErr := os.Stat(plist)
+			_, extraErr := os.Stat(extra)
+			if before != (plistErr == nil) || before != (extraErr == nil) {
+				t.Errorf("defined before %v: plist (%v), extra file (%v)", before, plistErr, extraErr)
+			}
+			if TransactionPending(home) {
+				t.Error("the journal remains")
+			}
+		})
+	}
+}
+
+// definitionOf is the stand-in launchd with another scheduler's Definition and
+// Locate, so Restore reads the definition as that scheduler does.
+type definitionOf struct {
+	plistScheduler
+	real scheduler.Scheduler
+}
+
+func (d definitionOf) Locate(definition string) (scheduler.Site, scheduler.Ref, error) {
+	return d.real.Locate(definition)
+}
+
+func (d definitionOf) Definition(site scheduler.Site, ref scheduler.Ref) scheduler.Status {
+	return d.real.Definition(site, ref)
+}
+
+func (d definitionOf) Inspect(context.Context, scheduler.Site, scheduler.Ref) scheduler.Status {
+	return scheduler.Status{State: scheduler.Missing}
+}
+
+// What the journal recorded is the rollback's alone: a definition path setup
+// never got to write, which the rollback leaves as setup found it, is not
+// removed afterwards as stranded, even when what is there reads as no file (a
+// link with nothing at its end). Against launchd's own Definition, whose one
+// path is the plist, Restore removes nothing it did not before.
+func TestRestoreNeverRemovesARecordedDefinitionPathLeftAsItWas(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	agents := filepath.Join(userHome, "Library", "LaunchAgents")
+	must(t, os.MkdirAll(agents, 0o700))
+	plist := filepath.Join(agents, "com.agent-archive.collector.plist")
+	must(t, os.Symlink(filepath.Join(t.TempDir(), "gone.plist"), plist))
+	journal := Journal{Changes: []hooks.Change{{Path: plist, After: []byte("new"), Mode: 0o600}}, Plist: plist, Backend: "launchd", JobRef: "com.agent-archive.collector"}
+	must(t, local.Write(JournalPath(home), journal))
+	sched := definitionOf{plistScheduler{newLaunchdSim()}, launchd.Scheduler{}}
+	if err := Restore(home, journal, func(string) (scheduler.Scheduler, error) { return sched, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(plist); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link setup found at the plist's path was removed or changed (%v, %v)", info, err)
+	}
+	if TransactionPending(home) {
+		t.Error("the journal remains")
+	}
+}
+
+// The same holds for a scheduler whose definition has a file beside the ones
+// setup wrote (systemd's enable link): that file goes, the recorded one stays.
+func TestRestoreRemovesOnlyTheUnrecordedStrandedPaths(t *testing.T) {
+	t.Parallel()
+	home, agents := t.TempDir(), t.TempDir()
+	plist, extra := filepath.Join(agents, "job.plist"), filepath.Join(agents, "job.link")
+	must(t, os.Symlink(filepath.Join(t.TempDir(), "gone"), plist))
+	must(t, os.Symlink(plist, extra))
+	journal := Journal{Changes: []hooks.Change{{Path: plist, After: []byte("new"), Mode: 0o600}}, Plist: plist}
+	must(t, local.Write(JournalPath(home), journal))
+	backends := func(string) (scheduler.Scheduler, error) {
+		return strandedScheduler{plistScheduler{newLaunchdSim()}, extra}, nil
+	}
+	if err := Restore(home, journal, backends); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(plist); err != nil {
+		t.Errorf("the recorded path was removed (%v)", err)
+	}
+	if _, err := os.Lstat(extra); !os.IsNotExist(err) {
+		t.Errorf("the stranded file is left (%v)", err)
 	}
 }

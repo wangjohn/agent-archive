@@ -39,12 +39,30 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// LimitedGetter reads at most limit bytes, rejecting oversized objects before
+// allocating their bodies. Callers of untrusted small records require it.
+type LimitedGetter interface {
+	GetLimited(ctx context.Context, key string, limit int64) ([]byte, error)
+}
+
 // PageLister lists one lexicographically ordered page. Continuation is an
 // opaque token supplied by the preceding page; an empty Next means done.
 // Keeping this as an extension lets older ObjectStore implementations retain
 // their existing all-results contract.
 type PageLister interface {
 	ListPage(ctx context.Context, prefix, continuation string, limit int32) (ObjectPage, error)
+}
+
+// RangeLister lists the objects under prefix whose keys are greater than
+// after and at most through, in key order. An empty after starts at the
+// beginning of prefix, and an empty through runs to its end, so ranges split
+// at the same boundaries (after of one equal to through of the one before)
+// cover every key exactly once. A cancelled context must end in an error,
+// never in a shorter listing, since a reader treats a range's result as
+// complete. Like PageLister it is an optional extension: a reader lists
+// disjoint ranges concurrently instead of paging through one listing.
+type RangeLister interface {
+	ListRange(ctx context.Context, prefix, after, through string) ([]Object, error)
 }
 
 // ObjectPage contains one page of object keys and an optional continuation token.

@@ -1,181 +1,102 @@
-// Package capture is the hook runtime: what `agent-archive _hook` does with
-// one lifecycle event an app sends. It classifies the event, admits a new
-// session (a provably fresh start in an included, activated project) or
-// continues a registered one, records lifecycle and final-response evidence
-// and subagent links as local requests, and leaves a content-free diagnostic
-// when a start is declined. It never touches the network or writes to
-// stdout, runs no program of its own (git, for a repository key and the
-// checked-out commit, runs in lookups the command passes in, made before
-// hooks.lock and bounded),
-// and every wait it can make is bounded: the command around it (in
-// internal/cli) owns flag parsing, the exit code, and panic recovery.
+// Package capture applies validated lifecycle facts under shared archive policy.
 package capture
 
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"os"
+	"path/filepath"
+	"time"
 )
 
-// RecordFailure leaves a content-free hook_failed diagnostic for status
-// after a recovered panic, under the same rule as every diagnostic: only for
-// an included project. It is best effort, and a failure of its own
-// (including another panic) is dropped: the hook must still exit 0.
-func RecordFailure(home, harness string, payload map[string]any) {
+// RecordFailure leaves a content-free diagnostic using already decoded project facts.
+func RecordFailure(home, harness, root string) {
 	defer func() { _ = recover() }()
-	if home == "" {
-		return
-	}
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled {
 		return
 	}
-	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	project, owned := ConfiguredProjectActivationFor(cfg, root)
 	if !owned || !project.Included {
 		return
 	}
-	// The real clock: the injected one may be what failed.
-	_ = RecordDiagnostic(home, Diagnostic{
-		Code: DiagnosticHookFailed, Harness: archive.CanonicalHarness(harness),
-		ProjectRoot: project.Root, ObservedAt: time.Now(),
-	})
+	_ = RecordDiagnostic(home, Diagnostic{Code: DiagnosticHookFailed, Harness: archive.CanonicalHarness(harness), ProjectRoot: project.Root, ObservedAt: time.Now()})
 }
 
-type hookEventKind int
-
-const (
-	hookEventIgnored hookEventKind = iota
-	hookEventStart
-	hookEventTurnStart
-	hookEventStop
-	hookEventSubagentStop
-	hookEventResponse
-)
-
-// classifyHookEvent mirrors, per harness, exactly the event names
-// hooks.Merge installs (see internal/hooks/hooks.go's events lists) and the
-// spec's Lifecycle integration table. Anything else installed alongside
-// these (PreToolUse, PostToolUse, ...) is not an
-// archive-relevant event and is ignored here.
-func classifyHookEvent(harness, eventName string) hookEventKind {
-	switch archive.CanonicalHarness(harness) {
-	case "codex":
-		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
-		switch eventName {
-		case "SessionStart":
-			return hookEventStart
-		case "UserPromptSubmit":
-			return hookEventTurnStart
-		case "Stop", "Interrupt", "SessionEnd":
-			return hookEventStop
-		case "SubagentStop":
-			return hookEventSubagentStop
-		}
-	case "claude":
-		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
-		switch eventName {
-		case "SessionStart":
-			return hookEventStart
-		case "UserPromptSubmit":
-			return hookEventTurnStart
-		case "Stop", "StopFailure", "SessionEnd":
-			return hookEventStop
-		case "SubagentStop":
-			return hookEventSubagentStop
-		}
-	case "cursor":
-		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
-		switch eventName {
-		case "sessionStart":
-			return hookEventStart
-		case "beforeSubmitPrompt":
-			return hookEventTurnStart
-		case "afterAgentResponse":
-			return hookEventResponse
-		case "stop", "sessionEnd":
-			return hookEventStop
-		case "subagentStop":
-			return hookEventSubagentStop
-		}
-	}
-	return hookEventIgnored
-}
-
-// HandleEvent records one hook event: payload is what harness sent on stdin,
-// home the data directory, and now the event's time. An event the harness
-// sends that capture does not use, a missing or disabled configuration, and
-// a paused archive are no-ops. While setup's transaction is open a start is
-// only explained by a diagnostic. Otherwise the event is handled under
-// hooks.lock, which it waits at most hooksLockWait for.
-func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...Option) error {
-	var o eventOptions
-	for _, option := range options {
-		option(&o)
-	}
-	return handleEvent(home, harness, payload, now, nil, nil, o)
-}
-
-// Option adjusts HandleEvent.
+// Option adjusts narrow capture dependencies.
 type Option func(*eventOptions)
 
 type eventOptions struct {
-	repoKey RepoKeyFunc
-	gitHead GitHeadFunc
-	replay  *archive.Replay
+	repoKey     RepoKeyFunc
+	replay      *archive.Replay
+	gitHead     GitHeadFunc
+	decoders    agentapi.DecodersLookup
+	stat        func(string) (os.FileInfo, error)
+	afterEffect func(effectName) error
 }
 
-// WithReplay marks a session HandleEvent registers as a replay when value,
-// the hook process's archive.ReplayEnv, is set (archive.ParseReplay). The
-// marker is fixed at registration: a continuation neither adds nor removes
-// it, so a replay tool resuming a person's session cannot relabel it, and a
-// person resuming a replay does not make it theirs.
+type effectName string
+
+const (
+	effectRegistrationCreate effectName = "registration-create"
+	effectRegistrationUpdate effectName = "registration-update"
+	effectEvidenceSave       effectName = "evidence-save"
+	effectLocatorUpdate      effectName = "locator-update"
+	effectRequestSave        effectName = "request-save"
+	effectChildReservation   effectName = "child-reservation"
+	effectChildLink          effectName = "child-link"
+	effectChildCandidate     effectName = "child-candidate"
+	effectIntentAck          effectName = "intent-ack"
+)
+
+// WithReplay records the hook's replay marker only when a new session is admitted.
+// Continuations preserve their original marker.
 func WithReplay(value string) Option {
 	return func(o *eventOptions) { o.replay = archive.ParseReplay(value) }
 }
 
-// RepoKeyFunc returns archive.RepoKey of the git repository at a project
-// root, or "" when it has none or cannot tell. The hook runs no program
-// itself, so the command line passes one (see internal/gitremote); it must
-// return within a few hundred milliseconds and never panic.
-type RepoKeyFunc func(root string) string
+// RepoKeyFunc is the command-owned, bounded repository lookup.
+type RepoKeyFunc func(string) string
 
-// WithRepoKey records repoKey's answer on a session HandleEvent registers, so
-// the session carries its repository even if the checkout is later moved or
-// deleted. Without it a registration has no key, and the collector derives
-// one when it publishes.
-func WithRepoKey(repoKey RepoKeyFunc) Option {
-	return func(o *eventOptions) { o.repoKey = repoKey }
+// WithRepoKey injects a repository lookup before hooks.lock.
+func WithRepoKey(f RepoKeyFunc) Option { return func(o *eventOptions) { o.repoKey = f } }
+
+// GitHeadFunc returns HEAD and optional dirtiness from the reported working directory.
+// The command owns this lookup; capture never runs git itself.
+type GitHeadFunc func(dir string, withDirty bool) (string, *bool)
+
+// WithGitHead injects a bounded working-directory commit lookup before hooks.lock.
+func WithGitHead(f GitHeadFunc) Option { return func(o *eventOptions) { o.gitHead = f } }
+
+// gitLookups contains only observations made by the current hook, never replay.
+type gitLookups struct {
+	repoKey   string
+	startHead *archive.GitHead
+	lastHead  *archive.GitHead
 }
 
-// GitHeadFunc reports the commit checked out in the git repository holding
-// dir: HEAD's full object name, or "" when there is none or it cannot tell,
-// and, when withDirty is set, whether the working tree differs from it (nil
-// when unknown). Like RepoKeyFunc it is passed in by the command line (see
-// internal/gitremote), must return within a few hundred milliseconds, and
-// must never panic.
-type GitHeadFunc func(dir string, withDirty bool) (sha string, dirty *bool)
-
-// WithGitHead records gitHead's answers for the session's working directory:
-// HEAD and whether the tree was dirty on a session HandleEvent registers
-// (StartHead), and HEAD at each stop of a registered session (LastHead).
-// Without it neither is recorded, and nothing derives them later.
-func WithGitHead(gitHead GitHeadFunc) Option {
-	return func(o *eventOptions) { o.gitHead = gitHead }
+// HandleBatch is the common typed capture entry used by injected integrations.
+func HandleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time.Time, options ...Option) error {
+	var o eventOptions
+	for _, option := range options {
+		option(&o)
+	}
+	return handleBatch(home, harness, batch, now, nil, nil, o)
 }
 
-// repoKeyBudget is the longest the hook waits for a repository key, and for
-// the checked-out commit, which is asked at the same time. The lookups bound
-// themselves (internal/gitremote) but a hung mount can stall a process before
-// its timeout starts, so the wait is bounded here too.
+// lockHooks substitutes a bounded lock operation for contention tests.
+type lockHooks func(string, time.Duration) (func(), error)
+
+// repoKeyBudget is the longest the hook waits for a repository key. The
+// lookup bounds itself (internal/gitremote) but a hung mount can stall a
+// process before its timeout starts, so the wait is bounded here too.
 const repoKeyBudget = 600 * time.Millisecond
 
 // hooksLockWait is how long a hook waits for hooks.lock when it did not spend
@@ -190,139 +111,6 @@ const (
 // repository key: the usual wait less spent, and never less than the floor.
 func lockWaitAfter(spent time.Duration) time.Duration {
 	return min(hooksLockWait, max(hooksLockWait-spent, minHooksLockWait))
-}
-
-// gitLookups is what the lookups made before hooks.lock found: a new
-// session's repository key and starting commit, or a registered session's
-// commit at a stop. Each is empty when not asked or not known.
-type gitLookups struct {
-	repoKey   string
-	startHead *archive.GitHead
-	lastHead  *archive.GitHead
-}
-
-// lookupsBeforeLock runs the git lookups this event needs: newSessionLookups
-// for an event that can register a session (a start, or, for Cursor only, see
-// the hookEventTurnStart case, a turn start), stopLookups for a stop. Any
-// other event, and an event without lookups to run, gets none.
-func lookupsBeforeLock(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, o eventOptions) gitLookups {
-	if o.repoKey == nil && o.gitHead == nil {
-		return gitLookups{}
-	}
-	switch {
-	case startsCapture(kind, harness):
-		return newSessionLookups(home, harness, payload, now, o)
-	case kind == hookEventStop:
-		return stopLookups(home, payload, now, o.gitHead)
-	}
-	return gitLookups{}
-}
-
-// newSessionLookups is the repository key and the starting commit for a
-// session this event may register: none unless capture is on, the start is in
-// an included configured project, would be admitted (declinedStart, the rule
-// the registration itself applies), and is not a continuation of a session
-// already registered. So the lookups run for at most one admitted start per
-// session, and never for a project that is not archived or a start that will
-// be declined. They read the configuration and the session index without
-// hooks.lock; a stale answer only costs what is not recorded (the collector
-// derives a repository key later; a starting commit is then unknown). The
-// repository key is asked of the project root and the commit of the working
-// directory the hook reports, which is the session's own checkout when that
-// is a linked worktree inside the project. The two run at the same time, so
-// together they take at most repoKeyBudget.
-func newSessionLookups(home, harness string, payload map[string]any, now time.Time, o eventOptions) gitLookups {
-	cfg, found, err := config.Load(home)
-	if err != nil || !found || cfg.Paused {
-		return gitLookups{}
-	}
-	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
-	dir := projectRoot(payload)
-	owner, owned := ConfiguredProjectActivationFor(cfg, dir)
-	// declinedStart is also what says capture is enabled and the project is
-	// included and active (archive.Config.Eligible).
-	if nativeSessionID == "" || !owned || declinedStart(cfg, owner.Root, now, harness, payload, false) != "" {
-		return gitLookups{}
-	}
-	// An index entry with no registration behind it is treated as never seen
-	// by the registration below, so it still gets a key.
-	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || registered {
-		return gitLookups{}
-	}
-	var out gitLookups
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		out.startHead = boundedGitHead(o.gitHead, dir, true, now)
-	}()
-	out.repoKey = boundedRepoKey(o.repoKey, owner.Root)
-	<-done
-	return out
-}
-
-// stopLookups is HEAD in the working directory a stop hook reports, for a
-// registered session in an included project: none otherwise, so git never
-// runs for a session that is not archived. It reads the configuration and
-// the session index without hooks.lock, like newSessionLookups. Only HEAD is
-// asked, not whether the tree is dirty, which costs more and would be asked
-// on every turn.
-func stopLookups(home string, payload map[string]any, now time.Time, gitHead GitHeadFunc) gitLookups {
-	if gitHead == nil {
-		return gitLookups{}
-	}
-	cfg, found, err := config.Load(home)
-	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
-		return gitLookups{}
-	}
-	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
-	dir := projectRoot(payload)
-	owner, owned := ConfiguredProjectActivationFor(cfg, dir)
-	if nativeSessionID == "" || !owned || !owner.Included {
-		return gitLookups{}
-	}
-	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || !registered {
-		return gitLookups{}
-	}
-	return gitLookups{lastHead: boundedGitHead(gitHead, dir, false, now)}
-}
-
-// boundedGitHead is gitHead's answer for dir as a GitHead observed at now,
-// or nil when gitHead is nil, panics, does not return within repoKeyBudget,
-// or does not return a full object name: the commit never fails or delays a
-// registration. The waiting goroutine may outlive the call; its answer is
-// then dropped.
-func boundedGitHead(gitHead GitHeadFunc, dir string, withDirty bool, now time.Time) *archive.GitHead {
-	if gitHead == nil || dir == "" || !filepath.IsAbs(dir) {
-		return nil
-	}
-	type result struct {
-		sha   string
-		dirty *bool
-	}
-	answer := make(chan result, 1)
-	go func() {
-		defer func() {
-			if recover() != nil {
-				answer <- result{}
-			}
-		}()
-		sha, dirty := gitHead(dir, withDirty)
-		answer <- result{sha, dirty}
-	}()
-	timer := time.NewTimer(repoKeyBudget)
-	defer timer.Stop()
-	select {
-	case got := <-answer:
-		var dirty *bool
-		if withDirty && got.dirty != nil {
-			dirty = new(*got.dirty)
-		}
-		if head := (&archive.GitHead{SHA: got.sha, Dirty: dirty, ObservedAt: now}); head.Valid() {
-			return head
-		}
-	case <-timer.C:
-	}
-	return nil
 }
 
 // boundedRepoKey is repoKey(root), or "" when it is nil, panics, does not
@@ -353,275 +141,402 @@ func boundedRepoKey(repoKey RepoKeyFunc, root string) string {
 	return ""
 }
 
-// lockHooks takes hooks.lock, waiting at most wait: local.NamedLockWait.
-type lockHooks func(home string, wait time.Duration) (func(), error)
-
-// lock, when not nil, replaces local.NamedLockWait for hooks.lock, so the
-// busy-lock test can time the hook's wait apart from the writes after it.
-// afterLock is used by the contention test to model a bounded slow durable
-// write while hooks.lock is held. Production calls provide neither.
-func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), o eventOptions) error {
-	if payload == nil {
+func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time.Time, lock lockHooks, afterLock func(), o eventOptions) error {
+	if len(batch) == 0 {
 		return nil
 	}
-	eventName, _ := payload["hook_event_name"].(string)
-	kind := classifyHookEvent(harness, eventName)
-	if kind == hookEventIgnored {
-		return nil
+	if err := validateBatchStructure(harness, batch, now); err != nil {
+		return err
 	}
 	if setupjournal.TransactionPending(home) {
-		return recordSetupInProgress(home, kind, harness, payload, now)
+		filtered, err := filterBatchEvidence(batch)
+		if err != nil {
+			return err
+		}
+		return recordSetupBatch(home, filtered, now)
 	}
-	// Asked before hooks.lock is taken, never under it: a slow lookup must not
-	// use up the hook's budget or make concurrent hooks find the lock busy.
+	observedConfig, active, err := loadHookCaptureWindow(home, nil)
+	if err != nil || !active {
+		return err
+	}
+	batch, err = filterBatchEvidence(batch)
+	if err != nil {
+		return err
+	}
+	batch = resolveFreshness(batch, o.stat)
 	lookupStarted := time.Now()
-	lookups := lookupsBeforeLock(home, harness, kind, payload, now, o)
-	// Leave room in the harness's two-second timeout for a retry intent and
-	// diagnostic if capture is contended. Those writes are synchronous and
-	// cannot be guaranteed against an indefinitely stalled filesystem.
-	// Whatever the lookup used comes off the lock wait, so the two together
-	// stay inside the budget; the wait keeps a floor for an uncontended lock.
-	lockWait := lockWaitAfter(time.Since(lookupStarted))
+	lookups := batchGitLookups(home, batch, now, o)
+	wait := lockWaitAfter(time.Since(lookupStarted))
 	if lock == nil {
 		lock = func(home string, wait time.Duration) (func(), error) {
 			return local.NamedLockWait(home, "hooks.lock", wait)
 		}
 	}
-	unlock, lockErr := lock(home, lockWait)
-	if lockErr != nil {
-		if errors.Is(lockErr, local.ErrBusy) {
-			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now, o.replay)
-			if err := recordHookBusy(home, harness, payload, now); err != nil {
-				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, lockErr, errors.Join(queueErr, err))
-			}
-			if queueErr != nil {
-				return fmt.Errorf("capture registration busy; this hook was not retained: %w; %w", lockErr, queueErr)
+	unlock, err := lock(home, wait)
+	if err != nil {
+		if errors.Is(err, local.ErrBusy) {
+			queued, queueErr := queueEventBatchInGeneration(home, batch, now, observedConfig.PauseGeneration, nil, o.replay)
+			diagnosticErr := recordHookBusyEvent(home, batch[0], now)
+			if queueErr != nil || diagnosticErr != nil {
+				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, err, errors.Join(queueErr, diagnosticErr))
 			}
 			if queued {
 				return nil
 			}
 		}
-		return fmt.Errorf("capture registration busy; this hook was not recorded: %w", lockErr)
+		return fmt.Errorf("capture registration busy; this hook was not recorded: %w", err)
 	}
 	defer unlock()
 	if afterLock != nil {
 		afterLock()
 	}
-	// Setup may have started while this hook was waiting for the lock.
 	if setupjournal.TransactionPending(home) {
-		return recordSetupInProgress(home, kind, harness, payload, now)
+		return recordSetupBatch(home, batch, now)
 	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	if !found || !cfg.Archive.Enabled || cfg.Paused {
-		return nil
+	cfg, active, err := loadHookCaptureWindow(home, &observedConfig)
+	if err != nil || !active {
+		return err
 	}
 	store, err := state.Open(home)
 	if err != nil {
 		return fmt.Errorf("open local store: %w", err)
 	}
-	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
-	if nativeSessionID == "" {
-		return fmt.Errorf("hook payload for %s has no session identifier", eventName)
+	store = store.ForHook()
+	// An absent-parent followup must wait for this batch's later start. Keep
+	// the whole content-free retry record until the native ordered effects
+	// finish, just as lock-contention replay does.
+	ordered, orderErr := needsOrderedAdmission(store, cfg, batch, now)
+	// Let the existing loop request qualified-index recovery on lookup failure.
+	if orderErr == nil && ordered {
+		err = applyOrderedAdmission(home, store, cfg, batch, now, lookups, o.afterEffect, o.replay)
+		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, batch[0], now, err, o.replay)
+		}
+		return err
 	}
+	for _, event := range batch {
+		err = applyEvent(home, store, cfg, event, now, lookups, o.afterEffect, o.replay)
+		if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+			return requestBatchIndexRecovery(home, store, observedConfig, batch, event, now, err, o.replay)
+		}
+		if errors.Is(err, state.ErrSessionNotRegistered) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	switch kind {
-	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups, o.replay)
-	case hookEventTurnStart:
-		registered := true
-		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, err = HasRegistration(store, nativeSessionID)
+func requestBatchIndexRecovery(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, event agentapi.LifecycleEvent, now time.Time, cause error, replay *archive.Replay) error {
+	key, err := eventKey(event)
+	if err != nil {
+		return err
+	}
+	recoveryErr := store.RequestSessionIndexRecovery(key)
+	_, queueErr := queueEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil, replay)
+	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	var diagnosticErr error
+	if owned && project.Included {
+		diagnosticErr = RecordDiagnostic(home, Diagnostic{Code: DiagnosticSessionIndexRecovery, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now})
+	}
+	return errors.Join(cause, recoveryErr, queueErr, diagnosticErr)
+}
+
+// Ordinary native batches have no followup before a proven deferred start;
+// their existing loop needs no additional index lookup or allocation.
+func needsOrderedAdmission(store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time) (bool, error) {
+	followup := false
+	for _, event := range batch {
+		if event.Deferred == agentapi.DeferredFollowup {
+			followup = true
+		}
+		if followup && event.Deferred == agentapi.DeferredStart && event.Start.Kind == agentapi.FreshExplicit {
+			owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+			if !owned || !owner.Included || !cfg.Archive.Eligible(owner.Root, now) {
+				return false, nil
+			}
+			key, err := eventKey(event)
+			if err != nil {
+				return false, err
+			}
+			found, err := HasRegistration(store, key)
+			return !found, err
+		}
+	}
+	return false, nil
+}
+
+func applyOrderedAdmission(home string, store *state.Store, cfg config.Config, batch []agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
+	path, err := persistEventBatchInGeneration(home, batch, now, cfg.PauseGeneration, nil, replay)
+	if err != nil || path == "" {
+		return err
+	}
+	var waiting []agentapi.LifecycleEvent
+	for _, event := range batch {
+		if event.Deferred == agentapi.DeferredFollowup {
+			key, err := eventKey(event)
 			if err != nil {
 				return err
 			}
-		}
-		if !registered {
-			// Cursor's desktop app fires no sessionStart for a new chat
-			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
-			// A never-seen conversation is registered there, under the
-			// same fresh-start proof a sessionStart would need.
-			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups, o.replay)
-		} else {
-			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
-		}
-	case hookEventSubagentStop:
-		err = handleSubagentStop(store, cfg, harness, nativeSessionID, payload, now)
-	case hookEventStop, hookEventResponse:
-		// Cursor can deliver a response and stop before its first prompt has
-		// finished registering. Keep only their validated transcript path so
-		// a later proven start can still be published. This never admits a
-		// session on its own.
-		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, lookupErr := HasRegistration(store, nativeSessionID)
-			if lookupErr != nil {
-				return lookupErr
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
 			}
-			if !registered {
-				_, err = queueAdmissionIntent(home, harness, kind, payload, now, o.replay)
-				break
+			if !found {
+				waiting = append(waiting, event)
+				continue
 			}
 		}
-		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now, lookups.lastHead)
-	case hookEventIgnored:
-		// Handled by the early return above, before the lock was taken.
+		if err := applyEvent(home, store, cfg, event, now, lookups, after, replay); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
+			return err
+		}
+		if event.Kind == agentapi.EventStart && len(waiting) > 0 {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			found, err := HasRegistration(store, key)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			for _, pending := range waiting {
+				if err := applyEvent(home, store, cfg, pending, now, lookups, after, replay); err != nil {
+					return err
+				}
+			}
+			waiting = nil
+		}
 	}
-	// Retention can forget a session between this hook's registration lookup
-	// and its request write; the store then refuses the write so no orphan
-	// request is left. That is the intended outcome of the race, not a fault
-	// to report on the user's turn.
-	if errors.Is(err, state.ErrSessionNotRegistered) {
-		return nil
+	if len(waiting) > 0 {
+		return state.ErrSessionNotRegistered
 	}
-	return err
+	return acknowledgeIntent(path, after)
 }
 
-// recordHookBusy only names an included configured project. A timeout may
-// occur on any lifecycle event, so no session or transcript data is retained.
-func recordHookBusy(home, harness string, payload map[string]any, now time.Time) error {
+func eventKey(event agentapi.LifecycleEvent) (agentmeta.SessionKey, error) {
+	return agentmeta.NewSessionKey(string(event.Session.Agent), event.Session.NativeID)
+}
+
+// HasRegistration performs a bounded lookup for an exact qualified identity.
+func HasRegistration(store *state.Store, key agentmeta.SessionKey) (bool, error) {
+	_, found, err := store.ArchiveSessionID(key)
+	return found, err
+}
+
+func resolveFreshness(batch []agentapi.LifecycleEvent, stat func(string) (os.FileInfo, error)) []agentapi.LifecycleEvent {
+	if stat == nil {
+		stat = os.Stat
+	}
+	for i := range batch {
+		event := &batch[i]
+		if event.Start.Kind != agentapi.FreshStat {
+			continue
+		}
+		path := event.Start.Path
+		event.Start.Kind = agentapi.FreshUnknown
+		if path == "" || !filepath.IsAbs(path) {
+			continue
+		}
+		info, err := stat(path)
+		if errors.Is(err, os.ErrNotExist) || err == nil && info != nil && info.Mode().IsRegular() && info.Size() == 0 {
+			event.Start.Kind = agentapi.FreshExplicit
+		}
+	}
+	return batch
+}
+
+func recordHookBusyEvent(home string, event agentapi.LifecycleEvent, now time.Time) error {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
 		return err
 	}
-	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
 	if !owned || !project.Included {
 		return nil
 	}
-	return recordDiagnostic(home, Diagnostic{
-		Code: DiagnosticHookBusy, Harness: archive.CanonicalHarness(harness),
-		ProjectRoot: project.Root, ObservedAt: now,
-	}, true)
+	return recordDiagnostic(home, Diagnostic{Code: DiagnosticHookBusy, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now}, true)
 }
 
-// startsCapture reports whether an event is one that can register a new
-// session: a start, or a Cursor first prompt (Cursor's app fires no start).
-func startsCapture(kind hookEventKind, harness string) bool {
-	return kind == hookEventStart || (kind == hookEventTurnStart && archive.CanonicalHarness(harness) == "cursor")
-}
-
-// recordSetupInProgress explains a session start that setup's own transaction
-// window swallowed. Without it an included project simply never registers the
-// session and `status` offers no reason, unlike the pre-activation and
-// unknown-start cases. Setup holds hooks.lock while it commits, so this path
-// never waits for it. The write takes only diagnostics.lock, for at most
-// hookDiagnosticsWait, and drops the diagnostic on timeout: losing one
-// bounded, content-free diagnostic is better than holding up the user's turn
-// behind an installation. RecordDiagnostic rechecks inclusion under
-// that lock, so a project setup has just excluded and pruned stays pruned.
-func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
-	if !startsCapture(kind, harness) {
-		return nil
-	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	if !found || !cfg.Archive.Enabled || cfg.Paused {
-		return nil
-	}
-	if kind == hookEventTurnStart {
-		// A Cursor prompt starts capture only for a never-seen chat. A
-		// registered chat's prompt is a continuation, which setup's window
-		// drops like any other activity; it is not a start to explain.
-		nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
-		if nativeSessionID == "" {
-			return nil
+func recordSetupBatch(home string, batch []agentapi.LifecycleEvent, now time.Time) error {
+	for _, event := range batch {
+		if event.Kind != agentapi.EventStart {
+			continue
 		}
-		registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID)
-		if err != nil || registered {
+		if event.NewOnly {
+			key, err := eventKey(event)
+			if err != nil {
+				return err
+			}
+			registered, err := HasRegistration(state.OpenReadOnly(home), key)
+			if err != nil || registered {
+				return err
+			}
+		}
+		cfg, found, err := config.Load(home)
+		if err != nil {
 			return err
 		}
+		if !found || !cfg.Archive.Enabled || cfg.Paused {
+			return nil
+		}
+		project, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+		if !owned || !project.Included {
+			return nil
+		}
+		return RecordDiagnostic(home, Diagnostic{Code: DiagnosticSetupInProgress, Harness: string(event.Session.Agent), ProjectRoot: project.Root, ObservedAt: now})
 	}
-	// Same rule as every other diagnostic: an excluded project, or a directory
-	// belonging to no configured project, never leaves its path on disk.
-	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if !owned || !project.Included {
-		return nil
-	}
-	return RecordDiagnostic(home, Diagnostic{
-		Code: DiagnosticSetupInProgress, Harness: archive.CanonicalHarness(harness),
-		ProjectRoot: project.Root, ObservedAt: now,
-	})
+	return nil
 }
 
-func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
-	if err != nil {
-		return fmt.Errorf("look up archive session ID: %w", err)
+func applyEvent(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
+	switch event.Kind {
+	case agentapi.EventStart:
+		return handleSessionStart(home, store, cfg, event, now, lookups, after, replay)
+	case agentapi.EventTurnStart:
+		return handleSessionActivity(store, event, now, after)
+	case agentapi.EventStop, agentapi.EventResponse:
+		key, err := eventKey(event)
+		if err != nil {
+			return err
+		}
+		found, err := HasRegistration(store, key)
+		if err != nil {
+			return err
+		}
+		if !found && event.Deferred == agentapi.DeferredFollowup {
+			_, err = queueEventBatchInGeneration(home, []agentapi.LifecycleEvent{event}, now, cfg.PauseGeneration, nil, replay)
+			return err
+		}
+		return handleSessionStop(store, event, now, lookups.lastHead, after)
+	case agentapi.EventSubagent:
+		return handleSubagentStop(store, cfg, event, now, after)
 	}
-	if !found {
-		return nil
+	return errors.New("invalid lifecycle effect")
+}
+
+func effectBoundary(after func(effectName) error, name effectName) error {
+	if after != nil {
+		return after(name)
 	}
-	reg, found, err := store.LoadRegistration(archiveID)
+	return nil
+}
+
+func handleSessionStart(home string, store *state.Store, cfg config.Config, event agentapi.LifecycleEvent, now time.Time, lookups gitLookups, after func(effectName) error, replay *archive.Replay) error {
+	key, err := eventKey(event)
 	if err != nil {
 		return err
 	}
-	if !found || archive.CanonicalHarness(reg.Harness.Name) != archive.CanonicalHarness(harness) {
-		return nil
+	owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	root := event.ProjectRoot
+	if owned {
+		root = owner.Root
 	}
-	if eventName == "beforeSubmitPrompt" {
-		if err := adoptCursorTranscriptPath(store, &reg, harness, payload); err != nil {
+	existingID, found, err := store.ArchiveSessionID(key)
+	if err != nil {
+		return fmt.Errorf("look up archive session ID: %w", err)
+	}
+	if found {
+		if event.NewOnly {
+			return nil
+		}
+		updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
+			if !cfg.AcceptSession(*existing) {
+				return errContinuationDeclined
+			}
+			if archive.CanonicalHarness(existing.Harness.Name) != string(key.Agent) || existing.NativeSessionID != key.NativeID {
+				return errSessionIdentityConflict
+			}
+			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
+				return errSessionIdentityConflict
+			}
+			applyLocator(existing, event)
+			existing.RegisteredAt = now
+			applyObservation(&existing.Harness, event.Session)
+			return nil
+		})
+		if errors.Is(err, errContinuationDeclined) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
+		if updated {
+			if err := effectBoundary(after, effectRegistrationUpdate); err != nil {
+				return err
+			}
+			return saveLifecycleEvidence(store, existingID, event, now, after)
+		}
 	}
-	return saveLifecycleEvidence(store, archiveID, harness, strings.ToLower(eventName), payload, now)
-}
-
-// HasRegistration reports whether a native session already has an accepted
-// registration. An index entry without a registration does not count.
-func HasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	if !owned || !owner.Included {
+		return nil
+	}
+	if code := declinedStart(cfg, root, now, event.Start); code != "" {
+		return RecordDiagnostic(home, Diagnostic{Code: code, Harness: string(key.Agent), ProjectRoot: root, ObservedAt: now})
+	}
+	harness := archive.Harness{Name: string(key.Agent)}
+	applyObservation(&harness, event.Session)
+	reg, err := store.RegisterNewSession(key, func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: key.NativeID, ProjectID: archive.ProjectID(root), ProjectRoot: root, RepoKey: lookups.repoKey, StartHead: lookups.startHead, Replay: replay, Harness: harness, TranscriptPath: event.Source.Path, SessionStartedAt: now, RegisteredAt: now, AdmittedAt: now, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceHook, DestinationID: cfg.DestinationID()}
+	})
 	if err != nil {
-		return false, fmt.Errorf("look up archive session ID: %w", err)
+		return fmt.Errorf("register session: %w", err)
 	}
-	if !found {
-		return false, nil
+	if err := effectBoundary(after, effectRegistrationCreate); err != nil {
+		return err
 	}
-	_, found, err = store.LoadRegistration(archiveID)
-	return found, err
+	return saveLifecycleEvidence(store, reg.ArchiveSessionID, event, now, after)
 }
 
-// cursorTranscriptPath returns the transcript path a Cursor payload names for
-// this conversation, or "" when it names none the archive may read. Cursor
-// writes a chat's transcript to .../agent-transcripts/<id>/<id>.jsonl, so the
-// path must be absolute and its file name must be the conversation's own id;
-// anything else is not provably this conversation's transcript.
-func cursorTranscriptPath(payload map[string]any, conversationID string) string {
-	path := firstNonEmptyString(payload, "transcript_path")
-	if path == "" || conversationID == "" || !filepath.IsAbs(path) {
-		return ""
+func declinedStart(cfg config.Config, root string, now time.Time, start agentapi.StartEvidence) DiagnosticCode {
+	if !cfg.Archive.Eligible(root, now) {
+		return DiagnosticPreActivationStart
 	}
-	path = filepath.Clean(path)
-	if filepath.Base(path) != conversationID+".jsonl" {
-		return ""
+	if start.Kind != agentapi.FreshExplicit {
+		return DiagnosticUnknownSessionStart
 	}
-	return path
+	return ""
 }
 
-// adoptCursorTranscriptPath fills in a Cursor registration's transcript path
-// from a later event. A new desktop chat is registered at its first prompt,
-// when Cursor has not yet named the transcript (transcript_path is null);
-// afterAgentResponse and stop then carry it. A path already set is never
-// replaced, whatever a later payload says. The write goes through
-// UpdateRegistration, under the lock retention forgets a session with, so a
-// chat forgotten meanwhile is not written back without its index entry; that
-// is reported as state.ErrSessionNotRegistered, which HandleEvent
-// treats as the quiet outcome of the race.
-func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
-	// A chat read from Cursor's database never switches to a file.
-	if archive.CanonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
+var errContinuationDeclined = errors.New("continuation not accepted by the current configuration")
+
+var errSessionIdentityConflict = errors.New("session identity conflicts with the accepted registration")
+
+func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
+	if session.Version != "" {
+		target.Version = session.Version
+	}
+	if session.Mode != "" {
+		target.Mode = string(session.Mode)
+	}
+}
+
+func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEvent) {
+	if event.Source.Path == "" || !reg.ReadsTranscriptFile() {
+		return
+	}
+	if event.Locator == agentapi.LocatorReplaceFile || event.Locator == agentapi.LocatorFillFile && reg.TranscriptPath == "" {
+		reg.TranscriptPath = event.Source.Path
+	}
+}
+
+func adoptLocator(store *state.Store, reg *archive.SessionRegistration, event agentapi.LifecycleEvent, after func(effectName) error) error {
+	if event.Source.Path == "" || event.Locator != agentapi.LocatorFillFile || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
 		return nil
 	}
-	path := cursorTranscriptPath(payload, reg.NativeSessionID)
-	if path == "" {
-		return nil
+	key, err := eventKey(event)
+	if err != nil {
+		return err
 	}
 	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
-		if current.TranscriptPath == "" && current.ReadsTranscriptFile() {
-			current.TranscriptPath = path
+		if archive.CanonicalHarness(current.Harness.Name) != string(key.Agent) || current.NativeSessionID != key.NativeID {
+			return errSessionIdentityConflict
 		}
+		applyLocator(current, event)
 		*reg = *current
 		return nil
 	})
@@ -631,153 +546,85 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 	if !found {
 		return state.ErrSessionNotRegistered
 	}
+	return effectBoundary(after, effectLocatorUpdate)
+}
+
+func handleSessionActivity(store *state.Store, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
+	key, err := eventKey(event)
+	if err != nil {
+		return err
+	}
+	id, found, err := store.ArchiveSessionID(key)
+	if err != nil || !found {
+		return err
+	}
+	reg, found, err := store.LoadRegistration(id)
+	if err != nil || !found {
+		return err
+	}
+	if archive.CanonicalHarness(reg.Harness.Name) != string(key.Agent) || reg.NativeSessionID != key.NativeID {
+		return nil
+	}
+	if err := adoptLocator(store, &reg, event, after); err != nil {
+		return err
+	}
+	return saveLifecycleEvidence(store, id, event, now, after)
+}
+
+func saveLifecycleEvidence(store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time, after func(effectName) error) error {
+	for _, evidence := range event.Evidence {
+		if err := store.SaveEvidence(id, event.Reason, now, evidence); err != nil {
+			return err
+		}
+		if err := effectBoundary(after, effectEvidenceSave); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lookups gitLookups, replay *archive.Replay) error {
-	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, lookups, replay)
-}
-
-func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, lookups gitLookups, replay *archive.Replay) error {
-	reason := strings.ToLower(eventName)
-	transcriptPath, _ := payload["transcript_path"].(string)
-	isCursor := archive.CanonicalHarness(harness) == "cursor"
-	if isCursor {
-		transcriptPath = cursorTranscriptPath(payload, nativeSessionID)
-	}
-	// A hook reports the session's working directory, which is only sometimes
-	// the configured project root: a Claude Code worktree lives in
-	// <project>/.claude/worktrees/<name>, and a session started from any
-	// subdirectory reports that subdirectory. Resolve the configured project
-	// that owns it and register under the configured spelling, so the project
-	// ID, the activation boundary, and later continuations all agree with the
-	// configuration rather than with the directory the user happened to be in.
-	owner, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	root := projectRoot(payload)
-	if owned {
-		root = owner.Root
-	}
-
-	existingID, found, err := store.ArchiveSessionID(nativeSessionID)
+func handleSessionStop(store *state.Store, event agentapi.LifecycleEvent, now time.Time, lastHead *archive.GitHead, after func(effectName) error) error {
+	key, err := eventKey(event)
 	if err != nil {
-		return fmt.Errorf("look up archive session ID: %w", err)
+		return err
 	}
-	if found {
-		// A continuation of a session we already registered: keep its
-		// original start time, admission, and origin (an imported session a
-		// hook resumes stays an import), and just refresh what may have
-		// changed. The load, the checks, and the save all happen under the
-		// lock retention forgets a session with, so a resume at the moment of
-		// expiry cannot write the registration back after retention removed
-		// it together with its index entry.
-		updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
-			if !cfg.AcceptSession(*existing) {
-				return errContinuationDeclined
-			}
-			// Claude Code's hook cwd follows the session's working
-			// directory (a persisted `cd`), so a continuation may report a
-			// subdirectory of the project it started in. Match on project
-			// identity: only a different harness or a different configured
-			// project is a conflict.
-			if archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(harness) {
-				return errSessionIdentityConflict
-			}
-			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
-				return errSessionIdentityConflict
-			}
-			// A Cursor path, once set, is never replaced by a different one,
-			// and a session read from Cursor's database never takes one.
-			if transcriptPath != "" && existing.ReadsTranscriptFile() && (!isCursor || existing.TranscriptPath == "") {
-				existing.TranscriptPath = transcriptPath
-			}
-			existing.RegisteredAt = now
-			applyHarnessObservation(&existing.Harness, harness, payload)
-			return nil
-		})
-		switch {
-		case errors.Is(err, errContinuationDeclined):
-			return nil
-		case err != nil:
-			return err
-		case updated:
-			return saveLifecycleEvidence(store, existingID, harness, reason, payload, now)
-		}
-		// The index points at a registration we no longer have: it was never
-		// eligible, or retention forgot it while this hook waited for the
-		// lock. Either way this native session is treated as never seen, and
-		// the fresh-start rules below decide whether it registers again.
+	id, found, err := store.ArchiveSessionID(key)
+	if err != nil || !found {
+		return err
 	}
+	reg, found, err := store.LoadRegistration(id)
+	if err != nil || !found {
+		return err
+	}
+	if archive.CanonicalHarness(reg.Harness.Name) != string(key.Agent) || reg.NativeSessionID != key.NativeID {
+		return errSessionIdentityConflict
+	}
+	if err := adoptLocator(store, &reg, event, after); err != nil {
+		return err
+	}
+	if err := recordLastHead(store, reg, lastHead); err != nil {
+		return err
+	}
+	if err := store.SaveRequest(id, event.Reason, now, event.Evidence...); err != nil {
+		return err
+	}
+	return effectBoundary(after, effectRequestSave)
+}
 
-	// A directory inside no configured project, and an excluded project, are
-	// both ignored without persisting their paths in diagnostics.
-	if !owned || !owner.Included {
-		return nil
-	}
-	if code := declinedStart(cfg, root, now, harness, payload, provedAtHook); code != "" {
-		return RecordDiagnostic(home, Diagnostic{
-			Code: code, Harness: archive.CanonicalHarness(harness),
-			ProjectRoot: root, ObservedAt: now,
-		})
-	}
-	observedHarness := archive.Harness{Name: strings.ToLower(strings.TrimSpace(harness))}
-	applyHarnessObservation(&observedHarness, harness, payload)
-	// RegisterNewSession saves under the archive ID's request lock and
-	// rechecks the index there, so an index entry retention is removing
-	// right now is never reused for a registration that would outlive it.
-	reg, err := store.RegisterNewSession(nativeSessionID, func(archiveID string) archive.SessionRegistration {
-		return archive.SessionRegistration{
-			ArchiveSessionID: archiveID,
-			NativeSessionID:  nativeSessionID,
-			ProjectID:        archive.ProjectID(root),
-			ProjectRoot:      root,
-			RepoKey:          lookups.repoKey,
-			StartHead:        lookups.startHead,
-			Replay:           replay,
-			Harness:          observedHarness,
-			TranscriptPath:   transcriptPath,
-			SessionStartedAt: now,
-			RegisteredAt:     now,
-			// A hook admits the session the moment it starts. A
-			// continuation never rewrites these, so a hook resuming an
-			// imported session keeps its import provenance.
-			AdmittedAt:      now,
-			Origin:          archive.SessionOriginHook,
-			StartedAtSource: archive.StartedAtSourceHook,
-			// Likewise the destination it was admitted into: a continuation
-			// keeps it, and an older registration without one keeps none.
-			DestinationID: cfg.DestinationID(),
-		}
-	})
+// loadHookCaptureWindow reads the active capture configuration. When observed
+// is supplied, a hook waiting for the lock must still belong to that same
+// uninterrupted window, even if pause and resume both finished during its wait.
+func loadHookCaptureWindow(home string, observed *config.Config) (config.Config, bool, error) {
+	cfg, found, err := config.Load(home)
 	if err != nil {
-		return fmt.Errorf("register session: %w", err)
+		return config.Config{}, false, fmt.Errorf("load config: %w", err)
 	}
-	return saveLifecycleEvidence(store, reg.ArchiveSessionID, harness, reason, payload, now)
+	active := found && cfg.Archive.Enabled && !cfg.Paused
+	if observed != nil && cfg.PauseGeneration != observed.PauseGeneration {
+		active = false
+	}
+	return cfg, active, nil
 }
-
-// declinedStart is the diagnostic code a start in an included project is
-// declined with, or "" when it would be admitted. It names the most specific
-// reason: a project that is not yet active cannot capture any start, so
-// activation is checked before whether this start is provably fresh. The
-// repository-key lookup asks it too, so git never runs for a start that will
-// be declined.
-func declinedStart(cfg config.Config, root string, now time.Time, harness string, payload map[string]any, provedAtHook bool) DiagnosticCode {
-	if !cfg.Archive.Eligible(root, now) {
-		return DiagnosticPreActivationStart
-	}
-	if !provedAtHook && !provesFreshSessionStart(harness, payload) {
-		return DiagnosticUnknownSessionStart
-	}
-	return ""
-}
-
-var (
-	// errContinuationDeclined: the registration exists but the current
-	// configuration no longer accepts it. The hook records nothing.
-	errContinuationDeclined = errors.New("continuation not accepted by the current configuration")
-	// errSessionIdentityConflict: a different harness or configured project
-	// claims an accepted registration's native session.
-	errSessionIdentityConflict = errors.New("session identity conflicts with the accepted registration")
-)
 
 // ConfiguredProjectActivationFor returns the configured project that owns
 // root: the project whose root is root itself or its nearest configured
@@ -819,173 +666,68 @@ func resolvedPath(path string) string {
 	return path
 }
 
-// provesFreshSessionStart reports whether this SessionStart is provably the
-// beginning of a conversation rather than the resumption of one that may
-// predate the project's activation.
-//
-// Codex and Claude Code document SessionStart.source: startup and clear begin
-// a conversation, resume and compact continue one. That evidence is decisive
-// when it is present.
-//
-// Cursor carries no equivalent field, so the proof is the transcript itself:
-// at the true start of a conversation the hook-provided transcript_path names
-// a file that does not exist yet or holds no bytes, while a resumed
-// conversation points at a transcript that already has content. Cursor's
-// desktop app (observed on 3.21.13) goes further: a new chat's first
-// beforeSubmitPrompt carries transcript_path null, and only afterAgentResponse
-// and stop name the file, while a resumed chat's first prompt already names
-// its existing transcript. So for Cursor a null or absent path is also proof.
-// The file-based proof is the fallback for a Codex or Claude payload that
-// carries no source at all; for those a payload that names no transcript
-// proves nothing and is still declined.
-func provesFreshSessionStart(harness string, payload map[string]any) bool {
-	switch archive.CanonicalHarness(harness) {
-	case "codex", "claude":
-		switch strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload, "source"))) {
-		case "startup", "clear":
-			return true
-		case "":
-			return emptyTranscriptProvesFreshStart(payload)
-		}
-		return false
-	case "cursor":
-		return cursorProvesFreshStart(payload)
-	}
-	return false
-}
-
-// cursorProvesFreshStart accepts a transcript_path that is null, absent, or
-// empty — the shape of a new desktop chat's first prompt — or one that names a
-// missing or empty file. A value that is present but not a string proves
-// nothing.
-func cursorProvesFreshStart(payload map[string]any) bool {
-	value, present := payload["transcript_path"]
-	if !present || value == nil {
-		return true
-	}
-	path, ok := value.(string)
-	if !ok {
-		return false
-	}
-	if path == "" {
-		return true
-	}
-	return emptyTranscriptProvesFreshStart(payload)
-}
-
-// emptyTranscriptProvesFreshStart reports whether the hook named a transcript
-// that holds no conversation yet. Only "the file does not exist" and "the file
-// is empty" are proof; a permission error, a directory, or anything else the
-// hook cannot read leaves the start unproven. The transcript is never opened.
-//
-// Only an absolute path can be checked: a relative one would be resolved
-// against the hook process's own working directory, where the transcript is
-// never found, and "not found" would then pass as proof of a start that never
-// happened. Harnesses document absolute transcript paths.
-func emptyTranscriptProvesFreshStart(payload map[string]any) bool {
-	path := firstNonEmptyString(payload, "transcript_path")
-	if path == "" || !filepath.IsAbs(path) {
-		return false
-	}
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	return info.Size() == 0
-}
-
-func applyHarnessObservation(target *archive.Harness, harness string, payload map[string]any) {
-	if target == nil {
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(harness), "cursor") {
-		if version := firstNonEmptyString(payload, "cursor_version"); version != "" {
-			target.Version = version
-		}
-		if mode := firstNonEmptyString(payload, "composer_mode"); mode != "" {
-			target.Mode = mode
-		}
-	}
-}
-
-// saveLifecycleEvidence records a start or prompt event as deferred evidence:
-// it is folded into the next scheduled publication rather than forcing an
-// upload on every prompt. Stop, end, and response events go through
-// handleSessionStop, whose request is the intended debounce flush.
-func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string, payload map[string]any, now time.Time) error {
-	evidence, err := filteredHookEvidence(archive.EvidenceKindLifecycleHook, harness, reason, payload, false, now)
-	if err != nil || evidence == nil {
-		return err
-	}
-	return store.SaveEvidence(archiveID, reason, now, *evidence)
-}
-
-func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lastHead *archive.GitHead) error {
-	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
-	if err != nil {
-		return fmt.Errorf("look up archive session ID: %w", err)
-	}
-	if !found {
-		// Never registered (ineligible project, or a resume we declined to
-		// track): nothing to request.
+// boundedGitHead is gitHead's answer for dir as a GitHead observed at now,
+// or nil when gitHead is nil, panics, does not return within repoKeyBudget,
+// or does not return a full object name: the commit never fails or delays a
+// registration. The waiting goroutine may outlive the call; its answer is
+// then dropped.
+func boundedGitHead(gitHead GitHeadFunc, dir string, withDirty bool, now time.Time) *archive.GitHead {
+	if gitHead == nil || dir == "" || !filepath.IsAbs(dir) {
 		return nil
 	}
-	registration, registered, err := store.LoadRegistration(archiveID)
-	if err != nil {
-		return err
+	type result struct {
+		sha   string
+		dirty *bool
 	}
-	if !registered {
-		return nil
-	}
-	if archive.CanonicalHarness(registration.Harness.Name) != archive.CanonicalHarness(harness) {
-		return fmt.Errorf("session event does not match the accepted harness")
-	}
-	//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
-	if eventName == "afterAgentResponse" || eventName == "stop" {
-		if err := adoptCursorTranscriptPath(store, &registration, harness, payload); err != nil {
-			return err
+	answer := make(chan result, 1)
+	go func() {
+		defer func() {
+			if recover() != nil {
+				answer <- result{}
+			}
+		}()
+		sha, dirty := gitHead(dir, withDirty)
+		answer <- result{sha, dirty}
+	}()
+	timer := time.NewTimer(repoKeyBudget)
+	defer timer.Stop()
+	select {
+	case got := <-answer:
+		var dirty *bool
+		if withDirty && got.dirty != nil {
+			dirty = new(*got.dirty)
 		}
-	}
-	if err := recordLastHead(store, registration, lastHead); err != nil {
-		return err
-	}
-	reason := strings.ToLower(eventName)
-	var evidence []archive.SupplementalEvidence
-	if isSessionLifecycleEvent(eventName) {
-		lifecycle, err := filteredHookEvidence(archive.EvidenceKindLifecycleHook, harness, eventName, payload, false, now)
-		if err != nil {
-			return err
+		if head := (&archive.GitHead{SHA: got.sha, Dirty: dirty, ObservedAt: now}); head.Valid() {
+			return head
 		}
-		if lifecycle != nil {
-			evidence = append(evidence, *lifecycle)
-		}
+	case <-timer.C:
 	}
-	filtered, err := filteredHookEvidence(archive.EvidenceKindFinalResponse, harness, eventName, payload, true, now)
-	if err != nil {
-		return err
-	}
-	if filtered != nil {
-		evidence = append(evidence, *filtered)
-	}
-	return store.SaveRequest(archiveID, reason, now, evidence...)
+	return nil
 }
 
 // recordLastHead saves head as the registration's LastHead when it names a
-// different commit from the one recorded, so a stop that finds HEAD where it
-// was writes nothing. The write goes through UpdateRegistration, like
-// adoptCursorTranscriptPath's, so a session retention forgot meanwhile is
+// different commit from the one recorded, preserving that commit's first-seen
+// time. Each successful observation advances a local watermark so an older
+// delayed stop cannot undo a newer stop at the same commit. The write goes
+// through UpdateRegistration, so a session retention forgot meanwhile is
 // reported as state.ErrSessionNotRegistered.
 func recordLastHead(store *state.Store, reg archive.SessionRegistration, head *archive.GitHead) error {
-	if !head.Valid() || (reg.LastHead != nil && reg.LastHead.SHA == head.SHA) {
+	if !head.Valid() {
 		return nil
 	}
 	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
+		latest := current.LastHeadSeenAt
+		if latest == nil && current.LastHead != nil {
+			latest = &current.LastHead.ObservedAt
+		}
+		if latest != nil && head.ObservedAt.Before(*latest) {
+			return nil
+		}
 		if current.LastHead == nil || current.LastHead.SHA != head.SHA {
 			current.LastHead = head
 		}
+		observed := head.ObservedAt
+		current.LastHeadSeenAt = &observed
 		return nil
 	})
 	if err != nil {
@@ -997,142 +739,53 @@ func recordLastHead(store *state.Store, reg archive.SessionRegistration, head *a
 	return nil
 }
 
-func isSessionLifecycleEvent(eventName string) bool {
-	//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
-	switch eventName {
-	case "Stop", "Interrupt", "SessionEnd", "StopFailure", "stop", "sessionEnd":
-		return true
-	default:
-		return false
+// batchGitLookups asks at most once for this validated batch's exact identity
+// and working directory. All lookups share the hook's existing wait budget.
+func batchGitLookups(home string, batch []agentapi.LifecycleEvent, now time.Time, o eventOptions) gitLookups {
+	if o.repoKey == nil && o.gitHead == nil {
+		return gitLookups{}
 	}
-}
-
-// extractHookEvidencePayload passes through only documented or stable identity
-// fields. Cursor's generation_id is normalized to turn_id for reconciliation;
-// every other value remains exactly as observed.
-func extractHookEvidencePayload(payload map[string]any, includeFinalText bool) map[string]any {
-	out := map[string]any{}
-	if eventName := firstNonEmptyString(payload, "hook_event_name"); eventName != "" {
-		out["event_name"] = eventName
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
+		return gitLookups{}
 	}
-	for _, key := range []string{"message_id", "turn_id", "agent_id", "model", "model_id"} {
-		if value, ok := payload[key].(string); ok && value != "" {
-			out[key] = value
-		}
+	event := batch[0]
+	owner, owned := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	if !owned || !owner.Included {
+		return gitLookups{}
 	}
-	if out["turn_id"] == nil {
-		if generation := firstNonEmptyString(payload, "generation_id"); generation != "" {
-			out["turn_id"] = generation
-		}
-	}
-	if raw, ok := payload["model_params"].([]any); ok {
-		params := make([]any, 0, len(raw))
-		for _, item := range raw {
-			param, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			id, value := firstNonEmptyString(param, "id"), firstNonEmptyString(param, "value")
-			if id != "" && value != "" {
-				params = append(params, map[string]any{"id": id, "value": value})
-			}
-		}
-		if len(params) > 0 {
-			out["model_params"] = params
-		}
-	}
-	if includeFinalText {
-		if text := firstNonEmptyString(payload, "last_assistant_message", "text"); text != "" {
-			out["text"] = text
-		}
-	}
-	return out
-}
-
-func filteredHookEvidence(kind archive.SupplementalEvidenceKind, harness, event string, payload map[string]any, includeFinalText bool, now time.Time) (*archive.SupplementalEvidence, error) {
-	hookPayload := extractHookEvidencePayload(payload, includeFinalText)
-	if kind == archive.EvidenceKindLifecycleHook {
-		if status := documentedLifecycleStatus(harness, event, payload); status != "" {
-			hookPayload["status"] = status
-		}
-	}
-	if len(hookPayload) == 0 {
-		return nil, nil
-	}
-	candidate := archive.SupplementalEvidence{
-		Kind: kind, ObservedAt: now, Provenance: "hook:" + strings.ToLower(strings.TrimSpace(harness)) + ":" + strings.ToLower(event), Payload: hookPayload,
-	}
-	filtered, gaps, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{candidate})
+	key, err := eventKey(event)
 	if err != nil {
-		return nil, fmt.Errorf("filter hook evidence: %w", err)
+		return gitLookups{}
 	}
-	if len(filtered) == 0 {
-		return nil, nil
+	store := state.OpenReadOnly(home)
+	id, registered, err := store.ArchiveSessionID(key)
+	if err != nil {
+		return gitLookups{}
 	}
-	archive.AnnotateSupplementalGaps(filtered[0].Payload, gaps)
-	return &filtered[0], nil
-}
-
-// cursorLifecycleStatus is a documented value of Cursor's stop status or
-// sessionEnd reason.
-type cursorLifecycleStatus string
-
-const (
-	cursorStatusCompleted   cursorLifecycleStatus = "completed"
-	cursorStatusAborted     cursorLifecycleStatus = "aborted"
-	cursorStatusError       cursorLifecycleStatus = "error"
-	cursorStatusWindowClose cursorLifecycleStatus = "window_close"
-	cursorStatusUserClose   cursorLifecycleStatus = "user_close"
-)
-
-// documentedLifecycleStatus retains only closed native enums. Free-form
-// reason/status text is never archived as lifecycle metadata.
-func documentedLifecycleStatus(harness, event string, payload map[string]any) string {
-	if !strings.EqualFold(strings.TrimSpace(harness), "cursor") {
-		return ""
+	hasStart, hasStop := false, false
+	for _, effect := range batch {
+		hasStart = hasStart || effect.Kind == agentapi.EventStart && declinedStart(cfg, owner.Root, now, effect.Start) == ""
+		hasStop = hasStop || effect.Kind == agentapi.EventStop
 	}
-	var field cursorLifecycleStatus
-	//lint:ignore LV1001 event is the hook_event_name Cursor sends, or a lowercased start or prompt reason; other values carry no status
-	switch event {
-	case "stop":
-		field = cursorLifecycleStatus(firstNonEmptyString(payload, "status"))
-	case "sessionEnd":
-		field = cursorLifecycleStatus(firstNonEmptyString(payload, "reason"))
-	default:
-		return ""
+	if !registered && hasStart {
+		var startHead *archive.GitHead
+		done := make(chan struct{})
+		go func() { defer close(done); startHead = boundedGitHead(o.gitHead, event.ProjectRoot, true, now) }()
+		repoKey := boundedRepoKey(o.repoKey, owner.Root)
+		<-done
+		// A stop in the same observation batch sees the same HEAD; do not run git twice.
+		var lastHead *archive.GitHead
+		if hasStop && startHead.Valid() {
+			lastHead = &archive.GitHead{SHA: startHead.SHA, ObservedAt: now}
+		}
+		return gitLookups{repoKey: repoKey, startHead: startHead, lastHead: lastHead}
 	}
-	switch field {
-	case cursorStatusCompleted, cursorStatusAborted, cursorStatusError:
-		return string(field)
-	case cursorStatusWindowClose, cursorStatusUserClose:
-		if event == "sessionEnd" {
-			return string(field)
+	if registered && hasStop {
+		reg, found, err := store.LoadRegistration(id)
+		if err == nil && found && cfg.AcceptSession(reg) && reg.ParentSessionID == "" && filepath.Clean(reg.ProjectRoot) == filepath.Clean(owner.Root) {
+			return gitLookups{lastHead: boundedGitHead(o.gitHead, event.ProjectRoot, false, now)}
 		}
 	}
-	return ""
-}
-
-func firstNonEmptyString(payload map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := payload[key].(string); ok && value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// projectRoot reads cwd, falling back to the first entry of workspace_roots
-// (Cursor's base hook schema uses that instead of a single cwd).
-func projectRoot(payload map[string]any) string {
-	if cwd := firstNonEmptyString(payload, "cwd"); cwd != "" {
-		return cwd
-	}
-	if roots, ok := payload["workspace_roots"].([]any); ok {
-		for _, raw := range roots {
-			if root, ok := raw.(string); ok && root != "" {
-				return root
-			}
-		}
-	}
-	return ""
+	return gitLookups{}
 }

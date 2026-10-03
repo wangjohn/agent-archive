@@ -1,0 +1,158 @@
+name: Extended
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Off the hour, when GitHub's scheduled workflow queue is less crowded.
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Checks to run on the selected ref
+        required: true
+        default: all
+        type: choice
+        options: [all, macos, linux, fuzz, systemd]
+permissions:
+  contents: read
+concurrency:
+  # Keep only the newest post-merge run during a burst of main pushes. A
+  # scheduled or manually requested run always gets its own group.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+# Every action is pinned to a full commit SHA; keep these in step with test.yml.
+jobs:
+  linux-race:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - run: go test -race -timeout 20m ./...
+      - name: Performance assertions (no race detector)
+        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
+        env:
+          AGENT_ARCHIVE_PERF: '1'
+      - run: go vet ./...
+      - run: python3 scripts/test_release_signing.py
+      - run: python3 scripts/test_release_assets.py
+      - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_install_from_source.py
+      - run: python3 scripts/test_purge_recipe.py
+      - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_linux_acceptance.py
+
+  macos-full:
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - run: go test -race -timeout 20m ./...
+      - name: Performance assertions (no race detector)
+        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
+        env:
+          AGENT_ARCHIVE_PERF: '1'
+      - run: go vet ./...
+      - run: python3 scripts/test_release_signing.py
+      - run: python3 scripts/test_release_assets.py
+      - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_install_from_source.py
+      - run: python3 scripts/test_purge_recipe.py
+      - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_linux_acceptance.py
+
+  fuzz:
+    # Plain go test in the PR workflow still runs every committed seed. The
+    # mutation campaign runs nightly or on demand against a selected ref.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'fuzz'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Fuzz each target for 30 seconds
+        run: |
+          found=0
+          for pkg in $(go list ./...); do
+            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
+              found=$((found + 1))
+              echo "::group::$pkg $target"
+              go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
+              echo "::endgroup::"
+            done
+          done
+          # Fail if discovery stops seeing the twenty-four targets present today.
+          test "$found" -ge 24
+
+  real-systemd:
+    # The real user manager is exercised only on a disposable CI runner.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'systemd'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Start the runner user's systemd user manager
+        run: |
+          uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          for _ in $(seq 1 60); do
+            [ -S "/run/user/$uid/bus" ] && break
+            sleep 0.5
+          done
+          test -S "/run/user/$uid/bus" || { echo "no user bus at /run/user/$uid/bus after enabling lingering" >&2; exit 1; }
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          export XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
+          systemctl --version | head -n 1
+          systemctl --user show-environment > /dev/null
+          loginctl show-user "$uid" --property=Linger
+      - name: Scheduler conformance suite against the real user manager
+        env:
+          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
+        run: go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd
+      - name: Setup, the timer's first run, and uninstall
+        env:
+          AGENT_ARCHIVE_REAL_SYSTEMD: '1'
+        run: go test -count=1 -v -timeout 8m -run 'TestRealSystemd' ./internal/cli
+      - name: What the manager says, if a step failed
+        if: failure()
+        run: |
+          systemctl --user list-units --all --no-pager 'agent-archive*' || true
+          systemctl --user status --no-pager 'agent-archive*' || true
+          journalctl --user --no-pager -n 100 || true

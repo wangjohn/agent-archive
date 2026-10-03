@@ -10,7 +10,7 @@ WHERE IT WENT
 By project
 p                                  n/a
 
-HEADS UP
-● 1 session has no token data (Cursor 1)
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Cursor: 1).
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html

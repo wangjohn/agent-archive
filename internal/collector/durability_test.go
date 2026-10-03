@@ -63,7 +63,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("first publication: %#v %v", result, err)
 	}
 	firstKey := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key
@@ -76,7 +76,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 
 func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
 	t.Helper()
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("republish: %#v %v", result, err)
 	}
@@ -106,6 +106,7 @@ func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storag
 // cannot serialize. Publishing must still complete and record the object it
 // really replaced, rather than failing after the upload on every pass.
 func TestPublishAfterSourceSchemaBumpSupersedesUploadedKey(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -117,6 +118,7 @@ func TestPublishAfterSourceSchemaBumpSupersedesUploadedKey(t *testing.T) {
 // State written before the source reference was recorded falls back to the
 // cached metadata, which names exactly the uploaded object.
 func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -131,6 +133,7 @@ func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T)
 // With neither record, the previous key is unknown: the publication still
 // completes, and nothing is guessed into the superseded ledger.
 func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -147,6 +150,7 @@ func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
 // metadata-only refresh instead of failing the session; normal capture goes
 // on and publishes current metadata.
 func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
@@ -154,7 +158,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -173,6 +177,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 // A publication stamped in the future by a wrong clock must not hold back
 // the next one until that date: it defers by at most one interval.
 func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
@@ -180,14 +185,14 @@ func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return future }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return future }}); err != nil {
 		t.Fatal(err)
 	}
 	// The clock is corrected and the transcript grows, with no hook asking
 	// for a flush.
 	writeTranscript(t, filepath.Dir(path), "codex.jsonl", grownTranscript)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 0 {
 		t.Fatalf("expected one interval's deferral: %#v %v", result, err)
 	}
@@ -200,6 +205,7 @@ func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 // A pending publication already carrying a far-future ReadyAt is capped at
 // one interval from now, durably, so it publishes once that has passed.
 func TestPendingReadyAtInTheFutureIsCapped(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
@@ -207,7 +213,7 @@ func TestPendingReadyAtInTheFutureIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}
 	if _, err := Run(context.Background(), local, store, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +250,7 @@ func corruptFile(t *testing.T, path string) {
 // One truncated state file fails only its own session: it is moved aside and
 // reported, every other session is published, and the pass completes.
 func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -263,7 +270,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	corruptFile(t, subagentCandidatePath(local, "child"))
 
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one corrupt file failed the whole pass: %v", err)
 	}
@@ -294,12 +301,13 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	if status.PendingCount != 1 {
 		t.Fatalf("pending = %d, want the unreadable registration counted", status.PendingCount)
 	}
-	// Quarantined once: the next pass is clean, and hooks can write again.
+	// Valid sessions keep scanning; unresolved identity evidence from the
+	// quarantined registration leaves explicit recovery incomplete.
 	if err := local.SaveRequest("session-2", "stop", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("second pass: %#v %v", result, err)
 	}
 }
@@ -307,6 +315,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 // A request that cannot be read for any other reason stays where it is and
 // holds its session back, without failing the pass.
 func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -322,7 +331,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 	if err := os.Chmod(requestPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || result.Errors["session-1"] == nil || errors.Is(result.Errors["session-1"], state.ErrQuarantined) || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -334,6 +343,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 // A local failure partway through one session is that session's error; the
 // pass goes on to the others and still records its status.
 func TestMidPassLocalFailureIsPerSession(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
@@ -351,7 +361,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one session's local failure ended the pass: %v", err)
 	}
@@ -366,6 +376,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 // A pass whose context has expired stops before the next session, leaving
 // its work pending, instead of failing every remaining session.
 func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {
@@ -377,7 +388,7 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := Run(ctx, local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(ctx, local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -387,7 +398,9 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 }
 
 // A hook-supplied transcript path naming a FIFO fails its session at once
-// instead of blocking the pass on an open that waits for a writer.
+// instead of blocking the pass on an open that waits for a writer. Not
+// parallel: the pass must end within ten seconds, which a busy parallel run
+// could exceed without any FIFO blocking it.
 func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -411,7 +424,7 @@ func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return now }})
 		done <- outcome{result, err}
 	}()
 	select {
@@ -429,6 +442,7 @@ func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 }
 
 func TestOpenRegularFileRefusesNonRegularPaths(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fifo := filepath.Join(dir, "fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
@@ -457,6 +471,7 @@ func TestOpenRegularFileRefusesNonRegularPaths(t *testing.T) {
 // A pass clears the atomic-write temporaries a crashed writer left, and only
 // those: one young enough to belong to a write in progress stays.
 func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	stale := filepath.Join(local.Home(), "requests", ".pending-stale")
 	fresh := filepath.Join(local.Home(), "published", ".pending-fresh")
@@ -475,7 +490,7 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{stale, nested} {
@@ -500,7 +515,7 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{Sources: testSources, MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	pendingFile := filepath.Join(local.Home(), "pending", "session-1.json")
 	var written os.FileInfo
 	for pass := range 3 {
