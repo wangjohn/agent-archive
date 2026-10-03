@@ -82,34 +82,45 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
-	return providerReader{reg: reg, opts: opts}, true
+	return providerReader{
+		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
+		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
+		passes: opts.sourcePasses, database: opts.CursorDatabase,
+	}, true
 }
 
+// providerReader keeps only read dependencies; boxing whole registrations and
+// collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
-	reg  archive.SessionRegistration
-	opts Options
+	ref              agentapi.SourceRef
+	harness          string
+	startedAt        time.Time
+	subagentMetadata bool
+	sources          agentapi.SourcesLookup
+	passes           *sourcePassSet
+	database         string
 }
 
 func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptFilter, error) {
-	if r.opts.Sources == nil {
+	if r.sources == nil {
 		return nil, nil, errors.New("source integrations are required")
 	}
-	p, f, ok := r.opts.Sources.LookupSources(r.reg.Harness.Name)
+	p, f, ok := r.sources.LookupSources(r.harness)
 	if !ok {
-		return nil, nil, fmt.Errorf("source integration unavailable for %s", r.reg.Harness.Name)
+		return nil, nil, fmt.Errorf("source integration unavailable for %s", r.harness)
 	}
-	if _, err := p.Describe(sourceRef(r.reg)); err != nil {
+	if _, err := p.Describe(r.ref); err != nil {
 		return nil, nil, err
 	}
 	return p, f, nil
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
-	if r.opts.sourcePasses != nil {
-		pass, err := r.opts.sourcePasses.get(ctx, key, p)
+	if r.passes != nil {
+		pass, err := r.passes.get(ctx, key, p)
 		return pass, func() error { return nil }, err
 	}
-	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Database: r.opts.cursorDatabase()})
+	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Database: (Options{CursorDatabase: r.database}).cursorDatabase()})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,11 +137,11 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		return out, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	o, err := p.Signature(ctx, sourceRef(r.reg))
+	o, err := p.Signature(ctx, r.ref)
 	if err == nil {
 		err = r.validateObservation(provider, o)
 	}
-	return observe(r.reg.SourceKind, o), err
+	return observe(r.ref.Kind, o), err
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
@@ -147,26 +158,26 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		return out, observed, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.reg.ParentSessionID != ""}
-	snap, err := p.Read(ctx, sourceRef(r.reg), limits)
+	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
+	snap, err := p.Read(ctx, r.ref, limits)
 	if err != nil {
 		if o, ok := agentapi.ErrorObservation(err); ok {
 			if observationErr := r.validateObservation(provider, o); observationErr != nil {
 				return out, observed, errors.Join(err, agentapi.Wrap(agentapi.Unavailable, observationErr))
 			}
-			observed = observe(r.reg.SourceKind, o)
+			observed = observe(r.ref.Kind, o)
 		}
 		return out, observed, translateSourceError(err)
 	}
 	defer func() { err = errors.Join(err, snap.Close()) }()
-	observed = observe(r.reg.SourceKind, snap.Observation())
+	observed = observe(r.ref.Kind, snap.Observation())
 	if err = r.validateObservation(provider, observed.observation); err != nil {
 		return out, sourceState{}, err
 	}
-	if r.reg.ReadsTranscriptFile() {
+	if r.ref.Kind == archive.SourceKindFile {
 		transcriptFilters.Add(1)
 	}
-	out, err = f.Filter(ctx, snap.Input(), agentapi.FilterContext{StartedAt: r.reg.SessionStartedAt, Limits: limits})
+	out, err = f.Filter(ctx, snap.Input(), agentapi.FilterContext{StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return out, observed, translateSourceError(err)
 	}
@@ -180,7 +191,7 @@ func (r providerReader) validateObservation(provider agentapi.SourceProvider, o 
 	if err := sourceio.ValidateSignature(o.Signature); err != nil {
 		return err
 	}
-	semantics, err := provider.Describe(sourceRef(r.reg))
+	semantics, err := provider.Describe(r.ref)
 	if err != nil {
 		return err
 	}

@@ -67,7 +67,7 @@ func TestProviderReaderUsesSelectedFilter(t *testing.T) {
 	}
 	selectedError := errors.New("selected filter")
 	selected := selectedTranscriptFilter{TranscriptFilter: claude.Filter{}, err: selectedError}
-	r := providerReader{reg: archive.SessionRegistration{TranscriptPath: path, Harness: archive.Harness{Name: "claude"}}, opts: Options{Sources: testSources}}
+	r, _ := newSourceReader(archive.SessionRegistration{TranscriptPath: path, Harness: archive.Harness{Name: "claude"}}, Options{Sources: testSources})
 	if _, _, err := r.Filter(t.Context(), selected, DefaultMaxTranscriptBytes); !errors.Is(err, selectedError) {
 		t.Fatalf("selected filter was replaced: %v", err)
 	}
