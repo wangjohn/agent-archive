@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,76 @@ func TestStopCommitRepairsAMissingSource(t *testing.T) {
 	}
 	if _, err := remote.Get(context.Background(), after.SourceBundle.Key); err != nil {
 		t.Fatalf("source %s not restored: %v", after.SourceBundle.Key, err)
+	}
+}
+
+// A stop that brings a new commit and new hook evidence after the transcript
+// was deleted ends in a gap that completes its request; the commit is still
+// published on a later pass, from the retained source.
+func TestStopCommitPublishesAfterTheTranscriptGoes(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript)
+	reg := registration(t, path)
+	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
+	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	evidence := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: last.ObservedAt, Provenance: "hook", Payload: map[string]any{"turn_id": "t1"}}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", last.ObservedAt, evidence); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		now = now.Add(time.Hour)
+		if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+			t.Fatalf("run: %+v %v", result, err)
+		}
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
+		t.Fatalf("stop commit stranded behind the gap: %+v", after.GitHead)
+	}
+}
+
+// A commit recorded on the registration after a pass had already completed
+// the stop's request (the hook's two writes straddling the pass's listing)
+// is published by a later pass with no request at all, and once published
+// the session is skipped again.
+func TestStopCommitPublishesWithoutARequest(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
+	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	last := &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
+	if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = last; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("run: %+v %v", result, err)
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
+		t.Fatalf("stop commit not published: %+v", after.GitHead)
+	}
+	remote.keys = nil
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("second run: %+v %v", result, err)
+	}
+	if len(remote.keys) != 0 {
+		t.Errorf("a published commit was published again: %v", remote.keys)
 	}
 }
