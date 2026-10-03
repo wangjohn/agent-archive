@@ -94,6 +94,11 @@ func codexOnlyAllProjects(cfg config.Config) bool {
 	return len(cfg.Harnesses) == 1 && cfg.Harnesses[0] == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
 }
 
+// setupNeedsProject preserves selected apps' project requirement after review edits.
+func setupNeedsProject(cfg config.Config) bool {
+	return includedProjects(cfg.Archive.Projects) == 0 && !codexOnlyAllProjects(cfg)
+}
+
 func codexConsentRows(cfg config.Config) []reviewRow {
 	if !containsString(cfg.Harnesses, "codex") {
 		return nil

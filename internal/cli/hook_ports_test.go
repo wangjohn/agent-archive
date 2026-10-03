@@ -101,7 +101,7 @@ func TestInjectedHookConfiguratorReachesSetupJournalAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := config.Config{MachineID: "machine", Harnesses: []string{"synthetic"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+	next := config.Config{MachineID: "machine", Harnesses: []string{"synthetic"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 	if err := applySetup(home, userHome, executable, config.Config{}, &next, nil, env); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestInjectedHookPlanFailureRollsBackSharedSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := config.Config{MachineID: "machine", Harnesses: []string{"synthetic"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+	next := config.Config{MachineID: "machine", Harnesses: []string{"synthetic"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 	if err := applySetup(home, userHome, executable, config.Config{}, &next, nil, env); err == nil {
 		t.Fatal("injected durable boundary did not fail")
 	}

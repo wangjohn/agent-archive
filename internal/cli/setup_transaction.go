@@ -212,6 +212,9 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 }
 
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
+	if len(next.Harnesses) > 0 && setupNeedsProject(*next) {
+		return errors.New("no project is included; include a project before saving these capture settings")
+	}
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
 		return fmt.Errorf("%s holds the collector lock; retry setup when it finishes: %w", lockHolder(home), err)

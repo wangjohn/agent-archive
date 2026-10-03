@@ -579,7 +579,7 @@ func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
 	}
 }
 
-// The collector must keep an IO error joined to its expired recovery context.
+// The collector must keep an IO error joined to its cancelled recovery context.
 func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 	for _, broken := range []bool{false, true} {
 		t.Run(strconv.FormatBool(broken), func(t *testing.T) {
@@ -605,6 +605,8 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			finished := make(chan error, 1)
 			go func() {
 				var file *os.File
@@ -621,7 +623,10 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 					finished <- err
 					return
 				}
-				time.Sleep(200 * time.Millisecond)
+				// A successful writer open proves recovery reached the census
+				// read. Cancel at that boundary instead of racing a short timeout
+				// against marker staging and filesystem scheduling.
+				cancel()
 				replacement := regPath + ".replacement"
 				err = os.WriteFile(replacement, data, 0600)
 				if err == nil {
@@ -636,8 +641,6 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 				}
 				finished <- err
 			}()
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			defer cancel()
 			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, MachineID: "m"})
 			if writeErr := <-finished; writeErr != nil {
 				t.Fatal(writeErr)
@@ -650,7 +653,7 @@ func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			if broken {
-				if !errors.Is(result.Errors["session-index"], context.DeadlineExceeded) || !strings.Contains(result.Errors["session-index"].Error(), "session-index-recovery.json") || status.LastError != FailedSessionsProblem(1) {
+				if !errors.Is(result.Errors["session-index"], context.Canceled) || !strings.Contains(result.Errors["session-index"].Error(), "session-index-recovery.json") || status.LastError != FailedSessionsProblem(1) {
 					t.Fatalf("checkpoint error lost: %#v %q", result.Errors, status.LastErrors)
 				}
 			} else if len(result.Errors) != 0 || len(status.LastErrors) != 0 {

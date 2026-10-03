@@ -233,6 +233,9 @@ func reviewChecklist(cfg config.Config, review setupReview, at time.Time) []revi
 		{mark: symbolOK, label: "Storage connected", detail: "write, read, list, delete"},
 		privacyCheck(cfg, at),
 	}
+	if len(cfg.Harnesses) > 0 && setupNeedsProject(cfg) {
+		checks = append(checks, reviewCheck{mark: symbolFail, label: "Project required", detail: "Use Edit a setting → Projects to include a directory. Only Codex-only all-projects scope permits no included projects."})
+	}
 	checks = append(checks, hookFilesChecks(cfg.Harnesses, review.hookFiles, review.userHome)...)
 	for _, app := range cfg.Harnesses {
 		if app == "codex" && cfg.Discovery != nil && cfg.Discovery.Enabled {

@@ -568,7 +568,7 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) []error 
 	if len(problems) > 0 {
 		return problems
 	}
-	if includedProjects(cfg.Archive.Projects) == 0 && !codexOnlyAllProjects(*cfg) {
+	if setupNeedsProject(*cfg) {
 		return []error{errors.New("no project is included; pass --project DIR")}
 	}
 	return nil

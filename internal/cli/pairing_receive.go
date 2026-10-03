@@ -318,6 +318,10 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 				return cfg, fmt.Errorf("pairing cancelled; nothing was changed")
 			}
 			if choice == "save" {
+				if setupNeedsProject(cfg) {
+					p.warn("Include a project with Edit settings → Projects before saving these capture settings.")
+					continue
+				}
 				break
 			}
 			draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2}
