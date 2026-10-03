@@ -5,25 +5,7 @@ These commands print JSON for scripts. Each document carries a
 keeps its meaning, and an incompatible change bumps `schema_version`, from
 `v0.1.0` on. Check `schema_version`, and read the
 [changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
-conversation content, except ### Replay sessions
-
-A session a replay tool ran carries `replay`, an object with an optional
-`run_id`:
-
-```json
-"replay": {"run_id": "bench-2026-09-30.7"}
-```
-
-The hook that registered the session had `AGENT_ARCHIVE_REPLAY` set in its
-environment; `run_id` is its value when that is 1 to 128 letters, digits,
-`.`, `_`, `:`, or `-` (starting with a letter or digit), and absent
-otherwise. The field is fixed at registration, and a subagent carries its
-parent's. Test for the key, not for `run_id`. `list`, `stats`, and
-`handoff --latest` leave replays out unless asked (`--replays
-include|only` on `list` and `stats`); `show ID` opens one as usual.
-
-
-`show --transcript --json`, which you ask for
+conversation content, except `show --transcript --json`, which you ask for
 explicitly.
 
 ## `list --json`
@@ -205,6 +187,25 @@ say what to call the session:
 
 `list` and `show` show `name` where they showed `title` (and `title` when
 there is no `name`).
+
+### Replay sessions
+
+A session a replay tool ran carries `replay`, an object with an optional
+`run_id`:
+
+```json
+"replay": {"run_id": "bench-2026-09-30.7"}
+```
+
+The hook that registered the session had `AGENT_ARCHIVE_REPLAY` set in its
+environment; `run_id` is its value when that is 1 to 128 letters, digits,
+`.`, `_`, `:`, or `-` (starting with a letter or digit), and absent
+otherwise. The field is fixed at registration, and a subagent carries its
+parent's. Test for the key, not for `run_id`. `list`, `stats`, and
+`handoff --latest` leave replays out unless asked (`--replays
+include|only` on `list` and `stats`); `show ID` opens one as usual.
+
+
 
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
