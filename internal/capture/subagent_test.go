@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -53,5 +55,46 @@ func TestSubagentStopRecordsASanitizedAgentType(t *testing.T) {
 				t.Fatalf("candidate=%+v, want type %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCodexSubagentPathDoesNotEnableTranscriptCapture(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), "/synthetic/project"
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "parent-native", "cwd": project, "transcript_path": "/synthetic/codex/parent.jsonl"}, at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SubagentStop", "session_id": "parent-native", "agent_id": "agent-1", "agent_transcript_path": "/synthetic/codex/child.jsonl"}, at.Add(time.Minute), WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("unsupported child candidates=%+v err=%v", candidates, err)
+	}
+	parentID, _, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "parent-native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, found, err := store.LoadRequest(parentID)
+	if err != nil || !found {
+		t.Fatalf("parent request found=%t err=%v", found, err)
+	}
+	childID := ""
+	for _, evidence := range request.HookEvidence {
+		if evidence.Kind == archive.EvidenceKindLinkedSession && evidence.Payload["status"] == string(archive.LinkedSessionUnavailable) {
+			childID, _ = evidence.Payload["archive_session_id"].(string)
+		}
+	}
+	if childID == "" {
+		t.Fatalf("missing unavailable link: %+v", request.HookEvidence)
+	}
+	if _, found, err := store.LoadRegistration(childID); err != nil || found {
+		t.Fatalf("unsupported child registration found=%t err=%v", found, err)
 	}
 }

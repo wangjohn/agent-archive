@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -363,7 +364,12 @@ func commitUndo(env Env, home string, batch *backfill.Batch, plan backfill.UndoP
 	if err := env.checkpoint("undo marked"); err != nil {
 		return backfill.UndoChanges{}, err
 	}
+	previous := cfg
+	previous.Archive.Projects = slices.Clone(cfg.Archive.Projects)
 	changes := plan.ApplyToConfig(&cfg)
+	if err := config.ReconcileDiscovery(&cfg, previous, now); err != nil {
+		return backfill.UndoChanges{}, fmt.Errorf("update discovery authorization: %w", err)
+	}
 	if err := config.Save(home, cfg); err != nil {
 		return backfill.UndoChanges{}, fmt.Errorf("save config: %w. The import is marked undone but nothing was removed; run undo again", err)
 	}
