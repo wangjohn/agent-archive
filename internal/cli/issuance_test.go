@@ -503,7 +503,7 @@ func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) 
 	existing := config.Config{MachineID: strings.Repeat("d", 32), Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: payload.Storage.Bucket, Prefix: payload.Storage.Prefix, R2AccountID: payload.Storage.R2Account}}
 	must(t, config.Save(home, existing))
 	out.Reset()
-	if result := Run([]string{"setup", "--pair-file", "-", "--yes", "--project", project}, strings.NewReader(bundle), &out, &out, env); result != 0 {
+	if result := Run([]string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}, strings.NewReader(bundle), &out, &out, env); result != 0 {
 		t.Fatalf("receiver %d %s", result, &out)
 	}
 	cfg, _, err := config.Load(home)

@@ -563,7 +563,7 @@ func TestScopeInputOwnsStdinAndSupportsSeparateR2Secret(t *testing.T) {
 			if mode == "missing secret" {
 				want = 1
 			}
-			output := setupYes(t, env, stdin, want, "--yes", "--provider", "r2", "--bucket", "synthetic", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--apps", "codex", "--project-scope-file", scopeFile)
+			output := setupYes(t, env, stdin, want, "--yes", "--provider", "r2", "--bucket", "synthetic", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--apps", "codex", "--codex-discovery", "off", "--codex-capture-scope", "included-projects", "--project-scope-file", scopeFile)
 			if mode == "missing secret" {
 				if !strings.Contains(output, "owns stdin") {
 					t.Fatalf("unclear stdin ownership: %s", output)

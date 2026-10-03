@@ -25,7 +25,3 @@ func NativeFirstTask(line []byte) (bool, bool) { return nativesessions.NativeFir
 func FirstTaskAt(line []byte) time.Time { return nativesessions.FirstTaskAt(line) }
 
 func present(v json.RawMessage) bool { return len(v) > 0 && string(v) != "null" }
-
-// SupportedCodexProducer remains disabled until the activation PR establishes
-// supported format/version combinations under the approved source contract.
-func SupportedCodexProducer(CodexMeta) bool { return false }

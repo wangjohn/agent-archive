@@ -472,7 +472,7 @@ func TestSetupYesDoesNotReadTheR2SecretFromATerminalInAnAgent(t *testing.T) {
 	stdin := strings.NewReader("private-secret\n")
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) }
-	code := Run([]string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--bucket", "b", "--project", project, "--apps", "codex"}, stdin, &out, &errOut, env)
+	code := Run([]string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--bucket", "b", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, stdin, &out, &errOut, env)
 	if code == 0 || stdin.Len() != len("private-secret\n") || !strings.Contains(errOut.String()+out.String(), envR2SecretAccessKey) {
 		t.Fatalf("code=%d unread=%d\n%s\n%s", code, stdin.Len(), &out, &errOut)
 	}

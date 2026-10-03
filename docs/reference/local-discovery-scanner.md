@@ -1,8 +1,9 @@
 # Local discovery scanner
 
-This phase adds disabled Codex source discovery machinery. It does not expose
-setup activation or support additional agents; hooks and backfill remain the
-available capture paths until the activation phase.
+This scanner backs automatic Codex discovery configured through
+[setup consent](../getting-started/setup.md#automatic-codex-discovery). Only
+inspected producer tuples qualify; Claude Code and Cursor retain their existing
+hook paths. Discovery does not claim originating local execution.
 
 A scheduled collector observes approved active and archived rollout roots before
 opening remote storage. A source scan has a five-second budget and at most 256 metadata
@@ -51,8 +52,10 @@ producer version, originator, and execution source against the
 registration before filtering. Existing origins, destination attribution,
 admission time, and removal records are preserved. Discovery never supplies
 a source locator to an existing hook or import registration; their existing
-capture paths establish those locators. Synthetic tests inject adapter
-support within the scanner package; there is no production support override.
+capture paths establish those locators. Scanner unit tests inject adapter
+support within the scanner package; activation integration tests use the real
+producer registry. There is no production support override, and synthetic
+publication/readback is not desktop GUI acceptance.
 
 ## Measured operating envelope
 

@@ -11,6 +11,11 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+\e[1mCodex capture scope\e[0m
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [\e[1m1\e[0m] › included-projects
+
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
@@ -36,6 +41,15 @@ Checking your storage connection…
 
   \e[2mApps      \e[0m Codex 0.121.0 · Claude Code 2.1.90
   \e[2mProjects  \e[0m ~/src/web-app
+  \e[2mCodex capture\e[0m Automatic discovery plus hooks when approved
+  \e[2mCodex scope\e[0m Included projects only
+  \e[2mExceptions\e[0m None configured  \e[2mNearest explicit project rule wins\e[0m
+  \e[2mCodex sources\e[0m /Users/alex/.codex
+  \e[2mDestination\e[0m s3://team-archive/agent-archive/
+  \e[2mStarts    \e[0m After local consent, outside pause or exclusion
+  \e[2mHistory   \e[0m Old sessions require deliberate backfill
+  \e[2mCopies    \e[0m Qualifying recent native copies may be captured
+  \e[2mHooks     \e[0m Optional for discovery; approval and observation are separate
   \e[2mSkills    \e[0m metadata  \e[2mUser skill roots outside selected projects may be scanned; change with Edit a setting\e[0m
   \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
   \e[2mKeep for  \e[0m 90 days
@@ -43,7 +57,7 @@ Checking your storage connection…
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[32m✓\e[0m Bucket is private       \e[2mall public access blocked\e[0m
   \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json\e[0m
-  \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
+  \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
 \e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m

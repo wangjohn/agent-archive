@@ -53,7 +53,7 @@ func TestSetupYesConfiguresR2WithoutQuestions(t *testing.T) {
 				env = withEnvironment(env, map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
 				stdin = ""
 			}
-			args := []string{"--yes", "--provider", "r2", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket", "--project", project, "--apps", "claude,codex"}
+			args := []string{"--yes", "--provider", "r2", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket", "--project", project, "--apps", "claude,codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}
 			if from == "stdin" {
 				args = append(args, "--r2-access-key-id", "KEY")
 			}
@@ -87,7 +87,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
 	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project)
 	cfg, _, _ := config.Load(home)
-	if cfg.SkillEvidence != config.SkillEvidenceMetadata {
+	if cfg.EffectiveSkillEvidence() != config.SkillEvidenceMetadata {
 		t.Fatalf("fresh policy = %q", cfg.SkillEvidence)
 	}
 	if cfg.Storage.Region != "eu-west-1" || cfg.Storage.AWSProfile != "archive" || !reflect.DeepEqual(cfg.Harnesses, []string{"cursor"}) {
@@ -99,7 +99,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	other := t.TempDir()
 	setupYes(t, env, "", 0, "--yes", "--project", other)
 	next, _, _ := config.Load(home)
-	if next.SkillEvidence != config.SkillEvidenceMetadata {
+	if next.EffectiveSkillEvidence() != config.SkillEvidenceMetadata {
 		t.Fatalf("reconfigured policy = %q", next.SkillEvidence)
 	}
 	if includedProjects(next.Archive.Projects) != 2 || next.Storage != cfg.Storage || next.MachineID != cfg.MachineID {
@@ -108,8 +108,8 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 
 	// Adding an app keeps the one set up; leaving it out is refused, since
 	// --yes never removes hooks or declines an app.
-	setupYes(t, env, "", 0, "--yes", "--apps", "cursor,codex")
-	output := setupYes(t, env, "", 1, "--yes", "--apps", "codex")
+	setupYes(t, env, "", 0, "--yes", "--apps", "cursor,codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
+	output := setupYes(t, env, "", 1, "--yes", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	after, _, _ := config.Load(home)
 	if !strings.Contains(output, "leaves out Cursor") || !reflect.DeepEqual(after.Harnesses, []string{"codex", "cursor"}) || len(after.DeclinedHarnesses) != 0 {
 		t.Fatalf("apps %v declined %v\n%s", after.Harnesses, after.DeclinedHarnesses, output)
@@ -122,19 +122,19 @@ func TestSetupYesSkillEvidenceReconfiguration(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project, "--skill-evidence", "none")
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project, "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--skill-evidence", "none")
 	cfg, _, err := config.Load(home)
-	if err != nil || cfg.SkillEvidence != config.SkillEvidenceNone {
+	if err != nil || cfg.EffectiveSkillEvidence() != config.SkillEvidenceNone {
 		t.Fatalf("none config: %+v %v", cfg, err)
 	}
 	out := setupYes(t, env, "", 0, "--yes", "--skill-evidence", "body")
 	cfg, _, err = config.Load(home)
-	if err != nil || cfg.SkillEvidence != config.SkillEvidenceBody || !strings.Contains(out, "Skill evidence: body") {
+	if err != nil || cfg.EffectiveSkillEvidence() != config.SkillEvidenceBody || !strings.Contains(out, "Skill evidence: body") {
 		t.Fatalf("body config: %+v %v\n%s", cfg, err, out)
 	}
 	setupYes(t, env, "", 1, "--yes", "--skill-evidence", "other")
 	cfg, _, _ = config.Load(home)
-	if cfg.SkillEvidence != config.SkillEvidenceBody {
+	if cfg.EffectiveSkillEvidence() != config.SkillEvidenceBody {
 		t.Fatal("invalid mode changed config")
 	}
 }
@@ -147,7 +147,7 @@ func TestSetupYesReconfiguresR2KeyAndStorage(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "first-secret"})
-	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "one", "--project", project, "--apps", "codex")
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "one", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	first, _, _ := config.Load(home)
 
 	// No key given: the stored one is kept.
@@ -178,7 +178,7 @@ func TestSetupYesKeepsTheKeyWhenApplyFails(t *testing.T) {
 	kc := newFakeKeychain()
 	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
 	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("cannot load the job") }
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, "run agent-archive setup to finish or discard it") || len(kc.items) != 1 {
 		t.Fatalf("%d keys\n%s", len(kc.items), output)
 	}
@@ -194,7 +194,7 @@ func TestSetupYesRefusesATemporaryExecutable(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	executable := filepath.Join(t.TempDir(), "go-build123", "b001", "exe", "agent-archive")
 	env.Executable = func() (string, error) { return executable, nil }
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--project", t.TempDir(), "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, "temporary build") {
 		t.Fatalf("output:\n%s", output)
 	}
@@ -216,7 +216,7 @@ func TestSetupYesClearsTheR2Variables(t *testing.T) {
 		seen = append(seen, os.Getenv(envR2AccessKeyID), os.Getenv(envR2SecretAccessKey))
 		return map[string]applicationDiscovery{}
 	}
-	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", t.TempDir(), "--apps", "codex")
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if strings.Join(seen, "") != "" || os.Getenv(envR2SecretAccessKey) != "" {
 		t.Fatalf("variables still set: %q", seen)
 	}
@@ -233,16 +233,16 @@ func TestSetupYesRefusesMissingAnswers(t *testing.T) {
 		want string
 	}{
 		{"no yes", 2, []string{"--provider", "s3"}, "need --yes"},
-		{"no storage", 1, []string{"--yes", "--project", project, "--apps", "codex"}, "pass --provider"},
-		{"no project", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--apps", "codex"}, "pass --project"},
+		{"no storage", 1, []string{"--yes", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, "pass --provider"},
+		{"no project", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, "pass --project"},
 		{"no apps found", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--project", project}, "pass --apps"},
-		{"unknown app", 1, []string{"--yes", "--apps", "codex,vim"}, `not "vim"`},
-		{"missing project", 1, []string{"--yes", "--apps", "codex", "--project", filepath.Join(project, "gone")}, "does not exist"},
-		{"no region", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--project", project, "--apps", "codex"}, "pass --region"},
-		{"no r2 key", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--project", project, "--apps", "codex"}, envR2AccessKeyID},
-		{"no r2 secret", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex"}, envR2SecretAccessKey},
-		{"bucket mismatch", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/c", "--project", project, "--apps", "codex"}, "differs"},
-		{"mixed providers", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--r2-account", "a", "--project", project, "--apps", "codex"}, "for --provider r2"},
+		{"unknown app", 1, []string{"--yes", "--apps", "codex,vim", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, `not "vim"`},
+		{"missing project", 1, []string{"--yes", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", filepath.Join(project, "gone")}, "does not exist"},
+		{"no region", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, "pass --region"},
+		{"no r2 key", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, envR2AccessKeyID},
+		{"no r2 secret", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, envR2SecretAccessKey},
+		{"bucket mismatch", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/c", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, "differs"},
+		{"mixed providers", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--r2-account", "a", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, "for --provider r2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -275,7 +275,7 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 		return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
 	}
 	env = withEnvironment(env, map[string]string{envR2SecretAccessKey: "private-secret"})
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, "The storage check failed.") || !strings.Contains(output, "the storage check failed; nothing was changed") || strings.Contains(output, "private-secret") {
 		t.Fatalf("output:\n%s", output)
 	}
@@ -363,11 +363,11 @@ func TestSetupYesListsEveryMissingAnswer(t *testing.T) {
 	}{
 		{"apps and project", []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1"}, []string{"pass --apps", "pass --project"}},
 		{"apps, project and storage", []string{"--yes"}, []string{"pass --apps", "pass --project", "pass --provider"}},
-		{"r2 flags", []string{"--yes", "--provider", "r2", "--region", "us-east-1", "--project", project, "--apps", "codex"}, []string{"are for --provider s3", "needs --r2-account", "pass --r2-access-key-id"}},
-		{"r2 bucket", []string{"--yes", "--provider", "r2", "--r2-account", testR2Account, "--project", project, "--apps", "codex"}, []string{"pass --r2-access-key-id", "--bucket is required"}},
+		{"r2 flags", []string{"--yes", "--provider", "r2", "--region", "us-east-1", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, []string{"are for --provider s3", "needs --r2-account", "pass --r2-access-key-id"}},
+		{"r2 bucket", []string{"--yes", "--provider", "r2", "--r2-account", testR2Account, "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, []string{"pass --r2-access-key-id", "--bucket is required"}},
 		{"apps", []string{"--yes", "--apps", "codex,foo,bar", "--provider", "s3", "--aws-profile", "p", "--region", "us-east-1"}, []string{`not "foo" or "bar"`, "pass --project", "--bucket is required"}},
-		{"s3 flags", []string{"--yes", "--provider", "s3", "--region", "US East", "--project", project, "--apps", "codex"}, []string{"needs --aws-profile", `--region "US East" isn't`, "--bucket is required"}},
-		{"projects", []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", filepath.Join(project, "one"), "--project", filepath.Join(project, "two"), "--project", filepath.Join(project, "one")}, []string{"one does not exist", "two does not exist"}},
+		{"s3 flags", []string{"--yes", "--provider", "s3", "--region", "US East", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, []string{"needs --aws-profile", `--region "US East" isn't`, "--bucket is required"}},
+		{"projects", []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", filepath.Join(project, "one"), "--project", filepath.Join(project, "two"), "--project", filepath.Join(project, "one")}, []string{"one does not exist", "two does not exist"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -422,7 +422,7 @@ func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
 	env := setupTestEnv(t, t.TempDir(), t.TempDir(), kc, time.Now())
 	fakeSched(env).stateFn = func(scheduler.Ref) string { t.Error("launchctl was asked"); return "missing" }
 	env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, "Setup incomplete: the R2 secret access key is needed") {
 		t.Fatalf("output:\n%s", output)
 	}
@@ -432,7 +432,7 @@ func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
 func TestSetupYesReportsOneMissingAnswerAlone(t *testing.T) {
 	t.Parallel()
 	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if !strings.Contains(output, "Setup incomplete: no project is included; pass --project DIR\n") || strings.Contains(output, "answers are missing") {
 		t.Fatalf("output:\n%s", output)
 	}
@@ -448,7 +448,7 @@ func TestSetupYesVerboseStorageFailure(t *testing.T) {
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 		return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
 	}
-	output := setupYes(t, env, "", 1, "--yes", "--verbose", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--verbose", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	if n := strings.Count(output, "incorrect region or folder"); n != 1 {
 		t.Fatalf("storage error printed %d times, want once:\n%s", n, output)
 	}
@@ -461,10 +461,10 @@ func TestSetupYesCarriesCaptureSettingsAndPreservesOmittedValues(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project, "--prefix", "team/archive/", "--retention-days", "30", "--require-skill-use", "--skill-evidence", "none", "--no-skills")
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project, "--prefix", "team/archive/", "--retention-days", "30", "--require-skill-use", "--skill-evidence", "none", "--no-skills")
 	before, _, err := config.Load(home)
 	must(t, err)
-	if before.Storage.Prefix != "team/archive/" || before.RetentionDays != 30 || !before.RequireSkillUse || !before.NoSkills || before.SkillEvidence != config.SkillEvidenceNone {
+	if before.Storage.Prefix != "team/archive/" || before.RetentionDays != 30 || !before.RequireSkillUse || !before.NoSkills || before.EffectiveSkillEvidence() != config.SkillEvidenceNone {
 		t.Fatalf("config: %+v", before)
 	}
 	setupYes(t, env, "", 0, "--yes")
@@ -528,7 +528,7 @@ func TestSetupYesPrefixOnlyKeepsR2DestinationAndKey(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
-	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 	before, _, err := config.Load(home)
 	must(t, err)
 	if before.RetentionDays != 90 || before.RequireSkillUse || before.NoSkills || before.Storage.Prefix != defaultPrefix {

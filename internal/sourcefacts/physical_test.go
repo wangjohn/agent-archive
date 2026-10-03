@@ -7,7 +7,12 @@ import (
 )
 
 func TestPhysicalProjectSeparatesNestedRepositoriesAndValidatesWorktrees(t *testing.T) {
-	root := t.TempDir()
+	// Git records physical paths in worktree metadata, including when the
+	// temporary directory is reached through macOS's /var symlink.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	main := filepath.Join(root, "main")
 	checkout := filepath.Join(root, "checkout")
 	gd := filepath.Join(main, ".git", "worktrees", "one")

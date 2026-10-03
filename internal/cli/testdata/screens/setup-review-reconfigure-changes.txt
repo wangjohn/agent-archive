@@ -46,6 +46,15 @@ Step 3 of 3 · Review your changes
 * Projects   ~/src/web-app
              ~/src/api
              was ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
@@ -56,6 +65,7 @@ Step 3 of 3 · Review your changes
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+  ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
@@ -76,8 +86,10 @@ What would you like to change?
   6) Bucket or credentials
   7) Folder inside the bucket
   8) AWS bucket region
-  9) Nothing, go back to the review
-Enter 1-9 [9]: 5
+  9) Automatic Codex discovery
+  10) Codex capture scope
+  11) Nothing, go back to the review
+Enter 1-11 [11]: 5
 
 Keep sessions for how many days? [90]: 30
 
@@ -89,6 +101,15 @@ Step 3 of 3 · Review your changes
 * Projects   ~/src/web-app
              ~/src/api
              was ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
 * Keep for   30 days
@@ -100,6 +121,7 @@ Step 3 of 3 · Review your changes
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+  ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
@@ -117,7 +139,8 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.
@@ -126,5 +149,5 @@ Check progress with agent-archive status.
 Looking for past sessions in these projects… none to import.
 
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --prefix agent-archive/ --retention-days 30 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app --project ~/src/api
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 30 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app --project ~/src/api
 [exit 0]

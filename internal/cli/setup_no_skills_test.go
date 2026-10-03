@@ -86,7 +86,7 @@ func TestFreshSetupWithNoSkillsInstallsNone(t *testing.T) {
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			var output string
 			if mode == "yes" {
-				output = setupYes(t, env, "", 0, "--yes", "--no-skills", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", project, "--apps", "codex,claude")
+				output = setupYes(t, env, "", 0, "--yes", "--no-skills", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", project, "--apps", "codex,claude", "--codex-discovery", "on", "--codex-capture-scope", "included-projects")
 			} else {
 				out, _ := setupRunWith(t, env, []string{"--no-skills"}, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 				output = out

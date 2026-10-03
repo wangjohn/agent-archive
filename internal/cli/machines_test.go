@@ -83,7 +83,7 @@ func TestSetupPublicationFailureKeepsCommittedCapture(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	s := &registrationStore{MemoryStore: storagetest.NewMemoryStore(), fail: true}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
-	out := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project)
+	out := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project)
 	cfg, found, e := config.Load(home)
 	if e != nil || !found || !cfg.Archive.Enabled || !strings.Contains(out, "Machine registration pending") || strings.Contains(out, "secret provider") {
 		t.Fatalf("%v %v %s", found, e, out)
@@ -139,7 +139,7 @@ func TestCollectorRecreatesMachineRecordWithoutSetupDraft(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	s := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project)
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project)
 	cfg, _, e := config.Load(home)
 	must(t, e)
 	must(t, s.Delete(context.Background(), "machines/"+cfg.MachineID+".json"))
@@ -163,7 +163,7 @@ func TestRefreshLeavesRegistrationUntouchedUntilCollectorUpdatesVersion(t *testi
 	s := storagetest.NewMemoryStore()
 	opens := 0
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { opens++; return s, nil }
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project)
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project)
 	var before, after machineRegistration
 	must(t, local.Read(filepath.Join(home, machineRegistrationFile), &before))
 	Version = "registry-new"
@@ -216,7 +216,7 @@ func TestMachineRecordsStayOutsideSessionListingAndRetention(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	s := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return s, nil }
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", project)
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project)
 	var out bytes.Buffer
 	if code := Run([]string{"list", "--json", "--all-projects", "--limit", "0"}, nil, &out, &out, env); code != 0 || strings.Contains(out.String(), "unnamed-") {
 		t.Fatalf("session list included machine: %d %s", code, out.String())

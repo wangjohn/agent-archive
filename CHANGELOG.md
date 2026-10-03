@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex setup offers included-project or all-current-and-future-project scope,
+  independent of supported-source discovery. Fresh scripts explicitly choose
+  both source and scope; omitted reconfiguration preserves consent. Codex-only
+  all-mode permits zero explicitly included projects. Discovery does not require hooks;
+  existing installations opt in explicitly. Original creation-time consent, pause
+  intervals and project/destination scope apply. Indistinguishable recent native
+  copies may qualify. Status schema 4 separates discovery health and actual hook
+  observation from publication/read-back verification.
+
 Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
