@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -27,20 +28,33 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	provider             string
-	bucket               string
-	r2Account            string
-	r2KeyID              string
-	awsProfile           string
-	region               string
-	apps                 string
-	projects             []string
-	yes                  bool
-	verbose              bool
-	skillEvidence        string
-	noSkills             bool
-	skills               bool
-	storageFlagsSupplied bool
+	pair                   bool
+	pairFile               string
+	prefix                 string
+	prefixSupplied         bool
+	retentionDays          int
+	retentionSupplied      bool
+	requireSkillUse        bool
+	noRequireSkillUse      bool
+	requireSkillSupplied   bool
+	noRequireSkillSupplied bool
+	provider               string
+	bucket                 string
+	r2Account              string
+	r2KeyID                string
+	awsProfile             string
+	region                 string
+	apps                   string
+	projects               []string
+	projectRepos           []string
+	projectMatches         *projectMatchResult
+	yes                    bool
+	verbose                bool
+	skillEvidence          string
+	noSkills               bool
+	skills                 bool
+	allowNetworkHome       bool
+	storageFlagsSupplied   bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -100,7 +114,13 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
-	var projects projectList
+	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted shared-key beta pairing")
+	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
+	var projects, projectRepos projectList
+	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
+	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
+	fs.BoolVar(&opts.requireSkillUse, "require-skill-use", false, "capture only sessions that use skills")
+	fs.BoolVar(&opts.noRequireSkillUse, "no-require-skill-use", false, "capture sessions with or without skills")
 	fs.StringVar(&opts.provider, "provider", "", "storage provider: r2 or s3")
 	fs.StringVar(&opts.bucket, "bucket", "", "bucket name")
 	fs.StringVar(&opts.r2Account, "r2-account", "", "R2 account ID, or the bucket URL")
@@ -111,6 +131,8 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
+	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
+	fs.Var(&projectRepos, "project-repo", "repository key to capture (repeatable; unresolved or ambiguous keys are skipped)")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -118,9 +140,18 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 		return opts, false
 	}
 	opts.projects = projects
+	opts.projectRepos = projectRepos
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "prefix":
+			opts.prefixSupplied = true
+		case "retention-days":
+			opts.retentionSupplied = true
+		case "require-skill-use":
+			opts.requireSkillSupplied = true
+		case "no-require-skill-use":
+			opts.noRequireSkillSupplied = true
 		case "provider", "bucket", "r2-account", "r2-access-key-id", "aws-profile", "region":
 			opts.storageFlagsSupplied = true
 		}
@@ -130,7 +161,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -173,7 +204,12 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	var matches projectMatchResult
+	opts.projectMatches = &matches
 	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
+	// A key-only command may leave no project included. Explain its skips
+	// before returning that validation error; invalid keys are never echoed.
+	printSetupProjectMatches(p, opts.projectRepos, matches)
 	if err != nil {
 		return err
 	}
@@ -283,6 +319,26 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if opts.retentionSupplied {
+		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
+			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
+		}
+		cfg.RetentionDays = opts.retentionDays
+	}
+	if opts.prefixSupplied {
+		if strings.TrimSpace(opts.prefix) == "" {
+			return cfg, credentials.R2Credentials{}, errors.New("--prefix must name a folder inside the bucket")
+		}
+		if _, err := storage.Prefix(opts.prefix, "test"); err != nil {
+			return cfg, credentials.R2Credentials{}, fmt.Errorf("--prefix: %w", err)
+		}
+	}
+	if opts.requireSkillSupplied {
+		cfg.RequireSkillUse = opts.requireSkillUse
+	}
+	if opts.noRequireSkillSupplied {
+		cfg.RequireSkillUse = !opts.noRequireSkillUse
+	}
 	if cfg.SkillEvidence == "" && cfg.SchemaVersion == 0 {
 		cfg.SkillEvidence = config.SkillEvidenceMetadata
 	}
@@ -290,6 +346,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
 	}
 	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
+	cfg.AllowNetworkHome = env.networkHomeOptIn(home, userHome, opts.allowNetworkHome, existing)
 	if !config.ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}
@@ -298,6 +355,27 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if len(problems) == 0 {
 		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
 			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
+		}
+	}
+	if len(opts.projectRepos) > 0 {
+		requests := make([]projectMatchRequest, 0, len(opts.projectRepos))
+		for _, key := range opts.projectRepos {
+			if !archive.IsRepoKey(key) {
+				problems = append(problems, fmt.Errorf("--project-repo must be repo- followed by 16 lowercase hex digits"))
+				continue
+			}
+			requests = append(requests, projectMatchRequest{RepoKey: key})
+		}
+		matched := matchProjects(context.Background(), env, userHome, existing, requests)
+		if opts.projectMatches != nil {
+			*opts.projectMatches = matched
+		}
+		if !matched.Incomplete {
+			for _, roots := range matched.Roots {
+				if len(roots) == 1 {
+					problems = append(problems, setupProjects(&cfg, roots, userHome)...)
+				}
+			}
 		}
 	}
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
@@ -410,7 +488,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(chosen) == 0 {
-			return []error{errors.New("no apps were found on this Mac; pass --apps (codex, claude, cursor)")}
+			return []error{errors.New("no apps were found on this machine; pass --apps (codex, claude, cursor)")}
 		}
 	}
 	if installed {
@@ -421,7 +499,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(dropped) > 0 {
-			return []error{fmt.Errorf("--apps leaves out %s, which this Mac captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))}
+			return []error{fmt.Errorf("--apps leaves out %s, which this machine captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))}
 		}
 	}
 	var ordered, declined []string
@@ -473,6 +551,9 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) []error 
 func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (credentials.R2Credentials, []error) {
 	var secret credentials.R2Credentials
 	if !opts.storageFlagsSupplied {
+		if opts.prefixSupplied {
+			cfg.Storage.Prefix = opts.prefix
+		}
 		if cfg.Storage.Provider == "" {
 			return secret, []error{errors.New("storage is not set up yet; pass --provider r2 or --provider s3 and the bucket's details")}
 		}
@@ -484,6 +565,9 @@ func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (cred
 		next.Prefix = previous.Prefix
 	}
 	next.Prefix = firstNonEmpty(next.Prefix, defaultPrefix)
+	if opts.prefixSupplied {
+		next.Prefix = opts.prefix
+	}
 	var problems []error
 	checkBucket := true
 	//lint:ignore LV1001 --provider is raw user input; anything else is refused below

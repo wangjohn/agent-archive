@@ -12,14 +12,21 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // harnessOrder is the order apps appear in, in columns and lists.
-var harnessOrder = []string{"claude", "codex", "cursor"}
+var harnessOrder = agentmeta.Names(agentmeta.Builtins())
 
-var harnessNames = map[string]string{"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
+var harnessNames = func() map[string]string {
+	names := make(map[string]string)
+	for _, d := range agentmeta.Builtins().All() {
+		names[string(d.ID)] = d.DisplayName
+	}
+	return names
+}()
 
 // ProjectSummary is one project row of the plan: the sessions it imports.
 type ProjectSummary struct {
@@ -183,7 +190,7 @@ func SearchLine(f Filters) string {
 			names = append(names, harnessNames[h])
 		}
 	}
-	return fmt.Sprintf("Looking for %s sessions on this Mac…", joinAnd(names))
+	return fmt.Sprintf("Looking for %s sessions on this machine…", joinAnd(names))
 }
 
 // RenderText writes the plan as the spec's default run shows it, without the
@@ -207,7 +214,7 @@ func renderPlanIntro(w io.Writer, p Plan) {
 	if p.Filters.Active() {
 		terminal.Printf(w, "Backfill imports sessions matching %s\ninto %s. Nothing has been uploaded yet.\n", p.filterFlags(), p.destination())
 	} else {
-		terminal.Printf(w, "Backfill imports every session found on this Mac into\n%s. Nothing has been uploaded yet.\n", p.destination())
+		terminal.Printf(w, "Backfill imports every session found on this machine into\n%s. Nothing has been uploaded yet.\n", p.destination())
 	}
 	terminal.Println(w)
 }

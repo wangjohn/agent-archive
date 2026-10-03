@@ -64,6 +64,56 @@ func TestWriteCompactIsAtomicCompactJSON(t *testing.T) {
 	}
 }
 
+// A staged file leaves its target alone until Commit, which gives the
+// target Write's bytes and mode; Discard removes a staged file that was not
+// committed, and leaves one that was.
+func TestStagedFileReplacesItsTargetOnlyOnCommit(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "state.json")
+	if e := Write(p, map[string]int{"a": 1}); e != nil {
+		t.Fatal(e)
+	}
+	old, _ := os.ReadFile(p)
+
+	discarded, e := Stage(p, map[string]int{"a": 2})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if now, _ := os.ReadFile(p); string(now) != string(old) {
+		t.Fatalf("staging changed the target to %q", now)
+	}
+	discarded.Discard()
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("Discard left behind %v", entries)
+	}
+
+	value := map[string]int{"a": 3}
+	staged, e := Stage(p, value)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := staged.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	staged.Discard()
+	if e := staged.SyncDir(); e != nil {
+		t.Fatal(e)
+	}
+	want := filepath.Join(dir, "want.json")
+	if e := Write(want, value); e != nil {
+		t.Fatal(e)
+	}
+	got, _ := os.ReadFile(p)
+	if wantBytes, _ := os.ReadFile(want); string(got) != string(wantBytes) {
+		t.Fatalf("replaced with %q, want Write's %q", got, wantBytes)
+	}
+	if st, _ := os.Stat(p); st.Mode().Perm() != 0600 {
+		t.Fatal(st.Mode())
+	}
+	var nothing *Staged
+	nothing.Discard()
+}
+
 func TestLockExcludesOtherCollector(t *testing.T) {
 	home := t.TempDir()
 	unlock, e := Lock(home)
@@ -110,5 +160,37 @@ func TestNamedLockWaitRespectsDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 30*time.Millisecond || elapsed > time.Second {
 		t.Fatalf("elapsed=%v", elapsed)
+	}
+}
+
+// Staging before a lock must not recreate a folder that the lock's holder
+// deletes (uninstall's purge of the admission queue); an existing folder
+// stages as Stage does.
+func TestStageInExistingDirNeverCreatesTheDirectory(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "queue", "intent.json")
+	staged, err := StageInExistingDir(missing, map[string]int{"a": 1})
+	if !os.IsNotExist(err) || staged != nil {
+		t.Fatalf("staged into a missing folder: %v, %v", staged, err)
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !os.IsNotExist(err) {
+		t.Fatalf("the missing folder was created: %v", err)
+	}
+
+	existing := filepath.Join(t.TempDir(), "intent.json")
+	staged, err = StageInExistingDir(existing, map[string]int{"a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Discard()
+	if _, err := os.Stat(existing); !os.IsNotExist(err) {
+		t.Fatalf("staged file in place before Commit: %v", err)
+	}
+	if err := staged.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if err := Read(existing, &got); err != nil || got["a"] != 1 {
+		t.Fatalf("committed = %v, %v", got, err)
 	}
 }

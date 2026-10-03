@@ -1,0 +1,174 @@
+package agentapi
+
+import (
+	"context"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"time"
+)
+
+// HookInput carries local native JSON only during decoding.
+type HookInput struct {
+	Payload    map[string]any
+	ObservedAt time.Time
+}
+
+// NativeSession contains exact native identity and observed native version facts.
+type NativeSession struct {
+	Agent    agentmeta.ID
+	NativeID string
+	Version  string
+	Mode     NativeMode
+}
+
+// EventKind is an archive-relevant lifecycle action, independent of native names.
+type EventKind uint8
+
+// The following values define the supported typed observations.
+const (
+	EventStart EventKind = iota + 1
+	EventTurnStart
+	EventResponse
+	EventStop
+	EventSubagent
+)
+
+// Freshness is native evidence interpreted by shared admission policy.
+type Freshness uint8
+
+// The following values define the supported typed observations.
+const (
+	FreshUnknown Freshness = iota
+	FreshExplicit
+	FreshContinuation
+	FreshStat
+)
+
+// NativeMode retains the exact observed native mode, including future values.
+type NativeMode string
+
+// NativeModeUnspecified is the absence of a native mode observation.
+const NativeModeUnspecified NativeMode = ""
+
+// FreshnessReason is a fixed explanation of native freshness evidence.
+type FreshnessReason string
+
+// These reason codes describe proof without retaining raw native source values.
+const (
+	FreshnessEmptyPath     FreshnessReason = "empty_native_path"
+	FreshnessInvalidPath   FreshnessReason = "invalid_native_path"
+	FreshnessInspectPath   FreshnessReason = "inspect_native_path"
+	FreshnessExplicitStart FreshnessReason = "explicit_start"
+	FreshnessContinuation  FreshnessReason = "explicit_continuation"
+	FreshnessUnknownSource FreshnessReason = "unknown_native_source"
+	FreshnessRetainedProof FreshnessReason = "retained_hook_proof"
+)
+
+// StartEvidence requests at most one bounded stat and never a source read.
+type StartEvidence struct {
+	Kind   Freshness
+	Reason FreshnessReason
+	Path   string
+}
+
+// LocatorUpdate declares a validated file locator's permitted update semantics.
+type LocatorUpdate uint8
+
+// The following values define the supported typed observations.
+const (
+	LocatorNone LocatorUpdate = iota
+	LocatorReplaceFile
+	LocatorFillFile
+)
+
+// DeferredKind limits which absent-parent effects may be retained for replay.
+type DeferredKind uint8
+
+// The following values define the supported typed observations.
+const (
+	DeferredNone DeferredKind = iota
+	DeferredStart
+	DeferredFollowup
+)
+
+// ChildObservation contains native child facts, without archive admission policy.
+type ChildObservation struct {
+	ID                string
+	Path              string
+	Type              string
+	MissingDetail     string
+	CaptureTranscript bool
+}
+
+// LifecycleEvent is a typed local result. Raw native payloads are never retained.
+type LifecycleEvent struct {
+	Kind        EventKind
+	Session     NativeSession
+	ProjectRoot string
+	Source      SourceRef
+	Locator     LocatorUpdate
+	Start       StartEvidence
+	NewOnly     bool
+	Deferred    DeferredKind
+	Reason      string
+	NativeEvent string
+	Evidence    []archive.SupplementalEvidence
+	Child       *ChildObservation
+}
+
+// HookDecoder interprets native JSON; it performs no host operations.
+type HookDecoder interface {
+	Decode(context.Context, HookInput) ([]LifecycleEvent, error)
+}
+
+// HookDiagnosticDecoder supplies only a project root for panic diagnostics.
+// It is pure, optional, and conveys no admission or lifecycle authority.
+type HookDiagnosticDecoder interface {
+	DiagnosticProject(HookInput) string
+}
+
+// DecodersLookup is the narrow port consumed by capture and replay.
+type DecodersLookup interface {
+	LookupDecoder(string) (HookDecoder, bool)
+}
+
+// LegacyAdmission retains the exact previous private intent wire fields.
+// Only native decoders interpret their meaning; no raw hook content is present.
+type LegacyAdmission struct {
+	Harness         string    `json:"harness"`
+	Event           string    `json:"event"`
+	NativeSessionID string    `json:"native_session_id"`
+	ProjectRoot     string    `json:"project_root"`
+	DestinationID   string    `json:"destination_id"`
+	PauseGeneration string    `json:"pause_generation,omitempty"`
+	TranscriptPath  string    `json:"transcript_path,omitempty"`
+	CursorVersion   string    `json:"cursor_version,omitempty"`
+	ComposerMode    string    `json:"composer_mode,omitempty"`
+	ObservedAt      time.Time `json:"observed_at"`
+}
+
+// LegacyHookDecoder translates old private records without rechecking fresh proof.
+type LegacyHookDecoder interface {
+	DecodeLegacy(AdmissionIntent) ([]LifecycleEvent, error)
+}
+
+// ReplayEffect is a content-free, versioned effect with original proof and identity.
+type ReplayEffect struct{ Event LifecycleEvent }
+
+// AdmissionIntent is the private replay wire envelope, retaining legacy fields.
+type AdmissionIntent struct {
+	Harness         string         `json:"harness"`
+	Event           string         `json:"event"`
+	NativeSessionID string         `json:"native_session_id"`
+	ProjectRoot     string         `json:"project_root"`
+	DestinationID   string         `json:"destination_id"`
+	PauseGeneration string         `json:"pause_generation,omitempty"`
+	TranscriptPath  string         `json:"transcript_path,omitempty"`
+	CursorVersion   string         `json:"cursor_version,omitempty"`
+	ComposerMode    string         `json:"composer_mode,omitempty"`
+	ObservedAt      time.Time      `json:"observed_at"`
+	Version         int            `json:"version,omitempty"`
+	Effects         []ReplayEffect `json:"effects,omitempty"`
+	// Replay is the hook process marker, retained for queued new admissions.
+	Replay *archive.Replay `json:"replay,omitempty"`
+}

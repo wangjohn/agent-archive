@@ -10,6 +10,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
+// None of these tests is parallel: newRefreshInstall replaces launchctl.
+
 // setup --refresh rewrites the collector's plist from the program and the
 // environment of the plist that is there: the executable becomes the running
 // one, AGENT_ARCHIVE_HOME is dropped and written again from the data

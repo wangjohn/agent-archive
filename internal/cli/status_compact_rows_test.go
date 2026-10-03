@@ -55,10 +55,10 @@ func TestStatusDestinationAgreesWithAStorageHeadline(t *testing.T) {
 		"open storage: load credentials: no profile":                                                  "! unreachable on the last pass",
 		backgroundCredentialProcessFailure:                                                            "! couldn't get credentials on the last pass",
 		// Not about storage: the clock hold proves storage answered, and
-		// the others are this Mac's own files and checks.
-		"retention: this Mac's clock is ahead of the storage service's; retention deletes nothing until it is corrected (by 5 minutes)": "✓ reachable",
-		"list registrations: open /Users/alex/.agent-archive/registrations: permission denied":                                          "✓ reachable",
-		"collection succeeded but retention cleanup failed: remove local copy: permission denied":                                       "✓ reachable",
+		// the others are this machine's own files and checks.
+		"retention: this machine's clock is ahead of the storage service's; retention deletes nothing until it is corrected (by 5 minutes)": "✓ reachable",
+		"list registrations: open /Users/alex/.agent-archive/registrations: permission denied":                                              "✓ reachable",
+		"collection succeeded but retention cleanup failed: remove local copy: permission denied":                                           "✓ reachable",
 	} {
 		failing := mixedStatusView()
 		failing.Collector.SetLastErrors(recorded)

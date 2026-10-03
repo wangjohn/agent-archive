@@ -2,17 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -27,7 +29,7 @@ func (f handoffFixture) addSession(t *testing.T, harness, native, prompt string,
 	transcript := filepath.Join(f.project, native+".jsonl")
 	must(t, os.WriteFile(transcript, nil, 0o600))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": native, "cwd": f.project, "transcript_path": transcript}
-	if err := capture.HandleEvent(f.home, harness, payload, f.env.now()); err != nil {
+	if err := handleTestHookEvent(f.home, harness, payload, f.env.now()); err != nil {
 		t.Fatal(err)
 	}
 	var content string
@@ -210,8 +212,9 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 
 func TestHandoffPickerBeforeSetup(t *testing.T) {
 	t.Parallel()
-	out, errOut, code := runPicker(t, testEnv(t, t.TempDir(), time.Now()), "1\n")
-	if code != 1 || out != "" || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	out, errOut, code := runPicker(t, f.env, "1\n")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }
@@ -371,7 +374,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
-	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --harness codex --max-bytes 0"} {
+	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --source archive --harness codex --max-bytes 0"} {
 		if !strings.Contains(*document, want) {
 			t.Errorf("document missing %q:\n%s", want, *document)
 		}
@@ -382,7 +385,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 }
 
 // addSubagent registers a subagent of parent under native, sharing parent's
-// transcript, as newer than everything else.
+// transcript, so it is as active as parent.
 func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string {
 	t.Helper()
 	reg, found, err := state.OpenReadOnly(f.home).LoadRegistration(parent)
@@ -390,8 +393,8 @@ func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string 
 		t.Fatalf("load %s: found=%v err=%v", parent, found, err)
 	}
 	id := "ffffffff" + parent[8:]
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, reg.NativeSessionID, "agent-1"
 	reg.ArchiveSessionID, reg.NativeSessionID = id, native
-	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, "native-new", "agent-1"
 	data, err := json.Marshal(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -419,6 +422,88 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	}
 }
 
+// publishArchivedSubagent puts session id in the archive as a subagent of
+// parent, last captured at captured.
+func (f handoffFixture) publishArchivedSubagent(t *testing.T, id, parent string, captured time.Time) {
+	t.Helper()
+	syntheticSession{id: id, harness: "codex", project: "sub-project", captured: captured, parent: parent}.publish(t, f.mem)
+}
+
+// An archived subagent, newer than every session here, is not offered, from
+// the merged list or the archive alone.
+func TestHandoffPickerSkipsArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := "eeeeeeee" + f.both[8:]
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+	for _, id := range []string{f.notUploaded, f.archiveOnly, f.both} {
+		pickerLine(t, out, id)
+	}
+	// Archive only: the subagent is not offered there either.
+	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("--source archive: code=%d stderr=%s; archived subagent listed:\n%s", code, errOut, out)
+	}
+}
+
+// The footer's total counts top-level sessions only: the archived subagents
+// past the limit are not among the ones that can be offered.
+func TestHandoffPickerFooterExcludesArchivedSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range defaultListLimit {
+		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
+	}
+	f.sync(t)
+	for i := range 3 {
+		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
+	}
+	out, errOut, code := runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// The footer names the archived subagents the rows leave out, in list's
+// words, and --source local, which never offers them, does not.
+func TestHandoffPickerFooterNamesHiddenSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range 2 {
+		f.publishArchivedSubagent(t, fmt.Sprintf("eeeeeee%d", i)+f.both[8:], f.both, f.env.now().Add(-10*time.Hour))
+	}
+	// The subagents are another project's.
+	out, errOut, code := runPicker(t, f.env, "q\n", "--all-projects")
+	if code != 0 || !strings.Contains(out, "3 sessions (2 subagent sessions hidden; search to find one).") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	out, errOut, code = runPicker(t, f.env, "q\n", "--all-projects", "--source", "local")
+	if code != 0 || strings.Contains(out, "hidden") {
+		t.Fatalf("--source local: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A local subagent registration is skipped even when its parent is in the
+// archive, so a parent that is both registered and archived is offered once.
+// The subagent is archived too: its archived row is dropped before the merge,
+// and its registration, finding no archived row to join, must not come back
+// as a session not yet uploaded.
+func TestHandoffPickerSkipsSubagentRegistrationOfArchivedParent(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.both, "native-local-sub")
+	f.publishArchivedSubagent(t, sub, f.both, f.env.now().Add(4*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
+	}
+	pickerLine(t, out, f.both)
+}
+
 // Picker titles come from the filtered record, never the raw transcript.
 func TestHandoffPickerTitleIsFiltered(t *testing.T) {
 	t.Parallel()
@@ -441,8 +526,11 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
 	}
 	f.sync(t)
+	// Registered, the archived session with no prompt would be read to see
+	// whether it has one by now; archived only, it is not counted.
+	f.unregister(t, f.noPrompt)
 	out, errOut, code := runPicker(t, f.env, "q\n")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
 		t.Fatalf("all archived: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	f.addSession(t, "codex", "native-old", "", f.env.now().Add(-3*time.Hour))
@@ -452,7 +540,180 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 		t.Fatalf("one not uploaded: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+3)) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A session's row shows the name its agent gave it, the same before it is
+// uploaded (built from the local transcript) and after (from its metadata).
+func TestHandoffPickerRowShowsTheSessionNameBeforeAndAfterUpload(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	id := f.addSession(t, "claude", "claude-named", "  a first   prompt\nof a named session", f.env.now().Add(3*time.Hour))
+	transcript := filepath.Join(f.project, "claude-named.jsonl")
+	file, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = file.WriteString(`{"type":"custom-title","customTitle":"Old name","sessionId":"claude-named"}` + "\n" +
+		`{"type":"custom-title","customTitle":"Name the picker shows","sessionId":"claude-named"}` + "\n" +
+		`{"type":"pr-link","sessionId":"claude-named","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}` + "\n")
+	must(t, errors.Join(err, file.Close()))
+	must(t, os.Chtimes(transcript, f.env.now().Add(3*time.Hour), f.env.now().Add(3*time.Hour)))
+
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	local := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(local, "Name the picker shows") || strings.Contains(local, "Old name") || strings.Contains(local, "first prompt") {
+		t.Fatalf("local row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.sync(t)
+	f.unregister(t, id)
+	out, errOut, code = runPicker(t, f.env, "q\n")
+	published := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(published, "Name the picker shows") || strings.Contains(published, "first prompt") {
+		t.Fatalf("published row: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// archiveNoPrompt uploads the fixture's session with no prompt and checks that
+// list still shows it: list shows every archived session, and only handoff
+// passes over one with nothing to hand off.
+func (f pickerFixture) archiveNoPrompt(t *testing.T) {
+	t.Helper()
+	f.sync(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"list", "--json"}, nil, &out, &errOut, f.env); code != 0 || !strings.Contains(out.String(), f.noPrompt) {
+		t.Fatalf("list --json: code=%d stderr=%s\n%s", code, errOut.String(), out.String())
+	}
+}
+
+// An archived session with no prompt is passed over as a local one is, whether
+// or not this machine still has it registered, and the footer does not count it.
+func TestHandoffPickerSkipsArchivedSessionsWithNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	check := func(label string, args ...string) {
+		t.Helper()
+		out, errOut, code := runPicker(t, f.env, "q\n", args...)
+		if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, "3 session(s).") {
+			t.Fatalf("%s: code=%d stderr=%s\n%s", label, code, errOut, out)
+		}
+		// Row 1 is the newest session that has a prompt.
+		if !strings.HasPrefix(pickerLine(t, out, f.notUploaded), "1 ") {
+			t.Fatalf("%s: row numbers:\n%s", label, out)
+		}
+	}
+	check("registered")
+	check("registered, archive only", "--source", "archive")
+	f.unregister(t, f.noPrompt)
+	check("archive only")
+	// Words typed into the picker's filter search the same sessions.
+	out, errOut, code := runPicker(t, f.env, "codex\nq\n")
+	if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, `"codex" matches 3`) {
+		t.Fatalf("filter: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A session archived before its first prompt is offered once its transcript
+// here has one, titled by it, as the archive's copy will be on the next sync.
+func TestHandoffPickerOffersAnArchivedSessionPromptedSince(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	transcript := filepath.Join(f.project, "native-empty.jsonl")
+	content := fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-01-02T00:00:00Z","payload":{"id":"native-empty","cwd":%q}}`+"\n", f.project) +
+		`{"type":"response_item","timestamp":"2026-01-02T00:00:02Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Prompted after upload"}]}}` + "\n"
+	must(t, os.WriteFile(transcript, []byte(content), 0o600))
+	active := f.env.now().Add(2 * time.Hour)
+	must(t, os.Chtimes(transcript, active, active))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	line := pickerLine(t, out, f.noPrompt)
+	if code != 0 || !strings.Contains(line, "Prompted after upload") || strings.Contains(line, "not yet uploaded") || !strings.HasPrefix(line, "1 ") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	// The archive's copy alone still has nothing to hand off.
+	out, _, _ = runPicker(t, f.env, "q\n", "--source", "archive")
+	if strings.Contains(out, f.noPrompt[:minShortSessionID]) {
+		t.Fatalf("--source archive offers the archive's prompt-less copy:\n%s", out)
+	}
+}
+
+// The filter's search over the picker's sessions reads the transcripts of
+// sessions not uploaded yet only within its bound, as the picker and a title
+// search do; an archived session past the bound is still searched.
+func TestHandoffPickerReadLimitBoundsTranscriptReads(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	older := f.addSession(t, "codex", "native-older", "Older not uploaded", f.env.now().Add(-3*time.Hour))
+	regs, err := state.OpenReadOnly(f.home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's own session is archived; the rest are only here.
+	archived := []archive.Metadata{{SessionID: f.both, Harness: archive.Harness{Name: "codex"}, Title: "Archived and here", CapturedAt: f.env.now().Add(-2 * time.Hour)}}
+	picker := handoffPicker{ctx: context.Background(), env: f.env, home: f.home, archiveRead: true}
+	ids := func(rows []handoffPickerRow) []string {
+		var out []string
+		for _, row := range rows {
+			out = append(out, row.metadata.SessionID)
+		}
+		return out
+	}
+	all, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(all); !sameStrings(got, []string{f.notUploaded, f.both, older}) {
+		t.Fatalf("unbounded rows %v", got)
+	}
+	picker.readLimit = 1
+	bounded, _, _ := picker.rows(regs, archived, math.MaxInt)
+	if got := ids(bounded); !sameStrings(got, []string{f.notUploaded, f.both}) {
+		t.Fatalf("bounded rows %v, want the first not uploaded and the archived one", got)
+	}
+}
+
+// touchFirst is stdin that runs touch before its first read: what happens on
+// the machine while the picker waits for an answer.
+type touchFirst struct {
+	r     io.Reader
+	touch func()
+}
+
+func (t *touchFirst) Read(p []byte) (int, error) {
+	if t.touch != nil {
+		t.touch()
+		t.touch = nil
+	}
+	return t.r.Read(p)
+}
+
+// The filter reads this machine's sessions again, after the table did; a
+// session active in between keeps the number the table gave it, so the number
+// the person saw hands off the session they saw it on.
+func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	later := f.env.now().Add(3 * time.Hour)
+	stdin := &touchFirst{r: strings.NewReader("codex\n3\np\n"), touch: func() {
+		must(t, os.Chtimes(filepath.Join(f.project, "codex.jsonl"), later, later))
+	}}
+	var out, errOut bytes.Buffer
+	env := f.env
+	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	var pager string
+	env.RunPager = copyPager(&pager)
+	if code := Run([]string{"handoff"}, stdin, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "session "+f.both+" · source: local") {
+		t.Fatalf("3, the table's number of %s, handed off another session:\n%s", f.both[:minShortSessionID], out.String())
+	}
+	_, filtered, found := strings.Cut(out.String(), `"codex" matches 3`)
+	filtered, _, _ = strings.Cut(filtered, "Continue in:")
+	if !found {
+		t.Fatalf("the filter was not drawn:\n%s", out.String())
+	}
+	if line := pickerLine(t, filtered, f.both); !strings.HasPrefix(line, "3 ") {
+		t.Fatalf("the filter renumbered %s: %q", f.both[:minShortSessionID], line)
 	}
 }

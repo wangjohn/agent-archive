@@ -93,13 +93,7 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 				t.Fatalf("%s: %v", name, err)
 			}
 			if !imported {
-				reg := registration()
-				dirty := true
-				reg.StartHead = &GitHead{SHA: strings.Repeat("3f", 20), Dirty: &dirty, ObservedAt: derived}
-				reg.LastHead = &GitHead{SHA: strings.Repeat("9e", 32), ObservedAt: derived}
-				metadata.ApplyGitHead(reg)
-				reg.Replay = &Replay{RunID: "bench-2026-09-30.run:7"}
-				metadata.ApplyReplay(reg)
+				metadata.ApplyReplay(SessionRegistration{Replay: &Replay{RunID: "bench-run:7"}})
 			}
 			if imported {
 				reg := registration()
@@ -117,9 +111,8 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 			exercised["capture_gaps"] = exercised["capture_gaps"] || len(metadata.CaptureGaps) > 0
 			exercised["started_at_source"] = exercised["started_at_source"] || metadata.StartedAtSource != ""
 			exercised["ended_at"] = exercised["ended_at"] || metadata.EndedAt != nil
-			exercised["repo_key"] = exercised["repo_key"] || metadata.RepoKey != ""
-			exercised["git_head"] = exercised["git_head"] || metadata.GitHead != nil
 			exercised["replay"] = exercised["replay"] || metadata.Replay != nil
+			exercised["repo_key"] = exercised["repo_key"] || metadata.RepoKey != ""
 			exercised["tools_used"] = exercised["tools_used"] || len(metadata.ToolsUsed) > 0
 			exercised["files_touched"] = exercised["files_touched"] || (metadata.Counts.FilesTouched != nil && *metadata.Counts.FilesTouched > 0)
 			exercised["model_tokens"] = exercised["model_tokens"] || len(metadata.ModelTokens) > 0
@@ -127,6 +120,9 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 			exercised["reasoning_tokens"] = exercised["reasoning_tokens"] || (metadata.Counts.ReasoningTokens != nil && *metadata.Counts.ReasoningTokens > 0)
 			exercised["tool_errors"] = exercised["tool_errors"] || (metadata.Counts.ToolErrors != nil && *metadata.Counts.ToolErrors > 0)
 			exercised["git_activity"] = exercised["git_activity"] || len(metadata.GitActivity) > 0
+			exercised["name"] = exercised["name"] || metadata.Name != ""
+			exercised["branch"] = exercised["branch"] || metadata.Branch != ""
+			exercised["pull_requests"] = exercised["pull_requests"] || len(metadata.PullRequests) > 0
 			for _, gap := range metadata.CaptureGaps {
 				if !slices.Contains(CaptureGapCodes, gap.Code) {
 					t.Errorf("%s: gap code %q is not in CaptureGapCodes", name, gap.Code)
@@ -141,7 +137,7 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 // arrays, which would leave that part of the schema untested.
 func checkExercised(t *testing.T, exercised map[string]bool) {
 	t.Helper()
-	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source", "ended_at", "tools_used", "files_touched", "model_tokens", "mcp_calls", "reasoning_tokens", "tool_errors", "git_activity", "repo_key", "git_head", "replay"} {
+	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source", "ended_at", "tools_used", "files_touched", "model_tokens", "mcp_calls", "reasoning_tokens", "tool_errors", "git_activity", "repo_key", "replay", "name", "branch", "pull_requests"} {
 		if !exercised[field] {
 			t.Errorf("no fixture metadata has %s, so its schema is untested", field)
 		}

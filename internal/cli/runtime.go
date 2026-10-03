@@ -1,0 +1,23 @@
+package cli
+
+import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"slices"
+)
+
+func runtimeObservations(env currentSessionDependencies) []agentapi.AgentRuntime {
+	return env.runtimeLookup().Observations(agentapi.RuntimeEnvironment{LookupEnv: env.lookupEnv})
+}
+
+func launchEnvironmentKeys(env interface{ runtimeLookup() agentapi.RuntimeLookup }) []string {
+	return slices.Concat(env.runtimeLookup().SessionEnvironmentKeys(), []string{envTrace})
+}
+
+func projectRuntime(env currentSessionDependencies, harness string) string {
+	for _, observation := range runtimeObservations(env) {
+		if observation.ProjectLatest && (harness == "" || harness == string(observation.Agent)) {
+			return string(observation.Agent)
+		}
+	}
+	return ""
+}

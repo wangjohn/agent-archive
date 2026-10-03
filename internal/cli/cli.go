@@ -14,6 +14,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"io"
 	"os"
 	"os/signal"
@@ -26,15 +27,19 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Version is the released version string. scripts/build-release.sh sets it
@@ -90,9 +95,14 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// Agents overrides immutable production composition, including its catalog.
+	Agents            *builtin.Registry
+	handoffConfigLoad func(string) (config.Config, bool, error)
+	nativeFS          nativesessions.FileSystem
+	nativeStoreRoots  []nativesessions.StoreRoot
 	// sweepClock, set only by tests, adjusts the retention sweep's clock
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
-	// moves Now months ahead moves only this Mac's clock; the sweep rightly
+	// moves Now months ahead moves only this machine's clock; the sweep rightly
 	// refuses to delete by it unless the storage clock moves too.
 	sweepClock func(*retention.Options)
 	// observeFlags, set only by tests, sees every command flag set as it is
@@ -104,9 +114,13 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
-	// gitHead, set only by tests, replaces the git lookup of the commit a
-	// session's working directory has checked out (see gitHeadResolver).
-	gitHead func(dir string, withDirty bool) (string, *bool)
+	// projectGitRunner replaces bounded Git operations in setup tests.
+	projectGitRunner gitremote.Runner
+	// repoKeyContext replaces bounded setup lookups in tests.
+	repoKeyContext func(context.Context, string) string
+	// currentBranch, set only by tests, replaces the git lookup of the
+	// branch checked out in a directory (see gitBranch).
+	currentBranch func(dir string) string
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults
@@ -133,6 +147,17 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
+	// Cloudflare makes the client guided R2 creation uses for the pasted
+	// bootstrap API token. Defaults to the real Cloudflare API.
+	Cloudflare func(token string) cloudflare.API
+	// RunTokenCommand replaces the bounded explicit management-token subprocess.
+	RunTokenCommand func(context.Context, []string, []string) (string, error)
+	// Pause waits between guided R2 creation's checks of a key Cloudflare
+	// has only just made. Defaults to sleeping; tests skip the wait.
+	Pause      func(time.Duration)
 	WorkingDir func() (string, error)
 	Home       func() (string, error)
 	Now        func() time.Time
@@ -157,6 +182,18 @@ type Env struct {
 	// it is the default installation, with the default launchd label.
 	// Defaults to os/user.Current's HomeDir.
 	AccountHome func() (string, error)
+	// HostFingerprint identifies the machine the command runs on, as
+	// local.HostFingerprint does (Linux only; "": cannot say). Setup records
+	// it beside the machine ID and status compares it, to notice a data
+	// directory copied from another machine. Defaults to
+	// local.HostFingerprint; it is read only on Linux.
+	HostFingerprint func() string
+	// MountTable returns this machine's mount table in the format of
+	// /proc/self/mountinfo, which setup, setup --refresh and status read on
+	// Linux to tell whether the data directory or the systemd unit directory
+	// is on a network filesystem. Defaults to reading /proc/self/mountinfo; it
+	// is read only on Linux, and a table that cannot be read stops nothing.
+	MountTable func() ([]byte, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -166,11 +203,16 @@ type Env struct {
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
 	// Scheduler is the background job manager: it reports the collector's job
-	// state, loads the LaunchAgent setup wrote so scheduled collection
-	// starts without a login/logout cycle, and stops it again (rolling setup
-	// back, or during uninstall). Defaults to this system's own, through
-	// newScheduler (launchd on macOS, through launchctl).
+	// state, loads the job setup defined so scheduled collection starts
+	// without a login/logout cycle, and stops it again (rolling setup back,
+	// or during uninstall). Defaults to the backend the installation's
+	// configuration records, through newScheduler: launchd on macOS (through
+	// launchctl) and systemd on Linux (through systemctl --user); setup uses
+	// this system's own and records it.
 	Scheduler scheduler.Scheduler
+	// choosesBackend is set for a command that picks the scheduler rather than
+	// addressing the installation's recorded one (see choosingBackend).
+	choosesBackend bool
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the
@@ -180,6 +222,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// UnsetEnv removes a variable from the process environment, so programs
+	// setup starts later do not inherit it. Guided R2 creation uses it for
+	// CLOUDFLARE_API_TOKEN once it has read it. Defaults to os.Unsetenv.
+	UnsetEnv func(string) error
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
 	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
 	// $TMPDIR; tests set it because their files live in one.
@@ -216,7 +262,7 @@ type Env struct {
 	// waits for it to exit. Defaults to running spec.Binary with spec.Args
 	// in spec.Dir with spec.Env. Tests replace it to avoid starting an agent.
 	LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error
-	// LookPath finds a destination agent's executable. Defaults to
+	// LookPath finds a destination agent or clipboard provider. Defaults to
 	// exec.LookPath.
 	LookPath func(string) (string, error)
 	// RunGit runs `git -C dir args...` and returns its stdout, with its
@@ -230,11 +276,22 @@ type Env struct {
 	// and returns where it opened. Defaults to termlaunch.Open. Tests
 	// replace it so no window opens.
 	OpenTerminal func(termlaunch.Spec) (string, error)
-	// Clipboard replaces the clipboard's contents. Defaults to pbcopy.
+	// Clipboard replaces the clipboard's contents. Defaults to pbcopy on
+	// macOS, or wl-copy, xclip, or xsel for a connected Linux desktop.
 	Clipboard func([]byte) error
-	// Interrupts delivers the signals that stop backfill while it plans,
-	// registers, and uploads, and stop ends the delivery. Defaults to
-	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
+	// PairingClipboardRead reads clipboard contents for conditional cleanup only.
+	PairingClipboardRead func() ([]byte, error)
+	// PairingTerminal opens the private terminal for redirected bundle input.
+	PairingTerminal func() (io.ReadWriteCloser, error)
+	// PairingCode supplies hidden interactive code input in isolated tests.
+	PairingCode func() (string, error)
+	// PairingRepoRoot is a bounded source scope lookup, injected by tests.
+	PairingRepoRoot func(context.Context, string) (string, error)
+	// Interrupts delivers the signals that stop a command while it runs
+	// (backfill while it plans, registers, and uploads, the full-screen
+	// views until they restore the terminal, setup's storage check), and
+	// stop ends the delivery. Defaults to os/signal for os.Interrupt,
+	// SIGTERM, SIGHUP, and SIGQUIT.
 	Interrupts func() (signals <-chan os.Signal, stop func())
 	// RefreshCollectorWait is how long setup --refresh waits for a running
 	// collector pass to finish before it refuses. Defaults to
@@ -256,12 +313,19 @@ func (e Env) isTerminal(stream any) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
+// interrupts is the signal set of the commands a person runs. SIGQUIT is in
+// it so that a kill -QUIT from outside (Ctrl-\ is turned off while a screen
+// reads keys) is answered like the others: the terminal is restored and the
+// process exits with the shell's status for it, 131. Go's default for SIGQUIT
+// is a goroutine dump, which would leave the terminal raw on the alternate
+// screen. The collector and the hooks never register these, so their SIGQUIT
+// keeps the default.
 func (e Env) interrupts() (<-chan os.Signal, func()) {
 	if e.Interrupts != nil {
 		return e.Interrupts()
 	}
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	return signals, func() { signal.Stop(signals) }
 }
 
@@ -284,6 +348,13 @@ func (e Env) fileOwner(path string) (uid int, ok bool) {
 		return e.FileOwner(path)
 	}
 	return fileOwner(path)
+}
+
+func (e Env) unsetEnv(key string) error {
+	if e.UnsetEnv != nil {
+		return e.UnsetEnv(key)
+	}
+	return os.Unsetenv(key)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {
@@ -315,6 +386,7 @@ func (e Env) now() time.Time {
 }
 
 func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -322,6 +394,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
+	defer trace.Start("open store").End()
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
@@ -441,7 +514,7 @@ var openCredentialStore = func() (credentials.CredentialStore, error) {
 	})
 }
 
-// notSetUp reports whether this Mac is not archiving: it has no saved
+// notSetUp reports whether this machine is not archiving: it has no saved
 // configuration, or uninstall left one with archiving disabled. It reads
 // only, and says nothing when the data directory cannot be read.
 func notSetUp(env Env) bool {
@@ -457,6 +530,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
+  agent-archive machines    List machine records and rename this machine
   agent-archive status      Check capture and see what to do next
 
 Manage capture
@@ -471,7 +545,7 @@ Inspect history
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
-  agent-archive backfill    Import sessions already on this Mac
+  agent-archive backfill    Import sessions already on this machine
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
@@ -504,6 +578,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 			return 2
 		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			startTrace("list", stderr, env)
+			defer finishTraceNow()
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {
@@ -513,6 +589,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		terminal.Print(stdout, usage)
 		return 0
 	}
+	if err := pairingInvocationError(args, env); err != nil {
+		terminal.Println(stderr, err.Error())
+		return 1
+	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
 	}
@@ -521,6 +601,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	if !nonInteractiveSettingUsable(args, stderr, env) {
 		return 2
 	}
+	startTrace(args[0], stderr, env)
+	defer finishTraceNow()
 
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -533,6 +615,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "machines":
+		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":

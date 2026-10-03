@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -52,16 +51,6 @@ var handoffLetters = []struct {
 	{"q", "quit", "quit", handoffQuit},
 }
 
-// handoffDestinations lists the agents in the order the prompt offers them
-// after the default.
-var handoffDestinations = []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
-
-var handoffDestinationLabels = map[handoffDestination]string{
-	handoffDestinationClaude: "Claude Code",
-	handoffDestinationCodex:  "Codex",
-	handoffDestinationCursor: "Cursor",
-}
-
 // handoffDefaultDestination is where a session goes by default when the
 // configuration names nothing: to another agent than the one it came from.
 var handoffDefaultDestination = map[string]handoffDestination{
@@ -80,11 +69,12 @@ func offersDestinations(opts handoffOptions, interactive bool) bool {
 }
 
 // installedDestinations returns the agents whose CLI is on PATH, in
-// handoffDestinations order.
+// catalog presentation order.
 func installedDestinations(env launchSpecDependencies) []handoffDestination {
 	var installed []handoffDestination
-	for _, dest := range handoffDestinations {
-		for _, name := range agentCommands[dest].binaries {
+	for _, binding := range env.launcherLookup().Launchers() {
+		dest := handoffDestination(binding.Agent)
+		for _, name := range binding.Launcher.Executables().Names {
 			if _, err := env.lookPath(name); err == nil {
 				installed = append(installed, dest)
 				break
@@ -113,28 +103,38 @@ func defaultDestination(installed []handoffDestination, source string, cfg confi
 // agents, numbered with def first, or print, copy, write to a file, or quit.
 // Enter takes def, or print when no agent is installed. Input ending is
 // quitting, as in the session picker.
-func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error) {
+func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination, canCopy bool, c agentmeta.Catalog) (handoffChoice, error) {
 	agents := installed
 	if i := slices.Index(installed, def); i > 0 {
 		agents = slices.Concat([]handoffDestination{def}, installed[:i], installed[i+1:])
 	}
 	p.heading("Continue in:")
 	for i, dest := range agents {
-		label := handoffDestinationLabels[dest]
+		label := string(dest)
+		if d, ok := c.Lookup(string(dest)); ok {
+			label = d.DisplayName
+		}
 		if dest == def {
 			label += " (default)"
 		}
 		terminal.Printf(p.out, "  %d) %s\n", i+1, label)
 	}
 	for _, l := range handoffLetters {
+		if l.action == handoffCopy && !canCopy {
+			continue
+		}
 		terminal.Printf(p.out, "  %s) %s\n", l.key, l.label)
 	}
-	label, defKey := "Enter p, c, w, or q", "p"
+	letters := "p, w, or q"
+	if canCopy {
+		letters = "p, c, w, or q"
+	}
+	label, defKey := "Enter "+letters, "p"
 	switch {
 	case len(agents) == 1:
-		label, defKey = "Enter 1, p, c, w, or q", "1"
+		label, defKey = "Enter 1, "+letters, "1"
 	case len(agents) > 1:
-		label, defKey = fmt.Sprintf("Enter 1-%d, p, c, w, or q", len(agents)), "1"
+		label, defKey = fmt.Sprintf("Enter 1-%d, %s", len(agents), letters), "1"
 	}
 	for {
 		answer, err := p.choose(label, defKey)
@@ -144,7 +144,7 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 			}
 			return handoffChoice{}, err
 		}
-		answer = strings.ToLower(answer)
+		answer = agentmeta.Canonical(c, answer)
 		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(agents) {
 			return handoffChoice{action: handoffLaunch, dest: agents[n-1]}, nil
 		}
@@ -154,6 +154,9 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		}
 		// So does a letter's word.
 		for _, l := range handoffLetters {
+			if l.action == handoffCopy && !canCopy {
+				continue
+			}
 			if answer == l.key || answer == l.word {
 				return handoffChoice{action: l.action}, nil
 			}
@@ -170,8 +173,12 @@ func askHandoffDestination(p *prompter, h archive.Handoff, home string, env hand
 	if err != nil {
 		return handoffChoice{}, fmt.Errorf("load config: %w", err)
 	}
+	return askHandoffDestinationConfig(p, h, cfg, env)
+}
+
+func askHandoffDestinationConfig(p *prompter, h archive.Handoff, cfg config.Config, env handoffDestinationDependencies) (handoffChoice, error) {
 	installed := installedDestinations(env)
-	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff))
+	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff), env.clipboardAvailable(), catalogFor(env))
 }
 
 // deliverHandoff carries out a choice other than launching: print it (paged
@@ -262,19 +269,4 @@ func (e Env) openTerminal(spec termlaunch.Spec) (string, error) {
 		return e.OpenTerminal(spec)
 	}
 	return termlaunch.Open(context.Background(), spec, termlaunch.DefaultEnvironment())
-}
-
-func (e Env) clipboard(data []byte) error {
-	if e.Clipboard != nil {
-		return e.Clipboard(data)
-	}
-	cmd := exec.CommandContext(context.Background(), "pbcopy")
-	cmd.Stdin = bytes.NewReader(data)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("pbcopy: %w: %s", err, msg)
-		}
-		return fmt.Errorf("pbcopy: %w", err)
-	}
-	return nil
 }

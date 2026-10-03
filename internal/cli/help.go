@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"regexp"
 	"slices"
@@ -12,13 +13,100 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"machines revoke": `Usage: agent-archive machines revoke NAME [--include-issued] [--yes] [--json]
+       agent-archive machines revoke --machine-id MACHINE_ID [--yes] [--json]
+       agent-archive machines revoke --recipient-id RECIPIENT_ID
+       [--yes] [--json]
+       agent-archive machines revoke --pairing-id PAIRING_ID [--yes] [--json]
+       agent-archive machines revoke --operation-id OPERATION_ID
+       [--yes] [--json]
+
+Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1 is required.
+Bucket claims never authorize deletion. Verify immutable ownership through a
+local assignment, healthy issuer ledger or independently checked operator file.
+Unknown ownership refuses even under --yes. No token records a request only.
+A provider 404 remains unknown; a request is never proof of access removal.
+Self's active object key is deleted last. Sessions and downloaded data remain.
+  --machine-id MACHINE_ID   Select an independently bound immutable machine
+  --recipient-id RECIPIENT_ID
+                    Select a healthy local issuer's recipient lineage
+  --pairing-id PAIRING_ID   Select a healthy local issuer's pairing lineage
+  --operation-id OPERATION_ID
+                    Retry exactly this local operation and confirmed outcomes
+  --binding-file PATH
+                    Private independent operator binding; never bucket claims
+  --include-issued Check visible issuer descendants, including delivered keys
+                    Inventory completeness stays unknown; no refill or mint
+  --yes             Never prompt; require environment token for deletion
+  --json            Write secret-free per-key outcomes; never prompt
+`,
+	"machines own-key": `Usage: agent-archive machines own-key [--yes] [--cancel]
+
+Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1 is required.
+Stage and check a dedicated key, then commit through setup's transaction.
+Existing machine identity remains. Shared access stays valid for other users.
+Remove the old local secret only after commit and only when no other local
+destination needs it. Record publication retries independently of commit.
+  --yes          Require environment token; never prompt or run a command
+  --cancel       Remove only a proven uncommitted staged dedicated key
+`,
+	"machines add": `Usage: agent-archive machines add [--name NAME] [--share-key] [--spares 0..5]
+       [--expires 15m] [--print | --file PATH] [--yes]
+
+Create an encrypted pairing bundle after checking the source storage.
+Dedicated R2 issuance is an experimental draft, gated by
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1. An available management token creates
+and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
+implicitly. --share-key explicitly selects shared-key beta without independent
+recipient revocation. Live provider acceptance and revocation remain required.
+S3 transfers settings and a profile name. Configure the profile on the receiver.
+Deliver the bundle and six-word code separately. Pairing refuses in any coding
+agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
+  --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
+  --share-key    Explicitly share the active R2 key (beta)
+  --spares N     Save unused R2 key target, 0..5 (default 2)
+                 Refill with an available management token
+  --expires DURATION  Lifetime from 5m to 24h (default: 15m)
+  --print        Print the encrypted bundle instead of copying it
+  --file PATH    Create a private 0600 bundle file; never overwrite a file
+  --yes          Require --name and deliberately print bundle and code
+                 (with --file, print only the separately delivered code)
+Interactive delivery needs terminal input and output; codes use a cleared
+alternate screen. Clipboard contents are
+cleared on normal exit only if they still equal the bundle. Interrupted delivery
+remains uncertain in the local ledger; dedicated keys are never recycled after
+attempted exposure. Issuer-local delivered secrets are removed on exit; lineage
+remains. Spare refill failure does not invalidate the delivered pairing.
+`,
+	"machines": `Usage: agent-archive machines [--json] [--verify] [--yes]
+
+List informational machine records from this bucket.
+--verify opts into an experimental, read-only Cloudflare metadata check behind
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1. Account inventory completeness
+remains unknown; matching metadata never proves ownership or access removal.
+Anyone with bucket access can forge records; they never authorize revocation.
+Heartbeat is updated at most daily and does not indicate current activity.
+Unreadable records and incomplete listings are reported; those exit with code 1.
+  --json    Write records and observations as JSON
+            Never prompt or run a token command
+  --verify  Explicit bounded provider metadata check for this R2 bucket
+  --yes     With --verify, require CLOUDFLARE_API_TOKEN and never prompt
+`,
+	"machines rename": `Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
+
+Rename this machine only, keeping its immutable machine and credential IDs.
+Use the full MACHINE_ID when a current name is ambiguous. The new name has
+1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.
+Observed duplicate names are refused; concurrent naming can still race.
+A failed publication keeps the local name and the collector retries.
+`,
 	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
        [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
 Plan lists still-current older-filter sessions separately and never proposes
-their current sources for deletion. Pause every Mac uploading to this prefix
+their current sources for deletion. Pause every machine uploading to this prefix
 before apply. A versioned bucket keeps noncurrent versions and delete markers.
 `,
 	"purge plan": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
@@ -31,14 +119,17 @@ terminal, the plan is paged through $PAGER unless --no-pager.
 `,
 	"purge apply": `Usage: agent-archive purge apply PLAN [--yes]
 
-Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Pause every uploading machine first. Confirm the plan digest or use --yes.
 Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 `,
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
-               [--no-skills | --skills]
+               [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--prefix PREFIX] [--retention-days DAYS]
+               [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
+               [--allow-network-home]
        agent-archive setup --refresh [--verbose]
 
 Choose apps and projects, connect storage, then review and enable capture.
@@ -46,19 +137,27 @@ Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --pair                Receive an encrypted bundle and hidden terminal code
+  --pair-file PATH|-    Read a bounded bundle file or stdin; with --yes read and
+                        unset AGENT_ARCHIVE_PAIRING_CODE. Never a code flag.
+                        Pairing refuses inside coding agents. --yes refuses a
+                        destination change; interactive review requires consent.
   --refresh             After upgrading agent-archive: bring the app hooks, the
-                        background collector's plist, and the skill files up to
+                        background job's definition, and the skill files up to
                         date for the saved settings and this executable, and
                         change nothing else. Asks nothing and needs no
                         terminal; the installer runs it. Prints "nothing to
                         refresh" when all is current. It refuses, changing
                         nothing, before setup has finished, while a setup
                         needs recovery, after uninstall, when another
-                        installation's hooks are in the way, or when this
-                        executable is a temporary build. It points the hooks
-                        at the executable now running, which repairs hooks
-                        left pointing at one that moved or was deleted. Takes
-                        no other flag than --verbose (which lists the files)
+                        installation's hooks are in the way, when this
+                        executable is a temporary build, or (Linux) when the
+                        data directory or the systemd unit directory is on a
+                        network filesystem that --allow-network-home never
+                        allowed. It points the hooks at the executable now
+                        running, which repairs hooks left pointing at one
+                        that moved or was deleted. Takes no other flag than
+                        --verbose (which lists the files)
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again
@@ -76,14 +175,31 @@ An interrupted setup is recovered on the next run.
                         default: keep the saved key)
   --aws-profile NAME    S3: the AWS profile with access to the bucket
   --region REGION       S3: the bucket's region (default: the profile's)
+  --prefix PREFIX       Folder inside the bucket (default: saved folder, else
+                        agent-archive/). May be changed alone with --yes
+  --retention-days DAYS Keep sessions for 1 to 36500 days (default: saved,
+                        else 90)
+  --require-skill-use   Capture only sessions that use skills
+  --no-require-skill-use
+                        Capture sessions with or without skills (default:
+                        saved setting, else capture both)
   --project DIR         Capture this project, besides any saved (repeatable)
+  --project-repo KEY    Capture a unique local repo by key (repeatable)
+                       Skip ambiguous, excluded, or incomplete matches
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
-                        saved apps, else those found on this Mac). It must
+                        saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
   --no-skills           Install no agent skills (such as /handoff), and
                         remove those setup wrote. Later setup runs keep
                         them off until --skills
   --skills              Turn the agent skills back on and install them
+  --allow-network-home  Linux: allow the data directory or the systemd unit
+                        directory (under your home) on a network filesystem
+                        (NFS, SMB, ...), which setup otherwise refuses,
+                        changing nothing, because machines that share a home
+                        share one identity, cannot rely on file locks, and
+                        each run the background job. Only for a home that one
+                        machine ever mounts; recorded while it is needed
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -136,29 +252,65 @@ can catch up, including activity written during the pause. For an immediate
 pass, run agent-archive sync.
 Example: agent-archive resume
 `,
-	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--yes]
+	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
 `,
-	"list": `Usage: agent-archive list [options]
+	"list": `Usage: agent-archive list [WORDS] [options]
 
 Find sessions using metadata; does not download conversation content.
-Default text columns: TITLE (first filtered prompt preview, or a short
-SESSION_ID prefix when none), relative capture time, harness, project,
-and a short SESSION_ID. On a terminal with an interactive stdin, list a
-numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
-wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
-never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
-is inside coding agents (see the configuration reference). On a terminal
-without interactive stdin, text is paged through $PAGER unless --no-pager.
+With WORDS (quote them: one argument), list only the sessions they match.
+Every word must appear, in any case, in some field of a session: its name,
+title, branch, project name, harness, or the start of its SESSION_ID (4
+characters or more). A word like #212 or 212 also matches a pull request
+number, and never the start of a SESSION_ID. Words may match different
+fields, so "linux 212" finds the session named for Linux that opened PR 212.
+Inside a project the search looks at that repository's top-level sessions
+first, then at every project's, and only then at subagent sessions, in that
+order; the first that has a match answers, and a note says how many more match
+in other projects. The words are matched against metadata, never the
+conversation. Without WORDS, the table and browser list top-level sessions
+only: subagent sessions are left out before --limit counts, and the footer
+says how many; a parent shows how many it has. --json without WORDS lists
+every session, subagents included.
+Run inside a project, it lists that repository's sessions (every checkout and
+worktree of it, and its sessions from other machines), with a heading naming the
+repository; when there are none, it lists all projects and says so. --project
+lists another project's, and --all-projects every project's. Outside any
+project it lists every session, grouped by project. On a terminal, the a key,
+typed alone, switches between the repository and all projects.
+Default text columns: TITLE (the Claude Code or Cursor session name when
+available, else a preview of its first filtered prompt, else a short
+SESSION_ID prefix; Codex uses the prompt preview), PR (the
+last pull request the session linked or created, when any row has one),
+relative capture time, harness, project, and a short SESSION_ID. A harness or
+project every row shares is left out of the table and named in the heading.
+On a terminal with an interactive stdin, list a numbered table and pick a
+session to show its summary, then t for its transcript, Enter or b to go
+back, or q to quit. Keys act as pressed; the wheel, arrows, and PgUp/PgDn
+scroll. Press / to filter the rows as you type, with the words WORDS takes:
+the first match is highlighted, the arrows move the highlight, Enter shows it,
+and Esc clears the filter. A subagent that matches is shown under its parent,
+which is shown too. Rows keep their numbers while filtered. WORDS open the
+browser with the filter already filled in, to edit. Where keys cannot be read,
+the browser reads lines, and an answer that is not a row number, a
+SESSION_ID, or q is words to filter by (an empty answer clears them). Piped
+or --json output is never interactive, nor is any run with
+AGENT_ARCHIVE_NONINTERACTIVE on, as it is inside coding agents (see the
+configuration reference). On a terminal without interactive stdin, text is
+paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -179,6 +331,16 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
                                  AGENT_ARCHIVE_REPLAY set): hidden by default
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --project DIR|NAME             List this project's sessions: the
+                                 repository of a directory, or a project
+                                 name (matched to project_name and the
+                                 configured project labels, exactly, ignoring
+                                 case). Default: the current directory's
+                                 repository
+  --all-projects                 List every project's sessions (not with
+                                 --project). Scripts that read every session
+                                 pass this, since list run inside a project
+                                 now lists only its own
   --rebuild-index                Rebuild the listing index from live metadata;
                                  scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
@@ -190,22 +352,34 @@ without interactive stdin, text is paged through $PAGER unless --no-pager.
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;
-                                 each session is live metadata. Usage errors
-                                 print no JSON. Never paged or interactive.
+                                 each session is live metadata. "scope"
+                                 ({"label", "all_projects", "fell_back",
+                                 "outside_matches"}) appears when the
+                                 listing looked at a project's sessions
+                                 first. Usage errors print no JSON. Never
+                                 paged or interactive.
+Example: agent-archive list "flaky retention" --json
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
-	"show": `Usage: agent-archive show [SESSION_ID|TITLE] [options]
+	"show": `Usage: agent-archive show [SESSION_ID|WORDS] [options]
 
 Print a readable summary of a session's metadata: title, when, app, models,
 activity counts, skills, subagents, and capture gaps. --json prints the
-metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
-several matches on a terminal open a picker. With no SESSION_ID on a
-terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit. On a terminal, the
-summary and transcript are paged; in the default less, scroll with the mouse
-wheel, arrows, or space, search with /, and quit with q. Nothing is asked
-when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
-a SESSION_ID.
+metadata sidecar instead. WORDS also work, as in list: every word must appear
+in some field of a session (name, title, branch, project, harness, the start
+of its SESSION_ID from 4 characters, or a PR number such as #212), looking at
+this repository's sessions first. One match is shown; several on a terminal
+open the browser on them, with the words in its filter, and without one they
+are listed with the command to run next. With --json or --transcript the
+browser picks the one session to print instead.
+With no SESSION_ID on a terminal, browse sessions as list does: pick one for
+its summary, then t for its transcript, Enter or b to go back, or q to quit,
+and press / to filter the rows as you type. With --json, it picks one session
+and prints its sidecar.
+On a terminal, the summary and transcript are paged; in the default less,
+scroll with the mouse wheel, arrows, or space, search with /, and quit with
+q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
+coding agents: give a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -282,6 +456,10 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --all                          With --json, list every project, skill and
+                                 MCP server, not the top five of each (models
+                                 are always all). Only with --json: the --html
+                                 page keeps its top lists
   --html                         Write one self-contained web page (inline
                                  styles and SVG; no script, no requests, works
                                  in light and dark and prints) to stdout, or
@@ -299,10 +477,24 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
 Example: agent-archive stats --since 2026-09-01 --by project
 Example: agent-archive stats --html --output stats.html
 `,
-	"handoff": `Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
+	"handoff": `Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
-Continue a session in another coding agent. On a terminal, pick a session
-(this Mac's, including ones not yet uploaded, and archived ones), then pick
+Before setup, browse Claude Code and Codex native sessions in this checkout
+and its descendants. Local IDs (qualified with --harness) or unique prefixes
+select beyond the first 50 filtered previews. o loads another 50 explicitly;
+/ filters loaded rows only. Word queries report their bounded preview window.
+--project requires a directory; --all-projects explicitly broadens the scope.
+Local --latest ranks file modification time and requires complete identity
+coverage. Direct --to uses an exact current identity or asks for selection;
+it never guesses newest. --source archive requires setup. No capture hooks,
+credentials, configuration, registrations or scheduler are created. Private
+temporary launch files survive launch; later local handoffs clean owned files
+older than seven days, best effort. Cursor discovery is not automatic.
+
+
+After setup, continue a session in another coding agent. On a terminal, pick
+a session
+(this machine's, including ones not yet uploaded, and archived ones), then pick
 where to continue: an installed agent starts in this terminal with the
 session as its context (Enter takes handoff.default_to in config.json, else
 Codex for a Claude Code session and Claude Code for the others), or print,
@@ -310,27 +502,54 @@ copy to the clipboard, or write to a file. Inside Claude Code, /handoff codex
 runs handoff --to codex, which opens Codex in a new terminal tab or window.
 The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
-this Mac is read from its transcript now; otherwise it is downloaded from
+this machine is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
-prints without asking. Without a terminal, give a SESSION_ID or TITLE,
+prints without asking. Without a terminal, give a SESSION_ID or WORDS,
 --latest, or --file PATH (or --to, from inside an agent). Inside a coding
 agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
 terminal.
-A TITLE substring or short SESSION_ID matches as it does for show, in this
-Mac's sessions first (no network), then the archive's; a full SESSION_ID
-wins. Quote a title of several words. Several matches on a terminal open the
-picker on them; without one, or inside a coding agent, they are listed on
-stderr and the command exits 1, never guessing. A title skips the agent
-session running the command, unless --to is given.
-  --latest              The most recent session for the project
-  --project DIR         Project for --latest, and where the agent starts
-                        (default: current directory)
+After setup, WORDS are matched as list matches them: every word must appear,
+in any case,
+in some field of a session (its name, title, branch, project name, harness, or
+the start of its SESSION_ID, from 4 characters), and a word like #212 or 212
+also matches a pull request number, never a SESSION_ID. Quote them as one
+argument, and use one or two distinctive words: a topic, a PR number, a
+branch, or a project name. They look in this machine's sessions first (no
+network), then the archive's; a full SESSION_ID wins, and subagent sessions
+answer only when no other session matches. Inside a project, the picker and
+WORDS look at that repository's sessions first (every checkout and worktree of
+it), then everywhere; a note says how many more match in other projects.
+On the picker, the a key, typed alone, switches between the repository and
+all projects, and / filters the rows as you type (the arrows move the
+highlight, Enter hands off the highlighted session, Esc clears the filter; a
+subagent that matches shows under its parent). The heading names what is shown,
+and a dot marks a session active in the last 2 minutes. Several matches on a
+terminal open the same picker on them, with the words in its filter; without
+one, or inside a coding agent, they are listed on
+stderr, with a PR column and the exact command to run next, and the command
+exits 1, never guessing. WORDS skip the agent session running the command,
+unless --to is given.
+  --latest              The most recent session for the project: one that ran
+                        at this path, else one from another checkout of the
+                        same repository (its remote origin), such as on
+                        another Mac. A match by repository alone is named
+                        before anything is downloaded and, on a terminal, asked
+                        about (default no); with no terminal it is refused
+                        and the SESSION_ID command printed, since a
+                        repository chooses its own origin
+  --project DIR|NAME    The project to pick from and search, in place of
+                        the current directory's repository: a directory, or
+                        a project name (matched to project_name and the
+                        configured project labels, exactly, ignoring case).
+                        With --latest, the directory it searches, and where
+                        the agent starts
+  --all-projects        Pick from and search every project
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
   --source auto|local|archive
                         Where the content comes from: auto (default) reads
-                        this Mac's transcript when there is one, else the
+                        this machine's transcript when there is one, else the
                         archive; local or archive uses only that one
   --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
                         no limit. When trimmed, the full version is saved for
@@ -363,6 +582,7 @@ session running the command, unless --to is given.
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
+Example: agent-archive handoff "#212"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
@@ -373,7 +593,7 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
-Import the Claude Code, Codex, and Cursor sessions already on this Mac that
+Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
 confirm. Projects the import needs are added to capture. Prints project
@@ -400,14 +620,14 @@ Example: agent-archive backfill --dry-run --since 30d
 
 List past imports, oldest first: each import's IMPORT_ID, when it started,
 how many sessions and projects it added, and its upload state (waiting,
-uploaded, interrupted, or undone). Reads this Mac's records only.
+uploaded, interrupted, or undone). Reads this machine's records only.
 Example: agent-archive backfill history
 `,
 	"backfill undo": `Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
-sessions are deleted from the bucket and this Mac, and the projects it added
+sessions are deleted from the bucket and this machine, and the projects it added
 are excluded from capture. Shows what it will do and asks first.
 Hook-captured sessions and the apps' own files are never touched. If the
 import raised retention, undo offers to put the shorter retention back,
@@ -496,7 +716,8 @@ func isHelpFlag(arg string) bool {
 // user.
 type commandFlags struct {
 	*flag.FlagSet
-	errOut io.Writer
+	errOut  io.Writer
+	catalog agentmeta.Catalog
 }
 
 // newCommandFlags returns the flag set of command, named as the user types
@@ -505,7 +726,7 @@ func (e Env) newCommandFlags(command string, errOut io.Writer) *commandFlags {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	flags := &commandFlags{FlagSet: fs, errOut: errOut}
+	flags := &commandFlags{FlagSet: fs, errOut: errOut, catalog: e.agentRegistry().Catalog()}
 	if e.observeFlags != nil {
 		e.observeFlags(flags)
 	}
@@ -547,21 +768,28 @@ func (f *commandFlags) parseFlagsOnly(args []string) bool {
 // package otherwise stops at the first positional value. It returns the
 // argument, or "" when there is none.
 func (f *commandFlags) parseWithArgument(args []string) (string, bool) {
+	argument, _, ok := f.parseWithOptionalArgument(args)
+	return argument, ok
+}
+
+// parseWithOptionalArgument is parseWithArgument that also reports whether
+// the argument was given, so an empty one ("") can be told from none.
+func (f *commandFlags) parseWithOptionalArgument(args []string) (argument string, given, ok bool) {
 	if !f.parse(args) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() == 0 {
-		return "", true
+		return "", false, true
 	}
-	argument := f.Arg(0)
+	argument = f.Arg(0)
 	if !f.parse(f.Args()[1:]) {
-		return "", false
+		return "", false, false
 	}
 	if f.NArg() != 0 {
 		f.usageError("unexpected argument %q", f.Arg(0))
-		return "", false
+		return "", false, false
 	}
-	return argument, true
+	return argument, true, true
 }
 
 var flagValueError = regexp.MustCompile(`^invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-+([^:]+): (.*)$`)

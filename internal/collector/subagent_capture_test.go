@@ -18,6 +18,7 @@ import (
 )
 
 func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {
@@ -47,6 +48,18 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	if err := local.SaveRequest("parent", "subagent-link", stopAt, link); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := materializeSubagentCandidate(ctx, local, state.SubagentCandidate{ArchiveSessionID: "child"}, Options{}, stopAt); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled materialization: %v", err)
+	}
+	if _, found, err := local.LoadRegistration("child"); err != nil || found {
+		t.Fatalf("canceled child found=%v err=%v", found, err)
+	}
+	candidates, issues, err := local.ScanSubagentCandidates()
+	if err != nil || len(issues) != 0 || len(candidates) != 1 {
+		t.Fatalf("candidates=%v issues=%v err=%v", candidates, issues, err)
+	}
 	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
 	result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
@@ -71,6 +84,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 }
 
 func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, _ := state.Open(home)
 	start := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
@@ -86,7 +100,7 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("mismatched transcript was accepted")
 	}
 	if _, found, _ := local.LoadRegistration("child"); found {
@@ -102,8 +116,10 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 // saving hook evidence or acknowledging the candidate. The next pass must
 // finish that work without changing the child's owner or duplicating evidence.
 func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
+	t.Parallel()
 	for _, origin := range []archive.SessionOrigin{archive.SessionOriginHook, archive.SessionOriginImport} {
 		t.Run(string(origin), func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			local, err := state.Open(home)
 			if err != nil {
@@ -138,7 +154,7 @@ func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
 				if err := local.SaveSubagentCandidate(candidate); err != nil {
 					t.Fatal(err)
 				}
-				if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err != nil {
+				if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{}, candidate.ObservedAt); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -184,6 +200,7 @@ func linkedSessionEvidenceCount(req state.Request, childID string) int {
 //
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
@@ -238,6 +255,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 //
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	local := newTestStore(t)
@@ -295,6 +313,7 @@ func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
 //
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
@@ -367,6 +386,7 @@ func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestChildProvenanceRequiresAgentIdentityAndStableStart(t *testing.T) {
+	t.Parallel()
 	at := time.Now().UTC()
 	reg := archive.SessionRegistration{ParentSessionID: "parent", ParentNativeSessionID: "native-parent", SubagentID: "agent", SessionStartedAt: at, SubagentObservedAt: at.Add(time.Minute)}
 	filtered := archive.FilteredTranscript{NativeStartComplete: true, NativeStartAt: at, NativeEndAt: at, SessionIDs: []string{"native-parent"}}
@@ -385,6 +405,7 @@ func TestChildProvenanceRequiresAgentIdentityAndStableStart(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store, err := state.Open(home)
 	if err != nil {
@@ -399,7 +420,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	if err := store.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(store, candidate, Options{}, candidate.ObservedAt); err == nil {
+	if err := materializeSubagentCandidate(context.Background(), store, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("expected pending transcript error")
 	}
 	candidates, err := store.LoadSubagentCandidates()
@@ -410,6 +431,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	at := time.Now().UTC()
 	parent := registration(t, "")
@@ -460,6 +482,7 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestHiddenOldRecordCannotMakeResumedChildLookFresh(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"unknown_hidden_record","sessionId":"parent","agentId":"agent","timestamp":"2026-09-21T09:00:00Z","content":"not retained"}` + "\n" + `{"type":"assistant","sessionId":"parent","agentId":"agent","timestamp":"2026-09-21T10:00:00Z","message":{"role":"assistant","content":"visible"}}` + "\n"
 	filtered, err := archive.ClaudeAdapter{}.FilterJSONL(strings.NewReader(input))
 	if err != nil {
@@ -474,6 +497,7 @@ func TestHiddenOldRecordCannotMakeResumedChildLookFresh(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestLaterChildStopSurvivesEarlierCaptureAcknowledgement(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	at := time.Now().UTC()
 	first := state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-child", ParentArchiveSessionID: "parent", ParentNativeSessionID: "native-parent", ProjectID: "project", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: at}
@@ -588,6 +612,7 @@ func isRunning(result Result) bool {
 // every pass; its next stop, or its transcript going quiet when no stop
 // comes, publishes the rest.
 func TestResumedSubagentWaitsForItsNextStop(t *testing.T) {
+	t.Parallel()
 	f := newResumedSubagentFixture(t)
 	f.write(2)
 	f.stop(3)
@@ -629,8 +654,10 @@ func TestResumedSubagentWaitsForItsNextStop(t *testing.T) {
 // rejected, and held to that stop: it publishes at its next stop, or once its
 // transcript is quiet.
 func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
+	t.Parallel()
 	for _, next := range []string{"stop", "quiet"} {
 		t.Run(next, func(t *testing.T) {
+			t.Parallel()
 			f := newResumedSubagentFixture(t)
 			f.write(2)
 			f.stop(3)
@@ -660,6 +687,7 @@ func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
 // A registered subagent that stops again and is resumed before the next pass
 // is one running subagent, and that pass records its later stop.
 func TestRestoppedRunningSubagentCountsOnceAndKeepsItsStop(t *testing.T) {
+	t.Parallel()
 	f := newResumedSubagentFixture(t)
 	f.write(2)
 	f.stop(3)
@@ -684,7 +712,9 @@ func TestRestoppedRunningSubagentCountsOnceAndKeepsItsStop(t *testing.T) {
 // is a provenance failure, not a subagent still running: a registered child
 // fails the pass, and a candidate is rejected rather than kept for good.
 func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
+	t.Parallel()
 	t.Run("registered", func(t *testing.T) {
+		t.Parallel()
 		f := newResumedSubagentFixture(t)
 		f.write(2)
 		f.stop(3)
@@ -699,6 +729,7 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 		}
 	})
 	t.Run("candidate", func(t *testing.T) {
+		t.Parallel()
 		f := newResumedSubagentFixture(t)
 		f.write(2)
 		f.stop(3)

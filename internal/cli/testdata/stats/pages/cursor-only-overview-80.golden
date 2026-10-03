@@ -11,7 +11,7 @@ By project
 agent-archive                                  n/a
 dotfiles                                       n/a
 
-HEADS UP
-● 8 sessions have no token data (Cursor 8)
+COVERAGE
+Sessions with no token data are left out of token and cost totals (Cursor: 8).
 
 Estimated at list price, not a bill.   --detail for more · --by project · --html

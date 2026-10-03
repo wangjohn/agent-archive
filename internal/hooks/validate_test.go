@@ -51,7 +51,7 @@ func TestValidateReportsWhereAndWhatPlanRefuses(t *testing.T) {
 			must(t, os.MkdirAll(filepath.Dir(path), 0700))
 			must(t, os.WriteFile(path, []byte(c.input), 0600))
 
-			problems := Validate(files)
+			problems := Validate(files, testPorts)
 			if len(problems) != 1 {
 				t.Fatalf("problems = %+v, want one", problems)
 			}
@@ -79,13 +79,13 @@ func TestValidateAcceptsWhatPlanAccepts(t *testing.T) {
 	must(t, os.WriteFile(files["cursor"], []byte("  \n"), 0600))
 	must(t, os.MkdirAll(filepath.Dir(files["claude"]), 0700))
 	must(t, os.WriteFile(files["claude"], []byte(`{"permissions": {"allow": ["Read"]}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}`), 0600))
-	if problems := Validate(files); len(problems) != 0 {
+	if problems := Validate(files, testPorts); len(problems) != 0 {
 		t.Fatalf("before setup: %+v", problems)
 	}
 	plan, err := Plan(files, testHook("/Applications/agent-archive"), []string{"claude", "codex", "cursor"})
 	must(t, err)
 	must(t, Apply(plan))
-	if problems := Validate(files); len(problems) != 0 {
+	if problems := Validate(files, testPorts); len(problems) != 0 {
 		t.Fatalf("after setup: %+v", problems)
 	}
 }
@@ -110,7 +110,7 @@ func TestValidateFollowsSymlinks(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(files["codex"]), 0700))
 	must(t, os.Symlink(filepath.Join(dotfiles, "codex", "hooks.json"), files["codex"]))
 
-	problems := Validate(files)
+	problems := Validate(files, testPorts)
 	if len(problems) != 1 {
 		t.Fatalf("problems = %+v, want one for claude", problems)
 	}
@@ -141,7 +141,7 @@ func TestValidateChangesNothing(t *testing.T) {
 	must(t, os.Chtimes(filepath.Join(home, "dotfiles", "cursor.json"), past, past))
 
 	before := tree(t, home)
-	if problems := Validate(files); len(problems) != 1 || problems[0].Harness != "claude" {
+	if problems := Validate(files, testPorts); len(problems) != 1 || problems[0].Harness != "claude" {
 		t.Fatalf("problems = %+v, want one for claude", problems)
 	}
 	if after := tree(t, home); after != before {
@@ -155,7 +155,7 @@ func TestValidateReportsUnreadableFiles(t *testing.T) {
 	home := t.TempDir()
 	files := testFiles(home)
 	must(t, os.MkdirAll(files["codex"], 0700))
-	problems := Validate(files)
+	problems := Validate(files, testPorts)
 	if len(problems) != 1 || problems[0].Harness != "codex" || problems[0].Line != 0 || !strings.HasPrefix(problems[0].Reason, "the file cannot be read") {
 		t.Fatalf("problems = %+v", problems)
 	}
@@ -176,7 +176,7 @@ func TestValidateReportsEveryFile(t *testing.T) {
 	}
 	files["gemini"] = filepath.Join(home, ".gemini", "settings.json")
 	var got []string
-	for _, p := range Validate(files) {
+	for _, p := range Validate(files, testPorts) {
 		got = append(got, p.Harness)
 	}
 	if strings.Join(got, " ") != "claude codex cursor gemini" {

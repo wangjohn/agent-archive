@@ -13,23 +13,6 @@ import (
 // screen. See docs/reference/configuration.md.
 const envNonInteractive = "AGENT_ARCHIVE_NONINTERACTIVE"
 
-// cursorAgentEnv is set by Cursor's agent for the commands it runs. Cursor
-// exposes no session ID, so it is evidence that an agent is running the
-// command, and handoff --to falls back to the newest Cursor session for the
-// working directory.
-const cursorAgentEnv = "CURSOR_AGENT"
-
-// agentShellEnv lists the variables whose presence means a coding agent's
-// shell is running this command: the ones handoff reads to find the calling
-// session, plus Cursor's.
-func agentShellEnv() []string {
-	keys := make([]string, 0, len(currentSessionEnv)+1)
-	for _, v := range currentSessionEnv {
-		keys = append(keys, v.key)
-	}
-	return append(keys, cursorAgentEnv)
-}
-
 // nonInteractiveMode says whether interaction is off and why.
 type nonInteractiveMode struct {
 	on bool
@@ -67,10 +50,8 @@ func (e Env) nonInteractive() (nonInteractiveMode, error) {
 		}
 		return nonInteractiveMode{on: true, reason: envNonInteractive + " is set"}, nil
 	}
-	for _, key := range agentShellEnv() {
-		if value, set := e.lookupEnv(key); set && strings.TrimSpace(value) != "" {
-			return nonInteractiveMode{on: true, reason: key + " is set, which means an agent is running this command"}, nil
-		}
+	if observations := runtimeObservations(e); len(observations) > 0 {
+		return nonInteractiveMode{on: true, reason: observations[0].PresenceKey + " is set, which means an agent is running this command"}, nil
 	}
 	return nonInteractiveMode{}, nil
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func testFiles(home string) Files {
-	return ResolveFiles(home, func(string) (string, bool) { return "", false })
+	return ResolveFiles(home, func(string) (string, bool) { return "", false }, testPorts)
 }
 
 func TestPlanApplyAndRollback(t *testing.T) {
@@ -68,7 +68,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
+	removal, err := PlanRemoval(testFiles(home), Hook{Ports: testPorts}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	}
 
 	// A second removal finds nothing of ours and plans no rewrite at all.
-	again, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
+	again, err := PlanRemoval(testFiles(home), Hook{Ports: testPorts}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
 	must(t, os.WriteFile(path, unrelated, 0600))
-	plan, err := PlanRemoval(testFiles(home), Hook{}, []string{"codex", "claude", "cursor"})
+	plan, err := PlanRemoval(testFiles(home), Hook{Ports: testPorts}, []string{"codex", "claude", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 	if err := Apply(plan); err != nil {
 		t.Fatal(err)
 	}
-	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude"})
+	removal, err := PlanRemoval(testFiles(home), Hook{Ports: testPorts}, []string{"claude"})
 	if err != nil || len(removal) != 1 {
 		t.Fatalf("removal %d changes, err %v", len(removal), err)
 	}
@@ -299,7 +299,7 @@ func TestInstalledIgnoresWhereOurHandlerSits(t *testing.T) {
 			if ok, err := Installed(files, testHook(exe), app); !ok || err != nil {
 				t.Fatalf("user handler before ours: installed=%v err=%v", ok, err)
 			}
-			if ok, _ := Installed(files, Hook{Executable: exe, DataHome: "/elsewhere"}, app); ok {
+			if ok, _ := Installed(files, Hook{Ports: testPorts, Executable: exe, DataHome: "/elsewhere"}, app); ok {
 				t.Fatal("a command without the data directory counts as installed")
 			}
 			edit(func(_, hs map[string]any) {
@@ -323,7 +323,7 @@ func TestInstalledIgnoresWhereOurHandlerSits(t *testing.T) {
 
 func TestResolveFilesFollowsTheAppsConfigDirectories(t *testing.T) {
 	env := map[string]string{"CLAUDE_CONFIG_DIR": "/cfg/claude", "CODEX_HOME": "/cfg/codex"}
-	files := ResolveFiles("/Users/u", func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	files := ResolveFiles("/Users/u", func(k string) (string, bool) { v, ok := env[k]; return v, ok }, testPorts)
 	want := Files{"claude": "/cfg/claude/settings.json", "codex": "/cfg/codex/hooks.json", "cursor": "/Users/u/.cursor/hooks.json"}
 	for app, path := range want {
 		if files[app] != path {

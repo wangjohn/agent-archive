@@ -31,7 +31,7 @@ func TestHookMarksASessionStartedWithTheReplayVariable(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithReplay(value)); err != nil {
+			if err := HandleEvent(home, "codex", startPayload("/work/widget"), time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), WithReplay(value), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			regs := registrations(t, home)
@@ -62,12 +62,12 @@ func TestHookNeverChangesTheReplayMarkerOfARegisteredSession(t *testing.T) {
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-			if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithReplay(tc.first)); err != nil {
+			if err := HandleEvent(home, "codex", startPayload("/work/widget"), at, WithReplay(tc.first), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			resumed := startPayload("/work/widget")
 			resumed["source"] = "resume"
-			if err := HandleEvent(home, "codex", resumed, at.Add(time.Hour), WithReplay(tc.then)); err != nil {
+			if err := HandleEvent(home, "codex", resumed, at.Add(time.Hour), WithReplay(tc.then), WithDecoders(testDecoders)); err != nil {
 				t.Fatal(err)
 			}
 			regs := registrations(t, home)
@@ -91,7 +91,11 @@ func TestAQueuedReplayStartIsAdmittedAsAReplay(t *testing.T) {
 	busy := func(home string, _ time.Duration) (func(), error) {
 		return local.NamedLockWait(home, "hooks.lock", 10*time.Millisecond)
 	}
-	if err := handleEvent(home, "claude", claudeStart(project, "native-replay", "startup", ""), at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}}); err != nil {
+	batch, err := testBatch("claude", claudeStart(project, "native-replay", "startup", ""), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handleBatch(home, "claude", batch, at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}, decoders: testDecoders}); err != nil {
 		t.Fatalf("queued start: %v", err)
 	}
 	release()

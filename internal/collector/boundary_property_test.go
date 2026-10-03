@@ -74,6 +74,7 @@ func randomTranscriptTail(rng *rand.Rand) []byte {
 // fit the limit, and beyond it the chunked scan is the one that reports the
 // trailing record as too large instead of guessing.
 func TestCompleteJSONLBoundaryMatchesTheFixedTailRead(t *testing.T) {
+	t.Parallel()
 	const seed = 20260922
 	rng := rand.New(rand.NewSource(seed))
 	const lowered = int64(boundaryChunk + boundaryChunk/2)

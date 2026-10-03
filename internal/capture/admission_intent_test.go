@@ -19,15 +19,15 @@ func TestAdmissionIntentReplayIsIdempotentAndExpires(t *testing.T) {
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "/private/native-1.jsonl")
 	for range 2 {
-		queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
+		queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
 		if err != nil || !queued {
 			t.Fatalf("queue = %t, %v", queued, err)
 		}
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -39,11 +39,11 @@ func TestAdmissionIntentReplayIsIdempotentAndExpires(t *testing.T) {
 		t.Fatalf("remaining intents = %#v, %v", entries, err)
 	}
 
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-expired", "startup", ""), at, nil)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-expired", "startup", ""), at)
 	if err != nil || !queued {
 		t.Fatalf("queue expired = %t, %v", queued, err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(25*time.Hour)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(25*time.Hour), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err = state.OpenReadOnly(home).LoadRegistrations()
@@ -60,7 +60,7 @@ func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(nested, "native-nested", "startup", ""), at, nil)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(nested, "native-nested", "startup", ""), at)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -75,7 +75,7 @@ func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
 	if err := PruneAdmissionIntents(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -92,7 +92,7 @@ func TestAdmissionIntentDoesNotMoveToNewDestination(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-old-destination", "startup", ""), at, nil)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-old-destination", "startup", ""), at)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -107,7 +107,7 @@ func TestAdmissionIntentDoesNotMoveToNewDestination(t *testing.T) {
 	if err := PruneAdmissionIntents(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -121,7 +121,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "")
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
@@ -140,14 +140,14 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("excluded intent retained: %#v, %v", entries, err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 0 {
 		t.Fatalf("excluded project registered: %#v, %v", regs, err)
 	}
-	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
+	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
 	if err != nil || queued {
 		t.Fatalf("excluded queue = %t, %v", queued, err)
 	}
@@ -164,7 +164,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
+	queued, err = queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
 	if queued || err == nil || !strings.Contains(err.Error(), "full") {
 		t.Fatalf("full queue = %t, %v", queued, err)
 	}
@@ -175,15 +175,15 @@ func TestAdmissionIntentDoesNotRewindLaterRegistration(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))
 	payload := claudeStart(project, "native-1", "startup", "")
-	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at, nil)
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
 	later := at.Add(time.Minute)
-	if err := HandleEvent(home, "claude", payload, later); err != nil {
+	if err := HandleEvent(home, "claude", payload, later, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, later.Add(time.Minute)); err != nil {
+	if err := ReplayAdmissionIntents(home, later.Add(time.Minute), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
@@ -201,7 +201,7 @@ func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
 	// The follow-ups can arrive before a start finishes writing. None may
 	// admit the session, but their path must survive the first collector pass.
 	for _, event := range []string{"afterAgentResponse", "stop"} {
-		queued, err := queueAdmissionIntent(home, "cursor", classifyHookEvent("cursor", event), cursorDesktopPayload(event, conversation, project, transcript), at, nil)
+		queued, err := queueAdmissionIntent(home, "cursor", classifyHookEvent("cursor", event), cursorDesktopPayload(event, conversation, project, transcript), at)
 		if err != nil || !queued {
 			t.Fatalf("queue %s = %t, %v", event, queued, err)
 		}
@@ -209,11 +209,11 @@ func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
 	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
 		t.Fatalf("follow-up admitted session: %#v, %v", regs, err)
 	}
-	queued, err := queueAdmissionIntent(home, "cursor", hookEventTurnStart, cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at, nil)
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventTurnStart, cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at)
 	if err != nil || !queued {
 		t.Fatalf("queue start = %t, %v", queued, err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	store := state.OpenReadOnly(home)
@@ -245,14 +245,14 @@ func TestAdmissionIntentDoesNotAttachPathToDifferentProject(t *testing.T) {
 	}
 	conversation := "5f3c2a10-0000-4000-8000-00000000c789"
 	transcript := cursorTranscriptLocation(t, conversation)
-	queued, err := queueAdmissionIntent(home, "cursor", hookEventResponse, cursorDesktopPayload("afterAgentResponse", conversation, projectA, transcript), at, nil)
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventResponse, cursorDesktopPayload("afterAgentResponse", conversation, projectA, transcript), at)
 	if err != nil || !queued {
 		t.Fatalf("queue = %t, %v", queued, err)
 	}
-	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, projectB, nil), at); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, projectB, nil), at, WithDecoders(testDecoders)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
 		t.Fatal(err)
 	}
 	reg := onlyCursorRegistration(t, home)

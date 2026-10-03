@@ -27,6 +27,7 @@ type page struct {
 	Models   *barTable
 	MostUsed *mostUsed
 	HeadsUp  []string
+	Coverage []string
 
 	// The detail, below the default view.
 	Agents *barTable

@@ -26,6 +26,7 @@ import (
 // change is checked to be only the executable's path. The keys of the JSON
 // itself are pinned in internal/setupjournal (TestJournalFormatIsPinned).
 func TestRefreshJournalIsFilesOnlyUnlessALoadedJobRestarts(t *testing.T) {
+	// Not parallel: newRefreshInstall replaces launchctl.
 	for _, tc := range []struct {
 		name   string
 		mode   launchdMode

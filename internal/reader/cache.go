@@ -171,10 +171,11 @@ func writeCacheFile(path string, data []byte) error {
 	return os.Rename(f.Name(), path)
 }
 
-// evictUnlisted removes every cached sidecar under listPrefix which the
-// listing did not return. Entries outside listPrefix belong to a listing this
-// one did not cover (another harness) and are left alone.
-func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object) {
+// evictUnlisted removes every cached entry among known (keys, read before
+// the listing) which the listing did not return. Entries outside the
+// listing's prefix were never in known: they belong to a listing this one
+// did not cover (another harness) and are left alone.
+func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
@@ -182,10 +183,28 @@ func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object
 	for _, object := range listed {
 		present[object.Key] = true
 	}
+	for _, key := range known {
+		if !present[key] {
+			_ = os.Remove(filepath.Join(c.dir, hex.EncodeToString([]byte(key))+".json"))
+		}
+	}
+}
+
+// keys returns the object keys cached under listPrefix, in no particular
+// order: what one listing plans its ranges from (planRanges) and later
+// evicts from (evictUnlisted), so the directory is read once per listing.
+// A file whose name this cache never writes is removed on the way. Like
+// everything else about the cache, a missing or unreadable directory is
+// just no keys.
+func (c *MetadataCache) keys(listPrefix string) []string {
+	if c == nil {
+		return nil
+	}
 	entries, err := os.ReadDir(c.dir)
 	if err != nil {
-		return
+		return nil
 	}
+	var keys []string
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".json") {
@@ -197,9 +216,9 @@ func (c *MetadataCache) evictUnlisted(listPrefix string, listed []storage.Object
 			_ = os.Remove(filepath.Join(c.dir, name))
 			continue
 		}
-		key := string(raw)
-		if strings.HasPrefix(key, listPrefix) && !present[key] {
-			_ = os.Remove(filepath.Join(c.dir, name))
+		if key := string(raw); strings.HasPrefix(key, listPrefix) {
+			keys = append(keys, key)
 		}
 	}
+	return keys
 }

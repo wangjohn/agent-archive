@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -52,7 +51,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
 		return map[string]applicationDiscovery{"codex": {VersionState: "absent"}}
 	}
-	input := strings.Join([]string{"y", project, "", "s3", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", project, "", "s3-existing", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	if !strings.Contains(output, "Codex (version not detected)") || strings.Contains(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
@@ -85,7 +84,7 @@ func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
-	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
+	if err := handleTestHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOnePass(env, false); err != nil {
@@ -168,15 +167,24 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
 			env.WorkingDir = func() (string, error) { return project, nil }
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "personal", Region: "us-west-2"}}, nil }
-			probes := 0
-			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
-			out := setupRun(t, env, "\ns3\n\ntest-bucket\n"+tc.edits, 0)
+			probes, publications := 0, 0
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				if _, committed, err := config.Load(home); err != nil {
+					t.Fatal(err)
+				} else if committed {
+					publications++
+				} else {
+					probes++
+				}
+				return storagetest.NewMemoryStore(), nil
+			}
+			out := setupRun(t, env, "\ns3-existing\n\ntest-bucket\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)
 			}
-			if probes != tc.probes || cfg.RetentionDays != tc.days || cfg.Storage.Prefix != tc.prefix {
-				t.Fatalf("probes=%d config=%+v", probes, cfg)
+			if probes != tc.probes || publications != 1 || cfg.RetentionDays != tc.days || cfg.Storage.Prefix != tc.prefix {
+				t.Fatalf("verification probes=%d postcommit publications=%d config=%+v", probes, publications, cfg)
 			}
 			if cfg.Storage.Region != "us-west-2" || cfg.Storage.AWSProfile != "personal" || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != project {
 				t.Fatalf("unexpected config: %+v", cfg)
@@ -289,18 +297,23 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 		}
 		return storagetest.NewMemoryStore(), nil
 	}
-	answers := []string{"y", "n", "n", project, "", "s3", "profile", "bucket", "us-east-1",
+	answers := []string{"y", "n", "n", project, "", "s3-existing", "profile", "bucket", "us-east-1",
 		"y",     // refused: starting is not a choice
 		"check", // the file is fixed just before this answer
 		"y"}
-	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() { must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600)) }}
+	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() {
+		if _, found, err := config.Load(home); err != nil || found {
+			t.Fatalf("setup committed before the invalid hook file was fixed: found=%v err=%v", found, err)
+		}
+		must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600))
+	}}
 	var out bytes.Buffer
 	if code := Run([]string{"setup"}, in, &out, &out, env); code != 0 {
 		t.Fatalf("setup exit %d\n%s", code, &out)
 	}
 	output := out.String()
 	blocked := strings.Index(output, "✗ Codex hook file is invalid")
-	refused := strings.Index(output, "Enter a number from 1 to 3.")
+	refused := strings.Index(output, "Enter a number from 1 to 4.")
 	if blocked < 0 || refused < blocked || !strings.Contains(output, "Fix what is marked ✗ above first.\n  1) Check again") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}

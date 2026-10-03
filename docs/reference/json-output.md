@@ -26,13 +26,27 @@ explicitly.
   listing (`--harness`, `--model`, `--since`, `--skill`, `--complete`,
   `--imported`, `--limit`, …). Each item is an instance of
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
-  `null`.
+  `null`. With words (`list "<words>" --json`), `sessions` is the first tier
+  of the search that has a match, as in the table: the scope's top-level
+  sessions, then every project's, then subagent sessions (in the scope, then
+  everywhere), so a subagent appears only when no top-level session matches.
 - `limit` is the `--limit` value (`50` by default; `0` means no cap).
   `returned` is `sessions.length`. `total_matched_known` says whether the
   count is exact. When false, `total_matched` is omitted and `truncated` is
   true: the indexed read stopped once it found one more match than the limit.
   When true, `total_matched` is the exact match count and `truncated` is
   present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Run inside a project, `list` and `list --json` return that repository's
+  sessions, and the document gains an optional `scope` object:
+  `{"label": "agent-archive", "all_projects": false, "fell_back": false,
+  "outside_matches": 3}`. `label` names the scope; `all_projects` is true when
+  it was not applied (`--all-projects`, or the scope held nothing);
+  `fell_back` is true when it held nothing and all projects are listed;
+  `outside_matches` is how many more sessions the same filters match outside
+  it (with words, how many sessions of the answering tier match outside it).
+  Outside any project there is no `scope` and every session is listed.
+  Scripts that want every session pass `--all-projects`. The field is
+  additive, so `schema_version` stays `4`.
 - Unsupported filter values return exit code `2` with an explanation on
   stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
   current parsers cannot prove non-use. Schema version `3` removed the
@@ -43,6 +57,24 @@ explicitly.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
 - `--json` is never auto-paged, even on a terminal.
+
+### Replay sessions
+
+A session a replay tool ran carries `replay`, an object with an optional
+`run_id`:
+
+```json
+"replay": {"run_id": "bench-2026-09-30.7"}
+```
+
+The hook that registered the session had `AGENT_ARCHIVE_REPLAY` set in its
+environment; `run_id` is its value when that is 1 to 128 letters, digits,
+`.`, `_`, `:`, or `-` (starting with a letter or digit), and absent
+otherwise. The field is fixed at registration, and a subagent carries its
+parent's. Test for the key, not for `run_id`. `list`, `stats`, and
+`handoff --latest` leave replays out unless asked (`--replays
+include|only` on `list` and `stats`); `show ID` opens one as usual.
+
 
 ## `show`
 
@@ -142,47 +174,37 @@ persists if the remote is later removed or git fails, a changed remote
 replaces it only at the next content publish or parser refresh, and a
 finished session never updates.
 
-A sidecar may also carry `git_head`, the commit the session's working
-directory had checked out, as the session's own hooks recorded it:
+From parser `0.19.0` a Cursor session's `title` leaves out the
+`<timestamp>` line and `<user_query>` tags Cursor wraps a prompt in, as
+handoff already did.
 
-```json
-"git_head": {
-  "start": {"sha": "<40 or 64 hex digits>", "dirty": true, "observed_at": "2026-09-30T09:00:00Z"},
-  "last":  {"sha": "<40 or 64 hex digits>", "observed_at": "2026-09-30T09:41:12Z"}
-}
-```
+From parser `0.17.0` a sidecar may also carry three optional fields that
+say what to call the session:
 
-- `start` is HEAD when the hook that registered the session ran, and
-  `dirty` whether the working tree then had staged, unstaged, or untracked
-  (not ignored) changes against it; `dirty` is absent when git could not
-  tell in time.
-- `last` is HEAD at the most recent stop hook that could read it;
-  `observed_at` is the first stop that saw that commit. It has no `dirty`.
-- `sha` is always a full object name. HEAD is asked of the directory the
-  hook reported, so a Claude Code worktree has its own, and a session
-  started inside a submodule has the submodule's.
-- Either half, or the whole field, is absent when no hook could tell (not a
-  repository, git not installed, a branch with no commits, git slower than
-  the hook's budget), and for sessions registered before the field existed,
-  imported sessions, and subagents. It is never inferred afterwards, and a
-  metadata refresh does not add it to older sidecars.
+- `name`: the title the agent gave the session, collapsed to one line and cut
+  to 128 characters from parser `0.17.1` (72 in older metadata), like `title`.
+  For Claude Code it is the session name in its sidebar (set from your prompt,
+  or by `/rename`; the last one wins), and for Cursor the chat's name. Codex
+  titles are not captured yet. From parser `0.18.0` a Claude Code subagent's
+  name is the description its parent gave the task, which Claude Code keeps
+  beside the subagent's transcript and the privacy filter keeps since
+  filter 14 (a `custom-title`, which a subagent does not normally have, wins
+  over it). `title` keeps its meaning, a preview of the first prompt. Absent
+  when the session has no name, including one whose transcript is gone and so
+  could not be re-read after the privacy filter began keeping names (filter
+  13, or 14 for a subagent).
+- `branch`: the last git branch the transcript recorded. Absent when none was
+  recorded, or it is `HEAD` (a detached checkout).
+- `pull_requests`: up to 20 pull requests the session was linked to (Claude
+  Code's `pr-link` records), in the order first linked and each once, as
+  `{"repository", "number", "url"}`. `repository` is `owner/repo`; `url` is
+  the GitHub address, present only when it is exactly
+  `https://github.com/<owner>/<repo>/pull/<number>`. Unlike `git_activity`,
+  which records the pull requests the session's own commands created or
+  merged, these are the ones the agent linked.
 
-### Replay sessions
-
-A session a replay tool ran carries `replay`, an object with an optional
-`run_id`:
-
-```json
-"replay": {"run_id": "bench-2026-09-30.7"}
-```
-
-The hook that registered the session had `AGENT_ARCHIVE_REPLAY` set in its
-environment; `run_id` is its value when that is 1 to 128 letters, digits,
-`.`, `_`, `:`, or `-` (starting with a letter or digit), and absent
-otherwise. The field is fixed at registration, and a subagent carries its
-parent's. Test for the key, not for `run_id`. `list`, `stats`, and
-`handoff --latest` leave replays out unless asked (`--replays
-include|only` on `list` and `stats`); `show ID` opens one as usual.
+`list` and `show` show `name` where they showed `title` (and `title` when
+there is no `name`).
 
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
@@ -285,11 +307,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). Every project is in `groups.rows` with `--by project`, which
-  is never cut; the terminal's "all in --json --by project" points at it.
-  The JSON has no more than five skills or MCP servers (the terminal's detail
-  screen lists up to 40). `models` lists every model family (the terminal's
-  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  (see below). `--all` (only with `--json`) lifts the cut: `projects`,
+  `skills`, `display_skills` and `mcp.servers` then list every row, in the
+  same order (the top five are its first five), and the `total_*` fields say
+  the same as before; the document is otherwise the same, so it is additive
+  and `schema_version` stays 1. The terminal's "all in --json --all" points
+  at it, under the projects screen and under the skills and MCP servers of
+  the overview and detail screens. Every project is also in `groups.rows`
+  with `--by project`, which is never cut, with `--all` or without it.
+  `models` lists every model family (the terminal's "all in --json"), with
+  or without `--all`. `display_skills` is `skills` for showing to a person: a
   plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
   only the first `:` counts) and skills that then share a name are one row,
   counted in the sessions that used any of them (a session that used both
@@ -332,15 +359,20 @@ at the top level. Read the rules below before using a number:
   `rows`, each with `key` (a date, a week's Monday, `2026-09`, or a project
   name), `sessions`, `prompts`, `tokens` and `cost`. Rows are chronological,
   or by estimated cost for `project` (in the order of `projects`, above).
-  `projects` keeps only the top few of `total_projects`.
-- `filters` echoes `--harness`, `--model`, `--hook-captured`/`--imported`
-  (as `origin`: `hook` or `imported`) and `--replays` (as `replays`:
-  `include` or `only`; replay sessions are left out by default); a filter
-  that was not given is absent. The document holds counts, model, project, skill and MCP server
+  `projects` keeps only the top few of `total_projects`, unless `--all`.
+- `filters` echoes `--harness`, `--model` and `--hook-captured`/`--imported`
+  (as `origin`: `hook` or `imported`) and `--replays` (as `replays`: `include` or `only`; replay sessions are hidden by default); a filter that was not given is
+  absent. The document holds counts, model, project, skill and MCP server
   names, and one session ID (`highlights.costliest_session`, which `show`
   opens). It never holds prompts, transcript text or paths. An empty archive
   prints a document with zero sessions. Usage errors (exit 2) print no JSON.
   `--json` is never paged.
+
+Stats `coverage.first_recorded_day` is the earliest available session day,
+clamped to the requested window start if earlier history exists. Charts omit
+preceding days; `daily` retains the full requested window, with leading zero
+placeholders that do not establish measured inactivity. `mcp.servers[].name`
+remains the recorded ID; optional `display_name` supplies a friendly label.
 
 ## `status --json`
 
@@ -363,7 +395,8 @@ Treat an absent field and `null` the same way.
 | `storage_access_confirmed_at`, `storage_access_confirmed_by` | The latest confirmation that the destination is reachable with the configured credentials, and by whom: `setup`, or `collector` (its access probe, or a pass that uploaded). Use this to tell whether capture can still reach the bucket. |
 | `authentication` | The last storage health check: state (`verified`, `stale_configuration`, …), time, and whether it came from a manual `sync` or the background collector. |
 | `privacy`, `privacy_evidence` | Bucket privacy: `verified_private`, `public_or_risky`, or `not_verified`, with the reason, scope, and check time. |
-| `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background` | The background job (the launchd job on macOS, the user's systemd timer on Linux): `loaded`, `running`, `missing`, `another_installation` (the scheduler runs this installation's job from a different definition, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown` (the scheduler could not say, for example because there is no systemd user bus). |
+| `background_warnings` | What the background job does, but not robustly, one sentence each: on Linux, that lingering is off (the collector stops when you log out) or that a systemd drop-in overrides its unit. The state is not changed by them. Absent when there is nothing to say, which is always the case on macOS. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |
@@ -371,11 +404,12 @@ Treat an absent field and `null` the same way.
 | `agent_skills` | The agent skill files (the `/handoff` and `agent-archive` skills) setup installed that are there now (absolute paths; absent when there are none). A file at one of those paths without setup's marker line is the person's own, and one naming another data directory is another installation's; neither is listed. |
 | `agent_skills_out_of_date` | The files in `agent_skills` whose text differs from what this version of `agent-archive` writes (an earlier release wrote them, or the executable moved); `agent-archive setup --refresh` (or `setup`) refreshes them, and status warns about each. Absent when there are none, or when no executable is recorded to compare with. |
 | `agent_skills_disabled` | `true` when the agent skills are turned off (`agent-archive setup --no-skills`); absent otherwise. Setup then installs and refreshes none, and `agent_skills` is empty unless a file of setup's is left over (a restored backup, an interrupted removal): status warns about it, `agent_skills_out_of_date` is absent, and `agent-archive setup` removes it. `agent-archive setup --skills` turns them back on. |
-| `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `replay_sessions`: top-level sessions among `sessions` that a replay tool ran (absent when none); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
-| `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this Mac only, never uploaded; not a problem). |
+| `applications[]` session counts | Per app, what the text status's app line counts. Only sessions the configuration publishes now count (the app's own, in the current destination, admitted in an included project once it was included; see [session eligibility](session-eligibility.md)). `sessions`: sessions the app's hooks registered, subagents included; `subagent_sessions`: the subagents among them (so top-level sessions are `sessions` minus `subagent_sessions`); `replay_sessions`: top-level replay hook sessions among `sessions` (absent when zero); `imported_sessions`: top-level sessions `agent-archive backfill` imported for the app (the top-level `imported_sessions` also counts imports into an earlier destination or from a project no longer included); `uploading_sessions`: top-level sessions, captured or imported, with work not yet in the bucket (the pending definition `collector.pending_count` uses, less sessions whose transcript is a recorded capture gap and those counted in `waiting_for_transcript_sessions`); `waiting_for_transcript_sessions`: top-level sessions pending only because no transcript was ever written for them, such as a Cursor chat with transcripts turned off; `uploading`: those sessions, failing ones first, then the most recently started, each with `archive_session_id`, `project`, `started_at`, `state` (`uploading`; `first_upload` when never uploaded yet; `failing` when the last pass recorded an issue for it, named in `issue` with a `collector.session_issues` code), and `imported` when backfill imported it. |
+| `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_errors` (each problem the pass recorded, one per entry; a status file from an older version may have only `last_error`), `last_error` (the same problems joined with `; `, kept for older readers), `session_issues` (per session, the kind of failure as a code: `storage_auth`, `storage_unavailable`, `local_state_unreadable`, `subagent_not_captured`, `retention_failed`, or `capture_failed`; a status file from an older version may have `capture_or_publication_failed`, which is `capture_failed`, `transcript_size_limit`, or `transcript_discontinuity`; accept codes not listed), `issue_counts` (how many sessions and subagents have each code, the counts the last error's summary of failed sessions is built from; absent when a failure before collection, such as storage that could not be opened, replaced that summary), `quarantined_files` (state files moved aside; see [local state](local-state.md)), `unrefreshable_summaries` (sessions whose metadata this version can't refresh), `waiting_subagents` (subagents whose transcripts weren't written yet; not a problem), `running_subagents` (subagents resumed after their last stop and still writing, kept at their last stop until they stop again or go quiet for 30 minutes; not a problem), and `expired_subagents` (the Claude Code subagents dropped in the last 7 days because their transcripts were never written, at most 100, oldest first, each with `archive_session_id`, `agent_type` when the hook reported a valid one, and `expired_at`; kept on this machine only, never uploaded; not a problem). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined or deferred, for included projects. `hook_busy` means a hook timed out waiting for the capture lock; a proven first start may be replayed on the next collector pass. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |
-| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, and another installation's hooks in this one's hook files. |
+| `machine_registration_pending` | Present and true when local machine-record publication is pending for this destination. The collector retries independently of capture; paused installations need not send heartbeats. |
+| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, another installation's hooks in this one's hook files, and on Linux a data directory or systemd unit directory on a network filesystem (allowed or not, see [`allow_network_home`](configuration.md)), a data directory set up on a different machine (see [`host_id`](configuration.md)) and a shell whose `XDG_CONFIG_HOME` or `XDG_CACHE_HOME` differs from the background job's. |
 
 Before setup, `state` says setup is needed, `background` is `missing`, and
 `authentication` is `not_configured`. When a command has held the collector
@@ -390,6 +424,51 @@ IDs, or content, but project folders are absolute paths: `projects[].root`,
 `projects[].kept_out`, `projects[].kept_out_unchecked`, and `filters.projects`. `storage_checked` is always
 `false`, because a dry run writes nothing and the storage check writes a test
 object; only an import checks storage, before it asks.
-`handoff --format json` prints the handoff document. Both follow the same
-add-only rule but are not yet versioned documents; prefer the text output for
-anything a person reads.
+`handoff --format json` prints the handoff document. Its `workspace` object
+holds `directory` and `branch` as the transcript recorded them and, when the
+command knew the checkout the handoff is for (not with `--worktree` or
+`--file`), two more, both omitted when not true: `elsewhere` (`true` when the
+recorded directory is neither that checkout nor a directory containing it or
+inside it) and `current_branch` (the branch that checkout is on, when it
+differs from the recorded one). Both commands follow the same add-only rule
+but are not yet versioned documents; prefer the text output for anything a
+person reads.
+
+## machines --json
+
+The document has `schema_version: 1` and contains `records` (each with `schema_version: 1` as defined by the
+[machine record schema](../../schemas/machine.schema.json)), `unreadable`
+(object key and a bounded safe reason), `partial`, and `provider_verified`
+(always false until a provider verification command is implemented). Unreadable
+records and partial listings exit with code 1 while preserving readable records.
+Records are untrusted bucket claims. Heartbeats are at most daily, not current
+activity; credential kinds do not establish provider-verified ownership.
+
+`machines --verify --json` adds a `verification` object: `checked_at`,
+`pagination_complete`, `account_inventory_complete` (currently always false),
+`visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
+`observations` and optional `claim_not_observed` token IDs. Observations contain
+`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+is true only when pagination and all observed checks complete without partial
+results; it never asserts ownership, account completeness or revocation.
+States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
+`scope_unknown_or_mismatch`, `provider_key_not_active`,
+`issuance_unknown_or_mismatch`, `provider_metadata_matches_claim` and
+`local_binding_mismatch`. Bindings are `untrusted_bucket_claim` or
+`local_committed_binding`. Failures return available observations and exit 1.
+
+`machines --json` additionally includes optional `pairing_warnings`, an array of
+secret-free local pending, uncertain-delivery or expired pairing descriptions.
+These warnings require no conversation scan or provider-management credential.
+An observed matching bucket claim does not prove machine ownership or revocation.
+
+`machines revoke --json` writes schema-1 revocation operation metadata and its
+exact selected `keys`, whose outcomes are `pending`, `confirmed` or
+`failed-or-unknown`. `publication_pending` describes the distinct bucket write,
+not provider success. `account_inventory_complete` is always false;
+`request_only` means no verified deletion selection. The optional
+`requested_selector` retains the explicitly **unverified** caller request as a
+bounded `kind` (`name`, `machine_id`, `recipient_id`, or `pairing_id`) and `value`.
+It is informational, never deletion authority; request-only operations cannot
+be retried as verified selections. Provider success confirms
+only the selected set, never all possible shared/legacy/creator-hidden access.

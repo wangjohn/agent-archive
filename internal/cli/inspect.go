@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"sort"
 	"strconv"
@@ -60,9 +61,10 @@ func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, conf
 
 // runListCommand implements `agent-archive list`. It reads only metadata
 // sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
-// metadata fields, so its output can never contain transcript content. It
-// uses the time-ordered index when complete and verifies each displayed
-// sidecar live; full scans reuse the local metadata cache unless --no-cache.
+// metadata fields, so its output can never contain transcript content. A
+// listing of every project uses the time-ordered index when complete and
+// verifies each displayed sidecar live; full scans, which a scope needs,
+// reuse the local metadata cache unless --no-cache.
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
 // terminal, paged through $PAGER unless --no-pager, --json, or an interactive
 // browse (stdin and stdout are both terminals).
@@ -84,8 +86,18 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	verbose := fs.Bool("verbose", false, "show full session IDs, absolute times, origin, parser, and all models/skills")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
-	if !fs.parseFlagsOnly(args) {
+	allProjects := fs.Bool("all-projects", false, "list every project's sessions, not only the current repository's")
+	project := fs.String("project", "", "list this project's sessions: a directory, or a project name (default: the current directory's repository)")
+	query, given, ok := fs.parseWithOptionalArgument(args)
+	if !ok {
 		return 2
+	}
+	q := parseSessionQuery(query)
+	if given && q.empty() {
+		return fs.usageError("the search words are empty")
+	}
+	if *project != "" && *allProjects {
+		return fs.usageError("--project and --all-projects cannot be used together: --project lists one project, --all-projects lists every project")
 	}
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
@@ -111,6 +123,17 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 			return 1
 		}
 	}
+	scope, err := scopeFor(env, *project, *allProjects)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return 1
+	}
+	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
+	// The index lists the newest sessions of every project. A scope is
+	// applied before --limit, so it reads them all; so does a search, and
+	// every table and browser, which leave subagents out before --limit
+	// counts (a browser may also switch to the scope).
+	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || !opts.jsonOut
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
@@ -118,47 +141,169 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		stopList = func() {}
 	}
 	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")}
-	var listed reader.RecentResult
-	if opts.limit > 0 && !opts.imported && !opts.hookCaptured {
-		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, opts.limit, listOpts)
-	} else {
-		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	listLimit := opts.limit
+	if full {
+		listLimit = 0
 	}
+	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
-	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
-	if !opts.imported && !opts.hookCaptured && listed.Complete {
-		totalMatched = listed.TotalMatched
-		truncated = totalMatched > len(shown)
-	} else if !listed.Complete {
-		totalMatched = -1
-		truncated = true
+	if !opts.jsonOut {
+		// --json keeps the listing's order, newest capture first, which
+		// the index's fast path can give without reading every session.
+		sortByActivity(sessions)
 	}
+	labels := projectLabels(cfg)
+	view := listViews{sessions: sessions, listed: listed, full: full, limit: opts.limit, jsonOut: opts.jsonOut, query: q,
+		fields: func(m archive.Metadata) sessionFields { return fieldsOf(m, sessionProjectName(m, labels)) }}.view
 	if opts.jsonOut {
-		return printJSON(stdout, stderr, newListDocument(shown, opts.limit, totalMatched, truncated))
-	}
-	if len(shown) == 0 {
-		terminal.Println(stdout, "No archived sessions match.")
-		return 0
+		return printJSON(stdout, stderr, listJSON(scope, opts.limit, view))
 	}
 	format := listFormatOptions{
-		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
-		GroupByProject: true,
+		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
+		GroupByProject: true, Numbered: browsing, Children: childCounts(sessions),
 	}
-	if browseInteractive(env, stdin, stdout) {
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, shown, totalMatched, truncated, format, opts.noPager, "list")
+	words := strings.Join(strings.Fields(query), " ")
+	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
+	if choices.shown().holdsNothing() {
+		if !q.empty() {
+			terminal.Printf(stdout, "No archived sessions match %q.\n", queryLabel(query))
+		} else {
+			terminal.Println(stdout, "No archived sessions match.")
+		}
+		return 0
+	}
+	if browsing {
+		_, _, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
+		return code
 	}
 	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		return printListTable(w, shown, totalMatched, truncated, format)
+		return printListTable(w, choices.shown())
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// listChoices is what list shows of the archive: for a browser, every
+// top-level session, opened with the words in its filter (the sessions the
+// search finds decide only which scope it opens on and the note about matches
+// elsewhere), and for a table, the sessions the search finds.
+func listChoices(scope sessionScope, format listFormatOptions, browsing bool, sessions []archive.Metadata, limit int, view func(sessionScope) listView, words string) *scopeChoices {
+	if browsing {
+		return newScopeChoices(scope, format, false, browseSearchRows(archiveRows(sessions, limit, format), view, words))
+	}
+	return newScopeChoices(scope, format, true, func(s sessionScope) scopeView {
+		v := view(s)
+		return scopeView{rows: formatSessionRows(v.shown, format), total: v.total, truncated: v.truncated, hidden: v.hidden, note: v.note}
+	})
+}
+
+// browseSearchRows is a browser's rows when it opens with words in its filter:
+// the rows it would have without them, in the scope the search settles on. A
+// scope the search finds nothing in counts as holding nothing, so the browser
+// opens on all projects, and the note about matches elsewhere shows while the
+// filter holds those words.
+func browseSearchRows(rows scopeRowsFunc, found func(sessionScope) listView, words string) scopeRowsFunc {
+	if words == "" {
+		return rows
+	}
+	return func(s sessionScope) scopeView {
+		v, hits := rows(s), found(s)
+		v.nothing, v.searchNote, v.searchWords = len(hits.shown) == 0, hits.note, words
+		return v
+	}
+}
+
+// listView is what one scope lists.
+type listView struct {
+	shown []archive.Metadata
+	// total counts what the scope holds before --limit, or is -1 when it was
+	// not read to the end; truncated is set when --limit cut shown.
+	total     int
+	truncated bool
+	// hidden is how many subagent sessions the table leaves out.
+	hidden int
+	// outside is how many more sessions match outside the scope.
+	outside int
+	// note is the footer's line about matches outside the scope.
+	note string
+}
+
+// listViews builds the views of the listing a `list` run read, one per scope.
+type listViews struct {
+	// sessions are every session listed, newest first, subagents included.
+	sessions []archive.Metadata
+	listed   reader.RecentResult
+	// full is set when sessions are every match, not the index's newest page.
+	full    bool
+	limit   int
+	jsonOut bool
+	query   sessionQuery
+	fields  func(archive.Metadata) sessionFields
+}
+
+// view is what scope s lists. A search shows the first tier of the search
+// that has a match, and only that tier's sessions in the scope, so a scope
+// with none of them is empty and the caller moves to all projects. Without
+// one, a table lists top-level sessions only, and --json every session.
+func (v listViews) view(s sessionScope) listView {
+	switch {
+	case !v.query.empty():
+		res := searchSessions(v.sessions, v.query, s, v.fields)
+		matches := res.matches
+		if s.narrowed() && !res.inScope {
+			matches = nil
+		}
+		shown, total, truncated := applyListLimit(matches, v.limit)
+		return listView{shown: shown, total: total, truncated: truncated, outside: res.outside, note: res.outsideNote(s)}
+	case !v.jsonOut:
+		return topLevelView(v.sessions, s, v.limit)
+	case v.full:
+		scoped := s.filter(v.sessions)
+		shown, total, truncated := applyListLimit(scoped, v.limit)
+		return listView{shown: shown, total: total, truncated: truncated, outside: len(v.sessions) - len(scoped)}
+	}
+	shown, _, _ := applyListLimit(v.sessions, v.limit)
+	if !v.listed.Complete {
+		return listView{shown: shown, total: -1, truncated: true}
+	}
+	return listView{shown: shown, total: v.listed.TotalMatched, truncated: v.listed.TotalMatched > len(shown)}
+}
+
+// topLevelView is a scope's top-level sessions, cut to limit: subagents are
+// left out before the limit counts, and tallied for the footer.
+func topLevelView(sessions []archive.Metadata, s sessionScope, limit int) listView {
+	scoped := s.filter(sessions)
+	top := topLevelSessions(scoped)
+	shown, total, truncated := applyListLimit(top, limit)
+	return listView{shown: shown, total: total, truncated: truncated, hidden: len(scoped) - len(top)}
+}
+
+// listJSON builds the `list --json` document for a scope. Its rows are the
+// scope's sessions, or every session when the scope is off or holds none (and
+// the scope object says which).
+func listJSON(scope sessionScope, limit int, view func(sessionScope) listView) listDocument {
+	v := view(scope)
+	fellBack, outside := false, 0
+	if scope.narrowed() {
+		if len(v.shown) == 0 {
+			fellBack = true
+			v = view(scope.everything())
+		} else {
+			outside = v.outside
+		}
+	}
+	out := newListDocument(v.shown, limit, v.total, v.truncated)
+	if scope.Label != "" {
+		out.Scope = &listScope{Label: scope.Label, AllProjects: scope.All || fellBack, FellBack: fellBack, OutsideMatches: outside}
+	}
+	return out
 }
 
 // listFlagValues holds the parsed list flags before validation.
@@ -236,7 +381,7 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	if !ok {
 		return listOptions{}, fs.usageError("--replays must be hide, include, or only, not %q", v.replays)
 	}
-	canonical, ok := harnessFlag(v.harness)
+	canonical, ok := harnessFlagWithCatalog(fs.catalog, v.harness)
 	if !ok {
 		return listOptions{}, fs.usageError("%s", harnessFlagError(v.harness))
 	}
@@ -319,12 +464,15 @@ func newListDocument(sessions []archive.Metadata, limit, totalMatched int, trunc
 // harnessFlag checks a --harness value and returns its canonical name, as
 // archived metadata records it ("claude-code" is Claude). An empty value
 // means no filter.
-func harnessFlag(value string) (string, bool) {
+func harnessFlagWithCatalog(c agentmeta.Catalog, value string) (string, bool) {
+	if c == nil {
+		c = productionAgents.Catalog()
+	}
 	if value == "" {
 		return "", true
 	}
-	if name, known := archive.KnownHarness(value); known {
-		return name, true
+	if d, known := c.Lookup(value); known {
+		return string(d.ID), true
 	}
 	return "", false
 }
@@ -352,6 +500,9 @@ type listDocument struct {
 	TotalMatched      *int               `json:"total_matched,omitempty"`
 	TotalMatchedKnown bool               `json:"total_matched_known"`
 	Truncated         bool               `json:"truncated,omitempty"`
+	// Scope says what part of the archive the listing looked at; absent when
+	// the working directory is in no project. Added within schema version 4.
+	Scope *listScope `json:"scope,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left
@@ -386,8 +537,7 @@ func listCache(env metadataCacheDependencies, disabled bool) *reader.MetadataCac
 }
 
 // sessionOrigin is list's ORIGIN column: imported for a session backfill
-// imported, replay for one a replay tool ran, hook for one captured as it
-// ran.
+// imported, hook for one captured as it ran.
 func sessionOrigin(m archive.Metadata) string {
 	if m.Origin == archive.SessionOriginImport {
 		return "imported"
@@ -427,7 +577,14 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if !ok {
 		return 2
 	}
-	canonical, ok := harnessFlag(*harness)
+	if v.replays == "" {
+		v.replays = replaysHide
+	}
+	replays, ok := replayFilterFlag(v.replays)
+	if !ok {
+		return listOptions{}, fs.usageError("--replays must be hide, include, or only, not %q", v.replays)
+	}
+	canonical, ok := harnessFlagWithCatalog(catalogFor(env), *harness)
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
@@ -469,28 +626,10 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	ctx := context.Background()
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		if *jsonOut {
-			// The one-shot picker, as before the browser: a script-like
-			// request for one document.
-			row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "show")
-			if code != 0 || !selected {
-				return code
-			}
-			view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
-			if err != nil {
-				terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-				return 1
-			}
-			return printJSON(stdout, stderr, view)
-		}
-		browse, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, *harness, "show")
-		if !ok {
-			return code
-		}
-		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, browse.sessions, browse.totalMatched, browse.truncated, browse.format, *noPager, "show")
+		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
 
-	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects)
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
 	}
@@ -532,6 +671,29 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
 		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
+}
+
+// runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
+// --json one session picked in it and printed as its sidecar.
+func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+	if jsonOut {
+		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		if code != 0 || !selected {
+			return code
+		}
+		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		return printJSON(stdout, stderr, view)
+	}
+	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	if !ok {
+		return code
+	}
+	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	return code
 }
 
 // checkShowMaxBytes reports a --max-bytes that is negative, or given

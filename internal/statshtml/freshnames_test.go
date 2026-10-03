@@ -127,11 +127,11 @@ func TestDailyBarHeightsFollowSpend(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			bars := bar.FindAllStringSubmatch(string(render(t, s, Options{})), -1)
-			if len(bars) != len(s.Daily) {
-				t.Fatalf("%d bars for %d days", len(bars), len(s.Daily))
+			if len(bars) != len(s.ChartDays()) {
+				t.Fatalf("%d bars for %d days", len(bars), len(s.ChartDays()))
 			}
 			plot := float64(chartBaseline - chartPlotTop)
-			for i, d := range s.Daily {
+			for i, d := range s.ChartDays() {
 				class := bars[i][1]
 				height, err := strconv.ParseFloat(bars[i][2], 64)
 				if err != nil {

@@ -87,6 +87,9 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	}
 	address, detail := storageAddress(cfg.Storage)
 	rows = append(rows, reviewRow{label: "Storage", values: []string{address}, detail: detail})
+	if cfg.MachineAssignment != nil && cfg.MachineAssignment.Kind == config.MachineAssignmentR2Own {
+		rows = append(rows, reviewRow{label: "R2 keys", values: []string{fmt.Sprintf("Own dedicated key · %d unused spares (target %d)", len(cfg.SpareCredentialRefs), cfg.SpareTarget())}})
+	}
 	days := fmt.Sprintf("%d days", cfg.RetentionDays)
 	if cfg.RetentionDays == 1 {
 		days = "1 day"
@@ -254,8 +257,12 @@ var appStepAfterSetup = map[string]string{
 func privacyCheck(cfg config.Config, at time.Time) reviewCheck {
 	report := currentBucketPrivacy(cfg, at)
 	switch {
+	case report.State == "verified_private" && report.Reason == "r2_public_domains_disabled":
+		return reviewCheck{mark: symbolOK, label: "Bucket is private", detail: "r2.dev off; no enabled custom domains (checked at setup)"}
 	case report.State == "verified_private":
 		return reviewCheck{mark: symbolOK, label: "Bucket is private", detail: "all public access blocked"}
+	case report.State == "public_or_risky" && report.Reason == "r2_public_access_enabled":
+		return reviewCheck{mark: symbolWarn, label: "Bucket is public", detail: "you chose to continue", more: []string{"Turn off public access in the Cloudflare dashboard:"}, link: report.GuidanceURL}
 	case report.State == "public_or_risky":
 		return reviewCheck{mark: symbolFail, label: "Bucket is public", detail: privacyReasonText(report.Reason), more: []string{"Fix its access before archiving:"}, link: report.GuidanceURL}
 	case report.Reason == r2PrivacyUnreadable:
@@ -330,7 +337,7 @@ func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, ins
 	}
 }
 
-// privacyDocURL is the page on what leaves the Mac and what filtering
+// privacyDocURL is the page on what leaves the machine and what filtering
 // removes.
 const privacyDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md"
 
@@ -342,7 +349,7 @@ func printReviewNotes(p *prompter) {
 		terminal.Println(p.out, p.style.dim(p.style.hang("  ", p.reviewHint)))
 	}
 	terminal.Println(p.out, p.style.dim(p.style.hang("  ", "Filtering is best effort; sensitive text may remain in archived sessions.")))
-	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your Mac:")+" "+p.style.cmd(privacyDocURL)))
+	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your machine:")+" "+p.style.cmd(privacyDocURL)))
 }
 
 // printReviewPrivacy reports the saved bucket privacy evidence as of the
@@ -350,8 +357,12 @@ func printReviewNotes(p *prompter) {
 func printReviewPrivacy(p *prompter, cfg config.Config) {
 	report := currentBucketPrivacy(cfg, p.clock())
 	switch {
+	case report.State == "verified_private" && report.Reason == "r2_public_domains_disabled":
+		p.item(p.style.ok("✓"), "Bucket privacy: r2.dev off and no enabled custom domains at the last check.", nil)
 	case report.State == "verified_private":
 		p.item(p.style.ok("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
+	case report.State == "public_or_risky" && report.Reason == "r2_public_access_enabled":
+		p.warn("Bucket privacy: R2 public access was enabled at the last check.", "Turn it off in the Cloudflare dashboard: "+report.GuidanceURL)
 	case report.State == "public_or_risky":
 		p.item(p.style.fail("!"), p.style.fail("The bucket looks public ("+privacyReasonText(report.Reason)+")."), []string{"Fix its access before archiving: " + report.GuidanceURL})
 	case report.Reason == r2PrivacyUnreadable:
@@ -363,8 +374,8 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	}
 }
 
-// r2PrivacyUnreadable is the privacy reason of every R2 bucket: its object
-// keys cannot read public-access settings (storage.UnknownPrivacy).
+// r2PrivacyUnreadable is the privacy reason when R2's object key is the only
+// credential available: it cannot read public-access settings.
 const r2PrivacyUnreadable = "r2_management_credentials_not_configured"
 
 func privacyReasonText(reason string) string {
@@ -378,6 +389,10 @@ func privacyReasonText(reason string) string {
 		return "not every public-access setting could be confirmed"
 	case "inspection_stale":
 		return "the last check is more than a day old"
+	case "r2_public_access_enabled":
+		return "R2 public access is enabled"
+	case "r2_public_access_not_fully_checked":
+		return "not every R2 public-access setting could be checked"
 	case "storage_configuration_changed":
 		return "storage changed since the last check"
 	case "public_bucket_policy":
@@ -392,7 +407,7 @@ func privacyReasonText(reason string) string {
 // y, n, and e still work for scripted input. When the checklist is blocked
 // (a row is ✗), starting is neither offered nor accepted: the first choice
 // checks again instead, returning check.
-func reviewAction(p *prompter, reconfiguring, blocked bool) (string, error) {
+func reviewAction(p *prompter, reconfiguring, blocked, offerName bool) (string, error) {
 	label, first := "Start archiving?", option{"yes", "Yes, start archiving"}
 	if reconfiguring {
 		label, first = "Save these changes?", option{"yes", "Yes, save"}
@@ -400,10 +415,11 @@ func reviewAction(p *prompter, reconfiguring, blocked bool) (string, error) {
 	if blocked {
 		label, first = "Fix what is marked ✗ above first.", option{"check", "Check again"}
 	}
-	choice, err := p.menu("\n"+label, first.Key,
-		first,
-		option{"edit", "Edit a setting"},
-		option{"no", "Cancel (your setup draft is kept)"})
+	options := []option{first, {"edit", "Edit a setting"}, {"no", "Cancel (your setup draft is kept)"}}
+	if offerName {
+		options = append(options, option{"machine", "Name this machine (optional)"})
+	}
+	choice, err := p.menu("\n"+label, first.Key, options...)
 	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
 	case "yes":

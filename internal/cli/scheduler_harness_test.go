@@ -17,7 +17,7 @@ import (
 )
 
 // The harness of the macOS scheduler characterization (PR 5a-0 of
-// dev/proposals/platform-abstraction.md; the tests are the other
+// dev/proposals/implemented/platform-abstraction.md; the tests are the other
 // scheduler_*_test.go files). Later PRs move the launchctl calls behind a
 // scheduler port and the launchd history into its adapter; the tests must
 // pass through that without their assertions changing. So the tests observe
@@ -66,7 +66,9 @@ type schedProbe struct {
 
 // newSchedRun is an installation of the account's default data directory (its
 // label is the plain com.agent-archive.collector) or, when defaultInstall is
-// false, of another one, whose label ends in a hash of its directory.
+// false, of another one, whose label ends in a hash of its directory. It
+// replaces launchctl (launchdAnswering), so a test that calls it must not be
+// parallel.
 func newSchedRun(t *testing.T, defaultInstall bool) *schedRun {
 	t.Helper()
 	account, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()

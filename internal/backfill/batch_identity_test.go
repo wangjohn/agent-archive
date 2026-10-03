@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -103,7 +104,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 			}
 			root := []string{"/p", "/q"}[rng.IntN(2)]
 			native := "s-" + string(rune('a'+round)) + "-" + string(rune('a'+i))
-			if _, err := f.store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
+			if _, err := f.store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: native}, func(id string) archive.SessionRegistration {
 				return archive.SessionRegistration{
 					ArchiveSessionID: id, NativeSessionID: native, ProjectID: archive.ProjectID(root), ProjectRoot: root,
 					Harness: archive.Harness{Name: "claude"}, SessionStartedAt: fixedNow.Add(-2 * time.Hour),

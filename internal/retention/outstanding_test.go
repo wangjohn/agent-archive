@@ -18,6 +18,7 @@ import (
 // a session was never expired, locally or in the bucket. Only a queued
 // request or an upload storage has not accepted defers expiry, as before.
 func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	expiry := t0.Add(retentionWindow + 24*time.Hour)
 	for _, tc := range []struct {
@@ -77,6 +78,7 @@ func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			local := newTestStore(t)
 			memory := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript)
@@ -112,6 +114,7 @@ func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
 // nothing it is (blocked, declined, rate limited, never captured, in
 // another destination), changes the verdict.
 func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	expiry := t0.Add(retentionWindow + 24*time.Hour)
 	type source int
@@ -134,6 +137,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 				name := fmt.Sprintf("source %d capture %q request %v scan %v upload %v publishable %v current %v",
 					src, capture, requested, scan, upload, publishable, current)
 				t.Run(name, func(t *testing.T) {
+					t.Parallel()
 					local := newTestStore(t)
 					reg := registration("s1", "")
 					switch src {

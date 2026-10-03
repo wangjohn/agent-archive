@@ -1,11 +1,11 @@
 ---
 name: agent-archive
-description: Find, look at, or pull in a past coding session (also called a chat or conversation) from any agent (Claude Code, Codex, or Cursor), whether it is in the agent-archive archive or only on this Mac. Use it when the person refers to an earlier session or to work done in another agent, for example to pull in, continue, or review a session by its topic, or to ask what they did in Cursor yesterday. It is not for the conversation you are in, or for reading files.
+description: Find, look at, or pull in a past coding session (also called a chat or conversation) from any agent (Claude Code, Codex, or Cursor), whether it is in the agent-archive archive or only on this machine. Use it when the person refers to an earlier session or to work done in another agent, for example to pull in, continue, or review a session by its topic, or to ask what they did in Cursor yesterday. It is not for the conversation you are in, or for reading files.
 ---
 <!-- Written by agent-archive setup, which replaces this file; agent-archive uninstall removes it. Delete this line to keep your own version. -->
 
 The person is pointing at a past coding session, from this or any other agent
-(Claude Code, Codex, Cursor), on this Mac or in their agent-archive archive.
+(Claude Code, Codex, Cursor), on this machine or in their agent-archive archive.
 Get it by running the commands below, exactly as written, with real words in
 place of anything in <angle brackets>. Do not read agent transcript or session
 files yourself.
@@ -16,10 +16,14 @@ files yourself.
     '/Users/me/My Tools/agent-archive' handoff "<words from the person>" --harness <codex|claude|cursor>
     '/Users/me/My Tools/agent-archive' handoff --latest --harness <codex|claude|cursor>
 
-- The words are matched as plain text, in any case, against session titles
-  (a title is the session's first prompt) and short session IDs. Use one or
-  two distinctive words the person used, like "auth" or "flaky test", not a
-  whole sentence. Leave any quote, $, backtick, or backslash out of them.
+- Every word must appear, as plain text in any case, in some field of a
+  session: its name, title (the first prompt), branch, project name, or agent,
+  or at the start of its short session ID. A word like #212 or 212 also
+  matches a pull request number. The words may be a topic, a PR number, a
+  branch, or a project name, and may match different fields ("linux 212").
+  Use one or two distinctive words the person used, like "auth", "#212" or
+  "flaky test", not a whole sentence. Leave any quote, $, backtick, or
+  backslash out of them.
 - Add --harness only if the person said which agent the session was in.
 - If the person gave no topic ("continue where my other agent left off"), use
   --latest: the most recent session for the project you are in (your own
@@ -36,10 +40,12 @@ files yourself.
 
 The command never asks anything. Read what it prints on stderr:
 
-- Several sessions match (exit 1, a table: short ID, agent, project, when,
-  title). Show the person that table and ask which one. Never pick for them.
-  Then run the command again with that short ID in place of the words, and
-  --harness set to that row's agent.
+- Several sessions match (exit 1, a table: short ID, agent, project when
+  the rows span several, when, PR, title, then a Next line). Show the person
+  that table and ask which one. Never pick for them. Then run the command
+  again with that short ID in place of the words, and --harness set to that
+  row's agent; the Next line has it written out. To see the candidates as
+  data instead, run `'/Users/me/My Tools/agent-archive' list "<words>" --json`.
 - No session matches (exit 1). Try once with different, shorter words, or run
   `'/Users/me/My Tools/agent-archive' list --since 30d` and show the person the titles near what
   they described. Do not widen the search any further on your own. The
@@ -52,14 +58,16 @@ The command never asks anything. Read what it prints on stderr:
     '/Users/me/My Tools/agent-archive' show <short ID>
     '/Users/me/My Tools/agent-archive' show <short ID> --transcript
 
-list prints a table, newest first: title, when, agent, project, short ID. It
-does not search and reads no conversation; to find a session by topic, use
-handoff. --since is when the session was captured: an age such as 2d or 14d,
-wide enough for what the person said ("yesterday", "last week"). Add --json
-only if you need more than the table shows (it is about 2 KB a session). show
-prints one session's summary, and --transcript its conversation, bounded to
-about 120 KB. To bring a session into your work, use handoff, not
---transcript.
+list prints a table, newest first: title, PR when a row has one, when, short
+ID, and the agent and project where they differ. It shows top-level sessions
+only, with a hint of how many subagent sessions a session has; the words
+search it, as for handoff, and `'/Users/me/My Tools/agent-archive' list "<words>" --json` prints the
+matches as data. It reads no conversation. --since is when the session was
+captured: an age such as 2d or 14d, wide enough for what the person said
+("yesterday", "last week"). Add --json only if you need more than the table
+shows (it is about 2 KB a session). show prints one session's summary, and
+--transcript its conversation, bounded to about 120 KB. To bring a session
+into your work, use handoff, not --transcript.
 
 ## Never run these
 
@@ -84,7 +92,7 @@ If it fails because of the network, credentials, the Keychain, or your
 sandbox, tell the person what failed and ask them to allow it or to run it
 themselves in a terminal. Do not retry with other flags or variants. If a
 command seems to wait for input, stop it and say so. A "no session matches"
-that adds "the archive could not be read" only searched this Mac: say so, and
+that adds "the archive could not be read" only searched this machine: say so, and
 ask before trying again.
 
 To check that agent-archive is healthy, run `'/Users/me/My Tools/agent-archive' status` and tell the

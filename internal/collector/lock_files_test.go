@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,6 +33,7 @@ func lockFiles(t *testing.T, home string) []string {
 // lock) behind for good. Rejecting or acknowledging a candidate now removes
 // its lock, and so does a request refused for an unregistered session.
 func TestRejectedCandidatesLeaveNoLockFiles(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {
@@ -53,7 +55,7 @@ func TestRejectedCandidatesLeaveNoLockFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if outcome := materializeSubagentCandidates(local, Options{}, start); len(outcome.rejected) != 3 || len(outcome.errors) != 2 {
+	if outcome := materializeSubagentCandidates(context.Background(), local, Options{}, start); len(outcome.rejected) != 3 || len(outcome.errors) != 2 {
 		t.Fatalf("outcome = %+v, want three rejections, the two with a mismatched transcript reported as failures", outcome)
 	}
 	// Only the registered parent's request lock remains: it now has a
@@ -67,6 +69,7 @@ func TestRejectedCandidatesLeaveNoLockFiles(t *testing.T) {
 // by a crash) are swept by the next pass; a registered session's lock, and a
 // lock someone holds, are left alone.
 func TestPassSweepsOrphanedLockFiles(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t)
 	home := store.Home()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", `{"type":"turn_context","model":"gpt-test"}`+"\n")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -268,7 +269,7 @@ func runKeyPicker(t *testing.T, picker *sessionPicker, sessions []archive.Metada
 	var out bytes.Buffer
 	picker.clear = func() { out.WriteString(screenBreak) }
 	format.Now = pickerNow
-	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, len(sessions), false, format, "show")
+	row, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, sessions, format, "show")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,9 +311,9 @@ func TestKeyPickerScrollsByRowsOnTheWheel(t *testing.T) {
 	// 16 rows: the column header and 15 sessions.
 	spans := []string{"1-15", "4-18", "3-17"}
 	statuses := []string{
-		"Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"36% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
-		"34% · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit",
+		"Top · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"36% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
+		"34% · ↑↓ scroll · PgUp/PgDn page · / filter · type a number and Enter · q quit",
 	}
 	for i, screen := range screens {
 		if rowSpan(screen) != spans[i] || statusLine(screen) != statuses[i] || !strings.HasPrefix(screen, "#") {
@@ -415,7 +416,7 @@ func TestKeyPickerFitsWithoutScrolling(t *testing.T) {
 	t.Parallel()
 	for _, size := range []fixedTerminal{{120, 40}, {}} {
 		_, _, screens := runKeyPicker(t, &sessionPicker{env: size}, pickerSessions(12, oneProject), listFormatOptions{}, "\x1b[B\x1b[6~ \x1b[F", "q")
-		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · type a number and Enter · q quit" {
+		if len(screens) != 2 || screens[0] != screens[1] || rowSpan(screens[0]) != "1-12" || statusLine(screens[0]) != "All · / filter · type a number and Enter · q quit" {
 			t.Fatalf("%v:\n%s", size, strings.Join(screens, "\n----\n"))
 		}
 	}
@@ -484,7 +485,7 @@ func TestKeysSuspendRestoresTheTerminal(t *testing.T) {
 	keys := startKeys(fake)
 	var out bytes.Buffer
 	picker := &sessionPicker{env: fixedTerminal{120, 20}, keys: keys, clear: func() { out.WriteString(screenBreak) }}
-	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), 30, false, listFormatOptions{Now: pickerNow}, "show")
+	_, ok, err := picker.pick(newPrompter(strings.NewReader(""), &out), &out, pickerSessions(30, oneProject), listFormatOptions{Now: pickerNow}, "show")
 	keys.close()
 	if err != nil || ok || strings.Count(out.String(), screenBreak) != 1 {
 		t.Fatalf("ok=%v err=%v:\n%s", ok, err, out.String())
@@ -687,41 +688,57 @@ func TestKeyBrowserRestoresTheTerminal(t *testing.T) {
 }
 
 // A signal while the browser waits for a key restores the terminal's modes
-// and the screen before the process exits.
+// and the screen before the process exits, with the shell's status for the
+// signal: SIGTERM, and SIGQUIT (131), which would otherwise dump goroutines
+// and leave the terminal raw on the alternate screen. The bare show is the
+// same browser as list.
 func TestKeyBrowserSignalRestoresTheTerminal(t *testing.T) {
 	t.Parallel()
-	env, _, _ := publishedFixture(t)
-	fake := newFakeKeys("1\r", string(fakeBlock))
-	stdin := strings.NewReader("")
-	var stdout, stderr syncBuffer
-	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
-	env.openKeys = func(io.Reader) (keyTerminal, bool) { return fake, true }
-	signals := make(chan os.Signal, 1)
-	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
-	exited := make(chan int, 1)
-	env.exitProcess = func(code int) {
-		if fake.keyMode() || !strings.HasSuffix(stdout.String(), leaveAltScreenSequence) {
-			t.Errorf("exit before restoring: modes %v", fake.history())
+	for _, command := range []string{"list", "show"} {
+		for _, tc := range []struct {
+			sig  syscall.Signal
+			code int
+		}{{syscall.SIGTERM, 143}, {syscall.SIGHUP, 129}, {syscall.SIGQUIT, 131}} {
+			t.Run(fmt.Sprintf("%s %v", command, tc.sig), func(t *testing.T) {
+				t.Parallel()
+				env, _, _ := publishedFixture(t)
+				fake := newFakeKeys("1\r", string(fakeBlock))
+				stdin := strings.NewReader("")
+				var stdout, stderr syncBuffer
+				env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
+				env.openKeys = func(io.Reader) (keyTerminal, bool) { return fake, true }
+				signals := make(chan os.Signal, 1)
+				env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+				exited := make(chan int, 1)
+				env.exitProcess = func(code int) {
+					if fake.keyMode() || !strings.HasSuffix(stdout.String(), leaveAltScreenSequence) {
+						t.Errorf("exit before restoring: modes %v", fake.history())
+					}
+					exited <- code
+				}
+				done := make(chan int, 1)
+				go func() { done <- Run([]string{command}, stdin, &stdout, &stderr, env) }()
+				<-fake.blocked
+				signals <- tc.sig
+				select {
+				case code := <-exited:
+					if code != tc.code {
+						t.Fatalf("exit %d, want %d", code, tc.code)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatalf("no exit after %v", tc.sig)
+				}
+				close(fake.unblock)
+				<-done
+				// Closed once by the handler; the browser's own close does nothing.
+				if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
+					t.Fatalf("terminal modes %v", history)
+				}
+				if out := stdout.String(); strings.Count(out, enterAltScreenSequence) != 1 || strings.Count(out, leaveAltScreenSequence) != 1 {
+					t.Errorf("the alternate screen was not entered and left once: %q", out)
+				}
+			})
 		}
-		exited <- code
-	}
-	done := make(chan int, 1)
-	go func() { done <- Run([]string{"list"}, stdin, &stdout, &stderr, env) }()
-	<-fake.blocked
-	signals <- syscall.SIGTERM
-	select {
-	case code := <-exited:
-		if code != 128+int(syscall.SIGTERM) {
-			t.Fatalf("exit %d", code)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("no exit after SIGTERM")
-	}
-	close(fake.unblock)
-	<-done
-	// Closed once by the handler; the browser's own close does nothing.
-	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
-		t.Fatalf("terminal modes %v", history)
 	}
 }
 

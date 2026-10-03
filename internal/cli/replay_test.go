@@ -130,7 +130,7 @@ func TestHandoffLatestPassesOverReplays(t *testing.T) {
 	t.Parallel()
 	ordinary := archive.Metadata{SessionID: "mine", ProjectID: "p"}
 	replay := archive.Metadata{SessionID: "replayed", ProjectID: "p", Replay: &archive.Replay{}}
-	got := archiveHandoffCandidates([]archive.Metadata{replay, ordinary}, map[string]bool{"p": true}, nil)
+	got, _ := archiveHandoffCandidates([]archive.Metadata{replay, ordinary}, map[string]bool{"p": true}, "", nil)
 	if len(got) != 1 || got[0].SessionID != "mine" {
 		t.Errorf("candidates = %+v, want only the ordinary session", got)
 	}
@@ -138,7 +138,7 @@ func TestHandoffLatestPassesOverReplays(t *testing.T) {
 	regs := []archive.SessionRegistration{
 		{ArchiveSessionID: "replayed", NativeSessionID: "n1", ProjectRoot: "/work/p", Harness: archive.Harness{Name: "claude"}, Replay: &archive.Replay{RunID: "run-1"}},
 	}
-	if c := r.localCandidates(regs, "/work/p"); len(c) != 0 {
+	if c := r.localCandidates(regs, "/work/p"); len(c.byPath) != 0 || len(c.byRepo) != 0 {
 		t.Errorf("local candidates = %+v, want the replay passed over", c)
 	}
 }

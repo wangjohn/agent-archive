@@ -26,7 +26,7 @@ func TestSetupFirstRunAsksOneQuestionForAppsAndProject(t *testing.T) {
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
 	// One confirmation, then S3, profile, bucket, and start.
-	out := f.runSetup(t, strings.Join([]string{"", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "s3-existing", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, "Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n]") {
 		t.Fatalf("no combined question:\n%s", out)
 	}
@@ -51,7 +51,7 @@ func TestSetupFirstRunDecliningAsksAppsAndProjectsSeparately(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"n", "n", "n", "y", "n", "", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"n", "n", "n", "y", "n", "", "s3-existing", "work", "2", ""}, "\n")+"\n")
 	for _, want := range []string{"Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n]", "Include Codex and Claude Code? [Y/n]", "Include Codex? [Y/n]", "Projects to archive", "Projects:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
@@ -72,7 +72,7 @@ func TestSetupOffersImportAfterNextSteps(t *testing.T) {
 	saved := strings.Index(out, "Configuration saved.")
 	steps := strings.Index(out, "Check progress with agent-archive status.")
 	offer := strings.Index(out, "Import the 2 past sessions from these projects?")
-	another := strings.Index(out, "To set up another Mac with this storage")
+	another := strings.Index(out, "To set up another machine with this storage")
 	if saved < 0 || steps < saved || offer < steps || another < offer {
 		t.Fatalf("order saved=%d steps=%d offer=%d another=%d:\n%s", saved, steps, offer, another, out)
 	}
@@ -88,11 +88,11 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", "3", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, "help"), "s3-existing", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}
-	if n := strings.Count(out, "Where should sessions be stored?"); n != 2 {
+	if n := strings.Count(out, "Where should your archive live?"); n != 2 {
 		t.Fatalf("menu shown %d times, want again after the instructions:\n%s", n, out)
 	}
 	if strings.Contains(out, "Manage API tokens") {
@@ -103,15 +103,15 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	}
 }
 
-// With no guided creation yet, the menu is the two providers and the
-// instructions, in that order.
-func TestStorageMenuOptionsWithoutGuidedCreation(t *testing.T) {
+// The menu is the two providers, the guided choices, then the instructions,
+// in that order.
+func TestStorageMenuOptionsOrder(t *testing.T) {
 	t.Parallel()
 	var keys []string
 	for _, o := range storageMenuOptions() {
 		keys = append(keys, o.Key)
 	}
-	if strings.Join(keys, ",") != "r2,s3,help" {
+	if strings.Join(keys, ",") != "r2,s3" {
 		t.Fatalf("menu = %v", keys)
 	}
 }

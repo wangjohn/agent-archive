@@ -64,20 +64,22 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
-	"registrations":       quarantineUnderLock,
-	"requests":            quarantineUnderLock,
-	"subagent-candidates": quarantineUnderLock,
-	"published":           quarantineInPass,
-	"pending":             quarantineInPass,
-	"superseded":          quarantineInPass,
-	"scan-signatures":     readAsAbsent,
-	refreshSkipDir:        readAsAbsent,
-	"pending-scans":       readAsPending,
-	"sessions":            rebuiltFromRegistrations,
-	"forgotten":           readAsRemoved,
-	"status.json":         replacedByNextPass,
-	storageClockFile:      readAsAbsent,
-	"request-locks":       holdsNoContent,
+	"registrations":        quarantineUnderLock,
+	"requests":             quarantineUnderLock,
+	"subagent-candidates":  quarantineUnderLock,
+	"published":            quarantineInPass,
+	"pending":              quarantineInPass,
+	"superseded":           quarantineInPass,
+	"scan-signatures":      readAsAbsent,
+	refreshSkipDir:         readAsAbsent,
+	"pending-scans":        readAsPending,
+	"sessions":             rebuiltFromRegistrations,
+	"sessions-v1":          rebuiltFromRegistrations,
+	sessionIndexMarkerFile: rebuiltFromRegistrations,
+	"forgotten":            readAsRemoved,
+	"status.json":          replacedByNextPass,
+	storageClockFile:       readAsAbsent,
+	"request-locks":        holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.
@@ -189,11 +191,18 @@ func IsUndecodable(err error) bool {
 // and the error wraps ErrQuarantined. Any other read failure is returned as
 // is and leaves the file where it is, to be retried.
 func readOrQuarantine[T any](s *Store, path, lockName string) (value T, found bool, err error) {
+	return readOrQuarantineWaiting[T](s, path, lockName, time.Second)
+}
+
+// readOrQuarantineWaiting is readOrQuarantine waiting at most lockWait for
+// lockName; with none, a lock held right now leaves the file where it is
+// and the error wraps local.ErrBusy.
+func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait time.Duration) (value T, found bool, err error) {
 	value, found, err = readJSON[T](path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
-	unlock, lockErr := local.NamedLockWait(s.home, lockName, time.Second)
+	unlock, lockErr := s.namedLockWait(lockName, lockWait)
 	if lockErr != nil {
 		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %w)", err, lockErr)
 	}
@@ -316,6 +325,12 @@ func (s *Store) ScanRequests() (requests []Request, issues map[string]error, err
 // ScanSubagentCandidates is LoadSubagentCandidates with ScanRegistrations'
 // isolation, keyed by the candidate's archive session ID.
 func (s *Store) ScanSubagentCandidates() ([]SubagentCandidate, map[string]error, error) {
+	return s.scanSubagentCandidates(time.Second)
+}
+
+// scanSubagentCandidates is ScanSubagentCandidates waiting at most lockWait
+// for the lock of a candidate that does not decode before it moves it aside.
+func (s *Store) scanSubagentCandidates(lockWait time.Duration) ([]SubagentCandidate, map[string]error, error) {
 	ids, err := s.listJSONStems("subagent-candidates")
 	if err != nil {
 		return nil, nil, fmt.Errorf("list subagent candidates: %w", err)
@@ -323,7 +338,7 @@ func (s *Store) ScanSubagentCandidates() ([]SubagentCandidate, map[string]error,
 	issues := map[string]error{}
 	var out []SubagentCandidate
 	for _, id := range ids {
-		candidate, found, err := readOrQuarantine[SubagentCandidate](s, s.subagentCandidatePath(id), subagentLockName(id))
+		candidate, found, err := readOrQuarantineWaiting[SubagentCandidate](s, s.subagentCandidatePath(id), subagentLockName(id), lockWait)
 		if err != nil {
 			issues[id] = fmt.Errorf("read subagent candidate %q: %w", id, err)
 			continue

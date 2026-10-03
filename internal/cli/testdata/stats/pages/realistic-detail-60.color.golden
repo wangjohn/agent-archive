@@ -40,18 +40,17 @@ Subagents  77% of tokens (7.7B) in 497 runs
                 subagents
 
 \e[1mSKILLS AND MCP\e[0m
-\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 · cursor-guide
-        2 sessions
+\e[2mSkills\e[0m  code-review 10 · review-pr 4 · docs 3 ·
+        cursor-guide 2 sessions
 \e[2mMCP   \e[0m  github 41 · linear 12 calls (Claude Code and Cursor
         only)
 \e[2mSkills count the sessions that used each one; MCP counts\e[0m
 \e[2mcalls.\e[0m
 
-\e[1mHEADS UP\e[0m
+\e[1mFINDINGS\e[0m
 \e[33m●\e[0m 77% of tokens came from subagents (497 runs)
 \e[33m●\e[0m Costliest session ~$564 · styleprofile · long context, 38
   subagents
-\e[33m●\e[0m 10 sessions have no token data (Cursor 8, Claude Code 2)
 
 \e[1mNOTES\e[0m
 \e[2mScope: this archive only.\e[0m

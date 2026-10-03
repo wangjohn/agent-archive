@@ -2,6 +2,8 @@ package backfill
 
 import (
 	"bytes"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +123,7 @@ func TestUndoTakesOverOnlyForTheImportsAProjectWasKeptFor(t *testing.T) {
 	batches[1].UndoneAt = &undoneB
 	batches[1].RecordKept(plan.KeepProjects)
 	for _, s := range plan.Sessions {
-		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, s.Registration.NativeSessionID, false, nil); err != nil {
+		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(s.Registration.Harness.Name)), NativeID: s.Registration.NativeSessionID}, false, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -23,7 +23,7 @@ func takeArchiveOffline(env *Env) *int {
 	return opens
 }
 
-// A title finds a session on this Mac, which needs no network and no upload.
+// A title finds a session on this machine, which needs no network and no upload.
 func TestHandoffTitleFindsALocalSessionWithoutTheArchive(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -35,7 +35,7 @@ func TestHandoffTitleFindsALocalSessionWithoutTheArchive(t *testing.T) {
 		}
 	}
 	if *opens != 0 {
-		t.Fatalf("opened the archive %d times for a session on this Mac", *opens)
+		t.Fatalf("opened the archive %d times for a session on this machine", *opens)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestHandoffSessionIDBeatsATitleMatch(t *testing.T) {
 	}
 }
 
-// A full archive ID that no session on this Mac has, but that a local title
+// A full archive ID that no session on this machine has, but that a local title
 // mentions, still names the archived session.
 func TestHandoffArchiveSessionIDBeatsALocalTitleMatch(t *testing.T) {
 	t.Parallel()
@@ -159,8 +159,8 @@ func TestHandoffTitleAmbiguousOnATerminalOpensThePickerOnTheMatches(t *testing.T
 	if strings.Contains(out, f.both[:minShortSessionID]) || strings.Contains(out, f.archiveOnly[:minShortSessionID]) {
 		t.Fatalf("the picker lists sessions the title does not match:\n%s", out)
 	}
-	if !strings.Contains(out, "2 session(s)") {
-		t.Fatalf("footer:\n%s", out)
+	if !strings.Contains(out, `Hand off · "yet" matches 2`) {
+		t.Fatalf("heading:\n%s", out)
 	}
 	// Row 1 is the newest match; choosing it hands that session off.
 	out, errOut, code = runPicker(t, f.env, "1\n", "yet")
@@ -194,7 +194,7 @@ func TestHandoffTitleWithNoMatchNamesList(t *testing.T) {
 		}
 	}
 	_, errOut, _ := runHandoff(t, f.env, "no such title", "--source", "local")
-	if !strings.Contains(errOut, "on this Mac (") {
+	if !strings.Contains(errOut, "on this machine (") {
 		t.Errorf("--source local: %s", errOut)
 	}
 	_, errOut, _ = runHandoff(t, f.env, "no such title", "--source", "archive")
@@ -270,8 +270,9 @@ func TestHandoffTitleWithToLaunchesTheMatch(t *testing.T) {
 
 func TestHandoffTitleBeforeSetup(t *testing.T) {
 	t.Parallel()
-	_, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "some title")
-	if code != 1 || errOut != notSetUpMessage+"\n" {
+	f := newNativeFixture(t)
+	_, errOut, code := runHandoff(t, f.env, "some title")
+	if code != 1 || !strings.Contains(errOut, "no verified local sessions") {
 		t.Fatalf("code=%d stderr=%q", code, errOut)
 	}
 }
@@ -296,7 +297,7 @@ func TestHandoffTitleSourceAndHarnessLimitTheSearch(t *testing.T) {
 
 // --source and --harness bound an ID as they bound a title: a registered ID
 // is not taken from the archive side, nor by the wrong app, and a full ID
-// is not read from the archive when only this Mac is wanted.
+// is not read from the archive when only this machine is wanted.
 func TestHandoffFullIDRespectsSourceAndHarness(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -400,8 +401,9 @@ func TestHandoffTitleListsAnIDPublishedUnderTwoHarnesses(t *testing.T) {
 }
 
 // A title as common as a word in every prompt lists a few candidates and
-// counts the rest, on stderr and in the picker, rather than flooding the
-// caller.
+// counts the rest on stderr, rather than flooding the caller. The picker is
+// for a person, who scrolls it and narrows it with the filter, so it lists
+// every match.
 func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -411,7 +413,7 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 	}
 	_, errOut, code := runHandoff(t, f.env, "bulk job")
 	lines := strings.Split(strings.TrimSpace(errOut), "\n")
-	if code != 1 || len(lines) != 1+handoffCandidateLimit+1 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
+	if code != 1 || len(lines) != 1+handoffCandidateLimit+1+2 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
 		!strings.Contains(errOut, "and 5 more") {
 		t.Fatalf("code=%d, %d lines:\n%s", code, len(lines), errOut)
 	}
@@ -420,12 +422,12 @@ func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
 		t.Fatalf("not the newest first:\n%s", errOut)
 	}
 	out, errOut, code := runPicker(t, f.env, "q\n", "bulk job")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s)", handoffCandidateLimit, extra)) {
+	if code != 0 || !strings.Contains(out, fmt.Sprintf(`"bulk job" matches %d`, extra)) || !strings.Contains(out, "Bulk job 0 ") || strings.Contains(out, "Showing") {
 		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 
-// The ID of a session this Mac has registered names it even before it has a
+// The ID of a session this machine has registered names it even before it has a
 // prompt to title it by, as handoff always allowed.
 func TestHandoffExactIDNeedsNoTitle(t *testing.T) {
 	t.Parallel()
@@ -491,5 +493,39 @@ func TestHandoffLatestTakesNoTitle(t *testing.T) {
 	}
 	if *opens != 0 {
 		t.Fatalf("--latest --source local opened the archive %d times", *opens)
+	}
+}
+
+// Words never offer an archived session with no prompt, which has nothing to
+// hand off, without a terminal or on one.
+func TestHandoffTitleSkipsArchivedSessionsWithNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	f.unregister(t, f.noPrompt)
+	// "codex" is in every session's harness; --source archive leaves the archive's.
+	out, errOut, code := runHandoff(t, f.env, "codex", "--source", "archive")
+	if code != 1 || out != "" || !strings.Contains(errOut, `"codex" matches 3 sessions`) || strings.Contains(errOut, f.noPrompt[:minShortSessionID]) {
+		t.Fatalf("code=%d stdout=%q stderr=%s", code, out, errOut)
+	}
+	out, errOut, code = runPicker(t, f.env, "q\n", "codex", "--source", "archive")
+	if code != 0 || strings.Contains(out, f.noPrompt[:minShortSessionID]) || !strings.Contains(out, `"codex" matches 3`) {
+		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// An archived session's ID, whole or short, names it even with no prompt, as
+// a registered one's does (TestHandoffExactIDNeedsNoTitle): only the picker
+// and words pass it over.
+func TestHandoffArchivedIDNeedsNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	f.archiveNoPrompt(t)
+	f.unregister(t, f.noPrompt)
+	for _, query := range []string{f.noPrompt, f.noPrompt[:minShortSessionID]} {
+		out, errOut, code := runHandoff(t, f.env, query)
+		if code != 0 || !strings.Contains(out, "session "+f.noPrompt+" · source: archive") {
+			t.Fatalf("%q: code=%d stderr=%s\n%s", query, code, errOut, out)
+		}
 	}
 }

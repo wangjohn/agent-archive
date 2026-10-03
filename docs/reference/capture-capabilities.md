@@ -32,9 +32,14 @@ does not itself validate a newer app version.
 | Codex CLI | 0.155 | Adapter built and checked against transcripts from this version. |
 | Cursor (desktop) | 3.21.13 | Hook payloads observed live; on 2026-09-23 (main `2a7a8fb`) a new chat registered at its first prompt, was published and read back, and `status` reported `verified_by_capture` for 3.21.13. A resumed chat was declined. |
 
-Support is reported per Mac: `status --json` says `verified_by_capture` for
+These observations were made on macOS. On Linux the real Cursor app and
+`cursor-agent` have not been run against agent-archive, so Cursor capture
+there is unverified and best effort (see [install](../getting-started/install.md#platforms));
+Claude Code and Codex use the same hooks and formats on both systems.
+
+Support is reported per machine: `status --json` says `verified_by_capture` for
 an installed version only once a session from that version has been
-published and read back on that Mac, and `unverified` until then. A version
+published and read back on that machine, and `unverified` until then. A version
 not in this table isn't assumed to work or to fail.
 
 ## Cursor 3.21.13 observations
@@ -157,6 +162,9 @@ sense of "unknown", not an error) otherwise. A session a hook did not register
 `installed_version` comes from setup-time discovery and is labelled by
 `installed_version_kind`: `cli` for a `--version` answer (Codex, Claude Code)
 or `app_bundle` for a macOS bundle's `CFBundleShortVersionString` (Cursor).
+Linux has no bundle to read, so Cursor's installed version is not detected
+there (setup says "version not detected" and `status` reports it as
+unknown); a captured Cursor session still reports its own `cursor_version`.
 Captured sessions report the harness's own version instead: Codex
 `session_meta.cli_version`, Claude Code's per-record `version`, and Cursor's
 hook `cursor_version`; these appear in `observed_harness_versions`. Support is

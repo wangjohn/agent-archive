@@ -24,6 +24,8 @@ func toolResultLine(uuid string, bulkBytes int) string {
 	return fmt.Sprintf(`{"type":"user","uuid":%q,"sessionId":"native-claude","timestamp":"2026-09-22T12:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"short summary"}]},"toolUseResult":{"stdout":%q}}`, uuid, strings.Repeat("x", bulkBytes))
 }
 
+// withCollectorRecordLimit lowers recordLimit for the rest of the test. Every
+// pass reads it, so a test that calls this must not be parallel.
 func withCollectorRecordLimit(t *testing.T, limit int64) {
 	t.Helper()
 	saved := recordLimit
@@ -34,6 +36,7 @@ func withCollectorRecordLimit(t *testing.T, limit int64) {
 // The session that was refused whole now publishes, and the megabytes of
 // dropped tool output stay out of the published bundle.
 func TestFiveMegabyteToolResultRecordPublishes(t *testing.T) {
+	t.Parallel()
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	claudeSession(t, local, claudePromptLine+"\n"+toolResultLine("r1", 5<<20)+"\n")
@@ -57,7 +60,8 @@ func TestFiveMegabyteToolResultRecordPublishes(t *testing.T) {
 // With the defaults a record over the limit cannot occur, since a transcript
 // over the same limit is refused whole first. With the limit lowered, one
 // long record mid-file or at the end is a capture gap recorded once, not a
-// failure every pass, and it clears when the transcript changes.
+// failure every pass, and it clears when the transcript changes. Not
+// parallel: it lowers recordLimit.
 func TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -126,6 +130,7 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func TestCompleteJSONLBoundaryScansBackwardInChunks(t *testing.T) {
+	t.Parallel()
 	record := func(bulk int) string { return toolResultLine("r", bulk) }
 	partial := func(bulk int) string { s := record(bulk); return s[:len(s)-5] } // no closing, invalid JSON
 	for _, tc := range []struct {
@@ -158,6 +163,7 @@ func TestCompleteJSONLBoundaryScansBackwardInChunks(t *testing.T) {
 		{"single record over the limit", partial(300 << 10), 200 << 10, nil, errRecordTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := completeJSONLBoundary(strings.NewReader(tc.content), int64(len(tc.content)), tc.limit)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -185,6 +191,7 @@ func TestCompleteJSONLBoundaryScansBackwardInChunks(t *testing.T) {
 // The limiter passes the transcript through unchanged, across any read
 // boundaries, and stops at the first line longer than the limit.
 func TestRecordLimitReader(t *testing.T) {
+	t.Parallel()
 	content := claudePromptLine + "\n" + toolResultLine("r1", 900) + "\n" + claudePromptLine
 	passed, err := io.ReadAll(&recordLimitReader{r: iotest.OneByteReader(strings.NewReader(content)), limit: 2048})
 	if err != nil || !bytes.Equal(passed, []byte(content)) {
