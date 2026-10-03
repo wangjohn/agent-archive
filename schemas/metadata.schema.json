@@ -77,6 +77,21 @@
       "type": "string",
       "pattern": "^repo-[0-9a-f]{16}$"
     },
+    "git_head": {
+      "description": "The commit the session's working directory had checked out, as the session's own hooks recorded it by running git there (a linked worktree's own HEAD; a submodule's when the session ran inside one). 'start' is HEAD, with whether the working tree was dirty, when the hook that registered the session ran; 'last' is HEAD at the most recent stop hook that could read it. Either is absent when no hook could tell (git not installed, not a repository, a branch with no commits, git slower than the hook's budget) 'start' is also absent on sessions registered before this field or imported by backfill; a later live stop can record 'last'. Subagents have neither. Neither is ever inferred afterwards. Only commit names, a boolean, and times are recorded: never a branch, remote, path, or file name. The commit may exist only on the capturing machine.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/git_head_observation"
+        },
+        "last": {
+          "description": "Replaced only when a stop hook finds HEAD at a different commit, so observed_at is the first stop that saw this commit. Carries no dirty flag.",
+          "$ref": "#/$defs/git_head_observation"
+        }
+      }
+    },
     "started_at": {
       "type": "string",
       "format": "date-time"
@@ -346,6 +361,18 @@
     "origin": {
       "const": "import",
       "description": "Present only for a session `agent-archive backfill` imported; absent for a hook-captured session. An imported session also carries the capture gap 'imported_without_hook_evidence': it has no lifecycle events, final-response text, or skill inventory."
+    },
+    "replay": {
+      "description": "Present only for a session a replay tool ran: the environment variable AGENT_ARCHIVE_REPLAY was set (non-empty) in the hook that registered it. list, stats, and handoff leave such sessions out unless asked (list --replays include|only). Fixed at registration, so a continuation never adds or removes it; a subagent carries its parent's. An object even without a run_id, so a reader tests for the key, not the value.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "description": "The variable's value when it is an identifier: 1 to 128 ASCII letters, digits, '.', '_', ':' or '-', starting with a letter or digit. Absent when the value was anything else, which is never recorded.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        }
+      }
     },
     "imported_at": {
       "type": "string",
@@ -623,6 +650,30 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "git_head_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "observed_at"
+      ],
+      "properties": {
+        "sha": {
+          "description": "HEAD's full object name: 40 hex digits (SHA-1) or 64 (SHA-256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "dirty": {
+          "description": "Whether the working tree had staged, unstaged, or untracked (not ignored) changes against sha. A submodule counts when its checked-out commit differs, not for changes inside it. Absent when unknown.",
+          "type": "boolean"
+        },
+        "observed_at": {
+          "description": "The time of the hook event that saw it.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     },
     "pull_request_link": {
       "type": "object",

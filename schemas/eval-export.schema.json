@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/eval-export.schema.json",
+  "title": "Agent Archive eval export record",
+  "description": "One line of `agent-archive eval export` output (JSON Lines): a session record or an error record, told apart by `record`. Every field is built from data agent-archive has already filtered: a metadata sidecar, a verified source bundle, or a local transcript filtered as the collector filters it. See dev/specs/eval-export.md for the stability promise: fields are only added within a schema_version; removing, renaming, or changing the meaning of one bumps it.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/session"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ],
+  "$defs": {
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record",
+        "source",
+        "detail",
+        "session_id",
+        "harness",
+        "project",
+        "parser",
+        "filter_version",
+        "counts"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "record": {
+          "const": "session"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "detail": {
+          "description": "'metadata': no conversation text; for an archived session every field comes from its metadata sidecar and no source bundle is read. 'full': adds prompts, final_response, files_edited, and feedback, read from the filtered source.",
+          "enum": [
+            "metadata",
+            "full"
+          ]
+        },
+        "session_id": {
+          "description": "The archive session ID for source 'archive'; the app's own session ID for source 'local'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "native_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transcript_path": {
+          "description": "Source 'local' only: the transcript's absolute path on this machine, which is also what --ids-from accepts to export it again.",
+          "type": "string",
+          "minLength": 1
+        },
+        "machine_id": {
+          "description": "Source 'archive' only: the machine that captured the session.",
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_session_id": {
+          "description": "Set for a subagent session: its parent's session ID.",
+          "type": "string",
+          "minLength": 1
+        },
+        "harness": {
+          "$ref": "metadata.schema.json#/$defs/harness"
+        },
+        "project": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "Base name of the project root.",
+              "type": "string",
+              "minLength": 1
+            },
+            "repo_key": {
+              "$ref": "metadata.schema.json#/properties/repo_key"
+            },
+            "root": {
+              "description": "Source 'local' only: the project root's absolute path on this machine. Never present for source 'archive', whose sidecars hold no paths.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "branch": {
+          "description": "The first git branch the retained transcript records (Claude Code's gitBranch): the branch the session started on. Absent when none is recorded (Codex, Cursor) and at metadata detail for source 'archive', which reads no transcript.",
+          "type": "string",
+          "minLength": 1
+        },
+        "git_head": {
+          "description": "As in the metadata sidecar. Absent for source 'local': a transcript file records no commit, and agent-archive does not guess one.",
+          "$ref": "metadata.schema.json#/properties/git_head"
+        },
+        "replay": {
+          "description": "As in the metadata sidecar. Absent for source 'local': the marker is recorded only by a hook.",
+          "$ref": "metadata.schema.json#/properties/replay"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "$ref": "metadata.schema.json#/properties/ended_at"
+        },
+        "captured_at": {
+          "description": "Source 'archive' only: when the published snapshot was captured.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "$ref": "metadata.schema.json#/properties/state"
+        },
+        "turn_outcome": {
+          "$ref": "metadata.schema.json#/properties/turn_outcome"
+        },
+        "parser": {
+          "$ref": "metadata.schema.json#/properties/parser"
+        },
+        "filter_version": {
+          "type": "string"
+        },
+        "models": {
+          "$ref": "metadata.schema.json#/properties/models"
+        },
+        "counts": {
+          "$ref": "metadata.schema.json#/properties/counts"
+        },
+        "model_tokens": {
+          "$ref": "metadata.schema.json#/properties/model_tokens"
+        },
+        "tools_used": {
+          "$ref": "metadata.schema.json#/properties/tools_used"
+        },
+        "mcp_calls": {
+          "$ref": "metadata.schema.json#/properties/mcp_calls"
+        },
+        "skills_used": {
+          "$ref": "metadata.schema.json#/properties/skills_used"
+        },
+        "git_activity": {
+          "$ref": "metadata.schema.json#/properties/git_activity"
+        },
+        "capture_gaps": {
+          "$ref": "metadata.schema.json#/properties/capture_gaps"
+        },
+        "prompts": {
+          "description": "Detail 'full' only, and then always present: every human prompt, filtered, in session order. Harness-written records (expanded skills, command output, notifications, compaction summaries) are not prompts.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "As the transcript recorded it.",
+                "type": "string"
+              },
+              "truncated": {
+                "const": true
+              }
+            }
+          }
+        },
+        "final_response": {
+          "description": "Detail 'full' only: the last assistant text in the transcript, or, when it has none, the last final message a stop hook reported (source 'hook'). Absent when there is neither.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "source"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "transcript",
+                "hook"
+              ]
+            },
+            "truncated": {
+              "const": true
+            }
+          }
+        },
+        "files_edited": {
+          "description": "Detail 'full' only, and then always present: the distinct files the session's editing calls named, in the order first edited, relative to the session's working directory when inside it. counts.files_touched counts the same files.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "feedback": {
+          "description": "Detail 'full' only: explicit feedback attached with `agent-archive feedback`, filtered, in order. Absent when there is none, and always for source 'local'.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "observed_at"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "truncated": {
+                "const": true
+              }
+            }
+          }
+        },
+        "trimmed": {
+          "description": "Present only when --max-bytes cut the record: the longest texts were halved (never below 256 bytes, never dropped, each marked truncated), then edited files were dropped from the end. exceeds_max_bytes says the record is still over the bound.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_bytes",
+            "texts_truncated"
+          ],
+          "properties": {
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "texts_truncated": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "files_edited_omitted": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "exceeds_max_bytes": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    "error": {
+      "description": "Written in place of a session that could not be exported. It never fails the rest of the export.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record",
+        "input",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "record": {
+          "const": "error"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transcript_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "description": "What was asked for, as given: a session ID or a transcript path.",
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "description": "A reader must accept any other lowercase code, which a later release may add.",
+              "anyOf": [
+                {
+                  "enum": [
+                    "not_found",
+                    "ambiguous",
+                    "read_failed",
+                    "parse_failed",
+                    "unknown_harness"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                }
+              ]
+            },
+            "message": {
+              "description": "For people; names no transcript content.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "enum": [
+        "archive",
+        "local"
+      ]
+    }
+  }
+}

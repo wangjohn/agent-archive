@@ -537,7 +537,9 @@ spend it has, marked `+`), and says how many more there are;
   so early in a month it reads low.
 
 `--harness`, `--model`, `--imported` and `--hook-captured` narrow the
-sessions counted, the previous period included. `--model` keeps a session that
+sessions counted, the previous period included. Sessions a replay tool ran
+(with `AGENT_ARCHIVE_REPLAY` set) are not counted unless you pass
+`--replays include` or `--replays only`. `--model` keeps a session that
 used the model, and counts all of that session's tokens, models included.
 Give the full model id (`claude-opus-5`), as `list` does, not the family the
 screen groups it under (`opus`).

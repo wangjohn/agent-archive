@@ -456,7 +456,7 @@ README says how to get a shell as the user whose manager is running.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), the `stats` screens end to end at 60, 80 and 120
+  (`testdata/handoff/`), eval export records (`internal/archive/testdata/eval-export/`, each line validated against its schema), the `stats` screens end to end at 60, 80 and 120
   columns and without a terminal (`internal/cli/testdata/stats/`), every `stats`
   page (overview, detail, projects, models, agents) at 60, 80 and 120 columns
   with and without color from hand-built numbers, plus a previous period,

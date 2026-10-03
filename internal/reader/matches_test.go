@@ -120,3 +120,25 @@ func TestMatchesSkillEntryOrderInvariant(t *testing.T) {
 		}
 	}
 }
+
+// Replays are included by the zero filter, so every caller that does not ask
+// (show by ID, retention) still sees them; list and stats ask to hide them.
+func TestMatchesReplays(t *testing.T) {
+	t.Parallel()
+	ordinary := archive.Metadata{}
+	replay := archive.Metadata{Replay: &archive.Replay{RunID: "run-1"}}
+	for _, tc := range []struct {
+		filter   ReplayFilter
+		ordinary bool
+		replays  bool
+	}{
+		{ReplaysIncluded, true, true},
+		{ReplaysHidden, true, false},
+		{ReplaysOnly, false, true},
+	} {
+		f := Filter{Replays: tc.filter}
+		if matches(ordinary, f) != tc.ordinary || matches(replay, f) != tc.replays {
+			t.Errorf("Replays %q: ordinary %t, replay %t; want %t, %t", tc.filter, matches(ordinary, f), matches(replay, f), tc.ordinary, tc.replays)
+		}
+	}
+}

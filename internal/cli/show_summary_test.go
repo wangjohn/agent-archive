@@ -562,6 +562,34 @@ func TestSummaryGit(t *testing.T) {
 	}
 }
 
+// The Commit row names the commit the session started on, says when its tree
+// was dirty, and adds the last commit a stop saw when it moved.
+func TestSummaryCommit(t *testing.T) {
+	t.Parallel()
+	start, last := strings.Repeat("3f", 20), strings.Repeat("9e", 20)
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		head *archive.SessionGitHead
+		want string
+	}{
+		{nil, ""},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(false), ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}, "started on 3f3f3f3f3f3f with uncommitted changes"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "started on 3f3f3f3f3f3f · last seen on 9e9e9e9e9e9e"},
+		{&archive.SessionGitHead{Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "last seen on 9e9e9e9e9e9e"},
+	} {
+		if got := strings.Join(summaryCommit(tc.head), " · "); got != tc.want {
+			t.Errorf("summaryCommit(%+v) = %q, want %q", tc.head, got, tc.want)
+		}
+	}
+	view := sessionView{Metadata: archive.Metadata{SessionID: "s", GitHead: &archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}}}
+	if out := renderSummaryText(view, summaryOptions{Now: at, Location: time.UTC}); !strings.Contains(out, "Commit    started on 3f3f3f3f3f3f with uncommitted changes") {
+		t.Errorf("show has no Commit row:\n%s", out)
+	}
+}
+
 // The Tools row wraps between tools: no line is cut with an ellipsis and then
 // carries on, at the default width or a narrow one. Only a tool too wide for
 // a line by itself is cut.

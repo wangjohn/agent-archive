@@ -612,6 +612,8 @@ func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, pa
 	metadata.ApplyRegistrationProvenance(reg)
 	metadata.ApplyProjectName(reg.ProjectRoot)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
+	metadata.ApplyGitHead(reg)
+	metadata.ApplyReplay(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return renderedPublication{}, fmt.Errorf("derive metadata: %w", buildErr)
 	}

@@ -6,6 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -185,5 +187,25 @@ func TestTraceIsWrittenBeforeAHandoffLaunchesHere(t *testing.T) {
 	}
 	if strings.Count(errOut, "agent-archive trace") != 1 {
 		t.Fatalf("trace written %d times:\n%s", strings.Count(errOut, "agent-archive trace"), errOut)
+	}
+}
+
+// Eval was added to tracing by the published parent. Its local JSON Lines
+// stay unchanged and the trace names no native session or source path.
+// Not parallel: the trace recorder is process-wide.
+func TestEvalExportTracePreservesLocalRecords(t *testing.T) {
+	f := localEvalFixture(t)
+	path := filepath.Join(f.userHome, ".claude", "projects", "slug-c-lev-1", "c-lev-1.jsonl")
+	plain, plainErr, code := f.evalLines(t, "", "--file", path, "--harness", "claude")
+	if code != 0 || plainErr != "" {
+		t.Fatalf("plain code %d stderr %s", code, plainErr)
+	}
+	f.env = withTrace(f.env, "1")
+	got, stderr, code := f.evalLines(t, "", "--file", path, "--harness", "claude")
+	if code != 0 || !reflect.DeepEqual(got, plain) || !strings.Contains(stderr, "agent-archive trace") {
+		t.Fatalf("trace code %d records %v stderr %s", code, got, stderr)
+	}
+	if strings.Contains(stderr, path) || strings.Contains(stderr, "c-lev-1") {
+		t.Fatalf("trace exposed local identity: %s", stderr)
 	}
 }

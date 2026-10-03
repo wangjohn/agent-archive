@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -106,7 +107,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 		return 0
 	}
-	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver())); err != nil {
+	if err := capture.HandleBatch(home, *harness, batch, now, capture.WithRepoKey(env.repoKeyResolver()), capture.WithGitHead(env.gitHeadResolver()), capture.WithReplay(env.getenv(archive.ReplayEnv))); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 

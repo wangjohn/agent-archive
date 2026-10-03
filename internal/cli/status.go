@@ -96,6 +96,11 @@ type appStatus struct {
 	// ImportedSessions counts the app's top-level sessions agent-archive
 	// backfill imported that the configuration publishes (AcceptSession).
 	ImportedSessions int `json:"imported_sessions"`
+	// ReplaySessions counts the top-level sessions among Sessions that a
+	// replay tool ran (archive.ReplayEnv). They are hook captures, so they
+	// count as sessions and verify the app's hooks; list hides them.
+	// Absent when there are none.
+	ReplaySessions int `json:"replay_sessions,omitempty"`
 	// UploadingSessions counts the app's top-level sessions, captured or
 	// imported, with work not yet published (state.Outstanding's Pending)
 	// that is not a recorded capture gap; Uploading lists them.
@@ -639,6 +644,9 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if reg.ParentSessionID != "" {
 			app.SubagentSessions++
 		} else {
+			if reg.Replay != nil {
+				app.ReplaySessions++
+			}
 			project(reg.ProjectRoot).sessions++
 			s.addUploading(&app, project(reg.ProjectRoot), reg, issues)
 		}
@@ -1641,6 +1649,9 @@ func appCounts(app appStatus) string {
 		if app.SubagentSessions > 0 {
 			parts[0] += " (+" + plural(app.SubagentSessions, "subagent") + ")"
 		}
+	}
+	if app.ReplaySessions > 0 {
+		parts[0] += fmt.Sprintf(", %d of them replays", app.ReplaySessions)
 	}
 	if app.ImportedSessions > 0 {
 		parts = append(parts, fmt.Sprintf("%d imported", app.ImportedSessions))

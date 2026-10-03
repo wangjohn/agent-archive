@@ -10,6 +10,57 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- **`agent-archive eval export`** prints archived sessions for an evaluation
+  tool: one JSON line per session, in a versioned format
+  ([`schemas/eval-export.schema.json`](schemas/eval-export.schema.json)).
+  `--detail metadata` reads only metadata sidecars and prints identity,
+  commits (`git_head`), counts, tokens, tools, and outcome; `--detail full`
+  (the default) adds every filtered human prompt in order, the final
+  response, the edited files, and feedback. A session that cannot be
+  exported is an error record on its own line and the rest still print.
+  `--max-bytes` bounds each record. Read-only and never interactive. See the
+  [guide](docs/guides/eval-export.md). Export failures omit private decoder
+  details, reject mismatched session identities, and report failed output
+  writes; size limits include escaped display controls and preserve whole
+  UTF-8 characters at the text floor.
+- `eval export` also works without setup, on this machine's transcripts:
+  `--file PATH --harness NAME` for one, and `--scan` for every transcript
+  backfill would find (with its `--harness`, `--project`, `--since`, and
+  `--until` filters). It never creates the data directory. `--ids-from -`
+  reads session IDs and transcript paths from standard input, and
+  `--workers N` exports several sessions at once, writing each record as it
+  finishes. Local records carry the transcript's path and project folder,
+  and no commit, replay marker, or feedback. Original native start times
+  are preserved, native identities come from filtered records, local decoder
+  errors omit private details, and failed
+  output cancels further source reads.
+
+- **Replay sessions stay out of your history.** A tool that replays archived
+  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
+  agents it runs; the sessions its runs produce are captured as usual but
+  marked with `replay` in their metadata (with the run ID when it is a plain
+  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
+  them out; `list --replays include|only` and `stats --replays include|only`
+  show them, marked `[replay]` in the table. `show ID` opens one as usual,
+  and `status --json` counts them per app in `replay_sessions`. See
+  [JSON output](docs/reference/json-output.md#replay-sessions).
+
+- **The commit a session started on.** When a session starts in a git
+  repository, the hook records the commit checked out in its working
+  directory and whether the working tree had uncommitted changes, and each
+  stop records the commit checked out then. The metadata carries them as
+  `git_head` (`start` with `sha`, `dirty` and `observed_at`; `last` with
+  `sha` and `observed_at`), `show` has a `Commit` row, and `show --json` and
+  `list --json` include the field. Only full commit names, a yes/no, and
+  times are kept: no branch, remote, path, or file name. The hook runs
+  `git rev-parse` and `git status` with the same short timeout as the
+  repository key, before it takes its lock, and records nothing when git is
+  missing, slow, or the directory is not a repository. Sessions registered
+  before this release and imported sessions have no starting commit; later
+  live stops can still record `last`. Subagents have neither, and nothing
+  infers a commit later. See
+  [JSON output](docs/reference/json-output.md#show) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
   plus transaction-based
