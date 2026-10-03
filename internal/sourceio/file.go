@@ -52,6 +52,18 @@ func (p *filePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agent
 	if err := ctx.Err(); err != nil {
 		return agentapi.SourceObservation{}, err
 	}
+	if p.env.Policy.Root != "" || p.env.Policy.RejectSymlinks {
+		f, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
+		if err != nil {
+			return agentapi.SourceObservation{}, Classify(err)
+		}
+		stamp := f.Stamp()
+		err = errors.Join(Classify(f.Check()), agentapi.Wrap(agentapi.Cleanup, f.Close()))
+		if err != nil {
+			return agentapi.SourceObservation{}, err
+		}
+		return fileObservation(stamp.Size, stamp.ModifiedAt), nil
+	}
 	info, err := p.env.Files.Lstat(ref.Path)
 	if err != nil {
 		return agentapi.SourceObservation{}, Classify(err)

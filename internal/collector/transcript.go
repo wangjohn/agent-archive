@@ -48,11 +48,6 @@ type transcriptFileInfo struct {
 }
 
 func filterSnapshot(ctx context.Context, file agentapi.FileInput, adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	if reg.Origin == archive.SessionOriginDiscovery {
-		if err := validateDiscoverySnapshot(ctx, file, reg); err != nil {
-			return archive.FilteredTranscript{}, transcriptFileInfo{}, err
-		}
-	}
 	stamp := file.Stamp()
 	stat := transcriptFileInfo{Size: stamp.Size, Mtime: stamp.ModifiedAt.UnixNano()}
 	if stamp.Size > maxRawBytes(maxBytes) {
@@ -82,9 +77,14 @@ func (r discoveryReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return r.file.ReadAt(p, off)
 }
 
-func validateDiscoverySnapshot(ctx context.Context, file agentapi.FileInput, reg archive.SessionRegistration) error {
+// validateDiscoveryInput checks immutable admission facts before filtering the
+// same verified handle. It never reopens the source path.
+func validateDiscoveryInput(ctx context.Context, file agentapi.FileInput, reg archive.SessionRegistration) error {
 	if file == nil {
-		return errors.New("discovery source requires a confined file snapshot")
+		return errors.New("discovery source requires verified file input")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	header := sourcefacts.ReadCodexHeader(io.NewSectionReader(discoveryReaderAt{ctx: ctx, file: file}, 0, file.Length()), reg.TranscriptPath)
 	var producerSource string
@@ -92,8 +92,8 @@ func validateDiscoverySnapshot(ctx context.Context, file agentapi.FileInput, reg
 	if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) || header.Meta.Version != reg.Harness.Version || header.Meta.Originator != reg.DiscoveryProducerOriginator || producerSource != reg.DiscoveryProducerSource {
 		return errors.New("discovery source identity changed")
 	}
-	if err := file.Check(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return nil
+	return file.Check()
 }

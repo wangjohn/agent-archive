@@ -84,28 +84,17 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" {
 		return nil, false
 	}
-	var discovered *archive.SessionRegistration
-	if reg.Origin == archive.SessionOriginDiscovery {
-		discovered = &archive.SessionRegistration{
-			NativeSessionID: reg.NativeSessionID, SessionStartedAt: reg.SessionStartedAt,
-			TranscriptPath: reg.TranscriptPath, Harness: reg.Harness,
-			DiscoveryRoot: reg.DiscoveryRoot, DiscoveryCwd: reg.DiscoveryCwd,
-			DiscoveryProducerOriginator: reg.DiscoveryProducerOriginator,
-			DiscoveryProducerSource:     reg.DiscoveryProducerSource,
-		}
-	}
 	return providerReader{
-		discovery: discovered,
-		ref:       sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
+		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, database: opts.CursorDatabase,
+		discovery: discoveryRegistration(reg),
 	}, true
 }
 
-// providerReader keeps ordinary hook read dependencies small. Discovery additionally
-// retains admitted identity fields for confined snapshot validation.
+// providerReader keeps only read dependencies; boxing whole registrations and
+// collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
-	discovery        *archive.SessionRegistration
 	ref              agentapi.SourceRef
 	harness          string
 	startedAt        time.Time
@@ -113,6 +102,29 @@ type providerReader struct {
 	sources          agentapi.SourcesLookup
 	passes           *sourcePassSet
 	database         string
+	discovery        *archive.SessionRegistration
+}
+
+// discoveryRegistration retains only discovery authority for strict native reads.
+func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegistration {
+	if reg.Origin != archive.SessionOriginDiscovery {
+		return nil
+	}
+	return &reg
+}
+
+// sourceEnvironment keeps discovered files confined to their admitted source home.
+// Hooks and backfill retain the provider's existing default filesystem semantics.
+func sourceEnvironment(reg *archive.SessionRegistration, database string) agentapi.SourceEnvironment {
+	db := (Options{CursorDatabase: database}).cursorDatabase()
+	if reg != nil {
+		return agentapi.SourceEnvironment{
+			Database: db,
+			Files:    sourcefacts.RootOpener{Root: reg.DiscoveryRoot},
+			Policy:   transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true},
+		}
+	}
+	return agentapi.SourceEnvironment{Database: db}
 }
 
 func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptFilter, error) {
@@ -130,24 +142,22 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 }
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
-	// Confined discovery passes must not share an unrestricted hook pass.
-	if r.discovery != nil {
-		root := r.discovery.DiscoveryRoot
-		pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
-		if err != nil {
-			return nil, nil, err
-		}
-		return pass, pass.Close, nil
-	}
 	if r.passes != nil {
-		pass, err := r.passes.get(ctx, key, p)
+		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil}, p)
 		return pass, func() error { return nil }, err
 	}
-	pass, err := p.OpenPass(ctx, agentapi.SourceEnvironment{Database: (Options{CursorDatabase: r.database}).cursorDatabase()})
+	pass, err := p.OpenPass(ctx, sourceEnvironment(r.discovery, r.database))
 	if err != nil {
 		return nil, nil, err
 	}
 	return pass, pass.Close, nil
+}
+
+func (r providerReader) discoveryRoot() string {
+	if r.discovery != nil {
+		return r.discovery.DiscoveryRoot
+	}
+	return ""
 }
 
 func (r providerReader) Signature(ctx context.Context) (out sourceState, err error) {
@@ -217,12 +227,13 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	if r.ref.Kind == archive.SourceKindFile {
 		transcriptFilters.Add(1)
 	}
+	in := snap.Input()
 	if r.discovery != nil {
-		if err := validateDiscoverySnapshot(ctx, snap.Input().File, *r.discovery); err != nil {
-			return out, sourceState{}, err
+		if err = validateDiscoveryInput(ctx, in.File, *r.discovery); err != nil {
+			return out, observed, err
 		}
 	}
-	out, err = f.Filter(ctx, snap.Input(), agentapi.FilterContext{StartedAt: r.startedAt, Limits: limits})
+	out, err = f.Filter(ctx, in, agentapi.FilterContext{StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return out, observed, translateSourceError(err)
 	}
@@ -342,24 +353,35 @@ func (o Options) cursorDatabase() string {
 // The returned function removes the pass's snapshot, and says if it could
 // not: a copy of every Cursor chat left in the temporary directory is worth
 // a failed pass (the next sweep removes it once it is stale).
-type sourcePassSet struct {
-	env    agentapi.SourceEnvironment
-	passes map[string]agentapi.SourcePass
+type sourcePassKey struct {
+	name      string
+	root      string
+	discovery bool
 }
 
-func (s *sourcePassSet) get(ctx context.Context, name string, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
-	if pass := s.passes[name]; pass != nil {
+type sourcePassSet struct {
+	env    agentapi.SourceEnvironment
+	passes map[sourcePassKey]agentapi.SourcePass
+}
+
+func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
+	if pass := s.passes[key]; pass != nil {
 		return pass, nil
 	}
-	pass, err := p.OpenPass(ctx, s.env)
+	e := s.env
+	if key.discovery {
+		e.Files = sourcefacts.RootOpener{Root: key.root}
+		e.Policy = transcriptio.OpenPolicy{Root: key.root, RejectSymlinks: true}
+	}
+	pass, err := p.OpenPass(ctx, e)
 	if err == nil {
-		s.passes[name] = pass
+		s.passes[key] = pass
 	}
 	return pass, err
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase()}, passes: map[string]agentapi.SourcePass{}}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase()}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {
