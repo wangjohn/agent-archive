@@ -70,13 +70,15 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 	}
 	old := previous.CodexCapture
 	active := p.Scope == CodexAllProjects && next.Archive.Enabled && slices.Contains(next.Harnesses, "codex")
-	keep := active && old != nil && old.Authorization != nil && old.Scope == CodexAllProjects && previous.Archive.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.DestinationID() == next.DestinationID()
+	keep := active && old != nil && old.Authorization != nil && !discoveryNativeStartFloor(*old.Authorization).IsZero() && old.Scope == CodexAllProjects && previous.Archive.Enabled && slices.Contains(previous.Harnesses, "codex") && previous.DestinationID() == next.DestinationID()
 	if keep {
 		a := *old.Authorization
 		a.Intervals = slices.Clone(a.Intervals)
 		p.Authorization = &a
 		if next.Paused != previous.Paused {
-			transitionIntervals(p.Authorization, next.Paused, now.UTC())
+			if err := transitionIntervals(p.Authorization, next.Paused, now.UTC()); err != nil {
+				return err
+			}
 		}
 	} else if active {
 		id, err := local.ID()
@@ -91,7 +93,7 @@ func ReconcileCodexCapture(next *Config, previous Config, now time.Time) error {
 		if !next.Paused {
 			intervals = []DiscoveryInterval{{Start: start}}
 		}
-		a := DiscoveryAuthorization{Generation: id, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
+		a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
 		p.Authorization = &a
 	}
 	if err := reconcileCodexSource(&p, *next, previous, active, keep, now); err != nil {
@@ -111,7 +113,7 @@ func (c Config) CodexGeneration(root, cwd string, started, now time.Time) (strin
 		return "", false
 	}
 	a := c.CodexCapture.Authorization
-	if a == nil || a.DestinationID != c.DestinationID() || !c.CodexProjectAllowed(root, cwd, started) {
+	if a == nil || discoveryNativeStartFloor(*a).IsZero() || started.Before(discoveryNativeStartFloor(*a)) || a.DestinationID != c.DestinationID() || !c.CodexProjectAllowed(root, cwd, started) {
 		return "", false
 	}
 	for _, v := range a.Intervals {
@@ -175,7 +177,7 @@ func (c Config) CodexDiscoveryGeneration(root, cwd string, started, now time.Tim
 		return "", false
 	}
 	a := c.CodexCapture.SourceAuthorization
-	if a == nil || a.DestinationID != c.DestinationID() {
+	if a == nil || discoveryNativeStartFloor(*a).IsZero() || started.Before(discoveryNativeStartFloor(*a)) || a.DestinationID != c.DestinationID() {
 		return "", false
 	}
 	for _, v := range a.Intervals {
@@ -244,24 +246,30 @@ func (c Config) CodexContinuationAllowed(root, cwd string) bool {
 func reconcileCodexSource(p *CodexCaptureConfig, next, previous Config, active, keep bool, now time.Time) error {
 	old := previous.CodexCapture
 	if active && next.Discovery != nil && next.Discovery.Enabled {
-		sourceKeep := keep && old.SourceAuthorization != nil && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
+		sourceKeep := keep && old.SourceAuthorization != nil && !discoveryNativeStartFloor(*old.SourceAuthorization).IsZero() && previous.Discovery != nil && previous.Discovery.Enabled && slices.Equal(previous.Discovery.CodexHomes, next.Discovery.CodexHomes)
 		if sourceKeep {
 			a := *old.SourceAuthorization
 			a.Intervals = slices.Clone(a.Intervals)
 			p.SourceAuthorization = &a
 			if next.Paused != previous.Paused {
-				transitionIntervals(p.SourceAuthorization, next.Paused, now.UTC())
+				if err := transitionIntervals(p.SourceAuthorization, next.Paused, now.UTC()); err != nil {
+					return err
+				}
 			}
 		} else {
 			id, err := local.ID()
 			if err != nil {
 				return err
 			}
+			start := now.UTC()
+			if next.DestinationSince.After(start) {
+				start = next.DestinationSince
+			}
 			var intervals []DiscoveryInterval
 			if !next.Paused {
-				intervals = []DiscoveryInterval{{Start: now.UTC()}}
+				intervals = []DiscoveryInterval{{Start: start}}
 			}
-			a := DiscoveryAuthorization{Generation: id, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
+			a := DiscoveryAuthorization{Generation: id, NativeStartFloor: start, Agent: "codex", DestinationID: next.DestinationID(), Intervals: intervals}
 			p.SourceAuthorization = &a
 		}
 	}

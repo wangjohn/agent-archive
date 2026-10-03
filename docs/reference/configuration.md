@@ -180,7 +180,7 @@ user-edited barriers/rules. Exhausting history fails closed; discovered
 projects never append permissions or cause configuration writes.
 
 Scope-capable records use the incompatible writer fence
-`{"version":3,"writer":"codex-scope-v3"}` in `schema_version` and a protected
+`{"version":3,"writer":"codex-scope-floor-v3"}` in `schema_version` and a protected
 skill-evidence marker. Active, disabled and rollback snapshots retain this
 fence. Older discovery-v2 and numeric writers refuse it before mutation;
 removing authorization fields is not a supported downgrade. Pairing transfers
@@ -194,5 +194,8 @@ selected app and destination. Legacy/import registrations never gain proof
 on continuation. An already admitted proof stops while excluded and resumes
 when the current exception permits it again; a forward barrier does not revoke
 that immutable admission. Its physical identity remains eligible inside a
-remaining included parent when scope is reduced. The proof remains local; filtered source and metadata schemas
-are unchanged.
+remaining included parent when scope is reduced. The proof remains local. Filtered source and metadata derivation versions
+are unchanged; native provenance already supported by the upstream filtered
+source contract remains available to child materialization.
+
+Each Codex scope and source generation retains an immutable `native_start_floor`, including when created while paused. Pause at or before an open interval start and resume before the floor or retained close boundary fail before any authority changes. Legacy retained intervals supply only their earliest surviving boundary; an empty legacy history remains unauthorized until setup renews it. The previous `codex-scope-v3` writer is readable for conservative migration but refuses the new protected writer tag. Saves and rollback snapshots preserve the new fence.

@@ -748,3 +748,62 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 		}
 	})
 }
+
+// This pins the shared assembler contract with a synthetic discovery parent;
+// automatic Codex discovery cannot currently produce a child candidate.
+func TestAssembleDiscoveryChildKeepsNativeStartProvenance(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	local, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	path := filepath.Join(home, "child.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"synthetic child"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parent := archive.SessionRegistration{ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, SessionStartedAt: start, RegisteredAt: start, AdmittedAt: start.Add(time.Minute), Origin: archive.SessionOriginDiscovery, DestinationID: "destination", StartedAtSource: archive.StartedAtSourceTranscript}
+	if err := local.SaveRegistration(parent); err != nil {
+		t.Fatal(err)
+	}
+	candidate := state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: parent.Harness, AgentID: "agent-1", TranscriptPath: path, ObservedAt: start.Add(3 * time.Minute)}
+	if err := local.SaveSubagentCandidate(candidate); err != nil {
+		t.Fatal(err)
+	}
+	// This unsupported synthetic discovery child lacks admitted Codex facts.
+	// Strict materialization must refuse it without persisting a registration.
+	if err := materializeSubagentCandidate(context.Background(), local, candidate, Options{Sources: testSources}, candidate.ObservedAt); !errors.Is(err, errSubagentWaiting) {
+		t.Fatalf("unsupported discovery child: %v", err)
+	}
+	if _, found, err := local.LoadRegistration("child"); err != nil || found {
+		t.Fatalf("unsupported discovery child persisted: found=%t err=%v", found, err)
+	}
+	reader, _ := newSourceReader(assembleSubagentRegistration(parent, candidate), Options{Sources: testSources})
+	if _, err := reader.Signature(context.Background()); err == nil {
+		t.Fatal("unsupported discovery child bypassed confined signature")
+	}
+	// Native filtering proves creation time independently of admission. The
+	// shared assembler is exercised without enabling discovery child capture.
+	filtered, _, err := FilterTranscriptFile("claude", path, start, testSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := assembleSubagentRegistration(parent, candidate)
+	got.SessionStartedAt = filtered.NativeStartAt
+	if got.StartedAtSource != archive.StartedAtSourceTranscript || got.Origin != parent.Origin || got.DestinationID != parent.DestinationID || !got.AdmittedAt.Equal(parent.AdmittedAt) || !got.SessionStartedAt.Equal(start.Add(2*time.Minute)) {
+		t.Fatalf("child provenance=%+v", got)
+	}
+	var metadata archive.Metadata
+	metadata.ApplyRegistrationProvenance(got)
+	if metadata.StartedAtSource != archive.StartedAtSourceTranscript || metadata.Origin != archive.SessionOriginDiscovery {
+		t.Fatalf("metadata provenance=%+v", metadata)
+	}
+	// Reassembling after a later stop retains native start and parent admission.
+	candidate.ObservedAt = candidate.ObservedAt.Add(time.Minute)
+	again := assembleSubagentRegistration(parent, candidate)
+	again.SessionStartedAt = filtered.NativeStartAt
+	if again.StartedAtSource != got.StartedAtSource || !again.SessionStartedAt.Equal(got.SessionStartedAt) || !again.AdmittedAt.Equal(got.AdmittedAt) {
+		t.Fatalf("repeat changed provenance=%+v", again)
+	}
+}
