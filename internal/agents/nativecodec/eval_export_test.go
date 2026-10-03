@@ -455,8 +455,10 @@ func TestEvalExportParserRefreshPreservesAdmissionGaps(t *testing.T) {
 	t.Parallel()
 	for _, origin := range []archive.SessionOrigin{archive.SessionOriginImport, archive.SessionOriginDiscovery} {
 		t.Run(string(origin), func(t *testing.T) {
+			t.Parallel()
 			bundle, metadata := evalExportFixture(t, "claude")
 			metadata.ApplyRegistrationProvenance(archive.SessionRegistration{Origin: origin})
+			gap := metadata.CaptureGaps[len(metadata.CaptureGaps)-1]
 			metadata.Parser.Version = "0.1.0"
 			before, err := json.Marshal(metadata)
 			if err != nil {
@@ -473,10 +475,8 @@ func TestEvalExportParserRefreshPreservesAdmissionGaps(t *testing.T) {
 			if !bytes.Equal(before, after) {
 				t.Fatal("export changed its sidecar")
 			}
-			for _, gap := range metadata.CaptureGaps {
-				if (gap.Code == archive.CaptureGapImportedWithoutHookEvidence || gap.Code == archive.CaptureGapDiscoveredWithoutHookEvidence) && !slices.Contains(record.CaptureGaps, gap) {
-					t.Errorf("parser refresh dropped admission gap %+v; retained %+v", gap, record.CaptureGaps)
-				}
+			if !slices.Contains(record.CaptureGaps, gap) {
+				t.Errorf("parser refresh dropped admission gap %+v; retained %+v", gap, record.CaptureGaps)
 			}
 		})
 	}

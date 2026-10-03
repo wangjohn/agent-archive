@@ -337,7 +337,7 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 // left to be retried. The size limits in force are recorded too, so raising
 // one reads the chat again, and so is the gap (blocked) a size limit
 // recorded, for status.
-func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason) error {
+func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason, publishedLastHead string) error {
 	if !observed.observation.Present {
 		return nil
 	}
@@ -355,7 +355,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
-		Blocked: blocked,
+		Blocked: blocked, PublishedLastHead: publishedLastHead,
 	})
 }
 
