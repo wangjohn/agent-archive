@@ -20,7 +20,7 @@ ASSETS = BINARIES + ['SHA256SUMS', MANIFEST]
 # These are acceptance categories, not claims that any live check has passed.
 ROWS = ['signed-install-darwin-amd64', 'signed-install-darwin-arm64',
         'install-linux-amd64', 'install-linux-arm64', 'clean-user', 'upgrade',
-        's3', 'r2', 'claude-code', 'codex', 'gemini', 'cursor', 'recovery',
+        's3', 'r2', 'claude-code', 'codex', 'cursor', 'recovery',
         'cleanup', 'listing-budget', 'documentation', 'repository-settings']
 CI_JOBS = {'Test': ['linux-race', 'macos-smoke', 'cross-build', 'lint'],
            'Levenshtein': ['verify'], 'Extended': ['macos-full', 'fuzz', 'real-systemd']}

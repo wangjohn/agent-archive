@@ -118,7 +118,7 @@ evidence.
    latest URL, in disposable accounts. Test both Darwin architectures and both
    Linux architectures natively. Check the online notarization ticket after
    strict Developer ID signature validation, and perform quarantined clean-user
-   installation, clean setup and upgrade, all four apps,
+   installation, clean setup and upgrade, all three supported apps (Claude Code, Codex, and Cursor),
    real S3 and R2, listing cost/correctness, recovery, and cleanup. Follow the
    [published acceptance sheet](open-source-acceptance.md) and
    [Linux acceptance recipe](../contributing/testing.md#the-linux-live-acceptance-run).
