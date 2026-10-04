@@ -152,9 +152,17 @@ func TestContinuationPreservesResolvedNoOwnerAndDeclinesUnknownRule(t *testing.T
 	}
 }
 
+type continuationScopeShape string
+
+const (
+	continuationAbsentCase       continuationScopeShape = "absent case"
+	continuationAbsentUnicode    continuationScopeShape = "absent Unicode"
+	continuationConflictingRules continuationScopeShape = "conflicting rules"
+)
+
 func TestContinuationDeclinesAmbiguousScopeBeforeMutation(t *testing.T) {
-	for _, shape := range []string{"absent case", "absent Unicode", "conflicting rules"} {
-		t.Run(shape, func(t *testing.T) {
+	for _, shape := range []continuationScopeShape{continuationAbsentCase, continuationAbsentUnicode, continuationConflictingRules} {
+		t.Run(string(shape), func(t *testing.T) {
 			home, parent := t.TempDir(), t.TempDir()
 			at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 			setUpTestConfig(t, home, parent, at.Add(-time.Hour))
@@ -168,10 +176,10 @@ func TestContinuationDeclinesAmbiguousScopeBeforeMutation(t *testing.T) {
 			}
 			cwd, rule := parent, parent
 			switch shape {
-			case "absent case":
+			case continuationAbsentCase:
 				cwd, rule = filepath.Join(parent, "absent"), filepath.Join(parent, "ABSENT")
-			case "absent Unicode":
-				cwd, rule = filepath.Join(parent, "caf\u00e9"), filepath.Join(parent, "cafe\u0301")
+			case continuationAbsentUnicode:
+				cwd, rule = filepath.Join(parent, "café"), filepath.Join(parent, "café")
 			}
 			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: rule, Included: false})
 			if err := config.Save(home, cfg); err != nil {
