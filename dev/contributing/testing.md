@@ -37,6 +37,10 @@ Levenshtein `verify` against the pushed commit, plus Extended `macos-full`,
 `fuzz`, and `real-systemd`. This provides an automatic final integration
 campaign when manual dispatch is unavailable. Extended skips its duplicate
 Linux suite on these branches because Test runs full Linux race coverage.
+Test, Levenshtein and Extended disable setup-go's shared module/build cache
+for every trigger, so candidate validation cannot restore executable build
+state from another run. Go still verifies downloaded modules against go.sum;
+fresh runners may take longer while downloading and compiling dependencies.
 Main and nightly behavior remains as described below, and concurrency groups
 keep each candidate branch separate from main. Candidate pushes cannot start
 the tag-only signing workflow or the manual promotion workflow. Record the

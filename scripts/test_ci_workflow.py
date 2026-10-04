@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import unittest
 
+from test_release_assets import steps
+
 ROOT = Path(__file__).resolve().parent.parent
 EXTENDED_YML = ROOT / '.github' / 'workflows' / 'extended.yml'
 TESTING_MD = ROOT / 'dev' / 'contributing' / 'testing.md'
@@ -78,6 +80,20 @@ class PublishedWriterJobTest(unittest.TestCase):
 
 
 class CandidateCampaignTest(unittest.TestCase):
+    def test_candidate_validation_never_restores_shared_go_build_state(self):
+        # Candidate evidence must come from fresh source/module verification,
+        # not executable build state restored from another workflow's cache.
+        expected = {'test': 4, 'levenshtein': 1, 'extended': 4}
+        for name, count in expected.items():
+            workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
+            setup = [step for job in jobs(workflow).values() for step in steps(job)
+                     if re.search(r'uses: actions/setup-go@', step)]
+            self.assertEqual(len(setup), count, name)
+            for step in setup:
+                with self.subTest(workflow=name, step=step):
+                    self.assertRegex(step, r'(?m)^          cache: false(?:\s+#.*)?$')
+                    self.assertNotIn('cache-dependency-path:', step)
+
     def test_candidate_push_triggers_test_verify_and_extended_without_signing(self):
         for name in ('test', 'levenshtein', 'extended'):
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
