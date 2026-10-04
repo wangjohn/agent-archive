@@ -775,13 +775,6 @@ func (m *resolvedLocationMatcher) within(path, root string) (within, certain boo
 	return true, true
 }
 
-// configuredProjectFor returns the owning project's configured root spelling,
-// which is what registrations store.
-func configuredProjectFor(cfg config.Config, root string) (string, bool) {
-	project, found := ConfiguredProjectActivationFor(cfg, root)
-	return project.Root, found
-}
-
 // resolvedPath resolves existing ancestors even when a descendant is absent.
 // Lstat stops at a dangling symlink so it cannot become a lexical inclusion.
 // An empty result means the filesystem identity could not be resolved safely.
