@@ -198,11 +198,22 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 		p.d.result.Capped = true
 		return nil, errProjectLimit
 	}
+	// Each configured native root starts its own bounded traversal. Unrelated
+	// roots do not constrain this path, and a nested root gives it a fresh budget.
+	depth := -1
 	for _, base := range p.bases {
-		if rel, err := filepath.Rel(base, path); err == nil && len(strings.Split(rel, string(filepath.Separator))) > 33 {
-			p.d.result.Capped = true
-			return nil, errProjectLimit
+		rel, err := filepath.Rel(base, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
 		}
+		n := len(strings.Split(rel, string(filepath.Separator)))
+		if depth < 0 || n < depth {
+			depth = n
+		}
+	}
+	if depth > 33 {
+		p.d.result.Capped = true
+		return nil, errProjectLimit
 	}
 	entries, err := p.d.env.readDir(path)
 	if p.d.stopped() {
