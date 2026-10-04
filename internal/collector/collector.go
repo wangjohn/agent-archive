@@ -198,6 +198,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	if err := local.ResumeGenerationRecoveries(ctx); err != nil {
+		return Result{}, err
+	}
 	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the

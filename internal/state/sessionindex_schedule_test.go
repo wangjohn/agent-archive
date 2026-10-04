@@ -836,65 +836,68 @@ func TestRepeatedUncertifiedAbsentRequestRetainsRecoveryProgress(t *testing.T) {
 func TestNewRecoveryRequestRetainsValidatedOwnerProgress(t *testing.T) {
 	for _, mutate := range []bool{false, true} {
 		t.Run(strconv.FormatBool(mutate), func(t *testing.T) {
-			s := newTestStore(t)
-			seedRecoveryInventory(t, s, 3)
-			first := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "first-request"}
-			if err := s.RequestSessionIndexRecovery(first); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			applied := 0
-			s.onIndexStep = func(step string) error {
-				if step == "recovery-entry" {
-					applied++
-					cancel()
-				}
-				return nil
-			}
-			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) || applied != 1 {
-				t.Fatalf("first owner checkpoint: %v %v applied=%d", complete, err, applied)
-			}
-			cancel()
-			s.onIndexStep = nil
-			var before sessionRecoveryCursor
-			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 0 || before.Offset != 1 {
-				t.Fatalf("owner checkpoint: %#v %v", before, err)
-			}
-			second := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "second-request"}
-			if err := s.RequestSessionIndexRecovery(second); err != nil {
-				t.Fatal(err)
-			}
-			var marker sessionIndexMarker
-			if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Generation == before.Generation || marker.Complete {
-				t.Fatalf("distinct request lost generation fence: %#v %v", marker, err)
-			}
-			if mutate {
-				key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-member"}
-				if err := s.SaveRegistration(migrationRegistration(key, "new-owner")); err != nil {
+			// These assertions exercise durable progress, not disk-sync speed.
+			synctest.Test(t, func(t *testing.T) {
+				s := newTestStore(t)
+				seedRecoveryInventory(t, s, 3)
+				first := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "first-request"}
+				if err := s.RequestSessionIndexRecovery(first); err != nil {
 					t.Fatal(err)
 				}
-			}
-			s.onIndexStep = func(step string) error {
-				if step == "recovery-entry" {
-					applied++
+				ctx, cancel := context.WithCancel(t.Context())
+				applied := 0
+				s.onIndexStep = func(step string) error {
+					if step == "recovery-entry" {
+						applied++
+						cancel()
+					}
+					return nil
 				}
-				return nil
-			}
-			if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
-				t.Fatalf("request recovery: %v %v", complete, err)
-			}
-			want := 3
-			if mutate {
-				want = 5 // New membership requires all four owners again.
-			}
-			if applied != want {
-				t.Fatalf("owner applications=%d want%d; equivalent inventory must resume, changed membership must restart", applied, want)
-			}
-			for _, key := range []agentmeta.SessionKey{first, second} {
-				if absent, err := s.SessionIndexAbsent(key); !absent || err != nil {
-					t.Fatalf("new generation complete absence: %v %v", absent, err)
+				if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) || applied != 1 {
+					t.Fatalf("first owner checkpoint: %v %v applied=%d", complete, err, applied)
 				}
-			}
+				cancel()
+				s.onIndexStep = nil
+				var before sessionRecoveryCursor
+				if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 0 || before.Offset != 1 {
+					t.Fatalf("owner checkpoint: %#v %v", before, err)
+				}
+				second := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "second-request"}
+				if err := s.RequestSessionIndexRecovery(second); err != nil {
+					t.Fatal(err)
+				}
+				var marker sessionIndexMarker
+				if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Generation == before.Generation || marker.Complete {
+					t.Fatalf("distinct request lost generation fence: %#v %v", marker, err)
+				}
+				if mutate {
+					key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-member"}
+					if err := s.SaveRegistration(migrationRegistration(key, "new-owner")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				s.onIndexStep = func(step string) error {
+					if step == "recovery-entry" {
+						applied++
+					}
+					return nil
+				}
+				if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+					t.Fatalf("request recovery: %v %v", complete, err)
+				}
+				want := 3
+				if mutate {
+					want = 5 // New membership requires all four owners again.
+				}
+				if applied != want {
+					t.Fatalf("owner applications=%d want%d; equivalent inventory must resume, changed membership must restart", applied, want)
+				}
+				for _, key := range []agentmeta.SessionKey{first, second} {
+					if absent, err := s.SessionIndexAbsent(key); !absent || err != nil {
+						t.Fatalf("new generation complete absence: %v %v", absent, err)
+					}
+				}
+			})
 		})
 	}
 }
@@ -902,53 +905,56 @@ func TestNewRecoveryRequestRetainsValidatedOwnerProgress(t *testing.T) {
 func TestNewRecoveryRequestRepairsPreviouslyAppliedOwner(t *testing.T) {
 	for _, phase := range []int{0, 2} {
 		t.Run(strconv.Itoa(phase), func(t *testing.T) {
-			s := newTestStore(t)
-			seedRecoveryInventory(t, s, 3)
-			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-0000"}
-			ctx, cancel := context.WithCancel(t.Context())
-			applied, stopAfter := 0, 1
-			if phase == 2 {
-				stopAfter = 3
-			}
-			s.onIndexStep = func(step string) error {
-				if step == "recovery-entry" {
-					applied++
-					if applied == stopAfter {
-						cancel()
+			// These assertions exercise durable progress, not disk-sync speed.
+			synctest.Test(t, func(t *testing.T) {
+				s := newTestStore(t)
+				seedRecoveryInventory(t, s, 3)
+				key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-0000"}
+				ctx, cancel := context.WithCancel(t.Context())
+				applied, stopAfter := 0, 1
+				if phase == 2 {
+					stopAfter = 3
+				}
+				s.onIndexStep = func(step string) error {
+					if step == "recovery-entry" {
+						applied++
+						if applied == stopAfter {
+							cancel()
+						}
+					}
+					return nil
+				}
+				if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) {
+					t.Fatalf("owner checkpoint: %v %v", complete, err)
+				}
+				cancel()
+				s.onIndexStep = nil
+				var cursor sessionRecoveryCursor
+				if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Phase != phase || applied != stopAfter {
+					t.Fatalf("actual phase checkpoint: %#v applied=%d err=%v", cursor, applied, err)
+				}
+				if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.RequestSessionIndexRecovery(key); err != nil {
+					t.Fatal(err)
+				}
+				// A new Store must recover from durable evidence, retaining the owner ID.
+				resumed := OpenReadOnly(s.home)
+				for attempt := range 2 {
+					complete, err := resumed.RecoverSessionIndexScheduled(t.Context(), time.Second)
+					if err != nil || !complete {
+						t.Fatalf("requested owner recovery attempt %d: %v %v", attempt, complete, err)
 					}
 				}
-				return nil
-			}
-			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) {
-				t.Fatalf("owner checkpoint: %v %v", complete, err)
-			}
-			cancel()
-			s.onIndexStep = nil
-			var cursor sessionRecoveryCursor
-			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Phase != phase || applied != stopAfter {
-				t.Fatalf("actual phase checkpoint: %#v applied=%d err=%v", cursor, applied, err)
-			}
-			if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := s.RequestSessionIndexRecovery(key); err != nil {
-				t.Fatal(err)
-			}
-			// A new Store must recover from durable evidence, retaining the owner ID.
-			resumed := OpenReadOnly(s.home)
-			for attempt := range 2 {
-				complete, err := resumed.RecoverSessionIndexScheduled(t.Context(), time.Second)
-				if err != nil || !complete {
-					t.Fatalf("requested owner recovery attempt %d: %v %v", attempt, complete, err)
+				id, found, err := resumed.ArchiveSessionID(key)
+				if err != nil || !found || id != "owner-0000" {
+					t.Fatalf("owner identity: %q %v %v", id, found, err)
 				}
-			}
-			id, found, err := resumed.ArchiveSessionID(key)
-			if err != nil || !found || id != "owner-0000" {
-				t.Fatalf("owner identity: %q %v %v", id, found, err)
-			}
-			if absent, err := resumed.SessionIndexAbsent(key); absent || err != nil {
-				t.Fatalf("owned key certified absent: %v %v", absent, err)
-			}
+				if absent, err := resumed.SessionIndexAbsent(key); absent || err != nil {
+					t.Fatalf("owned key certified absent: %v %v", absent, err)
+				}
+			})
 		})
 	}
 }

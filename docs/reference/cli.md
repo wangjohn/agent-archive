@@ -35,6 +35,7 @@ Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
+  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
@@ -425,6 +426,29 @@ Example: agent-archive resume
 ```
 
 No flags.
+
+## agent-archive recover
+
+Guide: [Recover a blocked transcript](../guides/transcript-recovery.md).
+
+```text
+Usage: agent-archive recover SESSION_ID [--confirm]
+
+Preview recovery of a local top-level append-only transcript blocked by a
+rewrite. Keep its history, feedback and handoffs; freeze its future native
+capture, and queue one new archive generation from the current transcript.
+Normal sync publishes it. Each generation expires under normal retention.
+Repeated confirmation of the old SESSION_ID returns the same successor. Imports
+remain in their original undo batch. Existing subagents keep their parent;
+new subagents use the active generation. Direct subagent recovery is not
+supported: start a fresh parent session instead. No storage is accessed.
+Recovery permanently fences older binaries out of this data directory.
+  --confirm    Start or resume the previewed generation without prompting
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--confirm` | no value | — |
 
 ## agent-archive list
 

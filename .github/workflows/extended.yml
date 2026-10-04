@@ -1,7 +1,7 @@
 name: Extended
 on:
   push:
-    branches: [main]
+    branches: [main, 'release-candidate/**']
   schedule:
     # Off the hour, when GitHub's scheduled workflow queue is less crowded.
     - cron: '17 8 * * *'
@@ -18,12 +18,12 @@ permissions:
 concurrency:
   # Keep only the newest post-merge run during a burst of main pushes. A
   # scheduled or manually requested run always gets its own group.
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'main' || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 # Every action is pinned to a full commit SHA; keep these in step with test.yml.
 jobs:
   linux-race:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
-          cache-dependency-path: go.sum
+          cache: false
       - name: Require Go 1.27.1 (go.mod's toolchain line)
         run: |
           go version
@@ -46,6 +46,7 @@ jobs:
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
+      - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
@@ -63,7 +64,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
-          cache-dependency-path: go.sum
+          cache: false
       - name: Require Go 1.27.1 (go.mod's toolchain line)
         run: |
           go version
@@ -78,6 +79,7 @@ jobs:
         run: bash scripts/test_published_writer.sh
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
+      - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
@@ -87,7 +89,7 @@ jobs:
   fuzz:
     # Plain go test in the PR workflow still runs every committed seed. The
     # mutation campaign runs nightly or on demand against a selected ref.
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'fuzz'))
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'fuzz'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -97,7 +99,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
-          cache-dependency-path: go.sum
+          cache: false
       - name: Fuzz each target for 30 seconds
         run: |
           found=0
@@ -114,7 +116,7 @@ jobs:
 
   real-systemd:
     # The real user manager is exercised only on a disposable CI runner.
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'systemd'))
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'systemd'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -124,7 +126,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
-          cache-dependency-path: go.sum
+          cache: false
       - name: Require Go 1.27.1 (go.mod's toolchain line)
         run: |
           go version

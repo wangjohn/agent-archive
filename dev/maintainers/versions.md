@@ -73,3 +73,19 @@ opening blanket windows. This changes session consent and physical project
 attribution, not adapter filtering, native parsing or derived-field algorithms;
 filter, adapter, parser and published source/metadata schema versions remain
 unchanged. The private policy/proof contract is documented in configuration.
+
+Explicit transcript recovery installs the incompatible
+`{version: 4, writer: archive-generations-v4}` configuration writer fence.
+Its underlying discovery and Codex policies retain their independent v2/v3
+floors and consent semantics. Every save and setup rollback keeps generation
+protection after it is enabled, including after content expires. Earlier
+writers refuse this fence rather than ignore frozen historical generations.
+
+Recovery adds optional `previous_generation_id` provenance to source headers
+and metadata and a persistent `recovered_generation` coverage gap to successor
+bundles. This relation is copied from registration by
+`ApplyRegistrationProvenance`; it is not computed by native parsing or metadata
+analysis. Filtering, adapter output and parser algorithms are unchanged, so
+filter, adapter and parser versions remain unchanged. Source schema 2 and
+metadata schema 1 remain compatible: earlier readers ignore these optional
+fields. The explicit relation is independent of subagent `parent_session_id`.

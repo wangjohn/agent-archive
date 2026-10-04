@@ -104,7 +104,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -1047,6 +1047,9 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// Frozen marks completed retained-history maintenance, independently of
+	// the live native source's stat. Ordinary capture never trusts this token.
+	Frozen          bool                      `json:"frozen,omitempty"`
 	SourceSignature *agentapi.SourceSignature `json:"source_signature,omitempty"`
 	SkillEvidence   string                    `json:"skill_evidence,omitempty"`
 	TranscriptSize  int64                     `json:"transcript_size"`

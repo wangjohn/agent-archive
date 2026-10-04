@@ -75,6 +75,9 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	if reg.Origin == SessionOriginDiscovery {
 		allGaps = append(allGaps, CaptureGap{Code: CaptureGapDiscoveredWithoutHookEvidence, Detail: "Discovered locally; hooks did not establish complete lifecycle coverage"})
 	}
+	if reg.PreviousGenerationID != "" {
+		allGaps = append(allGaps, CaptureGap{Code: "recovered_generation", Detail: "Starts from the current native transcript; earlier retained history belongs to the previous archive generation"})
+	}
 	for _, item := range filteredSupplemental {
 		if item.Kind == EvidenceKindCaptureGap {
 			if code := firstString(item.Payload, "code"); code != "" {
@@ -94,7 +97,7 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 			FilterVersion: FilterVersion, CapturedAt: capturedAt.UTC(), Gaps: allGaps,
 		},
 		NativeRecords: records, NativeText: nativeText, SupplementalEvidence: filteredSupplemental,
-		ParentSessionID: reg.ParentSessionID, LinkedSessions: deriveLinkedSessions(filteredSupplemental),
+		PreviousGenerationID: reg.PreviousGenerationID, ParentSessionID: reg.ParentSessionID, LinkedSessions: deriveLinkedSessions(filteredSupplemental),
 	}, nil
 }
 

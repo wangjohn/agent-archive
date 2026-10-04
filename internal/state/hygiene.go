@@ -66,6 +66,9 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
+	generationHeadsDir:        readAsRecoveryRequired,
+	generationNodesDir:        readAsRecoveryRequired,
+	generationRecoveryDir:     readAsRecoveryRequired,
 	"registrations":           quarantineUnderLock,
 	"requests":                quarantineUnderLock,
 	"subagent-candidates":     quarantineUnderLock,

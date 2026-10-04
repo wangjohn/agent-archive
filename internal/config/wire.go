@@ -21,6 +21,8 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
+const generationWriter configWriter = "archive-generations-v4"
+
 type writerVersion struct {
 	Version int          `json:"version"`
 	Writer  configWriter `json:"writer"`
@@ -35,7 +37,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	plain := configJSON(c)
-	if c.Discovery == nil && c.CodexCapture == nil {
+	if c.Discovery == nil && c.CodexCapture == nil && !c.GenerationProtection {
 		return json.Marshal(plain)
 	}
 	if err := validateDiscoveryConfig(c); err != nil {
@@ -44,6 +46,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	version := writerVersion{Version: 2, Writer: discoveryWriter}
 	if c.CodexCapture != nil {
 		version = writerVersion{Version: 3, Writer: codexWriter}
+	}
+	if c.GenerationProtection {
+		version = writerVersion{Version: 4, Writer: generationWriter}
 	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
@@ -74,40 +79,12 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 		if err := json.Unmarshal(raw, &version); err != nil {
 			return false, err
 		}
-		if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) {
-			return false, errors.New("configuration requires a supported writer fence")
-		}
-		if version.Version == 3 {
-			if plain.CodexCapture == nil || !codexMarkerMatches(plain.SkillEvidence, version.Writer) {
-				return false, errors.New("writer fence requires Codex policy")
-			}
-		} else if plain.Discovery == nil || !strings.HasSuffix(string(plain.SkillEvidence), discoveryWriterMarker) {
-			return false, errors.New("writer fence requires protected discovery configuration")
-		}
-		if version.Writer == discoveryWriter {
-			for _, a := range plain.Discovery.Authorizations {
-				if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
-					return false, errors.New("discovery permission history requires its native start floor")
-				}
-			}
-		}
-		if version.Writer == codexWriter {
-			var scopes []*DiscoveryAuthorization
-			scopes = append(scopes, plain.CodexCapture.Authorization, plain.CodexCapture.SourceAuthorization)
-			if plain.Discovery != nil {
-				for i := range plain.Discovery.Authorizations {
-					scopes = append(scopes, &plain.Discovery.Authorizations[i])
-				}
-			}
-			for _, a := range scopes {
-				if a != nil && len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
-					return false, errors.New("codex permission history requires its native start floor")
-				}
-			}
+		if err := validateWriterVersion(Config(plain), version); err != nil {
+			return false, err
 		}
 		// Prior protected writers also need canonical migration before identity
 		// mutation: they do not understand immutable generation floors.
-		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter
+		fenced = version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter
 		plain.SchemaVersion = version.Version
 	} else if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
@@ -120,4 +97,47 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 
 func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 	return strings.HasSuffix(string(mode), codexWriterMarker) || (writer == legacyCodexWriter && strings.HasSuffix(string(mode), legacyCodexWriterMarker))
+}
+
+func validateWriterVersion(c Config, version writerVersion) error {
+	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) {
+		return errors.New("configuration requires a supported writer fence")
+	}
+	if version.Version == 4 {
+		if !c.GenerationProtection {
+			return errors.New("generation writer fence requires generation protection")
+		}
+	} else if version.Version == 3 {
+		if c.CodexCapture == nil || !codexMarkerMatches(c.SkillEvidence, version.Writer) {
+			return errors.New("writer fence requires Codex policy")
+		}
+	} else if c.Discovery == nil || !strings.HasSuffix(string(c.SkillEvidence), discoveryWriterMarker) {
+		return errors.New("writer fence requires protected discovery configuration")
+	}
+	return validateWriterFloors(c, version)
+}
+
+func validateWriterFloors(c Config, version writerVersion) error {
+	if version.Writer == discoveryWriter || (version.Writer == generationWriter && c.Discovery != nil) {
+		for _, a := range c.Discovery.Authorizations {
+			if len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
+				return errors.New("discovery permission history requires its native start floor")
+			}
+		}
+	}
+	if version.Writer == codexWriter || (version.Writer == generationWriter && c.CodexCapture != nil) {
+		var scopes []*DiscoveryAuthorization
+		scopes = append(scopes, c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization)
+		if c.Discovery != nil {
+			for i := range c.Discovery.Authorizations {
+				scopes = append(scopes, &c.Discovery.Authorizations[i])
+			}
+		}
+		for _, a := range scopes {
+			if a != nil && len(a.Intervals) > 0 && a.NativeStartFloor.IsZero() {
+				return errors.New("codex permission history requires its native start floor")
+			}
+		}
+	}
+	return nil
 }

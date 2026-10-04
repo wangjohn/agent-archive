@@ -17,8 +17,14 @@ import (
 // database only to fail the same way.
 func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request) (done bool) {
 	id := reg.ArchiveSessionID
-
-	unchanged, signature, err := p.unchangedSinceLastScan(reg)
+	var unchanged bool
+	var signature state.ScanSignature
+	var err error
+	if reg.CaptureFrozen {
+		unchanged, signature, err = p.unchangedFrozenSinceLastScan(reg)
+	} else {
+		unchanged, signature, err = p.unchangedSinceLastScan(reg)
+	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("check transcript for changes: %w", err))
 		return true
@@ -108,7 +114,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 		return p.owesNothing(id, false)
 	}
 	signature, found, err := p.local.LoadScanSignature(id)
-	if err != nil || !found {
+	if err != nil || !found || signature.Frozen {
 		return false, signature, err
 	}
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
