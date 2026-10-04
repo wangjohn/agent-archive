@@ -138,7 +138,7 @@ func validateProjectScopeOptions(o setupOptions) error {
 	if o.projectScopeSupplied && strings.TrimSpace(o.projectScope) == "" {
 		return errors.New("--project-scope must contain capture rules")
 	}
-	if o.projectScopeFileSupplied && o.projectScopeFile == "" {
+	if o.projectScopeFileSupplied && strings.TrimSpace(o.projectScopeFile) == "" {
 		return errors.New("--project-scope-file must name a file or - for stdin")
 	}
 	if (o.projectScopeSupplied || o.projectScope != "") && (o.projectScopeFileSupplied || o.projectScopeFile != "") && !o.projectScopeInputRead {

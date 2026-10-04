@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -853,5 +854,79 @@ func TestPortableScopeParentLookupMatchesResolvedContainment(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestExplicitProjectsCannotDefeatTransferredExclusions(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"private", "private/child"} {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			root := filepath.Join(userHome, "repo")
+			must(t, os.MkdirAll(filepath.Join(root, "private", "child"), 0700))
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: filepath.Join(root, "private"), Included: false}})
+			must(t, err)
+			output := setupYes(t, env, "", 2, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "codex", "--project-scope", string(encoded), "--project", filepath.Join(root, suffix))
+			if !strings.Contains(output, "cannot be combined") {
+				t.Fatal(output)
+			}
+			if _, found, err := config.Load(home); err != nil || found {
+				t.Fatalf("refusal saved configuration: %t %v", found, err)
+			}
+		})
+	}
+}
+
+func TestExplicitEmptyScopeFlagsRefuseBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"--project-scope", "--project-scope-file"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			output := setupYes(t, env, "", 2, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "codex", "--project", userHome, name, "")
+			if !strings.Contains(output, name+" must") {
+				t.Fatal(output)
+			}
+			if _, found, err := config.Load(home); err != nil || found {
+				t.Fatalf("empty input saved configuration: %t %v", found, err)
+			}
+			opts, ok := setupFlags(env.newCommandFlags("setup", io.Discard), []string{name, ""})
+			if ok || !opts.given() {
+				t.Fatal("empty answer disappeared")
+			}
+		})
+	}
+}
+
+func TestStreamFallbackKeepsResolvedRepositoryKeys(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.MkdirAll(filepath.Join(root, ".git"), 0700))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	projects := []archive.ProjectActivation{{Root: root, Included: true}}
+	for i := range 400 {
+		projects = append(projects, archive.ProjectActivation{Root: filepath.Join(home, strings.Repeat("x", 200), strconv.Itoa(i)), Included: true})
+	}
+	calls := 0
+	env := Env{repoKeyContext: func(_ context.Context, path string) string {
+		calls++
+		if calls == 1 && path == root {
+			return key
+		}
+		return ""
+	}}
+	command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, home, env)
+	parts := strings.Split(command, "\n")
+	if len(parts) != 3 {
+		t.Fatalf("expected streamed transfer: %s", command)
+	}
+	var rules []portableProjectRule
+	must(t, json.Unmarshal([]byte(parts[1]), &rules))
+	if rules[0].RepoKey != key || rules[0].Path != "." || calls != 1 {
+		t.Fatalf("resolved identity lost or queried again: %+v, %d lookups", rules[0], calls)
 	}
 }
