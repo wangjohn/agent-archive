@@ -180,6 +180,8 @@ func TestContinuationDeclinesAmbiguousScopeBeforeMutation(t *testing.T) {
 				cwd, rule = filepath.Join(parent, "absent"), filepath.Join(parent, "ABSENT")
 			case continuationAbsentUnicode:
 				cwd, rule = filepath.Join(parent, "café"), filepath.Join(parent, "café")
+			case continuationConflictingRules:
+				// Keep both locations at parent to exercise conflicting rules.
 			}
 			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: rule, Included: false})
 			if err := config.Save(home, cfg); err != nil {
