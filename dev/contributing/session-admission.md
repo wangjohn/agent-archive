@@ -77,6 +77,11 @@ generation. After a fresh complete census proves equivalent membership and
 inventory, owner/candidate application can retain its earlier progress across
 that change; candidate facts must also match their complete phase fingerprint.
 Requested-miss coverage restarts so the new generation cannot skip a new key.
+Requested keys that name previously applied owners or candidates are repaired
+from the complete registration/candidate authority during that final phase;
+retained application offsets cannot turn an owned key into certified absence
+or strand a request for a damaged index. The candidate snapshot is loaded once
+per slice reaching the final phase, rather than reread for each requested key.
 
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision
