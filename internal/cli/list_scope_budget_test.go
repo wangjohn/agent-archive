@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,6 +35,7 @@ func (s *scopeBudgetStore) GetVersioned(ctx context.Context, key string) ([]byte
 	}
 	return s.MemoryStore.GetVersioned(ctx, key)
 }
+
 func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
 	if !strings.HasSuffix(key, "/metadata.json") {
@@ -47,7 +49,7 @@ func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) 
 func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{10000, 20000} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			a := newScopedArchive(t)

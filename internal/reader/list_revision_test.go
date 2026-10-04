@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,11 +30,13 @@ func (s *opaqueListingStore) List(ctx context.Context, prefix string) ([]storage
 	}
 	return objects, err
 }
+
 func (s *opaqueListingStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	info, err := s.MemoryStore.Stat(ctx, key)
 	info.ETag = "opaque/revision:" + info.ETag
 	return info, err
 }
+
 func (s *opaqueListingStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	if s.change != nil {
 		s.change(key)
@@ -41,6 +44,7 @@ func (s *opaqueListingStore) GetVersioned(ctx context.Context, key string) ([]by
 	data, etag, err := s.indexedCountingStore.GetVersioned(ctx, key)
 	return data, "opaque/revision:" + etag, err
 }
+
 func newOpaqueListingStore() *opaqueListingStore {
 	return &opaqueListingStore{indexedCountingStore: &indexedCountingStore{countingStore: newCountingStore()}}
 }
@@ -50,7 +54,7 @@ func newOpaqueListingStore() *opaqueListingStore {
 func TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{10000, 20000} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			store := newOpaqueListingStore()
@@ -220,8 +224,23 @@ func TestListingCleanupPreservesConcurrentCompletedPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.afterStat = func() {
-		putSession(t, store, "codex", "concurrent", baseTime.Add(time.Hour))
-		current, _, err := store.MemoryStore.GetVersioned(ctx, key)
+		prior, _, err := store.GetVersioned(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var metadata archive.Metadata
+		if err := json.Unmarshal(prior, &metadata); err != nil {
+			t.Fatal(err)
+		}
+		metadata.CapturedAt = baseTime.Add(time.Hour)
+		replacement, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Put(ctx, key, replacement); err != nil {
+			t.Fatal(err)
+		}
+		current, _, err := store.GetVersioned(ctx, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -365,7 +384,7 @@ func TestListingCleanupPreservesReactivatedValidator(t *testing.T) {
 	store.afterStat = func() {
 		// MemoryStore uses content-derived validators like ordinary S3 PUTs:
 		// restoring identical bytes legitimately restores the same validator.
-		if err := store.MemoryStore.Put(ctx, key, b); err != nil {
+		if err := store.Put(ctx, key, b); err != nil {
 			t.Fatal(err)
 		}
 		if err := listingindex.PublishRevision(ctx, store.MemoryStore, key, b); err != nil {
@@ -459,6 +478,7 @@ func (s *sameRevisionCleanupStore) List(ctx context.Context, prefix string) ([]s
 	}
 	return s.MemoryStore.List(ctx, prefix)
 }
+
 func (s *sameRevisionCleanupStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	info, err := s.MemoryStore.Stat(ctx, key)
 	if s.stats.Add(1) == 2 {
@@ -467,6 +487,7 @@ func (s *sameRevisionCleanupStore) Stat(ctx context.Context, key string) (storag
 	<-s.statReady
 	return info, err
 }
+
 func TestListingConcurrentEquivalentCleanupKeepsCoverage(t *testing.T) {
 	ctx := context.Background()
 	store := &sameRevisionCleanupStore{MemoryStore: storagetest.NewMemoryStore(), listReady: make(chan struct{}), statReady: make(chan struct{})}

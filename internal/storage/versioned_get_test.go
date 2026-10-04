@@ -14,7 +14,7 @@ func TestVersionedGetPreservesResponseOpaqueValidator(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"opaque/version:KMS-not-a-digest"`)
-		if r.Method != "HEAD" {
+		if r.Method != http.MethodHead {
 			_, _ = w.Write([]byte("metadata"))
 		}
 	}))

@@ -117,14 +117,8 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	if *rebuildIndex {
-		terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
-		if count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix); err != nil {
-			terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
-			return 1
-		} else {
-			terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
-		}
+	if *rebuildIndex && !rebuildListingIndex(store, stderr) {
+		return 1
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
 	if err != nil {
@@ -135,23 +129,14 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// Revision summaries support the implicit repository scope before limit.
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
-	full := opts.limit == 0 || opts.imported || opts.hookCaptured || (*project != "" && scope.narrowed()) || !q.empty() || browsing
+	full := listRequiresFullScan(opts, *project, scope, q, browsing)
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
 	} else {
 		stopList = func() {}
 	}
-	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list"),
-		ActivityOrder: !opts.jsonOut && !full, TopLevelOnly: !opts.jsonOut && !full,
-		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
-	}
-	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
-		listOpts.BodyRead = observer.listBodyObserver()
-	}
-	if scope.narrowed() && !full {
-		listOpts.ScopeMatch = func(m archive.Metadata) bool { return scope.contains(m, nil) }
-	}
+	listOpts := listingReadOptions(env, scope, opts, full, stderr)
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
@@ -959,4 +944,39 @@ func listingChildren(listed reader.RecentResult, sessions []archive.Metadata, fu
 		return listed.Children
 	}
 	return childCounts(sessions)
+}
+
+// listRequiresFullScan keeps queries needing metadata predicates exhaustive.
+func listRequiresFullScan(opts listOptions, project string, scope sessionScope, query sessionQuery, browsing bool) bool {
+	return opts.limit == 0 || opts.imported || opts.hookCaptured || (project != "" && scope.narrowed()) || !query.empty() || browsing
+}
+
+// listingReadOptions builds selection and observation options for one CLI listing.
+func listingReadOptions(env listCommandDependencies, scope sessionScope, opts listOptions, full bool, stderr io.Writer) reader.ListOptions {
+	var bodyRead func(string, bool)
+	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
+		bodyRead = observer.listBodyObserver()
+	}
+	var scopeMatch func(archive.Metadata) bool
+	if scope.narrowed() && !full {
+		scopeMatch = func(m archive.Metadata) bool { return scope.contains(m, nil) }
+	}
+	return reader.ListOptions{
+		Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list"),
+		ActivityOrder: !opts.jsonOut && !full, TopLevelOnly: !opts.jsonOut && !full,
+		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
+		BodyRead:          bodyRead, ScopeMatch: scopeMatch,
+	}
+}
+
+// rebuildListingIndex reports explicit index maintenance progress and resumable failure.
+func rebuildListingIndex(store storage.ObjectStore, stderr io.Writer) bool {
+	terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
+	count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
+		return false
+	}
+	terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
+	return true
 }

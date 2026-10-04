@@ -16,6 +16,7 @@ import (
 
 // V2Prefix contains revision-qualified entries; coverage is checked every read.
 const V2Prefix = "listing/v2/"
+
 const v2Pointers = "listing/by-session-v2/"
 
 // Revision contains only discovery summaries, never transcript or skill content.

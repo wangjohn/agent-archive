@@ -61,66 +61,9 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		}
 		revisions[key] = r
 	}
-	var selected, all []listingindex.Revision
-	allChildren := make(map[string]int)
-	scopedHidden, allHidden := 0, 0
-	result := RecentResult{Complete: true}
-	for _, obj := range objects {
-		if !isMetadataKey(obj.Key) {
-			continue
-		}
-		r, exists := revisions[obj.Key+"\x00"+obj.ETag]
-		if obj.ETag == "" || !exists {
-			return fallback("listing index does not cover current metadata; run list --rebuild-index")
-		}
-		if filter.Harness != "" && !strings.HasPrefix(r.MetadataKey, "sessions/"+filter.Harness+"/") {
-			continue
-		}
-		if !filter.From.IsZero() && r.CapturedAt.Before(filter.From) || !filter.To.IsZero() && r.CapturedAt.After(filter.To) {
-			continue
-		}
-		if filter.Replays == ReplaysHidden && r.Replay || filter.Replays == ReplaysOnly && !r.Replay {
-			continue
-		}
-		parts := strings.Split(r.MetadataKey, "/")
-		inScope := opts.ScopeMatch == nil || opts.ScopeMatch(archive.Metadata{ProjectID: r.ProjectID, RepoKey: r.RepoKey})
-		if r.Parent != "" {
-			allChildren[parts[1]+"/"+r.Parent]++
-			if opts.TopLevelOnly {
-				allHidden++
-				if inScope {
-					scopedHidden++
-				}
-				continue
-			}
-		}
-		all = append(all, r)
-		if inScope {
-			selected = append(selected, r)
-		}
-	}
-	result.Children = allChildren
-	result.Hidden = scopedHidden
-	result.Outside = len(all) - len(selected)
-	if opts.ScopeMatch != nil && len(selected) == 0 {
-		result.ScopeEmpty = true
-		selected = all
-		result.Children = allChildren
-		result.Hidden = allHidden
-	}
-	sort.Slice(selected, func(i, j int) bool {
-		a, b := selected[i], selected[j]
-		if opts.ActivityOrder && !a.Activity.Equal(b.Activity) {
-			return a.Activity.After(b.Activity)
-		}
-		if !a.CapturedAt.Equal(b.CapturedAt) {
-			return a.CapturedAt.After(b.CapturedAt)
-		}
-		return a.MetadataKey < b.MetadataKey
-	})
-	result.TotalMatched = len(selected)
-	if len(selected) > limit {
-		selected = selected[:limit]
+	selected, result, err := selectListingRevisions(objects, revisions, filter, limit, opts)
+	if err != nil {
+		return fallback(err.Error())
 	}
 	for _, r := range selected {
 		data, cached := opts.Cache.get(r.MetadataKey, r.ETag)
@@ -190,9 +133,7 @@ func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix strin
 			all = scoped
 		}
 	}
-	result := RecentResult{Complete: true, Children: allChildren}
-	result.ScopeEmpty = scopeEmpty
-	result.Outside = outside
+	result := RecentResult{Complete: true, Children: allChildren, ScopeEmpty: scopeEmpty, Outside: outside}
 	for _, m := range all {
 		if m.ParentSessionID != "" {
 			if opts.TopLevelOnly {
@@ -276,4 +217,67 @@ func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string)
 		}
 	}
 	return count, nil
+}
+
+// selectListingRevisions proves canonical coverage and applies summary predicates before body reads.
+func selectListingRevisions(objects []storage.Object, revisions map[string]listingindex.Revision, filter Filter, limit int, opts ListOptions) ([]listingindex.Revision, RecentResult, error) {
+	var selected, all []listingindex.Revision
+	allChildren := make(map[string]int)
+	scopedHidden, allHidden := 0, 0
+	for _, obj := range objects {
+		if !isMetadataKey(obj.Key) {
+			continue
+		}
+		r, exists := revisions[obj.Key+"\x00"+obj.ETag]
+		if obj.ETag == "" || !exists {
+			return nil, RecentResult{}, errors.New("listing index does not cover current metadata; run list --rebuild-index")
+		}
+		if filter.Harness != "" && !strings.HasPrefix(r.MetadataKey, "sessions/"+filter.Harness+"/") {
+			continue
+		}
+		if !filter.From.IsZero() && r.CapturedAt.Before(filter.From) || !filter.To.IsZero() && r.CapturedAt.After(filter.To) {
+			continue
+		}
+		if filter.Replays == ReplaysHidden && r.Replay || filter.Replays == ReplaysOnly && !r.Replay {
+			continue
+		}
+		parts := strings.Split(r.MetadataKey, "/")
+		inScope := opts.ScopeMatch == nil || opts.ScopeMatch(archive.Metadata{ProjectID: r.ProjectID, RepoKey: r.RepoKey})
+		if r.Parent != "" {
+			allChildren[parts[1]+"/"+r.Parent]++
+			if opts.TopLevelOnly {
+				allHidden++
+				if inScope {
+					scopedHidden++
+				}
+				continue
+			}
+		}
+		all = append(all, r)
+		if inScope {
+			selected = append(selected, r)
+		}
+	}
+	result := RecentResult{Complete: true, Children: allChildren, Hidden: scopedHidden, Outside: len(all) - len(selected)}
+	if opts.ScopeMatch != nil && len(selected) == 0 {
+		result.ScopeEmpty = true
+		selected = all
+		result.Children = allChildren
+		result.Hidden = allHidden
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		a, b := selected[i], selected[j]
+		if opts.ActivityOrder && !a.Activity.Equal(b.Activity) {
+			return a.Activity.After(b.Activity)
+		}
+		if !a.CapturedAt.Equal(b.CapturedAt) {
+			return a.CapturedAt.After(b.CapturedAt)
+		}
+		return a.MetadataKey < b.MetadataKey
+	})
+	result.TotalMatched = len(selected)
+	if len(selected) > limit {
+		selected = selected[:limit]
+	}
+	return selected, result, nil
 }
