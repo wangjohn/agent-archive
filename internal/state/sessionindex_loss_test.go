@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func TestCompletedCensusRepairsRecreatedEmptyIndexesOnce(t *testing.T) {
@@ -16,7 +17,7 @@ func TestCompletedCensusRepairsRecreatedEmptyIndexesOnce(t *testing.T) {
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"sessions", "sessions-v1"} {
@@ -37,7 +38,7 @@ func TestCompletedCensusRepairsRecreatedEmptyIndexesOnce(t *testing.T) {
 		return nil
 	}
 	for range 3 {
-		if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -57,7 +58,7 @@ func TestCompletedCensusRepairsRecreatedEmptyIndexesOnce(t *testing.T) {
 func TestCompletedEmptyCensusDoesNotRepeat(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	store.onIndexStep = func(string) error {
@@ -65,7 +66,7 @@ func TestCompletedEmptyCensusDoesNotRepeat(t *testing.T) {
 		return nil
 	}
 	for range 3 {
-		if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+		if err := recoverytest.Exhaust(context.Background(), store, SessionIndexRecoverySlice, false); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 	"os"
 	"testing"
 	"time"
@@ -301,7 +302,7 @@ func TestOrderedBatchRequestsRecoveryAndHonorsRevokedGeneration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 			t.Fatal(err)
 		}
 		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {

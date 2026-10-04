@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 // These synthetic measurements are machinery evidence, never producer or
@@ -155,7 +156,7 @@ func BenchmarkSyntheticAdmission(b *testing.B) {
 		}
 	}
 	unlock()
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		b.Fatal(err)
 	}
 	durations := make([]time.Duration, b.N)
@@ -255,7 +256,7 @@ func BenchmarkIndexedWarmBurst(b *testing.B) {
 // One call is one actual scheduled local stage, with recovery before scanning.
 // In contrast to test setup runWithCensus, this never hides an admission pass.
 func runScheduledSynthetic(ctx context.Context, store *state.Store, cfg config.Config, o Options) (Health, error) {
-	if err := store.RecoverSessionIndexIfNeeded(ctx); err != nil {
+	if _, err := store.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice); err != nil {
 		return Health{}, err
 	}
 	return runWithAdapters(ctx, store, cfg, o, []SourceAdapter{codexAdapter{supported: syntheticSupport}})

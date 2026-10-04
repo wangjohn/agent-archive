@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 // A fake source adapter deliberately reports usable evidence; only shared
@@ -190,7 +191,7 @@ func runWithCensus(ctx context.Context, store *state.Store, cfg config.Config, o
 	if err != nil || h.Outcomes["admission_retry"] == 0 {
 		return h, err
 	}
-	if err := store.RecoverSessionIndexIfNeeded(ctx); err != nil {
+	if err := recoverytest.Exhaust(ctx, store, state.SessionIndexRecoverySlice, false); err != nil {
 		return h, err
 	}
 	return runWithAdapters(ctx, store, cfg, o, adapters)

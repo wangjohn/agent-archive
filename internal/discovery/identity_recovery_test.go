@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 )
 
 func TestCopiedNativeSourcesUseOriginalCreationConsent(t *testing.T) {
@@ -74,7 +75,7 @@ func TestUnknownDiscoveryIdentityRequiresCensusBeforeAllocation(t *testing.T) {
 	if err != nil || len(regs) != 0 {
 		t.Fatalf("unexpected registrations: %v %v", regs, err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	h, err = runWithAdapters(context.Background(), store, cfg, options, adapters)
@@ -122,7 +123,7 @@ func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 	if err != nil || h.Registered != 0 {
 		t.Fatalf("lost indexes caused allocation: %#v %v", h, err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	h, err = runWithAdapters(context.Background(), store, cfg, options, adapters)
@@ -155,7 +156,7 @@ func TestAbsentIdentityNeedsCompletedRecoveryMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecoverSessionIndexIfNeeded(context.Background()); err != nil {
+	if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 		t.Fatal(err)
 	}
 	if absent, err := store.SessionIndexAbsent(key); err != nil || !absent {

@@ -63,24 +63,16 @@ func portableProjectScopeWithKeys(projects []archive.ProjectActivation, home str
 	}
 	projects = canonical
 	home = local.CanonicalPath(home)
+	// Only an outermost configured root may relocate. Walk each path's
+	// parents against the rule index rather than comparing every pair of
+	// paths: large scopes otherwise spend quadratic work on long siblings.
+	outermost, absolute := outermostProjectRoots(seen)
 	anchors := map[string]string{}
 	for _, project := range projects {
 		// A checkout inside a path-based rule must move with that rule.
 		// Relocating it alone would detach exclusions from their included
 		// ancestor (or reinclusions from their excluded ancestor).
-		hasAncestor := false
-		// Roots have already been resolved once. Walk lexical parents instead
-		// of comparing every long path with every other configured root.
-		for parent := filepath.Dir(project.Root); parent != project.Root; parent = filepath.Dir(parent) {
-			if _, configured := seen[parent]; configured {
-				hasAncestor = true
-				break
-			}
-			if filepath.Dir(parent) == parent {
-				break
-			}
-		}
-		if hasAncestor {
+		if absolute && outermost[project.Root] != project.Root || !absolute && configuredProjectAncestor(project.Root, projects) {
 			continue
 		}
 		if key := knownKeys[project.Root]; archive.IsRepoKey(key) {
@@ -112,27 +104,62 @@ func portableProjectScopeWithKeys(projects []archive.ProjectActivation, home str
 		path, repoKey := homeRelative(project.Root, home), ""
 		// Keep nested checkouts under the outer scope: relocating an excluded
 		// nested repo independently would leave its old subtree included.
-		anchor := ""
-		// Anchors are outermost configured roots, so at most one can own
-		// this rule. Parent membership keeps work bounded by path depth.
-		for root := project.Root; ; root = filepath.Dir(root) {
-			if _, found := anchors[root]; found {
-				anchor = root
-				break
-			}
-			if filepath.Dir(root) == root {
-				break
-			}
+		anchor := outermost[project.Root]
+		if !absolute {
+			anchor = projectScopeAnchor(project.Root, anchors)
 		}
-		if anchor != "" {
+		if key := anchors[anchor]; key != "" {
 			if rel, err := filepath.Rel(anchor, project.Root); err == nil {
-				repoKey, path = anchors[anchor], filepath.ToSlash(rel)
+				repoKey, path = key, filepath.ToSlash(rel)
 			}
 		}
 		rules = append(rules, portableProjectRule{RepoKey: repoKey, Path: path, Included: project.Included})
 	}
 	encoded, _ := json.Marshal(rules)
 	return string(encoded)
+}
+
+// outermostProjectRoots preserves the parent walk for canonical absolute paths.
+// Relative canonicalization failures require PathWithin's original semantics.
+func outermostProjectRoots(roots map[string]bool) (map[string]string, bool) {
+	for root := range roots {
+		if !filepath.IsAbs(root) {
+			return nil, false
+		}
+	}
+	outermost := make(map[string]string, len(roots))
+	for root := range roots {
+		outer := root
+		for parent := filepath.Dir(root); parent != root; parent = filepath.Dir(parent) {
+			if _, exists := roots[parent]; exists {
+				outer = parent
+			}
+			if next := filepath.Dir(parent); next == parent {
+				break
+			}
+		}
+		outermost[root] = outer
+	}
+	return outermost, true
+}
+
+func configuredProjectAncestor(root string, projects []archive.ProjectActivation) bool {
+	for _, other := range projects {
+		if other.Root != root && local.PathWithin(root, other.Root) {
+			return true
+		}
+	}
+	return false
+}
+
+func projectScopeAnchor(root string, anchors map[string]string) string {
+	anchor := ""
+	for candidate := range anchors {
+		if local.PathWithin(root, candidate) && (anchor == "" || len(candidate) < len(anchor)) {
+			anchor = candidate
+		}
+	}
+	return anchor
 }
 
 // hasProjectScope distinguishes an explicit empty flag from an absent flag.

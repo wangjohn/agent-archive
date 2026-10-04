@@ -34,9 +34,14 @@ directories. This preserves admitted continuations outside a newer start window
 without requesting recovery for every old unknown source. Arbitrary individual
 index loss while other entries survive still requires a recovery signal.
 The census currently enumerates registrations in memory;
-it is deadline-aware but has no fixed entry or memory cap. Recovery retains the
-collector pass context rather than the scanner's five-second deadline, so a
-larger census can finish instead of repeatedly restarting and blocking admission.
+it is deadline-aware but has no fixed entry or memory cap. The CLI gives the whole
+recovery stage a child context of up to half its remaining soft collection budget,
+separate from the scanner's five-second deadline. A separate application allowance
+of at most four seconds starts after complete census validation and fingerprinting;
+index application resumes across passes.
+an inventory that cannot finish within the child context restarts on the next
+pass and cannot certify absence. The proposed progress-preserving recovery and
+working-state targets still require qualification for the supported inventory size.
 This phase does not
 claim universal two-pass latency or release-machine resource acceptance.
 
