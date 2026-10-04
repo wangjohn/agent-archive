@@ -492,10 +492,18 @@ func TestCodexStatusShowsScheduledPackedRecoveryCompletion(t *testing.T) {
 		t.Fatalf("packed status JSON: %s", data)
 	}
 	screen := statusScreen{now: at, style: styleFor(&bytes.Buffer{})}
+	foundComplete := false
 	for _, row := range screen.captureRows(view) {
-		if strings.Contains(strings.Join(row.cells, " "), "Identity recovery:") {
-			t.Fatalf("completed recovery retained warning: %+v", row)
+		text := strings.Join(row.cells, " ")
+		if strings.Contains(text, "Identity recovery:") {
+			if row.mark != screen.info() || text != "Identity recovery: complete" {
+				t.Fatalf("completed recovery retained warning: %+v", row)
+			}
+			foundComplete = true
 		}
+	}
+	if !foundComplete {
+		t.Fatal("completed recovery omitted informational row")
 	}
 	if view.Apps[0].Discovery.Supported || view.Apps[0].PublishedSessions > 0 || view.Apps[0].ReadBackVerified {
 		t.Fatal("local packed recovery invented source/publication proof")
