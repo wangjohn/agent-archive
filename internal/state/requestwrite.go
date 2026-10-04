@@ -152,7 +152,7 @@ func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func(
 // as a write. An error from change or check is returned as is, with nothing
 // written.
 func (s *Store) writeUnderLock(w lockedWrite) error {
-	if s.indexSnapshots {
+	if s.indexSnapshots && w.snapshot == nil {
 		w.snapshot = s.readIndexSnapshot
 	}
 	attempts := unlockedWriteAttempts

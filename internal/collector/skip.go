@@ -17,6 +17,9 @@ import (
 // database only to fail the same way.
 func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request) (done bool) {
 	id := reg.ArchiveSessionID
+	if reg.CaptureFrozen {
+		return false
+	}
 
 	unchanged, signature, err := p.unchangedSinceLastScan(reg)
 	if err != nil {

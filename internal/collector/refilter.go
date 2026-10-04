@@ -131,7 +131,8 @@ func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, sn
 		// label, a field the new adapter keeps), a restored transcript does
 		// not compare equal: the snapshot is republished, the gap stands,
 		// and later passes compare the same way, so the transcript's new
-		// records are not captured. No retained evidence is lost. A looser
+		// records are not captured until the user explicitly starts a linked
+		// generation with agent-archive recover. No retained evidence is lost. A looser
 		// check (record counts, file size) cannot tell a restored file from
 		// one compacted and then grown, and would publish the latter over
 		// the richer snapshot, the loss this exists to prevent.

@@ -84,10 +84,12 @@ type Config struct {
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
-	SchemaVersion int                `json:"schema_version"`
-	MachineID     string             `json:"machine_id"`
-	Storage       destination.Config `json:"storage"`
-	Archive       archive.Config     `json:"archive"`
+	// GenerationProtection permanently fences writers that cannot freeze archive generations.
+	GenerationProtection bool               `json:"generation_protection,omitempty"`
+	SchemaVersion        int                `json:"schema_version"`
+	MachineID            string             `json:"machine_id"`
+	Storage              destination.Config `json:"storage"`
+	Archive              archive.Config     `json:"archive"`
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
 	Paused bool `json:"paused"`

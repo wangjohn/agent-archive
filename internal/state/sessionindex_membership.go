@@ -52,7 +52,7 @@ func sameRegistrationMembership(before fileSnapshot, value any) bool {
 	}
 	a, aerr := registrationKey(prior)
 	b, berr := registrationKey(next)
-	return aerr == nil && berr == nil && a == b && prior.ArchiveSessionID == next.ArchiveSessionID && prior.Validate() == nil && next.Validate() == nil
+	return aerr == nil && berr == nil && a == b && prior.ArchiveSessionID == next.ArchiveSessionID && prior.Validate() == nil && next.Validate() == nil && prior.PreviousGenerationID == next.PreviousGenerationID && prior.CaptureFrozen == next.CaptureFrozen
 }
 
 func stageRegistrationRevision(home, path string, before fileSnapshot, value any, write bool) (*local.Staged, error) {
