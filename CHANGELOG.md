@@ -19,6 +19,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Status recognizes valid packed identity-recovery scheduling evidence and
+  distinguishes shard application and fallback work without scanning the index.
+
 - The bucket cleanup recipe works after local integrations or configuration
   have been removed. An explicit ordinary uninstall check stops local uploads
   before planning full-prefix deletion; failed stop checks invalidate prior plans.

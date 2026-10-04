@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/hex"
 	"path/filepath"
 )
 
@@ -20,7 +21,7 @@ func (s *Store) SessionIndexRecoveryStatus() (SessionIndexRecoveryStatus, error)
 	if err := readRecoveryJSONLimit(filepath.Join(s.home, sessionIndexMarkerFile), &marker, 512); err != nil {
 		return SessionIndexRecoveryStatus{Phase: "unknown"}, err
 	}
-	if marker.Version != 1 {
+	if !recoveryMarkerVersion(marker.Version) || (marker.Version == 2 && !validPackedHealthMarker(marker)) {
 		return SessionIndexRecoveryStatus{Phase: "unknown"}, ErrSessionIndexRecoveryRequired
 	}
 	if marker.Complete {
@@ -51,7 +52,13 @@ func (s *Store) pendingRecoveryHealth(marker sessionIndexMarker) (SessionIndexRe
 	if err := readRecoveryJSONLimit(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor, 1536); err != nil {
 		return unknown, err
 	}
-	if cursor.Version != 1 || cursor.Generation != marker.Generation || !cursor.validChecksum() || cursor.Offset < 0 || cursor.Phase < 0 || cursor.Phase > 2 {
+	if !recoveryMarkerVersion(cursor.Version) || cursor.Generation != marker.Generation || !cursor.validChecksum() || cursor.Offset < 0 || cursor.Phase < 0 || cursor.Phase > 2 {
+		return unknown, ErrSessionIndexRecoveryRequired
+	}
+	if marker.Version == 2 && (cursor.Version != 2 || cursor.Revision != marker.PackedRevision || !healthFingerprint(cursor.Inventory) || (cursor.Phase == 0 && cursor.Offset > packedSessionIndexShards)) {
+		return unknown, ErrSessionIndexRecoveryRequired
+	}
+	if cursor.Version == 2 && marker.Version != 2 {
 		return unknown, ErrSessionIndexRecoveryRequired
 	}
 	if marker.MembershipFenced || cursor.Revision != "" {
@@ -59,5 +66,22 @@ func (s *Store) pendingRecoveryHealth(marker sessionIndexMarker) (SessionIndexRe
 			return unknown, err
 		}
 	}
-	return SessionIndexRecoveryStatus{Pending: true, Phase: []string{"registrations", "candidates", "requested-misses"}[cursor.Phase]}, nil
+	phases := []string{"registrations", "candidates", "requested-misses"}
+	if cursor.Version == 2 {
+		phases = []string{"packed-shards", "packed-fallback", "requested-misses"}
+	}
+	return SessionIndexRecoveryStatus{Pending: true, Phase: phases[cursor.Phase]}, nil
+}
+
+// Packed health certifies only bounded scheduling fields, not shard contents.
+func validPackedHealthMarker(marker sessionIndexMarker) bool {
+	return safeFileComponent(marker.Generation) && safeFileComponent(marker.PackedEpoch) && safeFileComponent(marker.PackedRevision) && healthFingerprint(marker.PackedInventory)
+}
+
+func healthFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
