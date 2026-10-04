@@ -390,6 +390,11 @@
         "cursor_composer"
       ],
       "description": "Where started_at came from: 'hook' when a hook observed the start, 'transcript' the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps), and 'cursor_composer' the chat's creation time in Cursor's database (a chat imported from it). Present for import and discovery origins."
+    },
+    "previous_generation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Previous archive generation, independent of parent_session_id subagent lineage."
     }
   },
   "$defs": {

@@ -325,13 +325,17 @@ type CodexAdmissionProof struct {
 type SessionRegistration struct {
 	CodexAdmission   *CodexAdmissionProof `json:"codex_admission,omitempty"`
 	ArchiveSessionID string               `json:"archive_session_id"`
-	NativeSessionID  string               `json:"native_session_id"`
-	ProjectID        string               `json:"project_id"`
-	ProjectRoot      string               `json:"project_root"`
-	Harness          Harness              `json:"harness"`
-	TranscriptPath   string               `json:"transcript_path"`
-	SessionStartedAt time.Time            `json:"session_started_at"`
-	RegisteredAt     time.Time            `json:"registered_at"`
+	// PreviousGenerationID links recovery generations independently of subagents.
+	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
+	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
+	CaptureFrozen    bool      `json:"capture_frozen,omitempty"`
+	NativeSessionID  string    `json:"native_session_id"`
+	ProjectID        string    `json:"project_id"`
+	ProjectRoot      string    `json:"project_root"`
+	Harness          Harness   `json:"harness"`
+	TranscriptPath   string    `json:"transcript_path"`
+	SessionStartedAt time.Time `json:"session_started_at"`
+	RegisteredAt     time.Time `json:"registered_at"`
 	// RepoKey is RepoKey of the project's origin remote when the session
 	// registered: a hash, never the URL. Empty when there was no portable
 	// origin, or on older registrations; the collector then derives it from
@@ -413,6 +417,9 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.PreviousGenerationID == r.ArchiveSessionID && r.PreviousGenerationID != "" {
+		return errors.New("generation cannot precede itself")
+	}
 	if r.CodexAdmission != nil && (r.Harness.Name != "codex" || r.Imported() || (r.Origin != SessionOriginHook && r.Origin != SessionOriginDiscovery) || r.CodexAdmission.Generation == "" || r.CodexAdmission.Revision == "" || !filepath.IsAbs(r.CodexAdmission.Cwd) || r.ProjectID != ProjectID(r.ProjectRoot) || !filepath.IsAbs(r.ProjectRoot)) {
 		return errors.New("invalid Codex admission proof")
 	}
@@ -509,6 +516,7 @@ type SourceBundle struct {
 	NativeRecords        []map[string]any         `json:"native_records"`
 	NativeText           []TextTranscript         `json:"native_text,omitempty"`
 	SupplementalEvidence []SupplementalEvidence   `json:"supplemental_evidence,omitempty"`
+	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
 	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
 }
@@ -687,11 +695,12 @@ type ToolUsage struct {
 // tool payloads and no full transcript. Title is an optional short preview of
 // the first filtered human prompt, derived for browsing.
 type Metadata struct {
-	SchemaVersion   int    `json:"schema_version"`
-	SessionID       string `json:"session_id"`
-	NativeSessionID string `json:"native_session_id"`
-	MachineID       string `json:"machine_id"`
-	ProjectID       string `json:"project_id"`
+	SchemaVersion        int    `json:"schema_version"`
+	SessionID            string `json:"session_id"`
+	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
+	NativeSessionID      string `json:"native_session_id"`
+	MachineID            string `json:"machine_id"`
+	ProjectID            string `json:"project_id"`
 	// Title is a one-line, truncated preview of the first human prompt after
 	// filtering. Omitted when no prompt text was available.
 	Title string `json:"title,omitempty"`
@@ -782,6 +791,7 @@ const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
 // It changes nothing for a hook registration. Callers apply it to every
 // metadata document BuildMetadata returns, including a failed parse's.
 func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
+	m.PreviousGenerationID = r.PreviousGenerationID
 	if !r.Imported() && r.Origin != SessionOriginDiscovery {
 		return
 	}
