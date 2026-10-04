@@ -183,10 +183,13 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 }
 
 func (s *sessionScan) recordFrozenSignature() error {
-	if _, requested, err := s.local.LoadRequest(s.id()); err != nil || requested {
+	_, requested, err := s.local.LoadRequest(s.id())
+	if err != nil {
 		return err
 	}
-	if pending, err := s.local.HasPending(s.id()); err != nil || pending {
+	// This scan is finishing; its own journal does not prevent recording the
+	// signature, but queued evidence, uploads and rate-limited work still do.
+	if outstanding, err := s.local.Outstanding(s.reg, requested); err != nil || outstanding.OwedAfterScan() {
 		return err
 	}
 	adapterVersion, known := harnessAdapterVersion(s.opts.Sources, s.reg.Harness.Name)

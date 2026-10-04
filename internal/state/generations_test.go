@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -359,5 +360,33 @@ func TestGenerationRetirementCrashAndEligibleRootReservation(t *testing.T) {
 	id, created, err := s.EnsureArchiveSessionID(key)
 	if err != nil || created || id != entry.ArchiveSessionID {
 		t.Fatalf("reservation replaced: %s %v %v", id, created, err)
+	}
+}
+
+func TestFrozenGenerationRefusesUnsupportedNodeVersion(t *testing.T) {
+	t.Parallel()
+	for _, version := range []int{0, 99} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			t.Parallel()
+			s, original, at := generationFixture(t)
+			if _, err := s.BeginGenerationRecovery(original.ArchiveSessionID, at, generationBuilder(at)); err != nil {
+				t.Fatal(err)
+			}
+			frozen, _, err := s.LoadRegistration(original.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node, found, err := readJSON[generationNode](s.generationNodePath(original.ArchiveSessionID))
+			if err != nil || !found {
+				t.Fatalf("generation node: %v %v", found, err)
+			}
+			node.Version = version
+			if err := local.Write(s.generationNodePath(original.ArchiveSessionID), node); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.FrozenGeneration(frozen); !errors.Is(err, ErrSessionIdentityConflict) {
+				t.Fatalf("unsupported node accepted as frozen authority: %v", err)
+			}
+		})
 	}
 }
