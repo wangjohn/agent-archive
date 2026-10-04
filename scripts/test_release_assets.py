@@ -500,22 +500,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIsNotNone(match, f'no step {name!r} in publish')
         return match.group(1)
 
-    def test_attestation_subjects_are_exactly_the_released_binaries(self):
+    def test_attestation_subjects_are_exactly_the_binaries_and_candidate_manifest(self):
         attest = self.publish[self.publish.index('actions/attest-build-provenance@'):]
         subjects = block_lines(attest, 'subject-path: |')
         self.assertEqual(len(subjects), len(set(subjects)), subjects)
-        self.assertEqual(set(subjects), self.dist)
+        self.assertEqual(set(subjects), self.dist | {'dist/release-candidate.json'})
 
-    def test_uploaded_and_released_assets_are_the_binaries_and_checksums(self):
+    def test_uploaded_and_released_assets_are_the_binaries_checksums_and_manifest(self):
         upload = self.publish[self.publish.index('name: agent-archive-${{ github.ref_name }}'):]
         uploaded = block_lines(upload, 'path: |')
         self.assertEqual(len(uploaded), len(set(uploaded)), uploaded)
-        self.assertEqual(set(uploaded), self.dist | {'dist/SHA256SUMS'})
+        self.assertEqual(set(uploaded), self.dist | {'dist/SHA256SUMS', 'dist/release-candidate.json'})
 
-        create = self.publish[self.publish.index('gh release create "$VERSION"'):]
-        released = re.findall(r'^\s+(dist/\S+?)(?: \\)?$', create, re.M)
-        self.assertEqual(len(released), len(set(released)), released)
-        self.assertEqual(set(released), self.dist | {'dist/SHA256SUMS'})
+        self.assertIn('python3 scripts/release_candidate.py stage', self.publish)
+        from release_candidate import ASSETS
+        self.assertEqual(set(ASSETS), set(BINARIES) | {'SHA256SUMS', 'release-candidate.json'})
 
     def test_build_jobs_together_produce_the_unsigned_binaries(self):
         produced = []
@@ -531,7 +530,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertNotIn('linux', text)
 
     def test_publish_waits_for_both_builds_and_downloads_both(self):
-        self.assertRegex(self.publish, r'needs: \[build, build-linux\]')
+        self.assertRegex(self.publish, r'needs: \[preflight, build, build-linux\]')
         self.assertRegex(self.publish, r'name: unsigned\n\s+path: dist')
         self.assertRegex(self.publish, r'name: linux\n\s+path: dist')
 
@@ -558,9 +557,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
             {'contents': 'write', 'id-token': 'write', 'attestations': 'write'},
         )
 
-    def test_publish_is_a_release_environment_job_with_no_condition(self):
+    def test_publish_is_a_release_environment_job_only_for_a_missing_candidate(self):
         self.assertRegex(self.publish, r'(?m)^    environment: release$')
-        self.assertNotRegex(self.publish, r'(?m)^    if:')
+        self.assertIn("if: needs.preflight.outputs.exists == 'false'", self.publish)
         # The one step that runs after a failure only removes the keychain.
         for text in steps(self.publish):
             if 'always()' in text:
@@ -631,8 +630,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn('build-release.sh linux', darwin)
 
     def test_release_is_created_for_an_existing_tag(self):
-        create = self.publish[self.publish.index('gh release create "$VERSION"'):]
-        self.assertIn('--verify-tag', create.split('\n')[0])
+        from release_candidate import GitHub
+        from unittest.mock import patch
+        with patch('release_candidate.run') as command:
+            GitHub('wangjohn/agent-archive').create('v1.2.3', Path('dist'))
+        self.assertIn('--verify-tag', command.call_args.args[0])
 
     def test_no_expression_is_expanded_into_script_text(self):
         texts = run_texts(self.workflow)
@@ -664,9 +666,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(form=name):
                 self.assertTrue(any('${{' in body for body in run_texts(text)), run_texts(text))
 
-    def test_the_workflow_has_exactly_the_three_jobs(self):
+    def test_the_workflow_has_preflight_and_the_three_build_publish_jobs(self):
         jobs = re.findall(r'(?m)^  ([\w-]+):$', self.workflow[self.workflow.index('\njobs:\n'):])
-        self.assertEqual(jobs, ['build', 'build-linux', 'publish'])
+        self.assertEqual(jobs, ['preflight', 'build', 'build-linux', 'publish'])
 
     def test_release_critical_steps_are_not_skippable_or_allowed_to_fail(self):
         self.assertNotIn('continue-on-error', self.workflow)
