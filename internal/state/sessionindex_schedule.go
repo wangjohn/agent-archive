@@ -190,15 +190,56 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 				cursor.Offset = 0
 			}
 			complete, err := s.applyRecoveryPhase(ctx, &cursor, deadline, packedSessionIndexShards, func(i int) error {
-				return s.recoverPackedShard(ctx, packedShardName(i), marker, owners[i], children[i])
+				return s.recoverPackedShardSlice(ctx, packedShardName(i), marker, owners[i], children[i], deadline)
 			})
 			if err != nil || !complete {
 				return false, err
 			}
-			cursor.Phase = 2
+			cursor.Phase = 1
 			cursor.Offset = 0
 			cursor.PhaseInventory = ""
 		}
+		if cursor.Phase == 1 {
+			var fallbackOwners []agentmeta.SessionKey
+			var fallbackCandidates []SubagentCandidate
+			var fallback [packedSessionIndexShards]bool
+			for i := range packedSessionIndexShards {
+				reader, err := s.openPackedIndex(packedShardName(i), marker)
+				if err != nil {
+					return false, err
+				}
+				fallback[i] = reader.fallback
+				_ = reader.file.Close()
+			}
+			for _, key := range keys {
+				shard, _ := hex.DecodeString(packedIndexHash(key)[:2])
+				if fallback[int(shard[0])] {
+					fallbackOwners = append(fallbackOwners, key)
+				}
+			}
+			for _, candidate := range candidates {
+				key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+				if err != nil {
+					return false, err
+				}
+				shard, _ := hex.DecodeString(packedIndexHash(key)[:2])
+				if fallback[int(shard[0])] {
+					fallbackCandidates = append(fallbackCandidates, candidate)
+				}
+			}
+			complete, err := s.applyRecoveryPhase(ctx, &cursor, deadline, len(fallbackOwners)+len(fallbackCandidates), func(i int) error {
+				if i < len(fallbackOwners) {
+					key := fallbackOwners[i]
+					return s.recoverRegistrationOwners(key, inventory[key])
+				}
+				return s.recoverCandidateIndex(ctx, fallbackCandidates[i-len(fallbackOwners)])
+			})
+			if err != nil || !complete {
+				return false, err
+			}
+			cursor.Phase, cursor.Offset, cursor.PhaseInventory = 2, 0, ""
+		}
+
 	} else {
 		if cursor.Phase == 0 {
 			if cursor.Offset > len(keys) {
@@ -262,6 +303,11 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	if err := s.indexStep("recovery-completing"); err != nil {
 		return false, err
 	}
+	if cursor.Version == 2 {
+		if err := s.clearPackedExpiryProofs(); err != nil {
+			return false, err
+		}
+	}
 	if err := s.completeSessionIndexRecovery(ctx, cursor.Generation, revision); err != nil {
 		return false, err
 	}
@@ -285,7 +331,10 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 		}
 
 		if marker.Version == 2 {
-			if _, packedErr := s.validatePackedPrefix(marker, packedSessionIndexShards); packedErr == nil {
+			if _, packedErr := s.validatePackedPrefix(marker, packedSessionIndexShards); packedErr == nil && s.packedOverlaysHealthy(marker) {
+				if err := s.reconcilePackedExpiryProofs(marker); err != nil {
+					return sessionRecoveryCursor{}, false, err
+				}
 				return sessionRecoveryCursor{}, true, nil
 			}
 			// Invalid aggregates need a fresh incomplete certificate before rebuilding.
@@ -351,6 +400,9 @@ func (s *Store) applyRecoveryPhase(ctx context.Context, cursor *sessionRecoveryC
 			return false, err
 		}
 		if err := apply(cursor.Offset); err != nil {
+			if errors.Is(err, errPackedSlicePending) {
+				return false, s.saveRecoveryCursor(cursor)
+			}
 			return false, err
 		}
 		cursor.Offset++

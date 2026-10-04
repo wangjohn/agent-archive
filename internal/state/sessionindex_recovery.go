@@ -484,6 +484,9 @@ func (s *Store) newSessionIndexMarker(generation string) sessionIndexMarker {
 		next.PackedEpoch = prior.PackedEpoch
 		next.PackedRevision = prior.PackedRevision
 		next.PackedInventory = prior.PackedInventory
+		if prior.Complete && !s.packedOverlaysHealthy(prior) {
+			next.PackedInventory = ""
+		}
 	}
 	return next
 }

@@ -45,6 +45,9 @@ func packedOwnerFixture(t testing.TB) (*Store, agentmeta.SessionKey, sessionInde
 	if err := s.recoverPackedShard(context.Background(), packedIndexHash(key)[:2], marker, map[agentmeta.SessionKey][]string{key: {reg.ArchiveSessionID}}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.ensurePackedOverlayDirectory(marker); err != nil {
+		t.Fatal(err)
+	}
 	marker.Complete = true
 	if err := local.Write(filepath.Join(s.home, sessionIndexMarkerFile), marker); err != nil {
 		t.Fatal(err)
@@ -177,6 +180,19 @@ func TestPackedOversizedIdentityFallsBack(t *testing.T) {
 	shard := packedIndexHash(huge)[:2]
 	if err := s.recoverPackedShard(context.Background(), shard, marker, map[agentmeta.SessionKey][]string{huge: {reg.ArchiveSessionID}}, nil); err != nil {
 		t.Fatal(err)
+	}
+	// Scheduled fallback applies ordinary owners in individually checkpointed units.
+	for attempt := 0; attempt < 20; attempt++ {
+		complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			break
+		}
+		if attempt == 19 {
+			t.Fatal("oversized scheduled fallback did not complete")
+		}
 	}
 	entry, found, err := s.readQualifiedIndex(huge)
 	if err != nil || !found || entry.ArchiveSessionID != reg.ArchiveSessionID {
