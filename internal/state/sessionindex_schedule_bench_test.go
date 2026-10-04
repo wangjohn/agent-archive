@@ -118,7 +118,7 @@ func benchmarkScheduledRecovery100k(b *testing.B, candidateCount int) {
 			b.Fatal("recovery did not converge in twenty slices")
 		}
 		var marker sessionIndexMarker
-		if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Version != 1 || !marker.Complete || !safeFileComponent(marker.Generation) || !marker.MembershipFenced {
+		if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || !recoveryMarkerVersion(marker.Version) || !marker.Complete || !safeFileComponent(marker.Generation) || !marker.MembershipFenced {
 			b.Fatalf("durable recovery certificate invalid: %v", err)
 		}
 		if revision, err := s.sessionMembershipRevision(); err != nil || revision == "" {

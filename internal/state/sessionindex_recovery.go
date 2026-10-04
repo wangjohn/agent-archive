@@ -24,6 +24,9 @@ type sessionIndexMarker struct {
 	Complete         bool   `json:"complete"`
 	Generation       string `json:"generation,omitempty"`
 	MembershipFenced bool   `json:"membership_fenced,omitempty"`
+	PackedEpoch      string `json:"packed_epoch,omitempty"`
+	PackedRevision   string `json:"packed_revision,omitempty"`
+	PackedInventory  string `json:"packed_inventory,omitempty"`
 }
 
 func (s *Store) sessionIndexMissAllowed() error {
@@ -32,7 +35,7 @@ func (s *Store) sessionIndexMissAllowed() error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err != nil || marker.Version != 1 || !marker.Complete {
+	if err != nil || !recoveryMarkerVersion(marker.Version) || !marker.Complete {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if marker.MembershipFenced {
@@ -114,7 +117,7 @@ func (s *Store) completeSessionIndexRecovery(ctx context.Context, generation str
 		path: filepath.Join(s.home, sessionIndexMarkerFile),
 		change: func(current fileSnapshot) (any, bool, error) {
 			var marker sessionIndexMarker
-			if !current.found || json.Unmarshal(current.data, &marker) != nil || marker.Version != 1 || marker.Complete || marker.Generation != generation {
+			if !current.found || json.Unmarshal(current.data, &marker) != nil || !recoveryMarkerVersion(marker.Version) || marker.Complete || marker.Generation != generation {
 				return nil, false, ErrSessionIndexRecoveryRequired
 			}
 			marker.Complete = true
@@ -137,7 +140,7 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	var prior qualifiedSessionIndexEntry
 	readErr := readRecoveryJSON(qualifiedSessionIndexPath(s.home, key), &prior)
 	var marker sessionIndexMarker
-	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && marker.Version == 1 && !marker.Complete && marker.Generation != "" {
+	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != "" {
 		return nil
 	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
@@ -198,7 +201,17 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 	// authority from a previously validated registration.
 	var reg archive.SessionRegistration
 	var data bytes.Buffer
+	var reads []recoveryRegistrationRead
+	var reader *recoveryRegistrationReader
+	if len(entries) >= packedSessionIndexThreshold {
+		reader = s.newRecoveryRegistrationReader()
+		defer reader.close()
+	}
 	for i, file := range entries {
+		if reader != nil && i%recoveryReadAheadWorkers == 0 {
+			end := min(i+recoveryReadAheadWorkers, len(entries))
+			reads = reader.readChunk(entries[i:end])
+		}
 		entries[i] = nil
 		if filepath.Ext(file.Name()) == quarantineSuffix {
 			return nil, ErrSessionIndexRecoveryRequired
@@ -211,7 +224,19 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 			return nil, err
 		}
 		reg = archive.SessionRegistration{}
-		if err := readRecoveryRegistration(s.registrationPath(id), &data, &reg); err != nil {
+		var readErr error
+		if reads != nil {
+			result := reads[i%recoveryReadAheadWorkers]
+			reads[i%recoveryReadAheadWorkers] = recoveryRegistrationRead{}
+			reg, readErr = result.reg, result.err
+			if errors.Is(readErr, errRecoveryReadAheadLarge) {
+				reg = archive.SessionRegistration{}
+				readErr = readRecoveryRegistration(s.registrationPath(id), &data, &reg)
+			}
+		} else {
+			readErr = readRecoveryRegistration(s.registrationPath(id), &data, &reg)
+		}
+		if err := readErr; err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, ErrSessionIndexRecoveryRequired
 			}
@@ -457,6 +482,13 @@ func (s *Store) newSessionIndexMarker(generation string) sessionIndexMarker {
 	}
 	if _, err := os.Stat(filepath.Join(s.home, sessionMembershipFile)); err == nil {
 		fenced = true
+	}
+	if prior.Version == 2 {
+		inventory := prior.PackedInventory
+		if prior.Complete && !s.packedOverlaysHealthy(prior) {
+			inventory = ""
+		}
+		return sessionIndexMarker{Version: 2, Generation: generation, MembershipFenced: fenced, PackedEpoch: prior.PackedEpoch, PackedRevision: prior.PackedRevision, PackedInventory: inventory}
 	}
 	return sessionIndexMarker{Version: 1, Generation: generation, MembershipFenced: fenced}
 }

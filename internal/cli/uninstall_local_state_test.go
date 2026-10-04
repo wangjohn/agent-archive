@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -97,7 +98,7 @@ func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 var handListedLocalState = []string{
 	"session-membership.json", "session-membership.lock", "session-index-recovery.json",
 	"config.json", "setup-draft.json", "setup-transaction.json",
-	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
+	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "sessions-packed-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
 	machineRegistrationFile, "discovery-catalog.json", "discovery-health.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	"cache", "handoffs", "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
@@ -144,6 +145,13 @@ func TestDeleteLocalDataRemovesOnlyItsOwnEntries(t *testing.T) {
 			write(name + ".20260925T010203Z.corrupt")
 		}
 	}
+	// Packed shards contain private native identities and must be removed
+	// recursively with the rest of local state.
+	packedShard := filepath.Join(home, "sessions-packed-v1", "x", "00.json")
+	if err := os.WriteFile(packedShard, []byte(`{"native_session_id":"private-native"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	write(".pending-123")
 	locks := []string{"setup.lock", "hooks.lock", "admission-intents.lock", "issued.lock"}
 	for _, name := range locks {
@@ -158,6 +166,10 @@ func TestDeleteLocalDataRemovesOnlyItsOwnEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(packedShard); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("packed identity shard survived deletion: %v", err)
+	}
+
 	slices.Sort(leftover)
 	if want := slices.Sorted(slices.Values(user)); !slices.Equal(leftover, want) {
 		t.Fatalf("leftover %q, want %q", leftover, want)
