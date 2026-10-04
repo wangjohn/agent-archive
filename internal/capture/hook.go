@@ -656,12 +656,20 @@ func loadHookCaptureWindow(home string, observed *config.Config) (config.Config,
 // nested in an included one must stay excluded rather than falling through to
 // its parent.
 func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.ProjectActivation, bool) {
+	project, found, _ := configuredProjectActivationIdentity(cfg, root)
+	return project, found
+}
+
+// configuredProjectActivationIdentity distinguishes unknown filesystem identity
+// from a resolved location with no configured owner. Existing registrations
+// retain their admission when the incoming location has no matching rule.
+func configuredProjectActivationIdentity(cfg config.Config, root string) (archive.ProjectActivation, bool, bool) {
 	if root == "" {
-		return archive.ProjectActivation{}, false
+		return archive.ProjectActivation{}, false, false
 	}
 	candidate := resolvedPath(root)
 	if candidate == "" {
-		return archive.ProjectActivation{}, false
+		return archive.ProjectActivation{}, false, false
 	}
 	var best archive.ProjectActivation
 	var locations resolvedLocationMatcher
@@ -671,11 +679,11 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		// An unresolved rule may be an exclusion; never fall through to an
 		// included ancestor when its filesystem identity is unknown.
 		if configured == "" {
-			return archive.ProjectActivation{}, false
+			return archive.ProjectActivation{}, false, false
 		}
 		within, certain := locations.within(candidate, configured)
 		if !certain {
-			return archive.ProjectActivation{}, false
+			return archive.ProjectActivation{}, false, false
 		}
 		if !within {
 			continue
@@ -693,9 +701,9 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		best, bestDepth, found, conflicting = project, depth, true, false
 	}
 	if conflicting {
-		return archive.ProjectActivation{}, false
+		return archive.ProjectActivation{}, false, false
 	}
-	return best, found
+	return best, found, true
 }
 
 // resolvedLocationMatcher keeps prefix observations within one scope lookup.
@@ -864,7 +872,11 @@ func continueHookSession(store *state.Store, cfg config.Config, event agentapi.L
 			return errSessionIdentityConflict
 		}
 		if !blanket && existing.CodexAdmission == nil {
-			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
+			configured, found, resolved := configuredProjectActivationIdentity(cfg, root)
+			if !resolved {
+				return errContinuationDeclined
+			}
+			if found && filepath.Clean(configured.Root) != filepath.Clean(existing.ProjectRoot) {
 				return errSessionIdentityConflict
 			}
 		}

@@ -10,6 +10,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Existing project-scoped hook sessions decline continuation updates when the
+  incoming checkout or a saved scope rule has unknown filesystem identity,
+  preserving their transcript locator and lifecycle timestamps.
+
 - Project capture scope resolves symlinked checkout paths even when a nested
   directory is absent, preserving nested exclusions and reinclusions. Existing
   components with another casing or canonically equivalent Unicode spelling
