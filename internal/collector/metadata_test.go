@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -335,10 +337,24 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 			metadataWrites++
 		}
 	}
-	if metadataWrites != 1 || len(remote.keys) != 4 {
-		t.Fatalf("parser upgrade with new content wrote %v, want source, listing hints, and metadata", remote.keys)
+	if metadataWrites != 1 || len(remote.keys) != 3 {
+		t.Fatalf("parser upgrade with new content wrote %v, want one source, canonical metadata, and v3 hint", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if remote.keys[0] != after.SourceBundle.Key || remote.keys[1] != metadataKey || !strings.HasPrefix(remote.keys[2], listingindex.V3Prefix) {
+		t.Fatalf("publication order = %v, want source, canonical metadata, then v3 hint", remote.keys)
+	}
+	revision, err := listingindex.ParseRevision(remote.keys[2])
+	if err != nil || revision.MetadataKey != metadataKey {
+		t.Fatalf("listing revision = %+v, err = %v", revision, err)
+	}
+	raw, err := remote.Get(context.Background(), metadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revision.ValidateMetadata(raw); err != nil {
+		t.Fatalf("listing hint does not match published metadata: %v", err)
+	}
 	if after.SourceBundle.SHA256 == before.SourceBundle.SHA256 || after.Parser.Version != "two" {
 		t.Fatalf("content publication missing or stale parser: %+v", after)
 	}
