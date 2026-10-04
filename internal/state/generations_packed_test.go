@@ -15,7 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.Time, sessionIndexMarker) {
+func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.Time) {
 	t.Helper()
 	s, key, marker := packedOwnerFixture(t)
 	reg, _, err := s.LoadRegistration("packed-owner")
@@ -49,11 +49,11 @@ func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration,
 			t.Fatal(err)
 		}
 	}
-	return s, reg, at, marker
+	return s, reg, at
 }
 
 func TestPackedGenerationRecoveryReplayAndCensus(t *testing.T) {
-	s, old, at, _ := packedGenerationFixture(t)
+	s, old, at := packedGenerationFixture(t)
 	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: old.NativeSessionID}
 	interrupted := errors.New("interrupted after freeze")
 	s.onIndexStep = func(step string) error {
@@ -136,7 +136,7 @@ func TestPackedGenerationRecoveryReplayAndCensus(t *testing.T) {
 }
 
 func TestPackedCandidateRetainsFrozenGenerationParent(t *testing.T) {
-	s, old, at, _ := packedGenerationFixture(t)
+	s, old, at := packedGenerationFixture(t)
 	if _, err := s.BeginGenerationRecovery(old.ArchiveSessionID, at, generationBuilder(at)); err != nil {
 		t.Fatal(err)
 	}
