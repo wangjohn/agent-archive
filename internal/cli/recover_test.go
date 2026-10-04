@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,9 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 		t.Run(seam, func(t *testing.T) {
 			t.Parallel()
 			env, home, path, id := recoverFixture(t)
+			if seam == "generation-active" {
+				seedPackedRecoveryRegistrations(t, home, id)
+			}
 			var out, errOut bytes.Buffer
 			if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
 				t.Fatalf("confirm: %d %s", code, errOut.String())
@@ -92,7 +96,7 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 				}
 			}
 			must(t, store.ResumeGenerationRecoveries(t.Context()))
-			for range 10 {
+			for range 20 {
 				complete, err := store.RecoverSessionIndexScheduled(t.Context(), state.SessionIndexRecoverySlice)
 				must(t, err)
 				if complete {
@@ -133,11 +137,43 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 			}
 			must(t, capture.ReplayAdmissionIntents(home, hookAt.Add(2*time.Second), productionAgents))
 			regs, err := store.LoadRegistrations()
-			if err != nil || len(regs) != 2 {
+			want := 2
+			if seam == "generation-active" {
+				want += 4096
+			}
+			if err != nil || len(regs) != want {
 				t.Fatalf("duplicate generations: %d %v", len(regs), err)
 			}
 		})
 	}
+}
+
+func seedPackedRecoveryRegistrations(t *testing.T, home, id string) {
+	t.Helper()
+	store, err := state.Open(home)
+	must(t, err)
+	original, found, err := store.LoadRegistration(id)
+	must(t, err)
+	if !found {
+		t.Fatal("packed recovery parent missing")
+	}
+	for i := range 4096 {
+		reg := original
+		reg.ArchiveSessionID = fmt.Sprintf("packed-fixture-%06d", i)
+		reg.NativeSessionID = fmt.Sprintf("packed-fixture-native-%06d", i)
+		data, err := json.Marshal(reg)
+		must(t, err)
+		must(t, os.WriteFile(filepath.Join(home, "registrations", reg.ArchiveSessionID+".json"), data, 0600))
+	}
+	must(t, store.MarkSessionIndexRecoveryNeeded())
+	for range 20 {
+		complete, err := store.RecoverSessionIndexScheduled(t.Context(), state.SessionIndexRecoverySlice)
+		must(t, err)
+		if complete {
+			return
+		}
+	}
+	t.Fatal("packed recovery fixture did not complete its census")
 }
 
 func recoverFixture(t *testing.T) (Env, string, string, string) {

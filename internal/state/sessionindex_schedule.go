@@ -140,35 +140,26 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	// one aggregate application allowance after that census; the caller's
 	// context independently bounds the whole recovery stage.
 	deadline := time.Now().Add(allowance)
-	if cursor.Phase == 0 {
-		if cursor.Offset > len(keys) {
-			cursor.Offset = 0
-		}
-		complete, err := s.applyRecoveryPhase(ctx, &cursor, deadline, len(keys), func(i int) error { return s.recoverRegistrationOwners(keys[i], inventory[keys[i]]) })
-		if err != nil || !complete {
-			return false, err
-		}
-		cursor.Phase, cursor.Offset = 1, 0
-	}
-	// Requested keys may refer to an already-applied candidate whose index
-	// changed after its checkpoint. Keep complete candidate authority available
-	// in phase two, including slices that resume there directly.
-	candidates, err := s.LoadSubagentCandidates()
-	if err != nil {
+
+	var candidates []SubagentCandidate
+	var currentMarker sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &currentMarker); err != nil {
 		return false, err
 	}
-	if cursor.Phase == 1 {
-		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ArchiveSessionID < candidates[j].ArchiveSessionID })
-		fingerprint := phaseFingerprint(candidates)
-		if cursor.PhaseInventory != fingerprint || cursor.Offset > len(candidates) {
-			cursor.Offset = 0
-		}
-		cursor.PhaseInventory = fingerprint
-		complete, err := s.applyRecoveryPhase(ctx, &cursor, deadline, len(candidates), func(i int) error { return s.recoverCandidateIndex(ctx, candidates[i]) })
+	packed := currentMarker.Version == 2 || cursor.Version == 2 || len(keys) >= packedSessionIndexThreshold
+	if packed {
+		var complete bool
+		candidates, complete, err = s.applyPackedRecovery(ctx, &cursor, keys, inventory, revision, fingerprint, deadline)
 		if err != nil || !complete {
 			return false, err
 		}
-		cursor.Phase, cursor.Offset, cursor.PhaseInventory = 2, 0, ""
+
+	} else {
+		var complete bool
+		candidates, complete, err = s.applyOrdinaryRecovery(ctx, &cursor, keys, inventory, deadline)
+		if err != nil || !complete {
+			return false, err
+		}
 	}
 	candidateInventory := make(map[agentmeta.SessionKey][]SubagentCandidate, len(candidates))
 	for _, candidate := range candidates {
@@ -201,6 +192,11 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	if err := s.indexStep("recovery-completing"); err != nil {
 		return false, err
 	}
+	if cursor.Version == 2 {
+		if err := s.clearPackedExpiryProofs(); err != nil {
+			return false, err
+		}
+	}
 	if err := s.completeSessionIndexRecovery(ctx, cursor.Generation, revision); err != nil {
 		return false, err
 	}
@@ -210,35 +206,172 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	return true, nil
 }
 
+func (s *Store) applyOrdinaryRecovery(ctx context.Context, cursor *sessionRecoveryCursor, keys []agentmeta.SessionKey, inventory map[agentmeta.SessionKey][]string, deadline time.Time) ([]SubagentCandidate, bool, error) {
+
+	if cursor.Phase == 0 {
+		if cursor.Offset > len(keys) {
+			cursor.Offset = 0
+		}
+		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, len(keys), func(i int) error { return s.recoverRegistrationOwners(keys[i], inventory[keys[i]]) })
+		if err != nil || !complete {
+			return nil, false, err
+		}
+		cursor.Phase, cursor.Offset = 1, 0
+	}
+	// Requested keys may refer to an already-applied candidate whose index
+	// changed after its checkpoint. Keep complete candidate authority available
+	// in phase two, including slices that resume there directly.
+	candidates, err := s.LoadSubagentCandidates()
+	if err != nil {
+		return nil, false, err
+	}
+	if cursor.Phase == 1 {
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ArchiveSessionID < candidates[j].ArchiveSessionID })
+		fingerprint := phaseFingerprint(candidates)
+		if cursor.PhaseInventory != fingerprint || cursor.Offset > len(candidates) {
+			cursor.Offset = 0
+		}
+		cursor.PhaseInventory = fingerprint
+		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, len(candidates), func(i int) error { return s.recoverCandidateIndex(ctx, candidates[i]) })
+		if err != nil || !complete {
+			return nil, false, err
+		}
+		cursor.Phase, cursor.Offset, cursor.PhaseInventory = 2, 0, ""
+	}
+	return candidates, true, nil
+}
+
+func (s *Store) applyPackedRecovery(ctx context.Context, cursor *sessionRecoveryCursor, keys []agentmeta.SessionKey, inventory map[agentmeta.SessionKey][]string, revision, fingerprint string, deadline time.Time) ([]SubagentCandidate, bool, error) {
+
+	candidates, err := s.LoadSubagentCandidates()
+	if err != nil {
+		return candidates, false, err
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ArchiveSessionID < candidates[j].ArchiveSessionID })
+	combined := phaseFingerprint([]string{fingerprint, phaseFingerprint(candidates)})
+	var prior sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &prior); err != nil {
+		return candidates, false, err
+	}
+	marker, err := s.preparePackedSessionIndex(ctx, revision, combined)
+	if err != nil {
+		return candidates, false, err
+	}
+	if cursor.Version != 2 || prior.PackedEpoch != marker.PackedEpoch {
+		cursor.Version = 2
+		cursor.Phase = 0
+		cursor.Offset = 0
+		cursor.PhaseInventory = ""
+	}
+
+	// A durable offset alone cannot authorize lost or damaged aggregate files.
+	// Revalidate the retained prefix and restart at the first damaged shard.
+	prefix := packedSessionIndexShards
+	if cursor.Phase == 0 {
+		prefix = cursor.Offset
+	}
+	if prefix > packedSessionIndexShards {
+		prefix = 0
+		cursor.Offset = 0
+	}
+	if first, err := s.validatePackedPrefix(marker, prefix); err != nil {
+		cursor.Phase = 0
+		cursor.Offset = first
+		cursor.PhaseInventory = ""
+	}
+	if cursor.Phase == 0 {
+		owners, children, err := packedRecoverySources(inventory, candidates)
+		if err != nil {
+			return candidates, false, err
+		}
+		if cursor.Offset > packedSessionIndexShards {
+			cursor.Offset = 0
+		}
+		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, packedSessionIndexShards, func(i int) error {
+			return s.recoverPackedShardSlice(ctx, packedShardName(i), marker, owners[i], children[i], deadline)
+		})
+		if err != nil || !complete {
+			return candidates, false, err
+		}
+		cursor.Phase = 1
+		cursor.Offset = 0
+		cursor.PhaseInventory = ""
+	}
+	if cursor.Phase == 1 {
+		var fallbackOwners []agentmeta.SessionKey
+		var fallbackCandidates []SubagentCandidate
+		var fallback [packedSessionIndexShards]bool
+		for i := range packedSessionIndexShards {
+			reader, err := s.openPackedIndex(packedShardName(i), marker)
+			if err != nil {
+				return candidates, false, err
+			}
+			fallback[i] = reader.fallback
+			_ = reader.file.Close()
+		}
+		for _, key := range keys {
+			shard, _ := hex.DecodeString(packedIndexHash(key)[:2])
+			if fallback[int(shard[0])] {
+				fallbackOwners = append(fallbackOwners, key)
+			}
+		}
+		for _, candidate := range candidates {
+			key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+			if err != nil {
+				return candidates, false, err
+			}
+			shard, _ := hex.DecodeString(packedIndexHash(key)[:2])
+			if fallback[int(shard[0])] {
+				fallbackCandidates = append(fallbackCandidates, candidate)
+			}
+		}
+		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, len(fallbackOwners)+len(fallbackCandidates), func(i int) error {
+			if i < len(fallbackOwners) {
+				key := fallbackOwners[i]
+				return s.recoverRegistrationOwners(key, inventory[key])
+			}
+			return s.recoverCandidateIndex(ctx, fallbackCandidates[i-len(fallbackOwners)])
+		})
+		if err != nil || !complete {
+			return candidates, false, err
+		}
+		cursor.Phase, cursor.Offset, cursor.PhaseInventory = 2, 0, ""
+	}
+
+	return candidates, true, nil
+}
+
 func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCursor, bool, error) {
 	var marker sessionIndexMarker
 	err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
-	if err == nil && marker.Version == 1 && marker.Complete {
+	if err == nil && marker.Version > 2 {
+		return sessionRecoveryCursor{}, false, ErrSessionIndexRecoveryRequired
+	}
+	if err == nil && recoveryMarkerVersion(marker.Version) && marker.Complete {
 		if marker.MembershipFenced {
 			if _, err := s.sessionMembershipRevision(); err != nil {
 				return sessionRecoveryCursor{}, false, err
 			}
 		}
-		lost, probeErr := s.sessionIndexDirectoriesLost()
-		if probeErr != nil {
-			return sessionRecoveryCursor{}, false, probeErr
+		complete, healthErr := s.completedRecoveryHealthy(marker)
+		if healthErr != nil {
+			return sessionRecoveryCursor{}, false, healthErr
 		}
-		if !lost {
+		if complete {
 			return sessionRecoveryCursor{}, true, nil
 		}
-		// Recreated empty indexes require the existing scheduled census phases.
 		err = ErrSessionIndexRecoveryRequired
 	}
 	var cursor sessionRecoveryCursor
 	cursorErr := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor)
-	validCursor := cursorErr == nil && cursor.validChecksum() && cursor.Version == 1 && cursor.Generation != "" && cursor.Phase >= 0 && cursor.Phase <= 2 && cursor.Offset >= 0
-	if err != nil || marker.Version != 1 || marker.Generation == "" || !validCursor || cursor.Generation != marker.Generation {
+	validCursor := cursorErr == nil && cursor.validChecksum() && recoveryMarkerVersion(cursor.Version) && cursor.Generation != "" && cursor.Phase >= 0 && cursor.Phase <= 2 && cursor.Offset >= 0
+	if err != nil || !recoveryMarkerVersion(marker.Version) || marker.Generation == "" || !validCursor || cursor.Generation != marker.Generation {
 		// New requests fence the final certificate, but do not change owner
 		// application already covered by an equivalent complete inventory.
 		// The fresh census below must match both membership and fingerprint
 		// before retaining phase zero/one progress; candidate facts also match
 		// their phase fingerprint. Requested misses restart for the new generation.
-		resume := err == nil && marker.Version == 1 && !marker.Complete && marker.Generation != "" && validCursor
+		resume := err == nil && recoveryMarkerVersion(marker.Version) && !marker.Complete && marker.Generation != "" && validCursor
 		if err := s.indexStep("recovery-begin"); err != nil {
 			return sessionRecoveryCursor{}, false, err
 		}
@@ -261,6 +394,21 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 	return cursor, false, nil
 }
 
+func (s *Store) completedRecoveryHealthy(marker sessionIndexMarker) (bool, error) {
+	invalidPacked := false
+	if marker.Version == 2 {
+		if _, err := s.validatePackedPrefix(marker, packedSessionIndexShards); err == nil && s.packedOverlaysHealthy(marker) {
+			if err := s.reconcilePackedExpiryProofs(marker); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		invalidPacked = true
+	}
+	lost, err := s.sessionIndexDirectoriesLost()
+	return !lost && !invalidPacked, err
+}
+
 func (s *Store) saveRecoveryCursor(cursor *sessionRecoveryCursor) error {
 	cursor.Checksum = ""
 	cursor.Checksum = phaseFingerprint(*cursor)
@@ -279,6 +427,9 @@ func (s *Store) applyRecoveryPhase(ctx context.Context, cursor *sessionRecoveryC
 			return false, err
 		}
 		if err := apply(cursor.Offset); err != nil {
+			if errors.Is(err, errPackedSlicePending) {
+				return false, s.saveRecoveryCursor(cursor)
+			}
 			return false, err
 		}
 		cursor.Offset++

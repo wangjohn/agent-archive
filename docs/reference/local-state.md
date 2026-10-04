@@ -167,3 +167,12 @@ lets the collector validate remaining historical registrations while keeping
 that separate from published transcript continuity. Imports keep their original
 batch, admission and destination, so batch undo continues to select all of its
 generations.
+
+The packed native-identity census validates generation lineage before selecting
+the active tip; linked generations are not unrelated duplicate owners. Queued
+children may still name a retained frozen parent. A journal or validated lineage
+census can replace an obsolete packed predecessor through a fenced per-key
+override, while ordinary hook lookups retain their fail-closed checks. Active-tip
+expiry retires generation routing before removing content, then prunes packed
+identities after request locks release. Retired generations use an explicit
+absence override rather than redirecting native hooks to a retained ancestor.

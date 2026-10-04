@@ -161,6 +161,10 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
 		return false, ErrSessionIdentityConflict
 	}
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
 	revision, err := s.stageRegistrationRemovalRevision(archiveSessionID, key)
 	if err != nil {
 		return false, err
@@ -187,7 +191,10 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 		if revision != nil {
 			s.writeSynced()
 		}
-		err = errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement))
+		err = errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement), s.removePackedIdentities(packedIDs))
+		if err == nil {
+			err = s.recordPackedExpiry(key, archiveSessionID)
+		}
 		return err == nil, err
 	}
 	// None of the session's own records are gone, so the record goes back.
@@ -313,6 +320,16 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if forgotten {
+			err = errors.Join(err, s.removePackedIdentities(packedIDs))
+			forgotten = err == nil
+		}
+	}()
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -356,6 +373,10 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return err
+	}
 	revision, err := s.stageRegistrationRemovalRevision(archiveSessionID, key)
 	if err != nil {
 		return err
@@ -370,7 +391,11 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 	if revision != nil {
 		s.writeSynced()
 	}
-	return errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement))
+	err = errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement), s.removePackedIdentities(packedIDs))
+	if err == nil {
+		err = s.recordPackedExpiry(key, archiveSessionID)
+	}
+	return err
 }
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that

@@ -346,7 +346,7 @@ func (s *Store) registerGenerationRecovery(r generationRecovery) error {
 }
 
 func (s *Store) activateGenerationRecovery(r generationRecovery) error {
-	if err := s.writeIndexUnderRequestLock(r.Next, qualifiedSessionIndexPath(s.home, r.Key), nil, func(current fileSnapshot) (any, bool, error) {
+	if err := s.writeGenerationIndexUnderRequestLock(r.Next, qualifiedSessionIndexPath(s.home, r.Key), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
 			var prior qualifiedSessionIndexEntry
 			if json.Unmarshal(current.data, &prior) != nil || prior.Version != 1 || prior.Agent != r.Key.Agent || prior.NativeID != r.Key.NativeID {
@@ -618,11 +618,17 @@ func (s *Store) recoverGenerationOwners(key agentmeta.SessionKey, owners []strin
 	if h, found, err := s.loadGenerationHead(key); err != nil {
 		return true, err
 	} else if found && h.Retired {
-		entry, present, err := s.readQualifiedIndex(key)
-		if err != nil {
+		// Genuine root reservations are always durable per-key overlays. A
+		// packed owner is derived from the preceding census and can name an
+		// expired tip or belong to the previous packed epoch during rebuilding.
+		entry, present, err := readJSON[qualifiedSessionIndexEntry](qualifiedSessionIndexPath(s.home, key))
+		if err != nil && !IsUndecodable(err) {
 			return true, err
 		}
 		if present && entry.Reservation != "" && entry.ArchiveSessionID != h.Active {
+			if entry.validate(key) != nil {
+				return true, ErrSessionIdentityConflict
+			}
 			if err := s.ensureGenerationReservation(key, entry.ArchiveSessionID); err != nil {
 				return true, err
 			}
@@ -632,14 +638,29 @@ func (s *Store) recoverGenerationOwners(key agentmeta.SessionKey, owners []strin
 		return true, err
 	} else if protected {
 		if active == "" {
-			return true, local.Write(qualifiedSessionIndexPath(s.home, key), qualifiedSessionIndexEntry{Version: 1, Agent: key.Agent, NativeID: key.NativeID, Absent: true})
+			h, found, err := s.loadGenerationHead(key)
+			if err != nil || !found {
+				return true, ErrSessionIndexRecoveryRequired
+			}
+			return true, s.writeGenerationIndexUnderRequestLock(h.Active, qualifiedSessionIndexPath(s.home, key), func() error {
+				current, protected, err := s.generationOwner(key, owners)
+				if err != nil {
+					return err
+				}
+				if !protected || current != "" {
+					return ErrSessionIndexRecoveryRequired
+				}
+				return nil
+			}, func(fileSnapshot) (any, bool, error) {
+				return qualifiedSessionIndexEntry{Version: 1, Agent: key.Agent, NativeID: key.NativeID, Absent: true}, true, nil
+			})
 		}
 		if _, registered, err := s.LoadRegistration(active); err != nil {
 			return true, err
 		} else if !registered {
 			return true, nil
 		} // Valid root reservation remains untouched.
-		return true, s.writeIndexUnderRequestLock(active, qualifiedSessionIndexPath(s.home, key), func() error {
+		return true, s.writeGenerationIndexUnderRequestLock(active, qualifiedSessionIndexPath(s.home, key), func() error {
 			current, protected, err := s.generationOwner(key, owners)
 			if err != nil {
 				return err
@@ -659,6 +680,40 @@ func (s *Store) recoverGenerationOwners(key agentmeta.SessionKey, owners []strin
 		})
 	}
 	return false, nil
+}
+
+// A validated journal or census owns generation routing even while its packed
+// predecessor is frozen. Compare raw logical index bytes under the request lock;
+// the caller checks lineage authority and allowable owners before replacement.
+// Keep packed overlay expectation and epoch fencing for the resulting write.
+func (s *Store) writeGenerationIndexUnderRequestLock(id, path string, check func() error, change func(fileSnapshot) (any, bool, error)) error {
+	indexStore := *s
+	indexStore.onWriteSync = s.onIndexSync
+	indexStore.indexSnapshots = true
+	return indexStore.writeUnderLock(lockedWrite{
+		lock: func() (func(), error) { return s.lockRequest(id) }, path: path, check: check, change: change,
+		snapshot: func(path string) (fileSnapshot, error) { return s.readQualifiedIndexSnapshot(path, false) },
+	})
+}
+
+// A previously queued child retains its frozen parent. Candidate authority is
+// separate from active native routing and must never recreate a missing parent.
+func (s *Store) matchingCandidateParent(key agentmeta.SessionKey, id string) (bool, error) {
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || !found {
+		return false, err
+	}
+	if !reg.CaptureFrozen {
+		return s.matchingRegistration(key, id)
+	}
+	actual, err := registrationKey(reg)
+	if err != nil || actual != key || reg.ArchiveSessionID != id || reg.Validate() != nil {
+		return false, ErrSessionIdentityConflict
+	}
+	if err := s.generationRegistrationAllowed(key, reg); err != nil {
+		return false, err
+	}
+	return true, s.FrozenGeneration(reg)
 }
 
 // GenerationCaptureAllowed checks the bounded active head before a collector
