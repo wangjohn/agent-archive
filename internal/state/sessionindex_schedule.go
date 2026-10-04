@@ -477,7 +477,8 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 		for errors.Unwrap(pendingCause) != nil {
 			pendingCause = errors.Unwrap(pendingCause)
 		}
-		slicePending := pendingCause == errPackedSlicePending
+		_, joinedCause := pendingCause.(interface{ Unwrap() []error })
+		slicePending := !joinedCause && errors.Is(pendingCause, errPackedSlicePending)
 		if slicePending {
 			prepareErr = nil
 		}
