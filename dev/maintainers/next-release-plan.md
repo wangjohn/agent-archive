@@ -19,6 +19,19 @@ app-specific archived, verified Capture row. JSON listing is now schema version
 until a tested candidate is promoted; candidate publication and disposable
 provider/app acceptance are separate release gates.
 
+Later product decisions also differ from this input: text listings and the
+session browsers sort by last activity, while JSON preserves capture-time
+ordering. The current listing performance target is two pages and 60 metadata
+reads for eligible unscoped JSON queries, rather than this plan's proposed
+N-body ceiling and full fresh-header coverage protocol; see
+[listing performance](list-performance.md). The existing qualified local
+session index and collector census recovery repair identity lookups, and keep
+remote archive IDs unchanged; they do not implement the linked transcript
+generation transition proposed below. See
+[session identity and recovery](../../docs/reference/session-identity.md).
+These deviations require reconciliation in their owning implementation work;
+this historical document does not change those current contracts.
+
 The remaining text is the original proposed plan, retained without changing
 its historical assumptions.
 
