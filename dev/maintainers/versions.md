@@ -16,6 +16,7 @@ affects.
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
+| Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
 The per-version filter changes are in the
 [filter changelog](../specs/privacy-filter-changelog.md).
@@ -73,6 +74,14 @@ opening blanket windows. This changes session consent and physical project
 attribution, not adapter filtering, native parsing or derived-field algorithms;
 filter, adapter, parser and published source/metadata schema versions remain
 unchanged. The private policy/proof contract is documented in configuration.
+
+Strict JSON Schema validators using the v0.1.1 schemas reject new discovery
+provenance: source schema 2 disallows additional properties, and metadata
+schema 1 constrains origin to import. Use the updated schemas shipped with
+the new release. Ordinary typed readers accept older records and optional
+new provenance; the source line format remains 2 and metadata remains 1.
+Optional metadata fields do not bump those schema versions; parser version
+20 records the changed derivation.
 
 Explicit transcript recovery installs the incompatible
 `{version: 4, writer: archive-generations-v4}` configuration writer fence.

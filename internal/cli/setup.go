@@ -36,13 +36,15 @@ const defaultPrefix = "agent-archive/"
 const defaultRetentionDays = 90
 
 type setupDraft struct {
-	GuidedSlotID  string        `json:"guided_slot_id,omitempty"`
-	PairingID     string        `json:"pairing_id,omitempty"`
-	StagedRefs    []string      `json:"staged_credential_refs,omitempty"`
-	Version       int           `json:"version"`
-	Config        config.Config `json:"config"`
-	Step          int           `json:"step"`
-	CredentialRef string        `json:"staged_credential_ref,omitempty"`
+	NewInstallation   bool          `json:"new_installation,omitempty"`
+	DiscoveryReviewed bool          `json:"discovery_reviewed,omitempty"`
+	GuidedSlotID      string        `json:"guided_slot_id,omitempty"`
+	PairingID         string        `json:"pairing_id,omitempty"`
+	StagedRefs        []string      `json:"staged_credential_refs,omitempty"`
+	Version           int           `json:"version"`
+	Config            config.Config `json:"config"`
+	Step              int           `json:"step"`
+	CredentialRef     string        `json:"staged_credential_ref,omitempty"`
 	// StopImported lists imported-only apps whose imports the person chose to
 	// stop publishing. Config.ImportedHarnesses itself always comes from the
 	// committed configuration (see carriedImportedHarnesses).
@@ -296,6 +298,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 		}
 		return nil
 	}
+	draft.NewInstallation = !found
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
 	draft.Config.AllowNetworkHome = env.networkHomeOptIn(home, userHome, allowNetworkHome, existing)
@@ -318,6 +321,13 @@ func runSetupDraft(p *prompter, draft setupDraft, home, userHome, exe string, en
 		}
 		if retry {
 			continue
+		}
+		if err := promptDiscovery(p, &draft, existing); err != nil {
+			return err
+		}
+		prepareDiscoveryHomes(&draft.Config, env, userHome)
+		if err := save(); err != nil {
+			return err
 		}
 		done, err := reviewAndCommitSetup(p, &draft, save, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, &verifiedStorage, known)
 		if err != nil {
@@ -388,7 +398,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 	if !found {
 		initial.SkillEvidence = config.SkillEvidenceMetadata
 	}
-	draft := setupDraft{Version: draftFormat, Config: initial}
+	draft := setupDraft{Version: draftFormat, Config: initial, NewInstallation: !found}
 	saved, haveDraft, err := offerUnusableDraft(p, home)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -1050,11 +1060,27 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	} else {
 		terminal.Println(p.out, "\nNext, in each app:")
 		for _, app := range cfg.Harnesses {
+			if app == "codex" && cfg.Discovery != nil && cfg.Discovery.Enabled {
+				location := "an included project"
+				if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+					location = "any non-excluded current or future project"
+				}
+				terminal.Println(p.out, p.style.hang("  ", "Codex: start a supported new task in "+location+"; automatic discovery does not require hook approval."))
+				terminal.Println(p.out, p.style.hang("  ", "Optional hook capture: "+paintCommands(p.style, hookNextStep[app])))
+				continue
+			}
 			if step, ok := hookNextStep[app]; ok {
 				terminal.Println(p.out, p.style.hang("  ", paintCommands(p.style, step)))
 			}
 		}
-		terminal.Println(p.out, "Sessions already open are not captured. Start a new one in an included project.")
+		if containsString(cfg.Harnesses, "codex") && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			terminal.Println(p.out, "Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.")
+			if len(cfg.Harnesses) > 1 {
+				terminal.Println(p.out, "Other apps still require an included project.")
+			}
+		} else {
+			terminal.Println(p.out, "Sessions already open are not captured. Start a new one in an included project.")
+		}
 		if unattended {
 			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
 		}
@@ -1101,6 +1127,13 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 	}
 	if len(cfg.Harnesses) > 0 {
 		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
+	}
+	if containsString(cfg.Harnesses, "codex") {
+		discoveryChoice := "off"
+		if cfg.Discovery != nil && cfg.Discovery.Enabled {
+			discoveryChoice = "on"
+		}
+		args = append(args, "--codex-discovery", discoveryChoice, "--codex-capture-scope", string(cfg.EffectiveCodexCaptureScope()))
 	}
 	args = append(args, "--prefix", firstNonEmpty(cfg.Storage.Prefix, defaultPrefix), "--retention-days", strconv.Itoa(cmp.Or(cfg.RetentionDays, defaultRetentionDays)))
 	if cfg.RequireSkillUse {
@@ -1219,6 +1252,9 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		}
 	}
 	if done, e := offerFirstCapture(env.setupNames(), p, cfg, detected, current, userHome, known); e != nil || done {
+		if e == nil {
+			e = promptCodexCaptureScope(p, cfg)
+		}
 		return e
 	}
 	err := chooseHarnesses(env.setupNames(), p, detected, cfg)
@@ -1227,6 +1263,17 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	}
 	if len(cfg.Harnesses) == 0 {
 		return fmt.Errorf("choose at least one application")
+	}
+	if cfg.CodexCapture == nil {
+		if err := promptCodexCaptureScope(p, cfg); err != nil {
+			return err
+		}
+	}
+	if codexOnlyAllProjects(*cfg) {
+		if cfg.RetentionDays <= 0 {
+			cfg.RetentionDays = defaultRetentionDays
+		}
+		return nil
 	}
 	// addProjects asks again while no project is included, so both paths
 	// end with at least one.
@@ -2156,7 +2203,7 @@ func isGoBuildDir(name string) bool {
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.hasProjectScope() {
-		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
+		return fs.usageError("pairing accepts --yes, --verbose, --project, --codex-discovery, --codex-capture-scope and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {
 		terminal.Printf(stderr, "Pairing incomplete: %v\n", err)

@@ -26,7 +26,7 @@ func TestSetupFirstRunAsksOneQuestionForAppsAndProject(t *testing.T) {
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
 	// One confirmation, then S3, profile, bucket, and start.
-	out := f.runSetup(t, strings.Join([]string{"", "s3-existing", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "included-projects", "s3-existing", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, "Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n]") {
 		t.Fatalf("no combined question:\n%s", out)
 	}

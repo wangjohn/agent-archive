@@ -49,6 +49,9 @@ func TestStatusUsesHookObservationIndependentlyOfAdmissionOrigin(t *testing.T) {
 			app := sessions.appStatus("codex", cfg, home, nil)
 			pair := app.Projects[0]
 			wantState, wantVerification := "waiting for first session", "not_verified"
+			if !reg.Imported() && !tc.want {
+				wantState = "task found; waiting for capture"
+			}
 			if tc.want {
 				wantState, wantVerification = "hook observed; waiting for capture", "hook_observed"
 			}

@@ -1035,3 +1035,17 @@ journals and distinct bucket operation objects never contain credential values.
 Operator binding files must come from independent local/out-of-band evidence;
 bucket claims do not authorize deletion. Own-key checkpoints store only opaque
 references and slot IDs, keeping old local access until replacement commits.
+
+## Consent for automatic Codex discovery
+
+Automatic discovery authorizes supported new-session records from the Codex homes
+selected by setup, within the reviewed Codex capture scope and chosen destination.
+Included-project scope requires an included project; all-projects scope covers
+current and future Codex projects subject to explicit exceptions. Other apps
+retain their included-project permissions. Discovery does not
+prove that execution originated on this machine: an indistinguishable recent
+native copy may be captured. Historical records before consent, starts while
+paused, excluded projects and recognizable unsupported import/fork shapes remain
+ineligible. Discovery reads bounded identity/start/project metadata before
+admission; eligible transcripts then pass through the same privacy filter as
+hook capture. Discovery health and rejection diagnostics contain no prompt text.

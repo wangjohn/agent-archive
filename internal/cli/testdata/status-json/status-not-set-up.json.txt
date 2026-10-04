@@ -12,7 +12,7 @@ $ agent-archive status --json
     "context": ""
   },
   "code": "not_configured",
-  "schema_version": 3,
+  "schema_version": 4,
   "state": "Not set up",
   "privacy": "not_verified",
   "background": "missing",
