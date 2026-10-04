@@ -99,7 +99,6 @@ var handListedLocalState = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
 	"generation-heads", "generation-nodes", "generation-recovery",
-	"listing-repairs",
 	machineRegistrationFile, "discovery-catalog.json", "discovery-health.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	"cache", "handoffs", "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
