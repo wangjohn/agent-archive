@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,12 +74,32 @@ func BenchmarkScanSettledRegistrations(b *testing.B) {
 // settledReadStore counts remote reads without changing the fake store semantics.
 type settledReadStore struct {
 	*storagetest.MemoryStore
-	reads int
+	reads                                      int
+	metadataReads, auxiliaryReads, sourceReads int
+	readKeys                                   []string
 }
 
 func (s *settledReadStore) Get(ctx context.Context, key string) ([]byte, error) {
-	s.reads++
+	s.recordRead(key)
 	return s.MemoryStore.Get(ctx, key)
+}
+
+func (s *settledReadStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	s.recordRead(key)
+	return s.MemoryStore.GetVersioned(ctx, key)
+}
+
+func (s *settledReadStore) recordRead(key string) {
+	s.reads++
+	s.readKeys = append(s.readKeys, key)
+	switch {
+	case strings.HasPrefix(key, "listing/"):
+		s.auxiliaryReads++
+	case strings.HasSuffix(key, "/metadata.json"):
+		s.metadataReads++
+	default:
+		s.sourceReads++
+	}
 }
 
 // A changed file must not cause its unchanged neighbours to be filtered.
@@ -116,6 +137,7 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	filters, reads := transcriptFilters.Load(), remote.reads
+	metadataReads, auxiliaryReads, sourceReads := remote.metadataReads, remote.auxiliaryReads, remote.sourceReads
 	result, err = Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 || len(result.Skipped) != 31 {
 		t.Fatalf("changed: %#v %v", result, err)
@@ -123,7 +145,14 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 	if got := transcriptFilters.Load() - filters; got != 1 {
 		t.Fatalf("filters=%d, want 1", got)
 	}
-	if got := remote.reads - reads; got != 0 {
-		t.Fatalf("remote reads=%d, want 0", got)
+	for _, key := range remote.readKeys[reads:] {
+		if key != "sessions/codex/session-0/metadata.json" && !strings.HasPrefix(key, "listing/by-session-v2/codex/session-0/") {
+			t.Fatalf("changed session read a settled neighbour: %s", key)
+		}
+	}
+	// Only the changed session's canonical confirmation and predecessor
+	// pointer are read. No settled neighbour or source body is fetched.
+	if remote.reads-reads != 2 || remote.metadataReads-metadataReads != 1 || remote.auxiliaryReads-auxiliaryReads != 1 || remote.sourceReads-sourceReads != 0 {
+		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 2/1/1/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
 	}
 }

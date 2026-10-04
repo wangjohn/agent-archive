@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -485,6 +486,10 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 	if requests, _ := local.LoadRequests(); len(requests) != 0 {
 		t.Fatalf("deferred request was not acknowledged by its publication: %#v", requests)
 	}
+	beforePrompts, err := store.List(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	const prompts = 5
 	var at time.Time
 	for i := 1; i <= prompts; i++ {
@@ -497,7 +502,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 			t.Fatalf("prompt %d forced an upload inside the interval: result=%#v err=%v", i, result, err)
 		}
 	}
-	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 5 {
+	if objects, err := store.List(context.Background(), ""); err != nil || !reflect.DeepEqual(objects, beforePrompts) {
 		t.Fatalf("prompts uploaded new objects: %v err=%v", objects, err)
 	}
 	requests, err := local.LoadRequests()

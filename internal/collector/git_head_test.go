@@ -54,7 +54,7 @@ func TestStopCommitPublishesWithoutTranscriptGrowth(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
@@ -93,7 +93,7 @@ func TestStopCommitWithHookEvidencePublishesOnce(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
@@ -231,7 +231,7 @@ func TestStopCommitPublishesWithoutARequest(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
@@ -326,7 +326,7 @@ func TestStopCommitPublishesPastAnUnderivableRefresh(t *testing.T) {
 
 // failingMetadataGets fails reads of metadata sidecars while failing is set.
 type failingMetadataGets struct {
-	storage.ObjectStore
+	*storagetest.MemoryStore
 	failing bool
 }
 
@@ -334,7 +334,15 @@ func (s *failingMetadataGets) Get(ctx context.Context, key string) ([]byte, erro
 	if s.failing && strings.HasSuffix(key, "/metadata.json") {
 		return nil, errors.New("storage unavailable")
 	}
-	return s.ObjectStore.Get(ctx, key)
+	return s.MemoryStore.Get(ctx, key)
+}
+
+// GetVersioned preserves the injected metadata read failure on both APIs.
+func (s *failingMetadataGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	if s.failing && strings.HasSuffix(key, "/metadata.json") {
+		return nil, "", errors.New("storage unavailable")
+	}
+	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
 // A publication without cached metadata whose sidecar cannot be read for a
@@ -344,7 +352,7 @@ func TestStopCommitWaitsForUnreadableLegacyMetadata(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
-	remote := &failingMetadataGets{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &failingMetadataGets{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
@@ -362,7 +370,7 @@ func TestStopCommitWaitsForUnreadableLegacyMetadata(t *testing.T) {
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("run: %+v %v", result, err)
 	}
-	if got := publishedLast(t, remote.ObjectStore, reg.ArchiveSessionID); got == nil || got.SHA != last.SHA {
+	if got := publishedLast(t, remote.MemoryStore, reg.ArchiveSessionID); got == nil || got.SHA != last.SHA {
 		t.Fatalf("published last = %+v, want %s", got, last.SHA)
 	}
 }
