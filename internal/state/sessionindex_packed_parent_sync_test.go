@@ -13,9 +13,11 @@ import (
 
 func TestPackedParentSyncGroupsCommittedMembersAndErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name                        string
-		mixed, secondRejected, fail bool
-		want                        int
+		name           string
+		mixed          bool
+		secondRejected bool
+		fail           bool
+		want           int
 	}{
 		{name: "shared", want: 1}, {name: "mixed", mixed: true, want: 2},
 		{name: "shared failure", fail: true, want: 1}, {name: "second rejected", secondRejected: true, want: 1},

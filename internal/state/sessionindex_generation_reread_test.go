@@ -14,8 +14,14 @@ import (
 // A same-call census is not a durable authority cache: direct corruption can
 // bypass the membership revision while changing generation protection facts.
 func TestPackedGenerationRereadRejectsDirectPostCensusMutation(t *testing.T) {
-	for _, field := range []string{"CaptureFrozen", "PreviousGenerationID", "invalid JSON"} {
-		t.Run(field, func(t *testing.T) {
+	type registrationMutation string
+	const (
+		captureFrozen        registrationMutation = "CaptureFrozen"
+		previousGenerationID registrationMutation = "PreviousGenerationID"
+		invalidJSON          registrationMutation = "invalid JSON"
+	)
+	for _, field := range []registrationMutation{captureFrozen, previousGenerationID, invalidJSON} {
+		t.Run(string(field), func(t *testing.T) {
 			s := newTestStore(t)
 			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "generation-reread"}
 			reg := migrationRegistration(key, "reread-owner")
@@ -42,11 +48,11 @@ func TestPackedGenerationRereadRejectsDirectPostCensusMutation(t *testing.T) {
 			}
 			var changed []byte
 			switch field {
-			case "CaptureFrozen":
+			case captureFrozen:
 				reg.CaptureFrozen = true
-			case "PreviousGenerationID":
+			case previousGenerationID:
 				reg.PreviousGenerationID = "previous-owner"
-			case "invalid JSON":
+			case invalidJSON:
 				changed = []byte("{")
 			}
 			if changed == nil {
@@ -67,7 +73,7 @@ func TestPackedGenerationRereadRejectsDirectPostCensusMutation(t *testing.T) {
 			if err == nil || len(entries) != 0 {
 				t.Fatalf("post-census corruption authorized stale owner: %v %#v", err, entries)
 			}
-			if field != "invalid JSON" && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+			if field != invalidJSON && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 				t.Fatalf("generation mutation error: %v", err)
 			}
 		})
