@@ -158,3 +158,44 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	}
 	return outcomeSkipped, s.completeRequest("complete frozen generation request")
 }
+
+// Frozen maintenance is settled by derivation and privacy policy, never by a
+// stat of the live file. Validate bounded lineage authority before trusting
+// its token; requests and publication/scan journals still force maintenance.
+func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bool, state.ScanSignature, error) {
+	var signature state.ScanSignature
+	if err := p.local.FrozenGeneration(reg); err != nil {
+		return false, signature, err
+	}
+	if owed, err := p.linkOwed(reg); err != nil || owed {
+		return false, signature, err
+	}
+	signature, found, err := p.local.LoadScanSignature(reg.ArchiveSessionID)
+	if err != nil || !found || !signature.Frozen || signature.Failed {
+		return false, signature, err
+	}
+	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
+	if !known || signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() || signature.PublishedLastHead != headFingerprint(reg.LastHead) {
+		return false, signature, nil
+	}
+	unchanged, _, err := p.owesNothing(reg.ArchiveSessionID, false)
+	return unchanged, signature, err
+}
+
+func (s *sessionScan) recordFrozenSignature() error {
+	if _, requested, err := s.local.LoadRequest(s.id()); err != nil || requested {
+		return err
+	}
+	if pending, err := s.local.HasPending(s.id()); err != nil || pending {
+		return err
+	}
+	adapterVersion, known := harnessAdapterVersion(s.opts.Sources, s.reg.Harness.Name)
+	if !known {
+		return nil
+	}
+	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+		Frozen: true, SkillEvidence: string(s.opts.skillEvidence()),
+		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
+		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
+	})
+}

@@ -1047,6 +1047,9 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// Frozen marks completed retained-history maintenance, independently of
+	// the live native source's stat. Ordinary capture never trusts this token.
+	Frozen          bool                      `json:"frozen,omitempty"`
 	SourceSignature *agentapi.SourceSignature `json:"source_signature,omitempty"`
 	SkillEvidence   string                    `json:"skill_evidence,omitempty"`
 	TranscriptSize  int64                     `json:"transcript_size"`

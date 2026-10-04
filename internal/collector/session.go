@@ -117,7 +117,11 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
 	if s.reg.CaptureFrozen {
-		return s.maintainFrozen()
+		outcome, err := s.maintainFrozen()
+		if err != nil {
+			return outcome, err
+		}
+		return outcome, s.recordFrozenSignature()
 	}
 	if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, err
