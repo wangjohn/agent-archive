@@ -348,6 +348,28 @@ class CandidateTest(unittest.TestCase):
         self.promote()
         self.assertEqual(len([c for c in self.gh.calls if c[0] == 'api' and '/jobs?' in c[1] and 'page=2' in c[1]]), 3)
 
+    def test_ci_job_pagination_is_bounded_and_incomplete_inventory_never_promotes(self):
+        self.ready()
+        original = self.gh.api
+        pages = []
+        def api(endpoint, payload=None, missing=False):
+            if '/jobs?' in endpoint:
+                page = int(endpoint.rsplit('=', 1)[1])
+                pages.append(page)
+                if page > 10:
+                    raise AssertionError('unbounded request after ten full pages')
+                # Finding all required names on early pages does not establish
+                # that the remaining inventory is complete.
+                required = original(endpoint, payload, missing)['jobs']
+                return {'jobs': required + [{'name': 'other', 'conclusion': 'success',
+                                            'head_sha': COMMIT}] * (100 - len(required))}
+            return original(endpoint, payload, missing)
+        self.gh.api = api
+        with self.assertRaisesRegex(RuntimeError, 'safe bound'):
+            self.promote()
+        self.assertEqual(pages, list(range(1, 11)))
+        self.assertEqual(self.mutations(), [])
+
     def test_real_gh_subprocess_fixture_reconciles_unknown_create_and_never_overwrites(self):
         # Exercise the real command adapter with a fake gh executable and API
         # persisted between calls; no network or authenticated client exists.

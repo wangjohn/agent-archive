@@ -160,7 +160,9 @@ executables: app-oriented `spctl` assessment can reject a valid CLI tool.
 The installed `codesign(1)` manual describes `--check-notarization` as forcing
 an online ticket check. A ticket check does not replace quarantined clean-user
 installation acceptance. Commands have a five-minute limit and REST calls a
-two-minute limit; unavailable services/timeouts block the gate. It checks the acceptance and
+two-minute limit; CI job enumeration allows at most ten pages of 100 jobs
+per run and fails closed if the final page is unavailable within that bound.
+Unavailable services/timeouts block the gate. It checks the acceptance and
 exact successful CI jobs, then rechecks tag/release/assets/latest before a
 single REST PATCH setting `prerelease=false` and `make_latest=true` on the
 **same release ID**. There is no rebuild, upload, deletion or asset replacement.
