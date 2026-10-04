@@ -51,6 +51,7 @@ type setupOptions struct {
 	projectScopeFile         string
 	projectScopeSupplied     bool
 	projectScopeFileSupplied bool
+	projectScopeInputRead    bool
 	projectMatches           *projectMatchResult
 	yes                      bool
 	verbose                  bool
@@ -166,12 +167,16 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if err := validateProjectScopeOptions(opts); err != nil {
+		fs.usageError("%s", err)
+		return opts, false
+	}
 	return opts, true
 }
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScopeSupplied || o.projectScopeFileSupplied || o.projectScope != "" || o.projectScopeFile != "" || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -338,6 +343,9 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return cfg, credentials.R2Credentials{}, err
+	}
 	if opts.retentionSupplied {
 		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
 			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
@@ -400,27 +408,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if opts.projectScope != "" {
 		problems = append(problems, setupProjectScope(&cfg, opts.projectScope, userHome, env)...)
 	}
-	paths := opts.projects
-	if opts.projectScope != "" {
-		paths = nil
-		scopeRules := slices.Clone(cfg.Archive.Projects)
-		for i := range scopeRules {
-			scopeRules[i].Root = local.CanonicalPath(scopeRules[i].Root)
-		}
-		for _, path := range opts.projects {
-			root, err := projectDir(path, userHome)
-			if err != nil {
-				problems = append(problems, fmt.Errorf("--project %w", err))
-				continue
-			}
-			if owner, found := nearestScopeRule(scopeRules, root); found && !owner.Included {
-				problems = append(problems, fmt.Errorf("--project %s conflicts with transferred capture scope; express reinclusions in --project-scope", root))
-				continue
-			}
-			paths = append(paths, path)
-		}
-	}
-	problems = append(problems, setupProjects(&cfg, paths, userHome)...)
+	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
 	if cfg.RetentionDays <= 0 {

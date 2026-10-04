@@ -635,3 +635,9 @@ repository match or unsafe subtree mapping refuses the transfer before
 changing capture settings. Saved destination exclusions stay in force; conflicting
 saved reinclusions refuse the transfer until you review the destination scope.
 Review non-home absolute paths for the new machine.
+
+Scope flags require a nonempty value. Include all desired capture rules in the
+scope; combining it with `--project` or `--project-repo` is refused.
+Scope transfer accepts at most 4,096 input rules and refuses saved or resulting
+destination scopes above that size. Saved unresolved symlinks must be reviewed
+before transfer; missing excluded directories remain supported.
