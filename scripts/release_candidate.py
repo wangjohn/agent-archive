@@ -24,6 +24,7 @@ ROWS = ['signed-install-darwin-amd64', 'signed-install-darwin-arm64',
         'cleanup', 'listing-budget', 'documentation', 'repository-settings']
 CI_JOBS = {'Test': ['linux-race', 'macos-smoke', 'cross-build', 'lint'],
            'Levenshtein': ['verify'], 'Extended': ['macos-full', 'fuzz', 'real-systemd']}
+CI_JOB_PAGE_LIMIT = 10
 
 
 def require(ok, message):
@@ -221,13 +222,15 @@ def verify_acceptance(gh, acceptance, tag, commit, hashes):
                 and (result.get('head_branch') == 'main' or result.get('head_branch', '').startswith('release-candidate/')), 'CI run is not a successful exact-commit run')
         # Pagination matters: fuzz campaigns and future matrices can exceed 100 jobs.
         found = []
-        page = 1
-        while True:
+        # Bound total requests as well as each subprocess. A missing final
+        # page leaves CI evidence incomplete, even if required names appeared.
+        for page in range(1, CI_JOB_PAGE_LIMIT + 1):
             batch = gh.api(f'actions/runs/{run_id}/jobs?per_page=100&page={page}').get('jobs', [])
             found += batch
             if len(batch) < 100:
                 break
-            page += 1
+        else:
+            raise RuntimeError('CI job pagination exceeds safe bound; incomplete inventory')
         for name in names:
             require(any(job.get('name') == name and job.get('conclusion') == 'success'
                         and job.get('head_sha') == commit for job in found), f'required successful CI job missing: {name}')
