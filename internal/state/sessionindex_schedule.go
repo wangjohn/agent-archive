@@ -454,7 +454,7 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 				break
 			}
 			shard := packedShardName(i)
-			data, err := s.preparePackedShardSlice(ctx, shard, marker, owners[i], children[i], deadline)
+			data, err := s.preparePackedShardSlice(ctx, marker, owners[i], children[i], deadline)
 			if err != nil {
 				prepareErr = err
 				break

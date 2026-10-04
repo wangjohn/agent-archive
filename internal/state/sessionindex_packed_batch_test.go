@@ -122,7 +122,7 @@ func TestPackedBatchMembershipMutationFencesSecondCommit(t *testing.T) {
 
 func TestPackedBatchJoinsSecondStagingFailure(t *testing.T) {
 	s, _, marker := packedOwnerFixture(t)
-	data, err := s.preparePackedShardSlice(context.Background(), "00", marker, nil, nil, time.Time{})
+	data, err := s.preparePackedShardSlice(context.Background(), marker, nil, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

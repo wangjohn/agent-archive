@@ -436,15 +436,7 @@ func (s *Store) preparePackedSessionIndex(ctx context.Context, revision, invento
 
 var errPackedSlicePending = errors.New("packed application slice pending")
 
-func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) error {
-	data, err := s.preparePackedShardSlice(ctx, shard, marker, owners, candidates, deadline)
-	if err != nil {
-		return err
-	}
-	return s.publishPackedIndex(ctx, shard, marker, data, true)
-}
-
-func (s *Store) preparePackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) ([]byte, error) {
+func (s *Store) preparePackedShardSlice(ctx context.Context, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) ([]byte, error) {
 
 	sizing, oversized, err := packedShardSizing(marker, owners, candidates)
 	if err != nil {
@@ -824,19 +816,6 @@ func (s *Store) writePackedOverlayState(marker sessionIndexMarker, value string,
 
 // Stage and directory durability happen outside all locks. The membership
 // lock serializes shard renames with expiry and fences stale census publication.
-func (s *Store) publishPackedIndex(ctx context.Context, shard string, marker sessionIndexMarker, data []byte, census bool) error {
-	path := packedIndexPath(s.home, shard)
-	before, err := readSnapshot(path)
-	if err != nil {
-		return err
-	}
-	return s.commitPackedIndex(ctx, path, marker, before, data, census)
-}
-
-func (s *Store) commitPackedIndex(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool) error {
-	return s.commitPackedIndexGuarded(ctx, path, marker, before, data, census, nil)
-}
-
 func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool, guard func() (func() error, error)) error {
 	staged, err := local.StageBytes(path, data)
 	if err != nil {
