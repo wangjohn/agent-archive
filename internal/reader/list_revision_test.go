@@ -2,16 +2,19 @@ package reader
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 type opaqueListingStore struct {
@@ -188,5 +191,311 @@ func TestListRevisionActivityAndChildSummariesMatchExhaustive(t *testing.T) {
 	}
 	if !reflect.DeepEqual(bounded.Sessions, full.Sessions[:2]) || bounded.TotalMatched != 4 || bounded.Hidden != 3 || bounded.Children["codex/s3"] != 3 {
 		t.Fatalf("summary parity failed: total=%d hidden=%d children=%v", bounded.TotalMatched, bounded.Hidden, bounded.Children)
+	}
+}
+
+// A writer that passed its validator check must not delete an entry created
+// after that check by another completed publication.
+type cleanupInterleaveStore struct {
+	*storagetest.MemoryStore
+	afterStat func()
+}
+
+func (s *cleanupInterleaveStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	info, err := s.MemoryStore.Stat(ctx, key)
+	if s.afterStat != nil {
+		callback := s.afterStat
+		s.afterStat = nil
+		callback()
+	}
+	return info, err
+}
+
+func TestListingCleanupPreservesConcurrentCompletedPublication(t *testing.T) {
+	ctx := context.Background()
+	store := &cleanupInterleaveStore{MemoryStore: storagetest.NewMemoryStore()}
+	key := putSession(t, store, "codex", "concurrent", baseTime)
+	old, _, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.afterStat = func() {
+		putSession(t, store, "codex", "concurrent", baseTime.Add(time.Hour))
+		current, _, err := store.MemoryStore.GetVersioned(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = listingindex.PublishRevision(ctx, store.MemoryStore, key, current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := listingindex.PublishRevision(ctx, store, key, old); err != nil {
+		t.Fatal(err)
+	}
+	scanned := false
+	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }})
+	if err != nil || scanned || len(result.Sessions) != 1 || !result.Sessions[0].CapturedAt.Equal(baseTime.Add(time.Hour)) {
+		t.Fatalf("completed concurrent index lost: scanned=%v result=%+v err=%v", scanned, result, err)
+	}
+}
+
+func TestListSelectedDeletionAndCorruptionDoNotRefill(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deleted=%v", deleted), func(t *testing.T) {
+			ctx := context.Background()
+			store := newOpaqueListingStore()
+			putSession(t, store, "codex", "older", baseTime)
+			newest := putSession(t, store, "codex", "newest", baseTime.Add(time.Hour))
+			if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
+				t.Fatal(err)
+			}
+			store.reset()
+			store.change = func(key string) {
+				store.change = nil
+				if key != newest {
+					t.Fatalf("wrong selection: %q", key)
+				}
+				var err error
+				if deleted {
+					err = store.Delete(ctx, key)
+				} else {
+					err = store.Put(ctx, key, []byte("corrupt"))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{}); err == nil || !strings.Contains(err.Error(), "incomplete listing") {
+				t.Fatalf("mutation accepted: %v", err)
+			}
+			_, gets := store.counts()
+			if len(gets) != 1 || gets[0] != newest {
+				t.Fatalf("refilled selection: %v", gets)
+			}
+		})
+	}
+}
+
+func TestListUnknownSchemaFallsBackAndReportsSkipped(t *testing.T) {
+	ctx := context.Background()
+	store := newOpaqueListingStore()
+	putSession(t, store, "codex", "supported", baseTime)
+	key := putSession(t, store, "codex", "future", baseTime.Add(time.Hour))
+	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.SchemaVersion++
+	data, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, key, data); err != nil {
+		t.Fatal(err)
+	}
+	scanned, skipped := false, 0
+	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }, Skipped: func(s SkippedSidecar) {
+		skipped++
+		if s.Key != key {
+			t.Errorf("wrong skipped identity: %q", s.Key)
+		}
+	}})
+	if err != nil || !scanned || skipped != 1 || result.TotalMatched != 1 || result.Sessions[0].SessionID != "supported" {
+		t.Fatalf("unsupported schema hidden silently: scanned=%v skipped=%d result=%+v err=%v", scanned, skipped, result, err)
+	}
+}
+
+func TestListCacheEvictionKeepsUnselectedPresentRows(t *testing.T) {
+	ctx := context.Background()
+	store := newOpaqueListingStore()
+	keys := []string{putSession(t, store, "codex", "old", baseTime), putSession(t, store, "codex", "new", baseTime.Add(time.Hour))}
+	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListRecent(ctx, store, "sessions", Filter{}, 2, ListOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	bodies := 0
+	store.reset()
+	if _, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{Cache: cache, BodyRead: func(string, bool) { bodies++ }}); err != nil {
+		t.Fatal(err)
+	}
+	_, gets := store.counts()
+	if bodies != 1 || len(gets) != 0 {
+		t.Fatalf("selection reopened bodies: bodies=%d gets=%v", bodies, gets)
+	}
+	for _, key := range keys {
+		_, validator, err := store.GetVersioned(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := cache.get(key, validator); !ok {
+			t.Fatalf("unselected live row evicted: %s", key)
+		}
+	}
+}
+
+func TestListingCleanupPreservesReactivatedValidator(t *testing.T) {
+	ctx := context.Background()
+	store := &cleanupInterleaveStore{MemoryStore: storagetest.NewMemoryStore()}
+	key := putSession(t, store, "codex", "reactivated", baseTime.Add(time.Hour))
+	b, _, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listingindex.PublishRevision(ctx, store.MemoryStore, key, b); err != nil {
+		t.Fatal(err)
+	}
+	putSession(t, store, "codex", "reactivated", baseTime)
+	a, _, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.afterStat = func() {
+		// MemoryStore uses content-derived validators like ordinary S3 PUTs:
+		// restoring identical bytes legitimately restores the same validator.
+		if err := store.MemoryStore.Put(ctx, key, b); err != nil {
+			t.Fatal(err)
+		}
+		if err := listingindex.PublishRevision(ctx, store.MemoryStore, key, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := listingindex.PublishRevision(ctx, store, key, a); err != nil {
+		t.Fatal(err)
+	}
+	scanned := false
+	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }})
+	if err != nil || scanned || len(result.Sessions) != 1 || !result.Sessions[0].CapturedAt.Equal(baseTime.Add(time.Hour)) {
+		t.Fatalf("reactivated index lost: scanned=%v result=%+v err=%v", scanned, result, err)
+	}
+}
+
+func TestListingRepeatedPublicationAndBoundedCleanup(t *testing.T) {
+	ctx := context.Background()
+	store := newOpaqueListingStore()
+	key := putSession(t, store, "codex", "repeated", baseTime)
+	data, validator, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 40 {
+		r, err := listingindex.NewRevision(key, data, validator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := listingindex.PutRevision(ctx, store, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Distinct immutable publication identities for the same bytes must not
+	// be mistaken for conflicting discovery claims.
+	scanned := false
+	if _, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }}); err != nil || scanned {
+		t.Fatalf("equal summaries conflict: scanned=%v err=%v", scanned, err)
+	}
+	if err := listingindex.PublishRevision(ctx, store, key, data); err == nil || !strings.Contains(err.Error(), "cleanup remains pending") {
+		t.Fatalf("unbounded cleanup: %v", err)
+	}
+	hints, err := store.List(ctx, listingindex.V2Prefix)
+	if err != nil || len(hints) != 9 {
+		t.Fatalf("cleanup did not stop after 32: hints=%d err=%v", len(hints), err)
+	}
+	if err := listingindex.PublishRevision(ctx, store, key, data); err != nil {
+		t.Fatal(err)
+	}
+	hints, err = store.List(ctx, listingindex.V2Prefix)
+	if err != nil || len(hints) != 1 {
+		t.Fatalf("cleanup did not converge: hints=%d err=%v", len(hints), err)
+	}
+	var summary listingindex.Revision
+	if summary, err = listingindex.ParseRevision(hints[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	// A supported, canonical encoded entry with the same provider validator
+	// but a changed scope summary must still force the exhaustive reader.
+	summary.ProjectID = "conflicting-project"
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(summary.Key, "/")
+	parts[len(parts)-1] = base64.RawURLEncoding.EncodeToString(encoded)
+	if err := store.Put(ctx, strings.Join(parts, "/"), nil); err != nil {
+		t.Fatal(err)
+	}
+	scanned = false
+	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }})
+	if err != nil || !scanned || len(result.Sessions) != 1 {
+		t.Fatalf("conflicting summary accepted: scanned=%v err=%v", scanned, err)
+	}
+}
+
+type sameRevisionCleanupStore struct {
+	*storagetest.MemoryStore
+	lists        atomic.Int32
+	stats        atomic.Int32
+	listReady    chan struct{}
+	statReady    chan struct{}
+	cleanupReady chan struct{}
+}
+
+func (s *sameRevisionCleanupStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
+	if strings.HasPrefix(prefix, "listing/by-session-v2/") {
+		call := s.lists.Add(1)
+		if call <= 2 {
+			if call == 2 {
+				close(s.listReady)
+			}
+			<-s.listReady
+		} else {
+			if call == 4 {
+				close(s.cleanupReady)
+			}
+			<-s.cleanupReady
+		}
+	}
+	return s.MemoryStore.List(ctx, prefix)
+}
+func (s *sameRevisionCleanupStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	info, err := s.MemoryStore.Stat(ctx, key)
+	if s.stats.Add(1) == 2 {
+		close(s.statReady)
+	}
+	<-s.statReady
+	return info, err
+}
+func TestListingConcurrentEquivalentCleanupKeepsCoverage(t *testing.T) {
+	ctx := context.Background()
+	store := &sameRevisionCleanupStore{MemoryStore: storagetest.NewMemoryStore(), listReady: make(chan struct{}), statReady: make(chan struct{}), cleanupReady: make(chan struct{})}
+	key := putSession(t, store, "codex", "equivalent", baseTime)
+	data, _, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 2)
+	for range 2 {
+		go func() { done <- listingindex.PublishRevision(ctx, store, key, data) }()
+	}
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	scanned := false
+	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }})
+	if err != nil || scanned || len(result.Sessions) != 1 {
+		t.Fatalf("equivalent cleanups removed all coverage: scanned=%v err=%v", scanned, err)
 	}
 }

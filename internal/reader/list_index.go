@@ -56,7 +56,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 			return fallback("listing index contains an unsupported or damaged entry; run list --rebuild-index")
 		}
 		key := r.MetadataKey + "\x00" + r.ETag
-		if prior, exists := revisions[key]; exists && prior.Key != r.Key {
+		if prior, exists := revisions[key]; exists && !prior.SameSummary(r) {
 			return fallback("listing index has conflicting revision summaries")
 		}
 		revisions[key] = r
@@ -144,8 +144,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		if err != nil {
 			return RecentResult{}, err
 		}
-		check, err := listingindex.NewRevision(r.MetadataKey, data, r.ETag)
-		if err != nil || check.Key != r.Key {
+		if err := r.ValidateMetadata(data); err != nil {
 			return RecentResult{}, fmt.Errorf("incomplete listing: invalid revision summary for %q", r.MetadataKey)
 		}
 		if !cached {
@@ -222,7 +221,7 @@ func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix strin
 }
 
 // RebuildIndex validates canonical bodies and writes only auxiliary revisions.
-// Each invocation resumes by replaying idempotent writes; no ready marker is used.
+// Each invocation resumes through convergent auxiliary writes; no ready marker is used.
 func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string) (int, error) {
 	getter, ok := store.(storage.VersionedGetter)
 	if !ok {
@@ -244,7 +243,7 @@ func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string)
 		if err != nil {
 			return count, err
 		}
-		r, err := listingindex.NewRevision(obj.Key, data, etag)
+		r, err := listingindex.NewPublicationRevision(ctx, store, obj.Key, data, etag)
 		if err != nil {
 			return count, fmt.Errorf("rebuild index %q: %w", obj.Key, err)
 		}
