@@ -88,6 +88,10 @@ func phaseFingerprint(value any) string {
 		for _, candidate := range values {
 			_ = encoder.Encode(candidate)
 		}
+	case []os.DirEntry:
+		for _, entry := range values {
+			_ = encoder.Encode(entry.Name())
+		}
 	case []string:
 		for _, name := range values {
 			_ = encoder.Encode(name)
@@ -143,11 +147,14 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 		}
 		cursor.Phase, cursor.Offset = 1, 0
 	}
+	// Requested keys may refer to an already-applied candidate whose index
+	// changed after its checkpoint. Keep complete candidate authority available
+	// in phase two, including slices that resume there directly.
+	candidates, err := s.LoadSubagentCandidates()
+	if err != nil {
+		return false, err
+	}
 	if cursor.Phase == 1 {
-		candidates, err := s.LoadSubagentCandidates()
-		if err != nil {
-			return false, err
-		}
 		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ArchiveSessionID < candidates[j].ArchiveSessionID })
 		fingerprint := phaseFingerprint(candidates)
 		if cursor.PhaseInventory != fingerprint || cursor.Offset > len(candidates) {
@@ -160,20 +167,31 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 		}
 		cursor.Phase, cursor.Offset, cursor.PhaseInventory = 2, 0, ""
 	}
+	candidateInventory := make(map[agentmeta.SessionKey][]SubagentCandidate, len(candidates))
+	for _, candidate := range candidates {
+		key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+		if err != nil {
+			return false, err
+		}
+		candidateInventory[key] = append(candidateInventory[key], candidate)
+	}
 	entries, err := os.ReadDir(filepath.Join(s.home, "sessions-v1"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	names := make([]string, len(entries))
-	for i, entry := range entries {
-		names[i] = entry.Name()
-	}
-	fingerprint = phaseFingerprint(names)
+	fingerprint = phaseFingerprint(entries)
 	if cursor.PhaseInventory != fingerprint || cursor.Offset > len(entries) {
 		cursor.Offset = 0
 	}
 	cursor.PhaseInventory = fingerprint
-	complete, err = s.applyRecoveryPhase(ctx, &cursor, deadline, len(entries), func(i int) error { return s.recoverRequestedMiss(ctx, entries[i], inventory) })
+	// The fingerprint covers the full sorted listing before consumed directory
+	// entries are released. Only unapplied entries are needed by this slice.
+	clear(entries[:cursor.Offset])
+	complete, err = s.applyRecoveryPhase(ctx, &cursor, deadline, len(entries), func(i int) error {
+		entry := entries[i]
+		entries[i] = nil
+		return s.recoverRequestedMiss(ctx, entry, inventory, candidateInventory)
+	})
 	if err != nil || !complete {
 		return false, err
 	}
