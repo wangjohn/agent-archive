@@ -725,6 +725,7 @@ func TestScopeFlagsRefuseEmptyAndProjectCompanionsBeforeEffects(t *testing.T) {
 		{"--project-scope", "", "--project-scope-file", "-"},
 	} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			env := Env{LookupEnv: noEnv, Home: func() (string, error) { t.Fatal("invalid scope flags reached home"); return "", nil }, PairingCode: func() (string, error) { t.Fatal("invalid scope flags reached pairing"); return "", nil }}
 			args := append([]string{"setup", "--yes"}, flags...)
@@ -840,13 +841,13 @@ func TestPortableScopeParentLookupMatchesResolvedContainment(t *testing.T) {
 						anchor = candidate
 					}
 				}
-				want := portableProjectRule{Path: homeRelative(root, home), Included: project.Included}
+				path, repoKey := homeRelative(root, home), ""
 				if anchor != "" {
 					rel, err := filepath.Rel(anchor, root)
 					must(t, err)
-					want.Path = filepath.ToSlash(rel)
-					want.RepoKey = keys[anchor]
+					path, repoKey = filepath.ToSlash(rel), keys[anchor]
 				}
+				want := portableProjectRule{Path: path, RepoKey: repoKey, Included: project.Included}
 				if rules[i] != want {
 					t.Fatalf("containment changed at %s (reversed=%t cached=%t): got %+v want %+v", root, reversed, cache != nil, rules[i], want)
 				}

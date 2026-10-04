@@ -167,6 +167,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if err := validateProjectScopeOptions(opts); err != nil {
+		fs.usageError("%s", err)
+		return opts, false
+	}
 	return opts, true
 }
 

@@ -117,9 +117,6 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
-	if err := validateProjectScopeOptions(opts); err != nil {
-		return fs.usageError("%s", err)
-	}
 	var questionErr error
 	opts, stdin, questionErr = initialSetupPairingQuestion(*refresh || *abandon, opts, stdin, stdout, env)
 	if questionErr != nil {
