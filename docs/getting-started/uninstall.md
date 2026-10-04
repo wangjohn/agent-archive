@@ -100,9 +100,11 @@ below is still needed for complete archive removal.
 To delete everything under your prefix now, pause or uninstall **every** machine
 that uploads there. Use the [cleanup preparation block](../security/privacy.md#after-a-filter-upgrade)
 first in a bash or zsh shell. It defines `purge_prepare` and `purge_apply`,
-lists and validates all metadata, and shows an initial unreferenced-source
-plan without deleting it. The AWS CLI and `jq` must be installed, and your
-credentials need list, read, and delete access. In that same shell, set your
+attempts a strict unreferenced-source plan without deleting it. If that initial
+plan refuses damaged metadata, the full-prefix plan below can still be prepared
+after pause succeeds. The AWS CLI and `jq` must be installed, and your
+credentials need list and delete access for full-prefix mode (selective modes
+also need read access). In that same shell, set your
 bucket and prefix and make a fresh full-prefix plan:
 
 <!-- purge-recipe:all -->
@@ -114,7 +116,9 @@ purge_prepare all
 
 Review **every printed key**. An empty prefix plans the entire bucket. If the
 plan contains exactly what you intend, run `purge_apply` within five minutes
-in the same shell. A failed listing or metadata read means zero deletions.
+in the same shell. Full-prefix mode validates the complete scoped listing and exact reviewed keys;
+it does not require readable metadata or existing source references. Metadata
+pointers are deleted before the remaining keys. A failed listing means zero deletions.
 If preparation fails before printing a valid plan, fix the issue and rerun
 `purge_prepare all`. After a valid plan has been printed, use `purge_resume`
 with its retained directory for recovery. A delete failure reports the keys
