@@ -3,23 +3,152 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
+	t.Parallel()
+	for _, seam := range []string{"generation-journal", "generation-active"} {
+		t.Run(seam, func(t *testing.T) {
+			t.Parallel()
+			env, home, path, id := recoverFixture(t)
+			var out, errOut bytes.Buffer
+			if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+				t.Fatalf("confirm: %d %s", code, errOut.String())
+			}
+			store, err := state.Open(home)
+			must(t, err)
+			next, _, err := store.GenerationSuccessor(id)
+			must(t, err)
+			old, _, err := store.LoadRegistration(id)
+			must(t, err)
+			reg, _, err := store.LoadRegistration(next)
+			must(t, err)
+			pending, _, err := store.LoadPending(next)
+			must(t, err)
+			request, _, err := store.LoadRequest(next)
+			must(t, err)
+			// Reconstruct the exact durable seam from the fixed confirmation
+			// snapshot. This requires no production fault-injection API.
+			journalPath := filepath.Join(home, "generation-recovery", id+".json")
+			raw, err := os.ReadFile(journalPath)
+			must(t, err)
+			var journal map[string]any
+			must(t, json.Unmarshal(raw, &journal))
+			delete(journal, "complete")
+			journal["registration"], journal["pending"], journal["request"] = reg, pending, request
+			must(t, local.Write(journalPath, journal))
+			if seam == "generation-journal" {
+				old.CaptureFrozen = false
+				must(t, local.Write(filepath.Join(home, "registrations", id+".json"), old))
+				must(t, os.Remove(filepath.Join(home, "registrations", next+".json")))
+				for _, dir := range []string{"generation-heads", "generation-nodes"} {
+					must(t, os.RemoveAll(filepath.Join(home, dir)))
+				}
+				// Restore the predecessor's qualified index without changing
+				// its native key or requiring knowledge of the filename hash.
+				files, err := filepath.Glob(filepath.Join(home, "sessions-v1", "*.json"))
+				must(t, err)
+				if len(files) != 1 {
+					t.Fatalf("qualified index fixture: %v", files)
+				}
+				for _, file := range files {
+					data, err := os.ReadFile(file)
+					must(t, err)
+					var entry map[string]any
+					must(t, json.Unmarshal(data, &entry))
+					if entry["archive_session_id"] == next {
+						entry["archive_session_id"] = id
+						must(t, local.Write(file, entry))
+					}
+				}
+			}
+			hookAt := env.now().Add(time.Minute)
+			payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": old.ProjectRoot, "transcript_path": path}
+			if err := handleTestHookEvent(home, "codex", payload, hookAt); !errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+				t.Fatalf("hook entered unfinished transition: %v", err)
+			}
+			if seam == "generation-active" {
+				feedbackPath := filepath.Join(t.TempDir(), "feedback.txt")
+				must(t, os.WriteFile(feedbackPath, []byte("feedback during interrupted recovery"), 0600))
+				if code := Run([]string{"feedback", next, "--file", feedbackPath}, nil, &out, &errOut, env); code != 0 {
+					t.Fatalf("feedback: %d %s", code, errOut.String())
+				}
+			}
+			must(t, store.ResumeGenerationRecoveries(t.Context()))
+			for range 10 {
+				complete, err := store.RecoverSessionIndexScheduled(t.Context(), state.SessionIndexRecoverySlice)
+				must(t, err)
+				if complete {
+					break
+				}
+			}
+			must(t, capture.ReplayAdmissionIntents(home, hookAt.Add(time.Second), productionAgents))
+			active, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native"})
+			if err != nil || !found || active != next {
+				t.Fatalf("route: %s %v %v", active, found, err)
+			}
+			after, _, err := store.LoadPending(next)
+			must(t, err)
+			if !bytes.Equal(after.SourceBytes, pending.SourceBytes) || !after.Bundle.Capture.CapturedAt.Equal(pending.Bundle.Capture.CapturedAt) {
+				t.Fatal("replay changed fixed publication")
+			}
+			currentRequest, _, err := store.LoadRequest(next)
+			must(t, err)
+			observed := 0
+			for _, evidence := range currentRequest.HookEvidence {
+				if evidence.Kind == archive.EvidenceKindLifecycleHook && evidence.ObservedAt.Equal(hookAt) {
+					observed++
+				}
+			}
+			if observed != 1 {
+				t.Fatalf("queued hook copies: %d", observed)
+			}
+			if seam == "generation-active" {
+				feedback := 0
+				for _, evidence := range currentRequest.HookEvidence {
+					if evidence.Kind == archive.EvidenceKindExplicitFeedback {
+						feedback++
+					}
+				}
+				if feedback != 1 {
+					t.Fatalf("journal replay lost feedback: %d", feedback)
+				}
+			}
+			must(t, capture.ReplayAdmissionIntents(home, hookAt.Add(2*time.Second), productionAgents))
+			regs, err := store.LoadRegistrations()
+			if err != nil || len(regs) != 2 {
+				t.Fatalf("duplicate generations: %d %v", len(regs), err)
+			}
+		})
+	}
+}
+
 func recoverFixture(t *testing.T) (Env, string, string, string) {
+	env, home, path, id, _ := recoverFixtureWithStorage(t)
+	return env, home, path, id
+}
+
+func recoverFixtureWithStorage(t *testing.T) (Env, string, string, string, storage.ObjectStore) {
 	t.Helper()
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	env, home, path, _ := publishedThroughSync(t, at)
+	env, home, path, bucket := publishedThroughSync(t, at)
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +167,69 @@ func recoverFixture(t *testing.T) (Env, string, string, string) {
 	}
 	env.Now = func() time.Time { return at.Add(time.Hour) }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { t.Fatal("recovery opened storage"); return nil, nil }
-	return env, home, path, reg.ArchiveSessionID
+	return env, home, path, reg.ArchiveSessionID, bucket
+}
+
+func TestRecoverFrozenFeedbackRetainsIdentityAgeAndRetry(t *testing.T) {
+	t.Parallel()
+	env, home, _, id, bucket := recoverFixtureWithStorage(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("recover: %d %s", code, errOut.String())
+	}
+	store, err := state.Open(home)
+	must(t, err)
+	before, _, _, err := store.LoadLastPublished(id)
+	must(t, err)
+	path := filepath.Join(t.TempDir(), "feedback.txt")
+	must(t, os.WriteFile(path, []byte("review preserved history; password=synthetic-secret-value"), 0600))
+	if code := Run([]string{"feedback", id, "--file", path}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("feedback: %d %s", code, errOut.String())
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey}
+	result, err := collector.Run(t.Context(), store, failingPutStore{bucket}, opts)
+	if err != nil || result.Errors[id] == nil {
+		t.Fatalf("expected frozen upload retry: %#v %v", result, err)
+	}
+	if _, found, err := store.LoadRequest(id); err != nil || !found {
+		t.Fatalf("failed upload acknowledged feedback: %v", err)
+	}
+	result, err = collector.Run(t.Context(), store, bucket, opts)
+	if err != nil || len(result.Errors) != 0 {
+		t.Fatalf("retry: %#v %v", result, err)
+	}
+	after, _, _, err := store.LoadLastPublished(id)
+	must(t, err)
+	if after.ArchiveSessionID != id || !after.Capture.CapturedAt.Equal(before.Capture.CapturedAt) {
+		t.Fatal("feedback changed frozen identity or retention age")
+	}
+	count := 0
+	for _, evidence := range after.SupplementalEvidence {
+		if evidence.Kind == archive.EvidenceKindExplicitFeedback {
+			count++
+			text, _ := evidence.Payload["text"].(string)
+			if strings.Contains(text, "synthetic-secret-value") || !strings.Contains(text, "[REDACTED]") {
+				t.Fatalf("feedback privacy: %s", text)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("feedback copies: %d", count)
+	}
+	if _, found, err := store.LoadRequest(id); err != nil || found {
+		t.Fatalf("successful feedback left request: %v", err)
+	}
+	key, err := archive.MetadataObjectKey("codex", id)
+	must(t, err)
+	raw, err := bucket.Get(t.Context(), key)
+	must(t, err)
+	var metadata archive.Metadata
+	must(t, json.Unmarshal(raw, &metadata))
+	if metadata.SessionID != id || !metadata.CapturedAt.Equal(before.Capture.CapturedAt) {
+		t.Fatal("metadata changed frozen identity or age")
+	}
 }
 
 func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
@@ -118,10 +309,20 @@ func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
 	}
 }
 
+type recoveryRefusalMode string
+
+const recoveryRefusalPaused recoveryRefusalMode = "paused"
+
+const recoveryRefusalDestination recoveryRefusalMode = "destination"
+
+const recoveryRefusalSubagent recoveryRefusalMode = "subagent"
+
+const recoveryRefusalPending recoveryRefusalMode = "pending"
+
 func TestRecoverRefusesPauseDestinationAndSubagent(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"paused", "destination", "subagent", "pending"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []recoveryRefusalMode{recoveryRefusalPaused, recoveryRefusalDestination, recoveryRefusalSubagent, recoveryRefusalPending} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			env, home, _, id := recoverFixture(t)
 			store, err := state.Open(home)
@@ -133,16 +334,16 @@ func TestRecoverRefusesPauseDestinationAndSubagent(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "paused":
+			case recoveryRefusalPaused:
 				cfg.Paused = true
-			case "destination":
+			case recoveryRefusalDestination:
 				cfg.Storage.Bucket = "another-destination"
-			case "subagent":
+			case recoveryRefusalSubagent:
 				_, err = store.UpdateRegistration(id, func(reg *archive.SessionRegistration) error { reg.ParentSessionID = "parent"; return nil })
 				if err != nil {
 					t.Fatal(err)
 				}
-			case "pending":
+			case recoveryRefusalPending:
 				if err := store.SavePending(id, state.PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: []byte("synthetic"), MetadataBytes: []byte(`{}`)}); err != nil {
 					t.Fatal(err)
 				}

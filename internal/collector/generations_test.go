@@ -98,6 +98,14 @@ func TestGenerationRecoveryPreservesMismatchAndCapturesNewActivity(t *testing.T)
 			if fetchMetadata(t, cloud, "codex", "session-1").SourceBundle != old.SourceBundle {
 				t.Fatal("new activity overwrote historical source")
 			}
+			opts.ParserVersion = "recovery-provenance-refresh"
+			if result, err := Run(context.Background(), s, cloud, opts); err != nil || len(result.Errors) != 0 {
+				t.Fatalf("metadata refresh: %#v %v", result, err)
+			}
+			refreshed := fetchMetadata(t, cloud, "codex", next)
+			if refreshed.PreviousGenerationID != "session-1" || fetchBundle(t, cloud, refreshed).PreviousGenerationID != "session-1" {
+				t.Fatal("metadata refresh lost generation provenance")
+			}
 		})
 	}
 }

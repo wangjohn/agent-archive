@@ -70,7 +70,7 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Printf(stdout, "To start this generation, run agent-archive recover %s --confirm.\n", id)
 		return 0
 	}
-	next, err := confirmGenerationRecovery(home, reg, cfg, at, builder, env)
+	next, err := confirmGenerationRecovery(home, reg, cfg, at, builder)
 	if err != nil {
 		return fail(err)
 	}
@@ -105,9 +105,9 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	if reg.CaptureFrozen {
 		return generationPreview{}, errors.New("session is a frozen earlier generation; select its active successor")
 	}
-	if pending, err := store.HasPending(id); err != nil {
+	if outstanding, err := store.Outstanding(reg, false); err != nil {
 		return generationPreview{}, err
-	} else if pending {
+	} else if outstanding.Upload {
 		return generationPreview{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
 	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
@@ -119,7 +119,7 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	return generationPreview{reg: reg, at: at, build: builder}, nil
 }
 
-func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg config.Config, at time.Time, builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), env Env) (string, error) {
+func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg config.Config, at time.Time, builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error)) (string, error) {
 	if cfg.Paused {
 		return "", errPaused
 	}

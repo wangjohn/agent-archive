@@ -110,6 +110,9 @@ func (s *Store) matchingRegistration(key agentmeta.SessionKey, id string) (bool,
 	if err := reg.Validate(); err != nil {
 		return false, ErrSessionIndexRecoveryRequired
 	}
+	if err := s.generationRegistrationAllowed(key, reg); err != nil {
+		return false, err
+	}
 	if reg.CaptureFrozen {
 		return false, ErrSessionIndexRecoveryRequired
 	}
@@ -167,6 +170,10 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 	}
 	if actual.Agent != key.Agent {
 		return "", false, nil
+	}
+	registered, err := s.matchingRegistration(key, entry.ArchiveSessionID)
+	if err != nil || !registered {
+		return "", false, err
 	}
 	return entry.ArchiveSessionID, true, nil
 }

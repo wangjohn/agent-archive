@@ -106,13 +106,13 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if !found {
 		return outcomeSkipped, errors.New("frozen generation has no retained publication")
 	}
-	var links []archive.SupplementalEvidence
+	var retained []archive.SupplementalEvidence
 	for _, evidence := range s.req.HookEvidence {
-		if evidence.Kind == archive.EvidenceKindLinkedSession {
-			links = append(links, evidence)
+		if evidence.Kind == archive.EvidenceKindLinkedSession || evidence.Kind == archive.EvidenceKindExplicitFeedback {
+			retained = append(retained, evidence)
 		}
 	}
-	updated := mergeSupplementalEvidence(bundle.SupplementalEvidence, links)
+	updated := mergeSupplementalEvidence(bundle.SupplementalEvidence, retained)
 	sameLinks, err := jsonEncodingsEqual(bundle.SupplementalEvidence, updated)
 	if err != nil {
 		return outcomeSkipped, err

@@ -56,7 +56,8 @@ transcript.
 
 Each generation expires independently under normal retention. Privacy and
 parser maintenance may refresh a frozen generation from its retained evidence,
-with its original capture time. Linking does not extend that lifetime. Import
+with its original capture time. Feedback submitted to an earlier ID stays with
+that generation and does not renew its retention age. Linking does not extend that lifetime. Import
 recovery preserves the original import batch; undoing that batch removes all
 its remaining generations. A genuine new native start after the active
 generation expires follows the normal admission rules and begins a separate

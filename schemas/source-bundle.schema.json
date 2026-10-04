@@ -342,7 +342,8 @@
             "unknown_field_omitted",
             "unknown_record_type",
             "unsupported_value_omitted",
-            "discovered_without_hook_evidence"
+            "discovered_without_hook_evidence",
+            "recovered_generation"
           ]
         },
         {
