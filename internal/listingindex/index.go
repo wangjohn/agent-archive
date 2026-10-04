@@ -19,11 +19,6 @@ import (
 // Prefix is the key prefix for immutable time-ordered listing hints.
 const Prefix = "listing/v1/"
 
-// ReadyKey marks a prefix whose listing hints are complete for existing sessions.
-const ReadyKey = "listing/v1-ready"
-
-const unreadyKey = "listing/v1-needs-rebuild"
-
 const bySessionPrefix = "listing/by-session/"
 
 const maxTime = uint64(9999999999999999999)
@@ -92,63 +87,6 @@ func SessionPrefix(harness, id string) (string, error) {
 		return "", err
 	}
 	return bySessionPrefix + harness + "/" + id + "/", nil
-}
-
-// Put writes an immutable hint and its per-session cleanup pointer.
-func Put(ctx context.Context, store storage.ObjectStore, entry Entry) error {
-	prefix, err := SessionPrefix(path.Base(path.Dir(path.Dir(entry.MetadataKey))), path.Base(path.Dir(entry.MetadataKey)))
-	if err != nil {
-		return err
-	}
-	pointer := prefix + entry.Hash
-	if err := store.Put(ctx, pointer, []byte(entry.Key)); err != nil {
-		return err
-	}
-	return store.Put(ctx, entry.Key, []byte(entry.MetadataKey))
-}
-
-// Ready reports whether existing sessions have complete listing hints.
-func Ready(ctx context.Context, store storage.ObjectStore) (bool, error) {
-	var err error
-	if statter, ok := store.(storage.ObjectStatter); ok {
-		_, err = statter.Stat(ctx, ReadyKey)
-	} else {
-		_, err = store.Get(ctx, ReadyKey)
-	}
-	if errors.Is(err, storage.ErrNotFound) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-// MarkReady records that a listing-index rebuild completed.
-func MarkReady(ctx context.Context, store storage.ObjectStore) error {
-	return store.Put(ctx, ReadyKey, []byte("listing-index-v1\n"))
-}
-
-// SeedIfEmpty enables bounded listing for a fresh destination before its
-// first metadata publication. A legacy destination is marked for rebuild so
-// later publications do not repeat the full discovery scan.
-func SeedIfEmpty(ctx context.Context, store storage.ObjectStore) error {
-	ready, err := Ready(ctx, store)
-	if err != nil || ready {
-		return err
-	}
-	if _, err := store.Get(ctx, unreadyKey); err == nil {
-		return nil
-	} else if !errors.Is(err, storage.ErrNotFound) {
-		return err
-	}
-	objects, err := store.List(ctx, "sessions/")
-	if err != nil {
-		return err
-	}
-	for _, object := range objects {
-		if strings.HasSuffix(object.Key, "/metadata.json") {
-			return store.Put(ctx, unreadyKey, []byte("run list --rebuild-index\n"))
-		}
-	}
-	return MarkReady(ctx, store)
 }
 
 // DeleteSession removes index hints after authoritative metadata deletion.

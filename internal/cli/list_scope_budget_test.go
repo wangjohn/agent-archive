@@ -171,28 +171,34 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 				if err = os.RemoveAll(filepath.Join(home, "cache")); err != nil {
 					t.Fatal(err)
 				}
-				store.gets.Store(0)
-				store.sourceGets.Store(0)
-				bodies := 0
-				a.env.observeListBody = func(string, bool) { bodies++ }
-				args := []string{}
-				if jsonOut {
-					args = append(args, "--json")
-				}
-				out, stderr, code := a.runList(t, args...)
-				if code != 0 || bodies != 50 || store.gets.Load() != 50 || store.sourceGets.Load() != 0 {
-					t.Fatalf("fallback JSON=%v code=%d bodies=%d gets=%d source=%d stderr=%s", jsonOut, code, bodies, store.gets.Load(), store.sourceGets.Load(), stderr)
-				}
-				if jsonOut {
-					var doc listDocument
-					if err = json.Unmarshal([]byte(out), &doc); err != nil {
-						t.Fatal(err)
+				for _, warm := range []bool{false, true} {
+					store.gets.Store(0)
+					store.sourceGets.Store(0)
+					bodies := 0
+					a.env.observeListBody = func(string, bool) { bodies++ }
+					args := []string{}
+					if jsonOut {
+						args = append(args, "--json")
 					}
-					if doc.Scope == nil || !doc.Scope.FellBack || !reflect.DeepEqual(doc.Sessions, oracle[:50]) {
-						t.Fatal("empty JSON fallback changed")
+					out, stderr, code := a.runList(t, args...)
+					wantGets := int64(50)
+					if warm {
+						wantGets = 0
 					}
-				} else if !strings.Contains(out, "Nothing in empty-project · showing all projects") {
-					t.Fatalf("text fallback missing: %s", out)
+					if code != 0 || bodies != 50 || store.gets.Load() != wantGets || store.sourceGets.Load() != 0 {
+						t.Fatalf("fallback JSON=%v warm=%v code=%d bodies=%d gets=%d source=%d stderr=%s", jsonOut, warm, code, bodies, store.gets.Load(), store.sourceGets.Load(), stderr)
+					}
+					if jsonOut {
+						var doc listDocument
+						if err = json.Unmarshal([]byte(out), &doc); err != nil {
+							t.Fatal(err)
+						}
+						if doc.Scope == nil || !doc.Scope.FellBack || !reflect.DeepEqual(doc.Sessions, oracle[:50]) {
+							t.Fatal("empty JSON fallback changed")
+						}
+					} else if !strings.Contains(out, "Nothing in empty-project · showing all projects") {
+						t.Fatalf("text fallback missing: %s", out)
+					}
 				}
 			}
 		})
