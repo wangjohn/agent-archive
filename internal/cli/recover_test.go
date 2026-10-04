@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -343,6 +344,37 @@ func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
 	}
 	if _, err := mutable.RecoverSessionIndexScheduled(context.Background(), state.SessionIndexRecoverySlice); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecoverRefusesDifferentNativeIdentity(t *testing.T) {
+	t.Parallel()
+	for _, confirm := range []bool{false, true} {
+		t.Run(strconv.FormatBool(confirm), func(t *testing.T) {
+			t.Parallel()
+			env, home, path, id := recoverFixture(t)
+			must(t, os.WriteFile(path, []byte(`{"type":"session_meta","payload":{"id":"different-native"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":"unrelated session"}}`), 0600))
+			before, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			args := []string{"recover", id}
+			if confirm {
+				args = append(args, "--confirm")
+			}
+			var out, errOut bytes.Buffer
+			if code := Run(args, nil, &out, &errOut, env); code != 1 {
+				t.Fatalf("different native identity accepted: exit %d %s %s", code, out.String(), errOut.String())
+			}
+			after, err := os.ReadFile(filepath.Join(home, "config.json"))
+			must(t, err)
+			if !bytes.Equal(before, after) {
+				t.Fatal("refusal changed writer protection")
+			}
+			store := state.OpenReadOnly(home)
+			if _, found, err := store.GenerationSuccessor(id); err != nil || found {
+				t.Fatalf("refusal created successor: %v", err)
+			}
+		})
 	}
 }
 

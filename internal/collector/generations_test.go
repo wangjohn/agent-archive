@@ -8,10 +8,52 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
+
+func TestGenerationRecoveryRequiresObservedNativeIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		harness    string
+		transcript string
+		refuse     bool
+	}{
+		{"codex matching metadata", "codex", `{"type":"session_meta","payload":{"id":"native-1"}}` + "\n" + codexTranscript, false},
+		{"codex different metadata", "codex", `{"type":"session_meta","payload":{"id":"different"}}` + "\n" + codexTranscript, true},
+		{"codex redacted metadata", "codex", `{"type":"session_meta","payload":{"id":"sk-abcdefghijklmnopqrstuv"}}` + "\n" + codexTranscript, true},
+		{"codex blank hook identity", "codex", codexTranscript, false},
+		{"claude different owner", "claude", `{"type":"user","sessionId":"different","message":{"role":"user","content":"current"}}`, true},
+		{"claude matching owner", "claude", `{"type":"user","sessionId":"native-1","message":{"role":"user","content":"current"}}`, false},
+		{"claude copied history", "claude", `{"type":"user","sessionId":"copied","message":{"role":"user","content":"earlier"}}
+{"type":"user","sessionId":"native-1","message":{"role":"user","content":"current"}}`, false},
+		{"claude blank hook identity", "claude", `{"type":"user","message":{"role":"user","content":"current"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg := registration(t, writeTranscript(t, t.TempDir(), "native.jsonl", tc.transcript))
+			reg.Harness.Name = tc.harness
+			at := reg.RegisteredAt.Add(time.Hour)
+			build, err := PrepareGenerationRecovery(t.Context(), reg, at, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", RepoKey: func(string) string { return "" }})
+			if tc.refuse {
+				if err == nil || build != nil {
+					t.Fatal("different observed native identity admitted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, pending, err := build(reg, "successor")
+			if err != nil || pending.Bundle.NativeSessionID != reg.NativeSessionID || pending.Bundle.PreviousGenerationID != reg.ArchiveSessionID || pending.Bundle.Capture.FilterVersion != archive.FilterVersion {
+				t.Fatalf("legitimate recovery changed identity or privacy: %#v %v", pending.Bundle, err)
+			}
+		})
+	}
+}
 
 func TestGenerationRecoveryPreservesMismatchAndCapturesNewActivity(t *testing.T) {
 	t.Parallel()

@@ -169,6 +169,40 @@ func TestGenerationIndexLossKeepsUniqueActiveTip(t *testing.T) {
 	}
 }
 
+func TestGenerationRecoveryReplayRefusesChangedAdmission(t *testing.T) {
+	t.Parallel()
+	s, original, at := generationFixture(t)
+	interrupted := errors.New("interrupted before fence")
+	s.onIndexStep = func(step string) error {
+		if step == "generation-journal" {
+			return interrupted
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(original.ArchiveSessionID, at, generationBuilder(at)); !errors.Is(err, interrupted) {
+		t.Fatal(err)
+	}
+	s.onIndexStep = nil
+	journal, found, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	journal.Registration.NativeSessionID = "unrelated-native"
+	if err := local.Write(s.generationRecoveryPath(original.ArchiveSessionID), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("replayed changed admission: %v", err)
+	}
+	old, _, err := s.LoadRegistration(original.ArchiveSessionID)
+	if err != nil || old.CaptureFrozen {
+		t.Fatalf("corrupt replay froze original: %#v %v", old, err)
+	}
+	if _, found, err := s.LoadRegistration(journal.Next); err != nil || found {
+		t.Fatalf("corrupt replay registered successor: %v", err)
+	}
+}
+
 func TestGenerationExpiryNeverRoutesToRetainedAncestor(t *testing.T) {
 	t.Parallel()
 	s, reg, at := generationFixture(t)
