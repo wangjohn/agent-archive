@@ -7,18 +7,40 @@ on:
 # repository, and only it can see the Apple signing secrets, which live in
 # the protected `release` environment.
 #
-# Three jobs: `build` (macOS binaries), `build-linux` (Linux binaries), and
-# `publish`, which signs the macOS binaries and publishes all four. The Linux
-# binaries are not signed: trust in them rests on SHA256SUMS and the build
+# Read-only preflight, then `build` (macOS binaries), `build-linux` (Linux
+# binaries), and `publish`, which signs the macOS binaries and stages all four
+# as a prerelease. The Linux binaries are not signed: trust in them rests on SHA256SUMS and the build
 # provenance attestation. The two build jobs repeat the tag and toolchain
 # guards on purpose, so neither can build from an untagged or off-main commit;
 # keep them in step.
 permissions: {}
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-publication
   cancel-in-progress: false
 jobs:
+  preflight:
+    runs-on: macos-14
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      exists: ${{ steps.candidate.outputs.exists }}
+    env:
+      VERSION: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconcile existing signed candidate before rebuilding
+        id: candidate
+        run: python3 scripts/release_candidate.py preflight
+
   build:
+    needs: preflight
+    if: needs.preflight.outputs.exists == 'false'
     # The macOS binaries. Both Intel and ARM64 are cross-compiled from one macOS
     # runner: real Keychain access requires CGO_ENABLED=1 (see
     # internal/credentials/keychain_darwin.go), and Xcode's clang, already
@@ -73,6 +95,7 @@ jobs:
           go test -race -timeout 20m ./...   # as test.yml, for internal/cli
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
+          python3 scripts/test_release_candidate.py
           python3 scripts/test_install.py
           python3 scripts/test_purge_recipe.py
 
@@ -106,6 +129,8 @@ jobs:
           retention-days: 1
 
   build-linux:
+    needs: preflight
+    if: needs.preflight.outputs.exists == 'false'
     # The Linux binaries (x86-64 and ARM64): pure Go with CGO_ENABLED=0, so
     # both cross-compile on one Linux runner with no C toolchain, and the
     # x86-64 one runs natively here for the version check.
@@ -150,6 +175,7 @@ jobs:
           go test -race -timeout 20m ./...   # as test.yml, for internal/cli
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
+          python3 scripts/test_release_candidate.py
           python3 scripts/test_install.py
           python3 scripts/test_purge_recipe.py
 
@@ -172,7 +198,8 @@ jobs:
           retention-days: 1
 
   publish:
-    needs: [build, build-linux]
+    if: needs.preflight.outputs.exists == 'false'
+    needs: [preflight, build, build-linux]
     runs-on: macos-14
     # Holds the Apple secrets. Configure it with required reviewers so a
     # pushed tag cannot sign and publish on its own.
@@ -186,7 +213,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Recheck tag and main before signing
+        run: |
+          python3 -c 'import os,sys; sys.path.insert(0,"scripts"); from release_candidate import guard_tag; guard_tag(os.environ["VERSION"],os.environ["GITHUB_SHA"])'
 
       - name: Require release signing configuration
         env:
@@ -284,12 +316,15 @@ jobs:
       - name: Recompute checksums after signing
         run: ./scripts/write-checksums.sh dist
 
+      - name: Record candidate identity and accepted notarization receipts
+        run: python3 scripts/release_candidate.py manifest
+
       # Records, signed by GitHub, that these exact bytes came from this
       # workflow run at this commit. Check one with:
       #   gh attestation verify agent-archive-darwin-arm64 --repo wangjohn/agent-archive
-      # The subjects are exactly the released binaries, the upload-artifact
-      # and `gh release create` lists below (scripts/test_release_assets.py
-      # checks that the three agree).
+      # Subjects are the four binaries and identity/notary manifest. The
+      # retained artifact and candidate upload also include SHA256SUMS;
+      # scripts/test_release_assets.py checks those inventories.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -297,6 +332,7 @@ jobs:
             dist/agent-archive-darwin-arm64
             dist/agent-archive-linux-amd64
             dist/agent-archive-linux-arm64
+            dist/release-candidate.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -307,18 +343,11 @@ jobs:
             dist/agent-archive-linux-amd64
             dist/agent-archive-linux-arm64
             dist/SHA256SUMS
+            dist/release-candidate.json
           if-no-files-found: error
+          retention-days: 30
 
-      - name: Publish release
+      - name: Stage signed prerelease without changing latest
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$VERSION" --verify-tag \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "agent-archive $VERSION" \
-            --notes "See CHANGELOG.md for what changed, docs/getting-started/install.md for installation, and SHA256SUMS below for checksums. Verify a binary's build provenance with: gh attestation verify <file> --repo $GITHUB_REPOSITORY" \
-            dist/agent-archive-darwin-amd64 \
-            dist/agent-archive-darwin-arm64 \
-            dist/agent-archive-linux-amd64 \
-            dist/agent-archive-linux-arm64 \
-            dist/SHA256SUMS
+        run: python3 scripts/release_candidate.py stage

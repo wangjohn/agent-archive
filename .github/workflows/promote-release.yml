@@ -1,0 +1,48 @@
+name: Promote release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed candidate tag (vX.Y.Z)
+        required: true
+        type: string
+      commit:
+        description: Exact full SHA tested and tagged
+        required: true
+        type: string
+      acceptance:
+        description: Committed dev/maintainers/release-evidence/*.json path on main
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 30
+    # Must already exist with required reviewers and main-only deployments.
+    # No Apple signing secrets belong in this separate environment.
+    environment: release-promotion
+    permissions:
+      contents: write
+      attestations: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      ACCEPTANCE: ${{ inputs.acceptance }}
+      PROMOTION_ENABLED: ${{ vars.PROMOTION_ENABLED }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require configured promotion approval gate
+        run: |
+          test "$PROMOTION_ENABLED" = true || { echo 'Configure and verify protected release-promotion environment before enabling promotion' >&2; exit 1; }
+      - name: Verify exact signed candidate and acceptance, then promote without rebuilding
+        run: python3 scripts/release_candidate.py promote --acceptance "$ACCEPTANCE"
