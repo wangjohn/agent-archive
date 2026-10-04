@@ -663,6 +663,7 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		return archive.ProjectActivation{}, false
 	}
 	var best archive.ProjectActivation
+	var locations resolvedLocationMatcher
 	bestLen, found := -1, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
@@ -671,7 +672,7 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		if configured == "" {
 			return archive.ProjectActivation{}, false
 		}
-		within, certain := pathWithinResolvedLocations(candidate, configured)
+		within, certain := locations.within(candidate, configured)
 		if !certain {
 			return archive.ProjectActivation{}, false
 		}
@@ -683,13 +684,37 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 	return best, found
 }
 
-// pathWithinResolvedLocations compares paths after strict symlink resolution.
+// resolvedLocationMatcher keeps prefix observations within one scope lookup.
+// Shared ancestors need one stat each even when thousands of rules alias them.
+// No observation survives this activation or intent ownership check.
+type resolvedLocationMatcher struct {
+	prefixes map[string]resolvedLocationPrefix
+}
+
+type resolvedLocationPrefix struct {
+	info os.FileInfo
+	err  error
+}
+
+func (m *resolvedLocationMatcher) statPrefix(path string) (os.FileInfo, error) {
+	if prefix, exists := m.prefixes[path]; exists {
+		return prefix.info, prefix.err
+	}
+	info, err := os.Stat(path)
+	if m.prefixes == nil {
+		m.prefixes = make(map[string]resolvedLocationPrefix)
+	}
+	m.prefixes[path] = resolvedLocationPrefix{info: info, err: err}
+	return info, err
+}
+
+// within compares paths after strict symlink resolution.
 // Differently spelled existing components may be the same directory on a
 // case-insensitive volume. Stat only those differing prefixes; enumerating each
 // ancestor directory to canonicalize every hook would make large homes costly.
 // Differently cased absent components have an uncertain identity: callers must
 // decline capture rather than bypass a possibly equivalent exclusion.
-func pathWithinResolvedLocations(path, root string) (within, certain bool) {
+func (m *resolvedLocationMatcher) within(path, root string) (within, certain bool) {
 	if local.PathWithin(path, root) {
 		return true, true
 	}
@@ -709,8 +734,8 @@ func pathWithinResolvedLocations(path, root string) (within, certain bool) {
 		if pathParts[i] == part {
 			continue
 		}
-		pathInfo, pathErr := os.Stat(pathPrefix)
-		rootInfo, rootErr := os.Stat(rootPrefix)
+		pathInfo, pathErr := m.statPrefix(pathPrefix)
+		rootInfo, rootErr := m.statPrefix(rootPrefix)
 		if pathErr != nil || rootErr != nil {
 			if errors.Is(pathErr, os.ErrNotExist) && errors.Is(rootErr, os.ErrNotExist) && strings.EqualFold(pathParts[i], part) {
 				return false, false

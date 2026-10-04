@@ -113,6 +113,7 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 		return false
 	}
 	included := false
+	var locations resolvedLocationMatcher
 	for _, project := range projects {
 		resolvedProject := resolvedPath(project.Root)
 		if resolvedProject == "" {
@@ -122,7 +123,7 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 			included = project.Included
 			continue
 		}
-		within, certain := pathWithinResolvedLocations(resolvedProject, resolvedRoot)
+		within, certain := locations.within(resolvedProject, resolvedRoot)
 		if !certain || within {
 			return false
 		}
